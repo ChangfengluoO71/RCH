@@ -88,39 +88,3 @@ jobs:
         with:
           name: rch-windows
           path: app/build/windows/x64/runner/Release/
-
-  build-android:
-    name: Android Build
-    runs-on: ubuntu-latest
-    needs: [analyze, rust-test]
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: '3.44'
-
-      - name: Flutter pub get
-        run: flutter pub get
-
-      - name: Flutter pub get (cargokit)
-        run: dart pub get
-        working-directory: app/rust_builder/cargokit/build_tool
-
-      - name: Build Android APK
-        run: flutter build apk --debug
-
-      - name: Upload Android build
-        uses: actions/upload-artifact@v4
-        with:
-          name: rch-android
-          path: app/build/app/outputs/flutter-apk/app-debug.apk

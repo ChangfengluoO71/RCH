@@ -363,3 +363,23 @@ class BookTag {
     tagId: j['tagId'] as String,
   );
 }
+
+/// library.json 顶层包装（ADR-016/017），含版本号用于向后兼容数据迁移。
+class LibraryData {
+  int version;
+  List<BookSource> sources;
+  Map<String, ReadRecord> records;
+  Map<String, BookMeta> metas;
+  AppSettings settings;
+
+  LibraryData({
+    this.version = 1,
+    List<BookSource>? sources,
+    Map<String, ReadRecord>? records,
+    Map<String, BookMeta>? metas,
+    AppSettings? settings,
+  })  : sources = sources ?? [],
+        records = records ?? {},
+        metas = metas ?? {},
+        settings = settings ?? AppSettings();
+}

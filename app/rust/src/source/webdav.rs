@@ -312,11 +312,7 @@ impl WebDavClient {
     > {
         use std::hash::{Hash, Hasher};
 
-        let cache_dir = if let Some(appdata) = std::env::var_os("APPDATA") {
-            PathBuf::from(appdata).join("RCH").join("download")
-        } else {
-            std::env::temp_dir().join("RCH").join("download")
-        };
+        let cache_dir = crate::cache::cache_root().join("download");
         std::fs::create_dir_all(&cache_dir).ok();
         let name = path.rsplit('/').next().unwrap_or("file.cbz");
         let hash = {

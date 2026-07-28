@@ -202,6 +202,7 @@ class AppSettings {
   int dualPageGap; // 双页拼接中间缝隙像素
   bool skipFrontCover; // 首页不拼
   KeyBinds keys; // 自定义按键
+  String? cacheDir; // 自定义缓存目录（null = 默认）
 
   AppSettings({
     this.coverQuality = CoverQuality.medium,
@@ -212,6 +213,7 @@ class AppSettings {
     this.dualPageGap = 0,
     this.skipFrontCover = true,
     KeyBinds? keys,
+    this.cacheDir,
   }) : keys = keys ?? KeyBinds();
 
   Map<String, dynamic> toJson() => {
@@ -223,6 +225,7 @@ class AppSettings {
         'dualPageGap': dualPageGap,
         'skipFrontCover': skipFrontCover,
         'keys': keys.toJson(),
+        if (cacheDir != null) 'cacheDir': cacheDir,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -243,6 +246,7 @@ class AppSettings {
         dualPageGap: (j['dualPageGap'] as int?) ?? 0,
         skipFrontCover: (j['skipFrontCover'] as bool?) ?? true,
         keys: KeyBinds.fromJson(j['keys'] as Map<String, dynamic>?),
+        cacheDir: j['cacheDir'] as String?,
       );
 }
 

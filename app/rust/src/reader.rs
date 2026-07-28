@@ -71,13 +71,20 @@ pub struct Reader {
 impl Reader {
     /// `cache_ns`:该书在磁盘缓存中的命名空间(同一本书应稳定不变)。
     pub fn new(book: Box<dyn Document>, cache_ns: &str) -> Self {
-        let disk_dir = disk_cache_root().join(stable_hash(cache_ns));
-        let _ = std::fs::create_dir_all(&disk_dir);
+        let disk_dir = crate::cache::CacheDir::Page.ensure().ok().unwrap_or_else(|| {
+            // 兜底：直接构造路径
+            let p = crate::cache::cache_root().join("cache").join("page").join(stable_hash(cache_ns));
+            let _ = std::fs::create_dir_all(&p);
+            p
+        });
+
+        let dir = disk_dir.join(stable_hash(cache_ns));
+        let _ = std::fs::create_dir_all(&dir);
         Reader {
             book,
             cache: Mutex::new(Lru::new(CACHE_CAP)),
             prefetching: Mutex::new(HashSet::new()),
-            disk_dir,
+            disk_dir: dir,
         }
     }
 
@@ -162,15 +169,6 @@ impl Reader {
                 me.prefetching.lock().unwrap().remove(&t);
             });
         }
-    }
-}
-
-/// 磁盘缓存根目录(应用数据目录/RCH/cache)。
-fn disk_cache_root() -> PathBuf {
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        PathBuf::from(appdata).join("RCH").join("cache")
-    } else {
-        std::env::temp_dir().join("RCH").join("cache")
     }
 }
 

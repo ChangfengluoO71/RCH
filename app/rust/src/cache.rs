@@ -1,10 +1,25 @@
-//! 磁盘缓存管理：五级缓存目录 + 大小计算 + 清理。
+//! 磁盘缓存管理：五级缓存目录 + 大小计算 + 清理 + 自定义缓存根目录。
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::RwLock;
+
+/// 用户自定义缓存根目录（设置后可迁移缓存到其他磁盘）。
+static CUSTOM_CACHE_ROOT: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
+
+fn custom_root() -> &'static RwLock<Option<PathBuf>> {
+    CUSTOM_CACHE_ROOT.get_or_init(|| RwLock::new(None))
+}
 
 /// RCH 数据根目录（`<APPDATA>/RCH` 或 `<TEMP>/RCH`）。
+/// 如果用户设置了自定义缓存根目录，优先使用自定义路径。
 pub fn cache_root() -> PathBuf {
+    if let Some(custom) = custom_root().read().ok().and_then(|g| g.clone()) {
+        if !custom.as_os_str().is_empty() {
+            return custom;
+        }
+    }
     if let Some(appdata) = std::env::var_os("APPDATA") {
         PathBuf::from(appdata).join("RCH")
     } else {
@@ -12,10 +27,25 @@ pub fn cache_root() -> PathBuf {
     }
 }
 
+/// 设置自定义缓存根目录（空字符串表示恢复默认）。
+/// 调用方应确保迁移已完成后才调用此方法。
+pub fn set_custom_cache_root(path: &str) {
+    let p = if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    };
+    if let Ok(mut w) = custom_root().write() {
+        *w = p;
+    }
+}
+
 /// 五级缓存子目录。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheDir {
-    /// 整本漫画原始文件（下载后存储）。
+    /// L2 磁盘页面缓存（读过的页写盘，避免重复下载）。
+    Page,
+    /// 整本漫画原始文件（WebDAV 下载后存储）。
     Raw,
     /// 封面缩略图缓存（按质量/裁剪分）。
     Cover,
@@ -30,6 +60,7 @@ pub enum CacheDir {
 impl CacheDir {
     pub fn as_str(&self) -> &'static str {
         match self {
+            CacheDir::Page => "page",
             CacheDir::Raw => "raw",
             CacheDir::Cover => "cover",
             CacheDir::Thumb => "thumb",
@@ -39,7 +70,12 @@ impl CacheDir {
     }
 
     pub fn path(&self) -> PathBuf {
-        cache_root().join("cache").join(self.as_str())
+        if matches!(self, CacheDir::Temp) {
+            // temp 放在系统临时目录，不占用用户数据目录空间
+            std::env::temp_dir().join("RCH").join("temp")
+        } else {
+            cache_root().join("cache").join(self.as_str())
+        }
     }
 
     /// 确保目录存在。
@@ -48,11 +84,6 @@ impl CacheDir {
         std::fs::create_dir_all(&p)?;
         Ok(p)
     }
-}
-
-/// 获取页面缓存目录（L2 兼容旧路径）。
-pub fn page_cache_dir() -> PathBuf {
-    cache_root().join("cache")
 }
 
 // ====== 大小计算与清理 ======
@@ -78,6 +109,9 @@ pub fn dir_size(dir: &Path) -> u64 {
 /// 递归清空目录内容（保留根目录），返回释放的字节数。
 fn remove_dir_contents(dir: &Path) -> Result<u64> {
     let mut freed = 0u64;
+    if !dir.exists() {
+        return Ok(0);
+    }
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries {
             let entry = entry?;
@@ -95,9 +129,9 @@ fn remove_dir_contents(dir: &Path) -> Result<u64> {
     Ok(freed)
 }
 
-/// 清空 L2 页面缓存（兼容旧路径）。
+/// 清空 L2 页面缓存（page/）。
 pub fn clear_page_cache() -> Result<u64> {
-    let dir = page_cache_dir();
+    let dir = CacheDir::Page.path();
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
@@ -113,33 +147,89 @@ pub fn clear_cover_cache() -> Result<u64> {
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
+/// 清空缩略图缓存（thumb/）。
+pub fn clear_thumb_cache() -> Result<u64> {
+    let dir = CacheDir::Thumb.path();
+    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+}
+
 /// 清空 AI 结果缓存（ai/）。
 pub fn clear_ai_cache() -> Result<u64> {
     let dir = CacheDir::Ai.path();
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
-/// 清空下载缓存（整包回退，兼容旧路径）。
+/// 清空临时文件（temp/）。
+pub fn clear_temp_cache() -> Result<u64> {
+    let dir = CacheDir::Temp.path();
+    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+}
+
+/// 清空下载缓存（旧路径兼容）。
 pub fn clear_download_cache() -> Result<u64> {
     let dir = cache_root().join("download");
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
-/// 清空所有缓存（五级 + 旧目录）。
+/// 清空所有缓存（六级 + 旧 download 目录）。
 pub fn clear_all_caches() -> Result<u64> {
     Ok(clear_page_cache()?
         + clear_raw_cache()?
         + clear_cover_cache()?
+        + clear_thumb_cache()?
         + clear_ai_cache()?
+        + clear_temp_cache()?
         + clear_download_cache()?)
 }
 
 /// 确保所有缓存目录存在。
 pub fn ensure_all_cache_dirs() -> Result<()> {
+    CacheDir::Page.ensure()?;
     CacheDir::Raw.ensure()?;
     CacheDir::Cover.ensure()?;
     CacheDir::Thumb.ensure()?;
     CacheDir::Ai.ensure()?;
     CacheDir::Temp.ensure()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    #[test]
+    fn cache_root_defaults_to_appdata() {
+        // 在 Windows CI 环境 APPDATA 存在
+        let root = cache_root();
+        assert!(root.to_string_lossy().contains("RCH"));
+    }
+
+    #[test]
+    fn custom_cache_root_works() {
+        set_custom_cache_root("C:\\TestRCH");
+        assert_eq!(cache_root(), PathBuf::from("C:\\TestRCH"));
+        // 恢复默认
+        set_custom_cache_root("");
+        let root = cache_root();
+        assert!(root.to_string_lossy().contains("RCH"));
+    }
+
+    #[test]
+    fn cache_dir_paths_are_distinct() {
+        let page = CacheDir::Page.path();
+        let raw = CacheDir::Raw.path();
+        let cover = CacheDir::Cover.path();
+        assert_ne!(page, raw);
+        assert_ne!(page, cover);
+        assert_ne!(raw, cover);
+    }
+
+    #[test]
+    fn dir_size_of_empty_dir_returns_zero() {
+        let tmp = std::env::temp_dir().join("rch_test_empty_size");
+        let _ = std::fs::create_dir_all(&tmp);
+        assert_eq!(dir_size(&tmp), 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

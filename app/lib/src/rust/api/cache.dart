@@ -10,11 +10,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<CacheSize> cacheSizes() =>
     RustLib.instance.api.crateApiCacheCacheSizes();
 
-/// 获取 L2 页面缓存大小（字节）—— 兼容 FRB 桥接。
+/// 获取 L2 页面缓存大小（字节）。
 Future<BigInt> pageCacheSize() =>
     RustLib.instance.api.crateApiCachePageCacheSize();
 
-/// 获取下载缓存大小（字节）—— 兼容 FRB 桥接。
+/// 获取下载缓存大小（字节）。
 Future<BigInt> downloadCacheSize() =>
     RustLib.instance.api.crateApiCacheDownloadCacheSize();
 
@@ -34,9 +34,17 @@ Future<BigInt> clearRawCache() =>
 Future<BigInt> clearCoverCache() =>
     RustLib.instance.api.crateApiCacheClearCoverCache();
 
+/// 清空缩略图缓存（thumb/），返回释放的字节数。
+Future<BigInt> clearThumbCache() =>
+    RustLib.instance.api.crateApiCacheClearThumbCache();
+
 /// 清空 AI 结果缓存（ai/），返回释放的字节数。
 Future<BigInt> clearAiCache() =>
     RustLib.instance.api.crateApiCacheClearAiCache();
+
+/// 清空临时文件（temp/），返回释放的字节数。
+Future<BigInt> clearTempCache() =>
+    RustLib.instance.api.crateApiCacheClearTempCache();
 
 /// 清空下载缓存，返回释放的字节数。
 Future<BigInt> clearDownloadCache() =>
@@ -46,46 +54,65 @@ Future<BigInt> clearDownloadCache() =>
 Future<BigInt> clearAllCaches() =>
     RustLib.instance.api.crateApiCacheClearAllCaches();
 
-/// 获取缓存根目录路径（可提供给用户自定义迁移）。
+/// 获取缓存根目录路径。
 Future<String> cacheRootPath() =>
     RustLib.instance.api.crateApiCacheCacheRootPath();
 
+/// 设置自定义缓存根目录（空字符串恢复默认）。
+/// 调用方应确保已迁移旧数据后再调用。
+Future<void> setCacheRootPath({required String path}) =>
+    RustLib.instance.api.crateApiCacheSetCacheRootPath(path: path);
+
+/// 获取默认缓存根目录（APPDATA/RCH），不受自定义路径影响。
+Future<String> defaultCacheRootPath() =>
+    RustLib.instance.api.crateApiCacheDefaultCacheRootPath();
+
 /// 缓存分类大小信息。
 class CacheSize {
-  /// 页面缓存(字节)，L2 磁盘页面缓存。
+  /// 页面缓存(字节)，L2 磁盘页面缓存（page/）。
   final BigInt page;
 
-  /// 下载缓存(字节)，WebDAV 整包回退/旧下载目录。
-  final BigInt download;
-
-  /// 封面缓存(字节)，封面缩略图磁盘缓存。
-  final BigInt cover;
-
-  /// 原始文件缓存(字节)，WebDAV raw/ 整本下载。
+  /// 整本下载缓存(字节)，WebDAV raw/ 整本下载。
   final BigInt raw;
 
-  /// AI 结果缓存(字节)。
+  /// 封面缓存(字节)，封面缩略图磁盘缓存（cover/）。
+  final BigInt cover;
+
+  /// 缩略图缓存(字节)（thumb/）。
+  final BigInt thumb;
+
+  /// AI 结果缓存(字节)（ai/）。
   final BigInt ai;
+
+  /// 旧下载目录(字节)。
+  final BigInt download;
+
+  /// 临时文件(字节)（temp/）。
+  final BigInt temp;
 
   /// 所有缓存总和(字节)。
   final BigInt total;
 
   const CacheSize({
     required this.page,
-    required this.download,
-    required this.cover,
     required this.raw,
+    required this.cover,
+    required this.thumb,
     required this.ai,
+    required this.download,
+    required this.temp,
     required this.total,
   });
 
   @override
   int get hashCode =>
       page.hashCode ^
-      download.hashCode ^
-      cover.hashCode ^
       raw.hashCode ^
+      cover.hashCode ^
+      thumb.hashCode ^
       ai.hashCode ^
+      download.hashCode ^
+      temp.hashCode ^
       total.hashCode;
 
   @override
@@ -94,9 +121,11 @@ class CacheSize {
       other is CacheSize &&
           runtimeType == other.runtimeType &&
           page == other.page &&
-          download == other.download &&
-          cover == other.cover &&
           raw == other.raw &&
+          cover == other.cover &&
+          thumb == other.thumb &&
           ai == other.ai &&
+          download == other.download &&
+          temp == other.temp &&
           total == other.total;
 }

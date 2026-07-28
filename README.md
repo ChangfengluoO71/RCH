@@ -13,7 +13,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 |---|---|---|
 | ZIP / CBZ | `zip` + `flate2` | 无 |
 | EPUB | `zip` + OPF spine | 无 |
-| Folder | 目录枚举 | 无 |
+| Folder | 目录枚举 + ComicInfo.xml | 无 |
 | CB7 | `sevenz-rust` | 无 |
 | CBT | `tar` | 无 |
 | PDF | `pdfium-render` | pdfium.dll |
@@ -24,6 +24,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 - **本地书源**:浏览本地目录,海报墙展示 ZIP/CBZ/EPUB,目录可下钻
 - **WebDAV 书源**:连接远程服务器(NAS/网盘),PROPFIND 列目录,流式阅读(支持 Range 的服务器)或整本下载到 raw/ 缓存(首次下载后自动缓存,后续秒开)。下载期间显示真实百分比进度条
 - **WebDAV 封面生成优先走 raw/ 本地缓存**：已整本下载的漫画封面秒出，不走网络
+- **目录型漫画元数据**：自动读取 ComicInfo.xml（标题/作者/系列/类型）
 - 书源详情页:查看服务器信息/路径,编辑备注,删除书源(连带清理记录)
 - 书源管理:添加/编辑/删除/备注,凭据持久化,密码字段遮盖
 
@@ -99,7 +100,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 |---|---|---|
 | ZIP / CBZ | `zip` + `flate2` 流式解析 | 已完成 |
 | EPUB | `zip` + OPF spine 自研 | 已完成 |
-| Folder | 目录枚举 | 已完成 |
+| Folder | 目录枚举 + ComicInfo.xml | 已完成 |
 | CB7 | `sevenz-rust` 纯 Rust | 已完成 |
 | CBT | `tar` | 已完成 |
 | PDF | `pdfium-render` | 已完成(需 pdfium.dll) |

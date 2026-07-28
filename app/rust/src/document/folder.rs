@@ -11,6 +11,9 @@ use std::path::Path;
 
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"];
 
+/// 封面候选文件名（按优先级从高到低）。
+const COVER_NAMES: &[&str] = &["cover.jpg", "cover.png", "cover.webp", "cover.jpeg"];
+
 fn is_image_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     if lower.contains("__macosx") || lower.ends_with(".ds_store") {
@@ -75,6 +78,21 @@ impl FolderBook {
         }
 
         Ok(FolderBook { files, title, meta })
+    }
+
+    /// 查找目录下的封面图片文件（返回绝对路径）。
+    pub fn cover_path(dir_path: &str) -> Option<String> {
+        let p = Path::new(dir_path);
+        if !p.is_dir() {
+            return None;
+        }
+        for name in COVER_NAMES {
+            let candidate = p.join(name);
+            if candidate.exists() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+        None
     }
 }
 

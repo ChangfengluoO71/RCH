@@ -38,7 +38,18 @@ class TagRepository extends ChangeNotifier {
     try {
       final j = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
 
-      // 从 BookMeta 重建标签数据（metas 是 ground truth，tags/book_tags 只是缓存）
+      // 优先从独立标签表加载（保持未关联任何漫画的标签不丢失）
+      final tagsJ = (j['tags'] as List?) ?? [];
+      for (final t in tagsJ) {
+        final tag = Tag.fromJson(Map<String, dynamic>.from(t));
+        _tags[tag.id] = tag;
+      }
+      final bookTagsJ = (j['book_tags'] as List?) ?? [];
+      for (final bt in bookTagsJ) {
+        _bookTags.add(BookTag.fromJson(Map<String, dynamic>.from(bt)));
+      }
+
+      // 然后从 BookMeta 补充/纠正（metas 是 ground truth）
       final metas = (j['metas'] as Map<String, dynamic>?) ?? {};
       for (final entry in metas.entries) {
         final bookKey = entry.key;

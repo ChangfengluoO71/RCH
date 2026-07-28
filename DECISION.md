@@ -287,3 +287,10 @@
 - **背景**：标签补全问题暴露出状态来源分散（BookMeta、LibraryStore、Widget、搜索框等）。
 - **决策**：所有业务状态只能通过 Repository 修改；Widget 禁止直接修改模型；Repository 是唯一持久化入口。
 - **影响**：后续搜索、标签、历史记录、设置全部改为 Repository API。
+
+## ADR-017 标签独立建模
+
+- **日期**：2026-07-28
+- **状态**：已定
+- **决策**：引入 Tag 实体与 BookTag 关联关系；补全、搜索、统计统一从 TagRepository 获取。
+- **影响**：废弃 allTags() 遍历 BookMeta 的实现。

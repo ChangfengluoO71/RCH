@@ -1,5 +1,10 @@
 # RCH 漫画阅读器
 
+[![Flutter](https://img.shields.io/badge/Flutter-3.44-blue?logo=flutter)](https://flutter.dev)
+[![Rust](https://img.shields.io/badge/Rust-1.80-orange?logo=rust)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Android-brightgreen)]()
+
 Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核心体验是**本地优先的流式阅读**——无论什么格式、无论来自什么来源，都能边加载边阅读。
 
 > **四层架构**：UI → Document → Cache → Network/AI。**阅读器永远只操作本地资源，网络只是同步层，AI 只是处理层。**
@@ -39,7 +44,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 
 ### 主界面
 - **左侧导航**:最近阅读 / 最多阅读 / 标签管理 / 书源列表 / 设置
-- **海报墙书架**:网格封面缩略图 + 标题 + 文件大小
+- **海报墙书架**:网格封面缩略图 + 标题 + 文件大小（漫画文件夹自动显示封面卡片）
 - **WebDAV 双模式**:海报墙 / 简略列表自由切换
 - **最近阅读 / 最多阅读**:自动记录打开次数与进度,点击继续阅读(自动跳到上次看的页)
 - **统一搜索栏**:输入 `#` + 文字 → 内联标签补全列表 → 点击补全 → Chip 展示 → 点 × 移除

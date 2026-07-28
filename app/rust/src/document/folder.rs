@@ -4,6 +4,7 @@
 //! 不依赖 ByteSource——直接通过文件系统读取。
 
 use super::{Document, DocumentMeta};
+use super::comicinfo::read_comicinfo;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -25,6 +26,7 @@ fn is_image_name(name: &str) -> bool {
 pub struct FolderBook {
     files: Vec<String>, // 图片文件绝对路径,自然排序
     title: String,
+    meta: DocumentMeta,
 }
 
 impl FolderBook {
@@ -56,7 +58,23 @@ impl FolderBook {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| dir_path.to_string());
-        Ok(FolderBook { files, title })
+
+        // 尝试读取 ComicInfo.xml
+        let mut meta = DocumentMeta {
+            title: title.clone(),
+            ..Default::default()
+        };
+        let ci_path = p.join("ComicInfo.xml");
+        if ci_path.exists() {
+            if let Ok(ci) = read_comicinfo(&ci_path) {
+                meta = super::comicinfo::comicinfo_to_meta(&ci);
+                if meta.title.is_empty() {
+                    meta.title = title.clone();
+                }
+            }
+        }
+
+        Ok(FolderBook { files, title, meta })
     }
 }
 
@@ -66,10 +84,7 @@ impl Document for FolderBook {
     }
 
     fn metadata(&self) -> DocumentMeta {
-        DocumentMeta {
-            title: self.title.clone(),
-            ..Default::default()
-        }
+        self.meta.clone()
     }
 
     fn page_bytes(&self, index: u32) -> Result<Vec<u8>> {

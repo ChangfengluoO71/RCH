@@ -2,6 +2,7 @@
 //!
 //! 新格式只需实现 [`Document`] 并在 [`open_document`] 注册。
 
+pub mod comicinfo;
 pub mod epub;
 pub mod folder;
 pub mod mobi;

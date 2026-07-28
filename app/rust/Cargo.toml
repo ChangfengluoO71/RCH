@@ -14,7 +14,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
-quick-xml = "0.37"
+quick-xml = { version = "0.37", features = ["serialize"] }
+serde = { version = "1", features = ["derive"] }
 percent-encoding = "2"
 tracing = "0.1"
 sevenz-rust = "0.6.1"

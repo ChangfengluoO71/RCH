@@ -2,6 +2,8 @@
 //!
 //! 适用于直接存放图片的文件夹(非压缩包)。
 //! 不依赖 ByteSource——直接通过文件系统读取。
+//!
+//! 元数据源优先级: ComicInfo.xml > metadata.json > 目录名
 
 use super::{Document, DocumentMeta};
 use super::comicinfo::read_comicinfo;
@@ -24,6 +26,59 @@ fn is_image_name(name: &str) -> bool {
         .next()
         .map(|ext| IMAGE_EXTS.contains(&ext))
         .unwrap_or(false)
+}
+
+/// metadata.json 中我们关心的字段。
+/// 非标准格式，各发布者定义不同，这里采用宽松解析：所有字段可选。
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct MetadataJson {
+    title: Option<String>,
+    #[serde(alias = "author")]
+    writer: Option<String>,
+    genre: Option<String>,
+    series: Option<String>,
+    summary: Option<String>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
+}
+
+/// 从 metadata.json 读取元数据。
+fn read_metadata_json(dir: &Path) -> Option<MetadataJson> {
+    let path = dir.join("metadata.json");
+    if !path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<MetadataJson>(&content).ok()
+}
+
+/// 将 metadata.json 映射到 DocumentMeta。
+fn metadata_json_to_meta(mj: &MetadataJson) -> DocumentMeta {
+    DocumentMeta {
+        title: mj.title.clone().unwrap_or_default(),
+        author: mj.writer.clone().unwrap_or_default(),
+        genre: mj.genre.clone().unwrap_or_default(),
+        series: mj.series.clone().unwrap_or_default(),
+    }
+}
+
+/// 检测目录是否可当作漫画文件夹（包含至少一张图片）。
+pub fn is_comic_folder(dir_path: &str) -> bool {
+    let p = Path::new(dir_path);
+    if !p.is_dir() {
+        return false;
+    }
+    fs::read_dir(p).ok().map(|mut entries| {
+        entries.any(|e| {
+            e.ok().map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                !name.starts_with('.') && !name.starts_with("__MACOSX")
+                    && !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(true)
+                    && is_image_name(&name)
+            }).unwrap_or(false)
+        })
+    }).unwrap_or(false)
 }
 
 pub struct FolderBook {
@@ -62,7 +117,7 @@ impl FolderBook {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| dir_path.to_string());
 
-        // 尝试读取 ComicInfo.xml
+        // 元数据: ComicInfo.xml > metadata.json > 目录名
         let mut meta = DocumentMeta {
             title: title.clone(),
             ..Default::default()
@@ -74,6 +129,11 @@ impl FolderBook {
                 if meta.title.is_empty() {
                     meta.title = title.clone();
                 }
+            }
+        } else if let Some(mj) = read_metadata_json(p) {
+            meta = metadata_json_to_meta(&mj);
+            if meta.title.is_empty() {
+                meta.title = title.clone();
             }
         }
 
@@ -154,5 +214,75 @@ mod tests {
     #[test]
     fn folder_book_rejects_file() {
         assert!(FolderBook::open("nonexistent_path_12345").is_err());
+    }
+
+    #[test]
+    fn metadata_json_parsing_works() {
+        let tmp = std::env::temp_dir().join("rch_test_meta_json");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // 写入一张测试图片
+        fs::write(tmp.join("001.jpg"), b"fake").unwrap();
+
+        // 写入 metadata.json
+        let json = r#"{"title": "Test Title", "author": "Test Author", "genre": "Action", "series": "Test Series", "description": "A test comic."}"#;
+        fs::write(tmp.join("metadata.json"), json.as_bytes()).unwrap();
+
+        let book = FolderBook::open(&tmp.to_string_lossy()).unwrap();
+        let meta = book.metadata();
+        assert_eq!(meta.title, "Test Title");
+        assert_eq!(meta.author, "Test Author");
+        assert_eq!(meta.genre, "Action");
+        assert_eq!(meta.series, "Test Series");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn cover_path_works() {
+        let tmp = std::env::temp_dir().join("rch_test_cover");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // 无封面时返回 None
+        assert!(FolderBook::cover_path(&tmp.to_string_lossy()).is_none());
+
+        // 写入 cover.jpg → 应检测到
+        fs::write(tmp.join("cover.jpg"), b"fake").unwrap();
+        let found = FolderBook::cover_path(&tmp.to_string_lossy());
+        assert!(found.is_some());
+        assert!(found.unwrap().ends_with("cover.jpg"));
+
+        // cover.png 优先级低于 cover.jpg，但 cover.jpg 先被找到
+        fs::write(tmp.join("cover.png"), b"fake").unwrap();
+        let found2 = FolderBook::cover_path(&tmp.to_string_lossy());
+        assert!(found2.is_some());
+        assert!(found2.unwrap().ends_with("cover.jpg"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_comic_folder_works() {
+        let tmp = std::env::temp_dir().join("rch_test_detect");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // 空目录 → false
+        assert!(!is_comic_folder(&tmp.to_string_lossy()));
+
+        // 只有非图片文件 → false
+        fs::write(tmp.join("readme.txt"), b"hello").unwrap();
+        assert!(!is_comic_folder(&tmp.to_string_lossy()));
+
+        // 加入图片 → true
+        fs::write(tmp.join("001.jpg"), b"fake").unwrap();
+        assert!(is_comic_folder(&tmp.to_string_lossy()));
+
+        // 非目录 → false
+        assert!(!is_comic_folder("nonexistent_path_12345"));
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

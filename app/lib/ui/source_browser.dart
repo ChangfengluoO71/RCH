@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
@@ -30,6 +32,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
   BigInt? _session;
   bool _posterMode = true; // true=海报墙, false=简略列表
 
+  /// 漫画文件夹检测结果：path → true 表示该目录是漫画文件夹。
+  /// 本地模式使用；WebDAV 暂不检测（避免大量网络请求）。
+  final Map<String, bool> _comicDirs = {};
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +58,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     setState(() {
       _loading = true;
       _error = null;
+      _comicDirs.clear();
     });
     try {
       final list = widget.source.isWebDav
@@ -66,10 +73,26 @@ class _SourceBrowserState extends State<SourceBrowser> {
                 ['.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar', '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3'].any((ext) => e.name.toLowerCase().endsWith(ext)))
             .toList();
       });
+      // 本地模式：异步检测子目录是否为漫画文件夹
+      if (!widget.source.isWebDav) {
+        _detectComicFolders();
+      }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// 异步检测当前列表中的子目录是否为漫画文件夹。
+  void _detectComicFolders() {
+    for (final e in _entries) {
+      if (!e.isDir) continue;
+      // 逐目录检测（非并发，避免 IO 抖动）
+      unawaited(isComicFolder(dirPath: e.path).then((isComic) {
+        if (!mounted) return;
+        setState(() => _comicDirs[e.path] = isComic);
+      }));
     }
   }
 
@@ -82,6 +105,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
     if (_stack.isNotEmpty) _list(_stack.removeLast());
   }
 
+  /// 漫画文件夹也作为漫画条目参与过滤。
+  bool _isComicDir(String path) => _comicDirs[path] == true;
+
   List<DirEntry> get _filtered {
     Iterable<DirEntry> list = _entries;
     // 搜索
@@ -89,11 +115,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
       final q = widget.search.toLowerCase();
       list = list.where((e) => e.name.toLowerCase().contains(q));
     }
-    // 标签过滤(交集)
+    // 标签过滤(交集) — 仅对漫画条目生效（普通文件夹不受影响）
     if (widget.selectedTags.isNotEmpty) {
       final store = LibraryStore.instance;
       list = list.where((e) {
-        if (e.isDir) return true;
+        // 普通文件夹（非漫画）不过滤
+        if (e.isDir && !_isComicDir(e.path)) return true;
         final newKey = '${widget.source.type}|${widget.source.id}|${e.path}';
         final legacyKey = '${widget.source.id}|${e.path}';
         final meta = store.metas[newKey] ?? store.metas[legacyKey];
@@ -119,9 +146,21 @@ class _SourceBrowserState extends State<SourceBrowser> {
             : await listLocalDir(path: p);
         for (final e in list) {
           if (e.isDir) {
-            pending.add(e.path);
-          } else if (e.name.toLowerCase().endsWith('.cbz') ||
-              e.name.toLowerCase().endsWith('.zip')) {
+            // 检测子目录是否为漫画文件夹
+            if (widget.source.isWebDav) {
+              pending.add(e.path);
+            } else {
+              final isComic = await isComicFolder(dirPath: e.path);
+              if (isComic) {
+                result.add(e.path);
+              } else {
+                pending.add(e.path);
+              }
+            }
+          } else if ([
+            '.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar',
+            '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3'
+          ].any((ext) => e.name.toLowerCase().endsWith(ext))) {
             result.add(e.path);
           }
         }
@@ -296,16 +335,19 @@ class _SourceBrowserState extends State<SourceBrowser> {
       itemCount: entries.length,
       itemBuilder: (context, i) {
         final e = entries[i];
+        // 目录：区分漫画文件夹 vs 普通文件夹
         if (e.isDir) {
+          if (_isComicDir(e.path)) {
+            // 漫画文件夹 → 显示为海报卡片，点击进详情而非下钻
+            return _comicFolderCard(e);
+          }
+          // 普通文件夹 → 现有文件夹卡片
           final sel = _selectMode && _selectedPaths.contains(e.path);
-          // 选择模式下:文件夹卡片不响应自身点击,由外层 InkWell 接管;
-          // 单击=勾选,双击=进入目录
           Widget folderCard = _FolderCard(
             name: e.name,
             onTap: _selectMode ? null : () => _openDir(e.path),
           );
           if (!_selectMode) return folderCard;
-          // 使用 GestureDetector 替代 Stack+InkWell,更精确控制手势
           return Stack(children: [
             folderCard,
             Positioned(right: 6, top: 6, child: IgnorePointer(child: Container(
@@ -319,6 +361,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             ))),
           ]);
         }
+        // 普通漫画文件
         final sel = _selectedPaths.contains(e.path);
         final card = ComicCard(
           source: widget.source, path: e.path, title: e.name, subtitle: fmtSize(e.size),
@@ -338,6 +381,33 @@ class _SourceBrowserState extends State<SourceBrowser> {
         ]);
       },
     );
+  }
+
+  /// 漫画文件夹卡片: 带封面（优先 cover.jpg → 首页缩略图），点击进详情。
+  Widget _comicFolderCard(DirEntry e) {
+    final sel = _selectMode && _selectedPaths.contains(e.path);
+    final card = _ComicFolderCoverCard(
+      source: widget.source,
+      dirPath: e.path,
+      name: e.name,
+      onTap: _selectMode
+          ? () {}
+          : () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => BookDetailPage(
+                  source: widget.source, path: e.path, title: e.name))),
+    );
+    if (!_selectMode) return card;
+    return Stack(children: [
+      card,
+      Positioned(right: 6, top: 6, child: IgnorePointer(child: Container(
+        width: 22, height: 22,
+        decoration: BoxDecoration(color: sel ? Colors.blue : Colors.black45, shape: BoxShape.circle, border: Border.all(color: Colors.white38)),
+        child: sel ? const Icon(Icons.check, size: 16, color: Colors.white) : null,
+      ))),
+      Positioned.fill(child: Material(color: Colors.transparent, child: InkWell(
+        onTap: () => setState(() => sel ? _selectedPaths.remove(e.path) : _selectedPaths.add(e.path)),
+      ))),
+    ]);
   }
 
   /// WebDAV:列表(选择模式下有复选框)。
@@ -397,6 +467,121 @@ class _FolderCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 漫画文件夹封面卡片：优先用 cover.jpg，无封面则取首页做缩略图。
+class _ComicFolderCoverCard extends StatefulWidget {
+  final BookSource source;
+  final String dirPath;
+  final String name;
+  final VoidCallback onTap;
+
+  const _ComicFolderCoverCard({
+    required this.source,
+    required this.dirPath,
+    required this.name,
+    required this.onTap,
+  });
+
+  @override
+  State<_ComicFolderCoverCard> createState() => _ComicFolderCoverCardState();
+}
+
+class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
+  /// null = 未加载；"" = 无显式封面（用首页）；非空 = 封面路径。
+  String? _coverPath;
+  bool _loadingCover = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _detectCover();
+  }
+
+  Future<void> _detectCover() async {
+    if (_loadingCover) return;
+    _loadingCover = true;
+    try {
+      final cp = await folderCoverPath(dirPath: widget.dirPath);
+      if (!mounted) return;
+      setState(() => _coverPath = cp);
+    } catch (_) {
+      if (mounted) setState(() => _coverPath = '');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: InkWell(
+        onTap: widget.onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: _buildCover(),
+            ),
+            Container(
+              color: Colors.black45,
+              padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.folder, size: 14, color: Colors.amber),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          widget.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12, height: 1.2),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCover() {
+    // 有显式封面 → 优先用封面路径解码（第 0 页）
+    if (_coverPath != null && _coverPath!.isNotEmpty) {
+      return _loadCover(_coverPath!);
+    }
+    // 无显式封面 → 用漫画目录首页
+    if (_coverPath == '') {
+      return _loadCover(widget.dirPath);
+    }
+    // 还在检测中 → 占位
+    return Container(
+      color: Colors.black26,
+      child: const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+
+  Widget _loadCover(String path) {
+    return ComicCover(
+      source: widget.source,
+      path: path,
+      force: true,
     );
   }
 }

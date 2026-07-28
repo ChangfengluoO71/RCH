@@ -43,6 +43,16 @@ Future<void> closeBook({required BigInt handle}) =>
 Future<List<DirEntry>> listLocalDir({required String path}) =>
     RustLib.instance.api.crateApiBookListLocalDir(path: path);
 
+/// 检测目录是否为漫画文件夹（包含至少一张图片文件）。
+/// 用于浏览页判断：是漫画文件夹 → 显示为海报卡片；否则 → 显示为普通文件夹。
+Future<bool> isComicFolder({required String dirPath}) =>
+    RustLib.instance.api.crateApiBookIsComicFolder(dirPath: dirPath);
+
+/// 获取漫画文件夹的显式封面路径（cover.jpg / cover.png 等）。
+/// 无显式封面时返回空字符串。
+Future<String> folderCoverPath({required String dirPath}) =>
+    RustLib.instance.api.crateApiBookFolderCoverPath(dirPath: dirPath);
+
 /// 书籍信息。
 class BookInfo {
   final BigInt handle;

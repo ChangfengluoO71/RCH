@@ -1540,6 +1540,7 @@ dependencies = [
  "reqwest",
  "rusqlite",
  "serde",
+ "serde_json",
  "sevenz-rust",
  "tar",
  "tokio",

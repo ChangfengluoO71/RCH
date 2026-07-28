@@ -9,12 +9,12 @@
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Android-brightgreen)]()
 
-- ⚡ **超大压缩包秒开** — 无需整包解压，即点即读
+- ⚡ **超大压缩包秒开** 
 - 📖 **连续阅读不等待** — 智能预取 + 三级缓存
-- 🖼️ **8 种格式全覆盖** — ZIP/CBZ/CB7/CBT/PDF/EPUB/RAR/MOBI
-- 🪟 **Windows 深度优化** — 触控手势、键盘快捷键
-- 📱 **Android 规划中**
-- 🧠 **端侧 AI 超分** — 本地模型，隐私安全
+- 🖼️ **8 种格式全覆盖** — ZIP/CBZ/PDF/EPUB/MOBI/文件夹适配
+- 🪟 **漫画信息自定义** — 封面选取裁剪/深度标签编辑系统/
+- 📱 **自带漫画搜索筛选系统** — 支持“标签 + 文字”双重精确筛选
+- 🧠 **webdav支持** — WebDAV 封面懒加载 + 缓存进度显示 + 缓存一键清理
 
 ## 快速开始
 
@@ -107,41 +107,14 @@ flutter run -d windows
 
 ## 待建设（按优先级）
 
-### M9 缓存基础设施（下一优先）
-- [x] 五级缓存目录: raw/cover/thumb/ai/temp + 分类清理 API + 分级缓存管理面板
-- [x] WebDAV 整本下载到 raw/ 缓存 + 百分比进度条（每 300ms 轮询）
-- [x] Rust 侧 SQLite (rusqlite): 缓存索引/书源能力/ETag
-- [ ] 统一下载器（Downloader）: 队列/去重/并发限制/优先级/重试
-
 ### M2 AI 超分
 - [ ] Phase 1: 常驻 Worker 进程 + 命名管道通信
 - [ ] Phase 2: 共享内存传图
 - [ ] Phase 3: Upscaler trait 多模型切换
 
 ### M1 低优先级暂缓
-- [ ] 双页自动/滚轮解耦/按键扩展
+- [ ] 双页自动拼接
 
-## 格式支持现状
-| 格式 | 引擎 | 状态 |
-|---|---|---|
-| ZIP / CBZ | `zip` + `flate2` 流式解析 | 已完成 |
-| EPUB | `zip` + OPF spine 自研 | 已完成 |
-| Folder | 目录枚举 + ComicInfo.xml + metadata.json | 已完成 |
-| CB7 | `sevenz-rust` 纯 Rust | 已完成 |
-| CBT | `tar` | 已完成 |
-| PDF | `pdfium-render` | 已完成(需 pdfium.dll) |
-| CBR / RAR | `unrar` | 已完成(需 unrar.dll) |
-| MOBI / AZW / AZW3 | `mobi` crate 纯 Rust | 已完成 |
-
-## 已知问题
-- 115 等有限请求频率限制的网盘在短时间内连接多次可能触发"Too many requests"
-- 封面缩略图首次生成需打开 ZIP 取页,多本书同时加载时略慢(质量调低可加快)
-- 双页拼接自动模式(宽图判定)已被移除,仅保留固定配对模式
-- 滚轮缩放功能已全局关闭,改用 `+/-/0` 键缩放
-- EPUB 元数据(title/author)尚未从 OPF 中提取,当前标题用文件名
-- PDF/CBR 需要运行时 DLL(pdfium.dll / unrar.dll),未打包时对应格式无法打开
-- WebDAV 封面缓存清除后,未整本下载的漫画封面需重新从远程请求,可能较慢
-- WebDAV 封面缓存清除后，未整本下载的漫画封面需重新从远程请求，可能较慢
 
 ## 如何运行
 

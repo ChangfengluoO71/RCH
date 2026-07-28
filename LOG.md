@@ -196,3 +196,36 @@ Bug 根因：
 
 **遗留问题**
 - 使用文档暂不上传，后续用户确认后补充到仓库
+
+---
+
+## 2026-07-28|第 35 轮：v0.2.0 安装程序 + 版号升级
+
+**本轮目的**
+升级版号至 v0.2.0，更新 setup.iss 安装脚本，重新构建安装程序并发布到 dist/。
+
+**修改内容**
+
+1. `app/windows/installer/setup.iss`：版号 0.1.0 → 0.2.0，文件名 RCH-v0.2.0-windows-x64
+2. `CHANGELOG.md`：新增 v0.2.0 版本记录 (SQLite + 已读标签 + Tag 系统修复)
+3. `README.md`：版号标记更新
+4. `app/pubspec.yaml`：version 0.1.0 → 0.2.0
+
+**构建流程**
+```
+flutter build windows → Release/ 目录
+ISCC.exe setup.iss   → dist/RCH-v0.2.0-windows-x64.exe
+```
+
+**决策原因**
+- v0.2.0 包含了 SQLite 数据层迁移、已读元数据标签、标签 ID 重构，是架构级变更
+
+**影响范围**
+- 构建: `setup.iss`、`pubspec.yaml`、`CHANGELOG.md`
+- 产物: `dist/RCH-v0.2.0-windows-x64.exe`
+
+**是否完成**
+✅ flutter build windows 成功，安装程序已输出到 dist/。
+
+**遗留问题**
+- ISCC (Inno Setup) 需单独安装后编译 setup.iss

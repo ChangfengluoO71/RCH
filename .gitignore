@@ -6,6 +6,9 @@ DECISION.md
 DECISION.md.bak
 SPEC.md
 TODO.md
+
+# Build artifacts
+dist/
 .dart_tool/
 .flutter-plugins-dependencies
 .pub-cache/

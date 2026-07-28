@@ -66,7 +66,7 @@ class LibraryStore extends ChangeNotifier {
   }
 
   /// 持久化: LibraryStore 数据 + TagRepository 数据合并写入。
-  Future<bool> _save() async {
+  Future<void> _save() async {
     try {
       final f = await _file();
       final data = {
@@ -78,9 +78,10 @@ class LibraryStore extends ChangeNotifier {
         ...TagRepository.instance.toJson(),
       };
       await f.writeAsString(jsonEncode(data));
-      return true;
-    } catch (_) {
-      return false;
+    } catch (e, st) {
+      debugPrint('Library save failed: $e');
+      debugPrintStack(stackTrace: st);
+      rethrow;
     }
   }
 

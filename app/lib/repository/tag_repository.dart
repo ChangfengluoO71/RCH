@@ -70,7 +70,7 @@ class TagRepository extends ChangeNotifier {
       // 向后兼容：旧 hash ID → 新 name ID 合并归一化
       _normalizeTagIds();
     } catch (e) {
-      print('[TagRepository] load failed: $e');
+      debugPrint('[TagRepository] load failed: $e');
     }
     notifyListeners();
   }

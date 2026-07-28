@@ -202,6 +202,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     final metaSet = store.metaTagNames();
     final all = store.allTags();
     final ctrl = TextEditingController();
+    if (!mounted) return;
     final tag = await showDialog<String>(
       context: context,
       builder: (c) => StatefulBuilder(
@@ -298,7 +299,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               if (_selectMode) ...[
                 TextButton(onPressed: () => setState(() { _selectedPaths.clear(); }), child: const Text('取消全选')),
-                TextButton(onPressed: () => setState(() { for (var e in _filtered) _selectedPaths.add(e.path); }), child: const Text('全选')),
+                TextButton(onPressed: () => setState(() { for (var e in _filtered) { _selectedPaths.add(e.path); } }), child: const Text('全选')),
                 IconButton(icon: const Icon(Icons.label), tooltip: '批量打标签', onPressed: _batchTagFromSelection),
                 IconButton(icon: const Icon(Icons.close), tooltip: '退出选择', onPressed: () => setState(() { _selectedPaths.clear(); _selectMode = false; })),
               ] else ...[

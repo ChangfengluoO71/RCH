@@ -213,7 +213,15 @@ class _HomePageState extends State<HomePage> {
         PopupMenuItem(value: 'edit', child: Text('编辑书源')),
         PopupMenuItem(value: 'detail', child: Text('书源详情')),
         PopupMenuItem(value: 'delete', child: Text('删除书源')),
-      ], onSelected: (act) { if (act == 'edit') _showEditSource(src); else if (act == 'detail') _showSourceDetail(src); else _deleteSource(src); }),
+      ], onSelected: (act) {
+        if (act == 'edit') {
+          _showEditSource(src);
+        } else if (act == 'detail') {
+          _showSourceDetail(src);
+        } else {
+          _deleteSource(src);
+        }
+      }),
     ));
   }
 

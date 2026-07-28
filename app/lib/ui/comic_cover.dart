@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/book.dart';
@@ -8,16 +9,78 @@ import 'package:app/ui/common.dart';
 import 'package:app/ui/opener.dart';
 import 'package:flutter/material.dart';
 
-/// 漫画封面:统一本地 / WebDAV 来源,带全局内存缓存。
-/// WebDAV 封面采用懒加载策略:未打开过的漫画不主动加载封面(避免大量网络请求),
-/// 仅当用户已阅读(有缓存记录)时**并且有本地缓存可秒出**时才加载封面。
-/// 如果已阅读但本地缓存不存在（如封面缓存被清理），则不尝试远程加载，
-/// 直接显示"未缓存"（与未阅读过的漫画一致），避免网络慢导致一直转圈。
-class ComicCover extends StatelessWidget {
+/// 封面加载任务队列 — 限制并发 FFI 调用数，避免数百个封面同时竞争线程池。
+///
+/// 设计：
+/// - 最大并发数 4：本地封面 open_document + decode 约 30-80ms/本，4 并发足以喂饱 GPU。
+/// - 已缓存的任务立即返回（内存缓存命中），不消耗并发槽位。
+/// - 滚动时新出现的 Widget 入队，不再可见的 Widget 自动取消（didUpdateWidget dispose）。
+class _CoverLoadQueue {
+  _CoverLoadQueue._();
+
+  static final _CoverLoadQueue instance = _CoverLoadQueue._();
+
+  static const int maxConcurrent = 4;
+
+  int _running = 0;
+  final List<_QueuedTask> _pending = [];
+
+  Completer<ui.Image> enqueue(String key, Future<ui.Image> Function() task) {
+    final c = Completer<ui.Image>();
+    final qt = _QueuedTask(key: key, task: task, completer: c);
+    _pending.add(qt);
+    _drain();
+    return c;
+  }
+
+  void cancel(String key) {
+    _pending.removeWhere((qt) {
+      if (qt.key == key) {
+        if (!qt.completer.isCompleted) {
+          qt.completer.completeError(Exception('cancelled'));
+        }
+        return true;
+      }
+      return false;
+    });
+  }
+
+  void _drain() {
+    while (_running < maxConcurrent && _pending.isNotEmpty) {
+      final qt = _pending.removeAt(0);
+      if (qt.completer.isCompleted) continue; // 已被 cancel
+      _running++;
+      qt.task().then((img) {
+        qt.completer.complete(img);
+      }).catchError((e) {
+        if (!qt.completer.isCompleted) qt.completer.completeError(e);
+      }).whenComplete(() {
+        _running--;
+        _drain();
+      });
+    }
+  }
+}
+
+class _QueuedTask {
+  final String key;
+  final Future<ui.Image> Function() task;
+  final Completer<ui.Image> completer;
+  _QueuedTask({required this.key, required this.task, required this.completer});
+}
+
+/// 漫画封面：统一本地 / WebDAV 来源，带全局内存缓存。
+///
+/// StatefulWidget 设计确保：
+/// - 加载 Future 只在 initState 中创建一次，父 rebuild 不会重新触发加载。
+/// - 并发限制 4 个 FFI 调用 + 队列调度。
+/// - 内存缓存命中立即返回，不经过队列。
+/// - 滚动时 Widget dispose 自动取消队列中的等待任务。
+/// - WebDAV 封面懒加载：未打开过的漫画不主动请求封面。
+class ComicCover extends StatefulWidget {
   final BookSource source;
   final String path;
   final BoxFit fit;
-  /// 强制加载封面(即使用户从未打开过此漫画)。用于手动触发加载。
   final bool force;
 
   const ComicCover({
@@ -28,153 +91,168 @@ class ComicCover extends StatelessWidget {
     this.force = false,
   });
 
-  static final Map<String, Future<ui.Image>> _cache = {};
+  @override
+  State<ComicCover> createState() => _ComicCoverState();
 
-  /// 清空封面内存/磁盘缓存(质量切换或手动清理时调用)。
-  static void clear() {
-    _cache.clear();
-  }
+  // ---- 全局内存缓存（已完成的封面） ----
 
-  /// 移除指定封面的缓存(用于失败后重试)。
-  static void evict(String key) {
-    _cache.remove(key);
-  }
+  static final Map<String, ui.Image> _cache = {};
 
-  /// 移除某个源+路径的所有封面缓存(用于阅读后强制刷新)。
+  static void clear() => _cache.clear();
+
+  static void evict(String key) => _cache.remove(key);
+
   static void evictAll(String sourceId, String path) {
     _cache.removeWhere((k, _) => k.startsWith('$sourceId|$path'));
   }
+}
+
+class _ComicCoverState extends State<ComicCover> {
+  Future<ui.Image>? _future;
 
   String get _cacheKey {
     final store = LibraryStore.instance;
     final q = store.settings.coverQuality;
-    final meta = store.metaOf(source, path);
-    return '${source.id}|$path|${q.name}|${meta.coverPage}'
+    final meta = store.metaOf(widget.source, widget.path);
+    return '${widget.source.id}|${widget.path}|${q.name}|${meta.coverPage}'
         '|${meta.cropX},${meta.cropY},${meta.cropW},${meta.cropH}';
   }
 
-  /// 本地漫画始终加载；WebDAV 未阅读过→不加载；强制模式→总是加载。
   bool get _shouldSkipLoad {
-    if (!source.isWebDav) return false; // 本地始终加载
-    if (force) return false; // 强制加载
-    // WebDAV: 仅当有阅读记录时才尝试加载
-    final store = LibraryStore.instance;
-    final key = '${source.type}|${source.id}|$path';
-    return !store.records.containsKey(key);
+    if (!widget.source.isWebDav) return false;
+    if (widget.force) return false;
+    final key = '${widget.source.type}|${widget.source.id}|${widget.path}';
+    return !LibraryStore.instance.records.containsKey(key);
   }
 
-  /// 异步检查 WebDAV 漫画是否有 raw/ 本地缓存。
-  /// 有 → 从本地秒出封面；没有 → 不尝试远程加载，直接显示"未缓存"。
-  Future<bool> _hasRawCache() async {
-    if (!source.isWebDav) return true;
-    try {
-      // 调 Rust 端检测 raw/ 本地缓存路径是否存在
-      return await webdavHasRawCache(
-        session: (await webdavSessionFor(source)),
-        path: path,
-      );
-    } catch (_) {
-      return false;
+  @override
+  void initState() {
+    super.initState();
+    _maybeLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant ComicCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.source.id != widget.source.id ||
+        oldWidget.path != widget.path ||
+        oldWidget.force != widget.force) {
+      // 路径变化：取消旧队列任务，重新加载
+      _CoverLoadQueue.instance.cancel(_cacheKey);
+      _future = null;
+      _maybeLoad();
     }
   }
 
+  @override
+  void dispose() {
+    // Widget 不可见时取消队列中的等待任务（已经开始的 FFI 调用不中断）
+    _CoverLoadQueue.instance.cancel(_cacheKey);
+    super.dispose();
+  }
+
+  void _maybeLoad() {
+    if (_future != null) return;
+    if (_shouldSkipLoad) return;
+
+    final key = _cacheKey;
+
+    // 内存缓存命中 → 立即完成
+    final cached = ComicCover._cache[key];
+    if (cached != null) {
+      _future = Future.value(cached);
+      return;
+    }
+
+    // 入队：并发控制在队列内部
+    final completer = _CoverLoadQueue.instance.enqueue(key, _load);
+    _future = completer.future;
+    _future!.then((img) {
+      ComicCover._cache[key] = img;
+    }).catchError((_) {});
+  }
+
+  /// 实际的封面加载逻辑（不包含队列调度）。
   Future<ui.Image> _load() async {
     final store = LibraryStore.instance;
     final q = store.settings.coverQuality;
     final (w, h) = q.size;
-    final meta = store.metaOf(source, path);
+    final meta = store.metaOf(widget.source, widget.path);
     final crop = meta.hasCrop
         ? CropRect(x: meta.cropX!, y: meta.cropY!, w: meta.cropW!, h: meta.cropH!)
         : null;
-    final key = _cacheKey;
-    // 内存缓存命中
-    final existing = _cache[key];
-    if (existing != null) return existing;
 
-    if (source.isWebDav) {
-      final session = await webdavSessionFor(source);
+    if (widget.source.isWebDav) {
+      try {
+        final session = await webdavSessionFor(widget.source);
+        final hasRaw = await webdavHasRawCache(
+            session: session, path: widget.path);
+        if (!hasRaw) throw Exception('no raw cache');
+      } catch (_) {
+        throw Exception('not cached');
+      }
+      final session = await webdavSessionFor(widget.source);
       final p = await webdavCover(
           session: session,
-          path: path,
+          path: widget.path,
           page: meta.coverPage,
           width: w,
           height: h,
           crop: crop);
-      final img = await rgbaToImage(p.rgba, p.width, p.height);
-      _cache[key] = Future.value(img);
-      return img;
+      return await rgbaToImage(p.rgba, p.width, p.height);
     } else {
       final p = await bookCover(
-          path: path, page: meta.coverPage, width: w, height: h, crop: crop);
-      final img = await rgbaToImage(p.rgba, p.width, p.height);
-      _cache[key] = Future.value(img);
-      return img;
+          path: widget.path, page: meta.coverPage, width: w, height: h, crop: crop);
+      return await rgbaToImage(p.rgba, p.width, p.height);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // WebDAV 懒加载: 未阅读过的漫画显示占位图标
-    if (_shouldSkipLoad) {
-      return _placeholder();
-    }
+    if (_shouldSkipLoad) return _placeholder();
+    if (_future == null) return _loading();
 
-    return FutureBuilder<bool>(
-      future: _hasRawCache(),
-      builder: (context, snap) {
-        // 正在检查本地缓存
-        if (!snap.hasData) {
-          return Container(color: Colors.black26, child: const Center(
-            child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
-          ));
-        }
-        // 无本地缓存 → 不尝试远程加载，直接显示"未缓存"
-        if (snap.data != true) {
-          return _placeholder();
-        }
-        // 有本地缓存 → 加载封面
-        return _loadCover();
-      },
-    );
-  }
-
-  Widget _placeholder() {
-    return Container(
-      color: Colors.black26,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.cloud_download_outlined,
-                size: 36, color: Colors.lightBlueAccent.withAlpha(120)),
-            const SizedBox(height: 4),
-            Text('未缓存', style: TextStyle(fontSize: 10, color: Colors.white38)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _loadCover() {
     return FutureBuilder<ui.Image>(
-      future: _load(),
+      future: _future,
       builder: (context, snap) {
         if (snap.hasData) {
-          return RawImage(image: snap.data, fit: fit);
+          return RawImage(image: snap.data, fit: widget.fit);
         }
         if (snap.hasError) {
           return _placeholder();
         }
-        // 加载中（本地文件一般是秒出）
-        return Container(color: Colors.black26, child: const Center(
-          child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
-        ));
+        return _loading();
       },
     );
   }
+
+  Widget _loading() => Container(
+    color: Colors.black26,
+    child: const Center(
+      child: SizedBox(
+        width: 22, height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    ),
+  );
+
+  Widget _placeholder() => Container(
+    color: Colors.black26,
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.cloud_download_outlined,
+              size: 36, color: Colors.lightBlueAccent.withAlpha(120)),
+          const SizedBox(height: 4),
+          const Text('未缓存', style: TextStyle(fontSize: 10, color: Colors.white38)),
+        ],
+      ),
+    ),
+  );
 }
 
-/// 漫画卡片:封面 + 标题 + 副标题,海报墙通用。
+/// 漫画卡片：封面 + 标题 + 副标题，海报墙通用。
 class ComicCard extends StatelessWidget {
   final BookSource source;
   final String path;

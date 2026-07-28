@@ -1,6 +1,6 @@
-//! 磁盘缓存管理：五级缓存目录 + 大小计算 + 清理 + 自定义缓存根目录。
+//! 磁盘缓存管理：五级缓存目录 + 大小计算 + 清理 + 封面缓存读写 + 自定义缓存根目录。
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::RwLock;
@@ -84,6 +84,48 @@ impl CacheDir {
         std::fs::create_dir_all(&p)?;
         Ok(p)
     }
+}
+
+// ====== 封面磁盘缓存 ======
+
+/// 计算封面缓存的磁盘键。
+/// 格式: `{book_path_hash}_{page}_{width}_{height}_{crop_hash}.cover`
+/// 使用路径 hash 避免路径中的非法文件名字符。
+fn cover_cache_key(path: &str, page: u32, width: u32, height: u32, crop: Option<(f64, f64, f64, f64)>) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    let path_hash = hasher.finish();
+    let crop_str = crop.map(|(x, y, w, h)| format!("_{x:.3}_{y:.3}_{w:.3}_{h:.3}")).unwrap_or_default();
+    format!("{path_hash:x}_{page}_{width}_{height}{crop_str}.cover")
+}
+
+/// 从磁盘读取封面缓存（若存在）。
+/// 返回完整的 RGBA 像素字节和宽高。
+pub fn cover_cache_read(path: &str, page: u32, width: u32, height: u32, crop: Option<(f64, f64, f64, f64)>) -> Option<(Vec<u8>, u32, u32)> {
+    let dir = CacheDir::Cover.path();
+    let key = cover_cache_key(path, page, width, height, crop);
+    let file_path = dir.join(key);
+    let data = std::fs::read(&file_path).ok()?;
+    if data.len() < 8 { return None; }
+    let w = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    let h = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+    let rgba = data[8..].to_vec();
+    if rgba.len() as u32 != w * h * 4 { return None; }
+    Some((rgba, w, h))
+}
+
+/// 将封面写入磁盘缓存。
+pub fn cover_cache_write(path: &str, page: u32, width: u32, height: u32, crop: Option<(f64, f64, f64, f64)>, rgba: &[u8]) -> Result<()> {
+    let dir = CacheDir::Cover.ensure()?;
+    let key = cover_cache_key(path, page, width, height, crop);
+    let file_path = dir.join(key);
+    let mut data = Vec::with_capacity(8 + rgba.len());
+    data.extend_from_slice(&width.to_le_bytes());
+    data.extend_from_slice(&height.to_le_bytes());
+    data.extend_from_slice(rgba);
+    std::fs::write(&file_path, &data).context("写入封面缓存失败")?;
+    Ok(())
 }
 
 // ====== 大小计算与清理 ======

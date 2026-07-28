@@ -3,6 +3,7 @@
 use super::book::{register_book, BookInfo, CropRect, DirEntry, PageImage};
 use crate::document;
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
+use crate::cache;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -164,8 +165,8 @@ pub fn webdav_has_raw_cache(session: u64, path: String) -> bool {
 }
 
 /// 生成 WebDAV 书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
-/// 优先检查 raw/ 本地缓存(已下载过的漫画本地秒出);
-/// 无本地缓存时走 HTTP Range 流式请求。
+/// 封面结果写入磁盘缓存（cover/）供后续秒开。
+/// 优先走磁盘缓存 → raw/ 本地缓存 → HTTP Range 流式。
 pub async fn webdav_cover(
     session: u64,
     path: String,
@@ -176,24 +177,43 @@ pub async fn webdav_cover(
 ) -> Result<PageImage> {
     let client = get_session(session)?;
     let origin = client.origin().to_string();
+    let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
+    // 先查磁盘缓存
+    let cache_lookup_path = webdav::raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref lookup) = cache_lookup_path {
+        let lookup_str = lookup.to_string_lossy();
+        if let Some((rgba, w, h)) = cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple) {
+            return Ok(PageImage { rgba, width: w, height: h });
+        }
+    }
+    let origin_clone = origin.clone();
+    let path_clone = path.clone();
+    let client_clone = Arc::clone(&client);
     let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
         // 先尝试 raw/ 本地缓存(已下载过的漫画直接本地秒出)
-        if let Some(local_path) = webdav::raw_cache_path(&origin, &path) {
+        if let Some(local_path) = webdav::raw_cache_path(&origin_clone, &path_clone) {
             let src = crate::source::local::LocalFile::open(&local_path)?;
-            let book = document::open_document(src, &path)?;
+            let book = document::open_document(src, &path_clone)?;
             let bytes = book.page_bytes(page)?;
             let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
             return crate::decode::decode_cover(&bytes, width, height, crop);
         }
         // 未下载: 走 HTTP Range 流式
-        let len = client.file_size(&path)?;
-        let src = WebDavFile::new(Arc::clone(&client), path.clone(), len);
-        let book = document::open_document(src, &path)?;
+        let len = client_clone.file_size(&path_clone)?;
+        let src = WebDavFile::new(client_clone, path_clone.clone(), len);
+        let book = document::open_document(src, &path_clone)?;
         let bytes = book.page_bytes(page)?;
         let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
         crate::decode::decode_cover(&bytes, width, height, crop)
     })
     .await??;
+    // 写入磁盘缓存
+    let cache_write_path = webdav::raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref wp) = cache_write_path {
+        let _ = cache::cover_cache_write(&wp.to_string_lossy(), page, width, height, crop_tuple, &img.rgba);
+    }
     Ok(PageImage {
         rgba: img.rgba,
         width: img.width,

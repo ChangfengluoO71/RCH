@@ -6,6 +6,25 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.2.1] — 2026-07-28
+
+### Added
+
+- **封面磁盘缓存**：`book_cover` / `webdav_cover` 解码后写入 `cover/` 目录，再次访问秒出
+- **封面加载并发控制**：`_CoverLoadQueue` 限制最多 4 个 FFI 调用同时执行，避免几百个封面同时竞争线程池
+
+### Changed
+
+- **Repository 层扩展**：`BookRepository` + `RecordRepository` 接管数据 CRUD，`LibraryStore` 精简为 facade + ChangeNotifier + 跨模块协调层
+- **ComicCover StatelessWidget → StatefulWidget**：Future 在 initState 创建一次，父 rebuild 不再触发重复解码
+
+### Fixed
+
+- 修复封面缩略图磁盘缓存始终 0MB 的问题（`cover/` 目录从未写入）
+- 修复海报墙大量转圈的问题（StatelessWidget + FutureBuilder 反模式 + 无并发限制）
+
+---
+
 ## [0.1.0] — 2026-07-28
 
 ### Added

@@ -5,7 +5,7 @@
 //! `reader::Reader` 的缓存 + 预取保证。
 
 use crate::reader::Reader;
-use crate::{document, decode, source::local};
+use crate::{document, decode, source::local, cache};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -101,6 +101,8 @@ pub async fn book_page(handle: u64, index: u32) -> Result<Vec<u8>> {
 
 /// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
 /// 若 path 为目录,走 Folder 格式。
+/// 生成本地书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
+/// 封面结果写入磁盘缓存（cover/）供后续秒开。
 pub async fn book_cover(
     path: String,
     page: u32,
@@ -108,18 +110,26 @@ pub async fn book_cover(
     height: u32,
     crop: Option<CropRect>,
 ) -> Result<PageImage> {
+    let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
+    // 先查磁盘缓存
+    if let Some((rgba, w, h)) = cache::cover_cache_read(&path, page, width, height, crop_tuple) {
+        return Ok(PageImage { rgba, width: w, height: h });
+    }
+    let path_for_closure = path.clone();
     let img = tokio::task::spawn_blocking(move || -> Result<decode::DecodedImage> {
-        let book: Box<dyn document::Document> = if std::path::Path::new(&path).is_dir() {
-            document::open_folder_document(&path)?
+        let book: Box<dyn document::Document> = if std::path::Path::new(&path_for_closure).is_dir() {
+            document::open_folder_document(&path_for_closure)?
         } else {
-            let src = local::LocalFile::open(&path)?;
-            document::open_document(src, &path)?
+            let src = local::LocalFile::open(&path_for_closure)?;
+            document::open_document(src, &path_for_closure)?
         };
         let bytes = book.page_bytes(page)?;
-        let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
-        decode::decode_cover(&bytes, width, height, crop)
+        let crop_f = crop.map(|r| (r.x, r.y, r.w, r.h));
+        decode::decode_cover(&bytes, width, height, crop_f)
     })
     .await??;
+    // 写入磁盘缓存
+    let _ = cache::cover_cache_write(&path, page, width, height, crop_tuple, &img.rgba);
     Ok(PageImage {
         rgba: img.rgba,
         width: img.width,

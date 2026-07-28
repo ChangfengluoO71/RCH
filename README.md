@@ -15,6 +15,7 @@
 - 🪟 **漫画信息自定义** — 封面选取裁剪/深度标签编辑系统/
 - 📱 **自带漫画搜索筛选系统** — 支持“标签 + 文字”双重精确筛选
 - 🧠 **webdav支持** — WebDAV 封面懒加载 + 缓存进度显示 + 缓存一键清理
+- 💾 **封面磁盘缓存** — 封面解码后写入磁盘，重启秒出；并发队列限流避免 IO 风暴
 
 ## 快速开始
 
@@ -104,7 +105,8 @@ flutter run -d windows
 - L2 磁盘缓存:原始页字节写 `%APPDATA%/RCH/cache/`,重复阅读秒开
 - WebDAV 封面生成优先走 raw/ 本地缓存（已下载漫画秒出，不走网络）
 - 封面缩略图:Rust decode_cover(支持裁剪),自定义封面页+裁剪区域,失败自动重试
-- 应用数据持久化:JSON(library.json),存书源/阅读记录/元数据/设置
+- 封面磁盘缓存:cover/ 目录存储解码后的 RGBA，重启秒出；并发队列限流 4 FFI 避免 IO 风暴
+- 应用数据持久化:SQLite 主存储 + library.json 备份(sources/metas/records/tags/settings)
 - 下载进度: Rust 端 AtomicU64 线程安全进度追踪 + Flutter 端每 300ms 轮询更新
 - 五级缓存目录: raw / cover / thumb / ai / temp, 分类独立大小查询与清理
 

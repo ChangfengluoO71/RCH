@@ -35,6 +35,10 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      - name: Flutter pub get (cargokit)
+        run: dart pub get
+        working-directory: app/rust_builder/cargokit/build_tool
+
       - name: Flutter analyze
         run: flutter analyze
 

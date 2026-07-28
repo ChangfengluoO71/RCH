@@ -13,7 +13,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 |---|---|---|
 | ZIP / CBZ | `zip` + `flate2` | 无 |
 | EPUB | `zip` + OPF spine | 无 |
-| Folder | 目录枚举 + ComicInfo.xml | 无 |
+| Folder | 目录枚举 + ComicInfo.xml + metadata.json | 无 |
 | CB7 | `sevenz-rust` | 无 |
 | CBT | `tar` | 无 |
 | PDF | `pdfium-render` | pdfium.dll |
@@ -22,9 +22,12 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 
 ### 书源
 - **本地书源**:浏览本地目录,海报墙展示 ZIP/CBZ/EPUB,目录可下钻
+- **漫画文件夹识别**:包含图片的子目录自动检测为漫画，海报墙中显示封面卡片（优先 cover.jpg → 首页缩略图），点击直接进详情/开始阅读
+- **漫画文件夹元数据**:自动读取 `ComicInfo.xml` 或 `metadata.json`（标题/作者/系列/类型），元数据优先级 ComicInfo.xml > metadata.json > 目录名
 - **WebDAV 书源**:连接远程服务器(NAS/网盘),PROPFIND 列目录,流式阅读(支持 Range 的服务器)或整本下载到 raw/ 缓存(首次下载后自动缓存,后续秒开)。下载期间显示真实百分比进度条
 - **WebDAV 封面生成优先走 raw/ 本地缓存**：已整本下载的漫画封面秒出，不走网络
-- **目录型漫画元数据**：自动读取 ComicInfo.xml（标题/作者/系列/类型）
+- **目录型漫画元数据**：自动读取 ComicInfo.xml / metadata.json（标题/作者/系列/类型）
+- **目录型漫画封面**：优先读取 cover.jpg/png/webp/jpeg，无显式封面时取首页做缩略图
 - 书源详情页:查看服务器信息/路径,编辑备注,删除书源(连带清理记录)
 - 书源管理:添加/编辑/删除/备注,凭据持久化,密码字段遮盖
 
@@ -71,6 +74,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 ## 已实现能力(后端)
 - `ByteSource` 统一字节源抽象(本地/WebDAV/Range/整包回退)
 - `Document` trait 统一格式抽象:**8种格式**(ZIP/CBZ/EPUB/Folder/CB7/CBT/PDF/CBR/MOBI)
+- Folder 格式:支持 ComicInfo.xml / metadata.json 双元数据源 + cover.jpg 优先封面 + 漫画文件夹智能检测(`is_comic_folder`)
 - WebDAV 封面懒加载:只列目录元数据,不主动生成封面
 - L2 磁盘缓存:原始页字节写 `%APPDATA%/RCH/cache/`,重复阅读秒开
 - WebDAV 封面生成优先走 raw/ 本地缓存（已下载漫画秒出，不走网络）
@@ -100,7 +104,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 |---|---|---|
 | ZIP / CBZ | `zip` + `flate2` 流式解析 | 已完成 |
 | EPUB | `zip` + OPF spine 自研 | 已完成 |
-| Folder | 目录枚举 + ComicInfo.xml | 已完成 |
+| Folder | 目录枚举 + ComicInfo.xml + metadata.json | 已完成 |
 | CB7 | `sevenz-rust` 纯 Rust | 已完成 |
 | CBT | `tar` | 已完成 |
 | PDF | `pdfium-render` | 已完成(需 pdfium.dll) |
@@ -153,7 +157,7 @@ RCH/
    │  ├─ store/                         # 数据持久化(models + library_store)
    │  └─ ui/                            # 页面组件
    │     ├─ home_page.dart              # 主界面(左侧导航 + 右侧内容)
-   │     ├─ source_browser.dart         # 书源浏览(海报墙/列表双模式 + 选择/批量)
+   │     ├─ source_browser.dart         # 书源浏览(海报墙/列表双模式 + 漫画文件夹识别 + 选择/批量)
    │     ├─ reader_page.dart            # 阅读器(+/-/0键缩放 + 双页 + 下载进度)
    │     ├─ book_detail_page.dart       # 漫画详情(元数据/标签/简介/感想)
    │     ├─ cover_editor_page.dart      # 封面编辑器(选页 + 裁剪)

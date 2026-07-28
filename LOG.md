@@ -930,3 +930,68 @@ D. **Overlay 点击可能被拦截** — `ListTile` 在 Material ink splash 警�
 
 **是否完成**
 已完成。Flutter analyze 0 error，仅 3 条 info（216行单行 if-else 风格提示）。待用户运行验证。
+
+---
+
+## 2026-07-28|第 30 轮:Git 仓库初始化 + 数据层稳定化 + Folder 元数据全面支持
+
+**本轮目标**
+1. 为项目建立 Git 版本管理
+2. ADR-016/017：确立 Repository 唯一数据源 + 标签独立建模
+3. 修复 `_save()` 静默失败和 TagRepository 孤儿标签丢失
+4. Folder 格式全面支持 ComicInfo.xml + metadata.json 双元数据源
+5. 浏览页智能识别漫画文件夹（图片+JSON），显示为海报封面卡片
+6. library.json 增加版本号字段
+
+**修改内容**
+
+### 数据层稳定化
+- `DECISION.md`：新增 ADR-016（Repository + Single Source of Truth）、ADR-017（标签独立建模）
+- `app/lib/repository/tag_repository.dart`：修复 `load()` 中独立标签（无漫画关联）重载后丢失的 bug，改为优先从序列化 `tags` 数组加载，再从 `metas` 补充
+- `app/lib/store/library_store.dart`：`_save()` 取消 `catch(_)` 静默吞异常，改为 `debugPrint + rethrow`
+- `app/lib/store/models.dart`：新增 `LibraryData` 包装类，包含 `version` 字段
+
+### Folder 元数据支持
+- `app/rust/Cargo.toml`：新增 `serde_json = "1"` 依赖；`quick-xml` 开启 `serialize` feature
+- `app/rust/src/document/comicinfo.rs`（新建）：ComicInfo.xml 解析模块，支持 Title/Series/Writer/Genre/Summary 等字段，映射到 `DocumentMeta`
+- `app/rust/src/document/folder.rs`：
+  - 新增 `metadata.json` 解析（`serde_json`），支持 `title/author/genre/series/description/tags` 字段
+  - 元数据优先级：ComicInfo.xml > metadata.json > 目录名
+  - 新增 `cover_path()`：按优先级查找 `cover.jpg/png/webp/jpeg`
+  - 新增 `is_comic_folder()`：检测目录是否包含至少一张图片
+- `app/rust/src/api/book.rs`：暴露 `is_comic_folder()` 和 `folder_cover_path()` 给 Flutter
+
+### Flutter 浏览页改造
+- `app/lib/ui/source_browser.dart`：
+  - 本地模式下异步检测子目录是否为漫画文件夹（`isComicFolder`）
+  - 漫画文件夹显示为 `_ComicFolderCoverCard`（带封面缩略图），普通文件夹保持 `_FolderCard`（文件夹图标）
+  - 漫画文件夹点击进详情页而非下钻
+  - 封面优先 `folderCoverPath()`（cover.jpg），无显式封面取首页缩略图
+  - 批量标签递归收集支持漫画文件夹（不再只认 .cbz/.zip）
+- FRB 桥接代码重新生成（`flutter_rust_bridge_codegen generate`）
+
+### README 更新
+- 格式支持表：Folder 更新为 "目录枚举 + ComicInfo.xml + metadata.json"
+- 新增"漫画文件夹识别"和"漫画文件夹元数据"说明
+- 已实现能力：新增 Folder 双元数据源 + 封面优先 + 智能检测
+- 目录结构：source_browser.dart 注释更新
+
+**修改原因**
+- 标签补全问题根因是数据来源分散、孤儿标签无持久化，需要 Repository + 独立标签表
+- `_save()` 静默失败导致数据丢失无感知
+- 用户明确要求"文件夹下图片+json"作为一等漫画格式被识别和展示
+
+**影响范围**
+- Rust: `document/folder.rs`, `document/comicinfo.rs`(新), `document/mod.rs`, `api/book.rs`, `Cargo.toml`
+- Dart: `store/models.dart`, `store/library_store.dart`, `repository/tag_repository.dart`, `ui/source_browser.dart`
+- FRB 生成文件: `lib/src/rust/api/book.dart`, `lib/src/rust/frb_generated.*`
+- 文档: `DECISION.md`, `README.md`, `.gitignore`
+- 19 个 Rust 单元测试全部通过（18 passed, 1 ignored）
+
+**是否完成**
+已完成。cargo test 18/18 passed，flutter analyze 仅 2 info。待用户运行验证。
+
+**遗留问题**
+- WebDAV 模式下暂不检测漫画文件夹（避免大量网络 IO）
+- EPUB 元数据仍未从 OPF 提取
+- metadata.json 的 tags 字段已解析但尚未自动同步到 TagRepository（需在 Flutter 侧打开时同步）

@@ -13,7 +13,7 @@ pub struct MobiBook {
 }
 
 impl MobiBook {
-    pub fn open(mut src: impl ByteSource, path: &str) -> Result<Self> {
+    pub fn open(src: impl ByteSource, _path: &str) -> Result<Self> {
         let len = src.len() as usize;
         let mut data = vec![0u8; len];
         src.read_exact_at(0, &mut data)

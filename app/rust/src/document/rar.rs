@@ -14,7 +14,7 @@ pub struct RarBook {
 }
 
 impl RarBook {
-    pub fn open(mut src: impl ByteSource, path: &str) -> Result<Self> {
+    pub fn open(src: impl ByteSource, path: &str) -> Result<Self> {
         // unrar crate 只能从文件路径打开,不支持内存读取
         // 对于 ByteSource,需要先把数据写入临时文件
         let len = src.len() as usize;

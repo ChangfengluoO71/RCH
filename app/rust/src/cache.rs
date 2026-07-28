@@ -238,7 +238,6 @@ pub fn ensure_all_cache_dirs() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
 
     #[test]
     fn cache_root_defaults_to_appdata() {

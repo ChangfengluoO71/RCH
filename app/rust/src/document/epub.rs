@@ -21,7 +21,6 @@ pub struct EpubBook<S: ByteSource> {
 
 #[derive(Clone)]
 struct ZipEntryMeta {
-    path: String,
     data_start: u64,
     compressed_size: u64,
     deflated: bool,
@@ -93,7 +92,6 @@ impl<S: ByteSource> EpubBook<S> {
                 .with_context(|| format!("EPUB 中找不到图片: {img_path}"))?;
             let f = zip.by_index(idx)?;
             page_entries.push(ZipEntryMeta {
-                path: img_path.clone(),
                 data_start: f.data_start(),
                 compressed_size: f.compressed_size(),
                 deflated: matches!(f.compression(), zip::CompressionMethod::Deflated),

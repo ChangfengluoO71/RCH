@@ -7,7 +7,7 @@
 //! - 重试策略（429 退避 / 401 停止 / 超时重试 3 次）
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// 下载优先级：数值越小越优先。
@@ -52,7 +52,8 @@ pub enum DownloadResult {
 
 /// 统一下载器状态。
 pub struct Downloader {
-    /// 并发上限。
+    /// 并发上限。保留供后续使用。
+    #[allow(dead_code)]
     max_concurrency: usize,
     /// 正在进行的下载（URL → 取消标志）。
     _active: HashMap<String, ()>,

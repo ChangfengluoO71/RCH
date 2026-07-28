@@ -83,7 +83,6 @@ pub fn is_comic_folder(dir_path: &str) -> bool {
 
 pub struct FolderBook {
     files: Vec<String>, // 图片文件绝对路径,自然排序
-    title: String,
     meta: DocumentMeta,
 }
 
@@ -137,7 +136,7 @@ impl FolderBook {
             }
         }
 
-        Ok(FolderBook { files, title, meta })
+        Ok(FolderBook { files, meta })
     }
 
     /// 查找目录下的封面图片文件（返回绝对路径）。

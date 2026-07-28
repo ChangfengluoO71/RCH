@@ -1,11 +1,28 @@
-# RCH 漫画阅读器
+# RCH
+
+**Windows-first, local-first streaming comic reader.**
+
+打开 ZIP/CBZ/7Z/文件夹，边加载边阅读。
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.44-blue?logo=flutter)](https://flutter.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.80-orange?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Android-brightgreen)]()
 
-Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核心体验是**本地优先的流式阅读**——无论什么格式、无论来自什么来源，都能边加载边阅读。
+- ⚡ **超大压缩包秒开** — 无需整包解压，即点即读
+- 📖 **连续阅读不等待** — 智能预取 + 三级缓存
+- 🖼️ **8 种格式全覆盖** — ZIP/CBZ/CB7/CBT/PDF/EPUB/RAR/MOBI
+- 🪟 **Windows 深度优化** — 触控手势、键盘快捷键
+- 📱 **Android 规划中**
+- 🧠 **端侧 AI 超分** — 本地模型，隐私安全
+
+## 快速开始
+
+```bash
+git clone https://github.com/ChangfengluoO71/RCH.git
+cd RCH/app
+flutter run -d windows
+```
 
 > **四层架构**：UI → Document → Cache → Network/AI。**阅读器永远只操作本地资源，网络只是同步层，AI 只是处理层。**
 > 当前阶段：**格式引擎已完成（8种格式），缓存基础设施已完成。**
@@ -129,7 +146,7 @@ Windows 优先、面向多端(Windows / Android)的现代漫画阅读器。核�
 ## 如何运行
 
 ### 环境准备
-见 [docs/SETUP.md](docs/SETUP.md)(Rust / Flutter / VS 2022 BuildTools / flutter_rust_bridge_codegen)
+见 [SETUP.md](SETUP.md)（Rust / Flutter / VS 2022 BuildTools / flutter_rust_bridge_codegen）
 
 ### 启动(Windows)
 ```bash
@@ -155,7 +172,13 @@ RCH/
 ├─ CLAUDE.md / SPEC.md / README.md      # 约定 / 目标设计 / 当前状态
 ├─ LOG.md / LOG-INDEX.md / DECISION.md  # 开发历史 / 索引 / 架构决策
 ├─ TODO.md                              # 任务看板与工作流程
-├─ docs/SETUP.md                        # 环境搭建
+├─ CHANGELOG.md                         # 版本变更记录
+├─ CONTRIBUTING.md                      # 贡献规范
+├─ CODE_OF_CONDUCT.md                   # 社区行为准则
+├─ SETUP.md                             # 环境搭建
+├─ LICENSE                              # 开源许可 (MIT)
+├─ docs/
+│  └─ architecture.md                   # 系统架构文档
 └─ app/                                 # Flutter 应用
    ├─ lib/
    │  ├─ main.dart                      # 入口(主题 + 启动加载)

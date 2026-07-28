@@ -1,4 +1,11 @@
-# Flutter/Dart
+# Internal dev docs (not for users)
+CLAUDE.md
+LOG-INDEX.md
+LOG.md
+DECISION.md
+DECISION.md.bak
+SPEC.md
+TODO.md
 .dart_tool/
 .flutter-plugins-dependencies
 .pub-cache/

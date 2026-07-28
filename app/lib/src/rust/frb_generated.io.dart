@@ -5,6 +5,7 @@
 
 import 'api/book.dart';
 import 'api/cache.dart';
+import 'api/db.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
 import 'dart:async';
@@ -31,10 +32,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookInfo dco_decode_book_info(dynamic raw);
 
   @protected
+  BookMetaDto dco_decode_book_meta_dto(dynamic raw);
+
+  @protected
+  BookSourceDto dco_decode_book_source_dto(dynamic raw);
+
+  @protected
+  BookTagDto dco_decode_book_tag_dto(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  BookMetaDto dco_decode_box_autoadd_book_meta_dto(dynamic raw);
+
+  @protected
+  BookSourceDto dco_decode_box_autoadd_book_source_dto(dynamic raw);
+
+  @protected
   CropRect dco_decode_box_autoadd_crop_rect(dynamic raw);
+
+  @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw);
+
+  @protected
+  ReadRecordDto dco_decode_box_autoadd_read_record_dto(dynamic raw);
 
   @protected
   CacheSize dco_decode_cache_size(dynamic raw);
@@ -49,16 +71,58 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double dco_decode_f_64(dynamic raw);
 
   @protected
+  int dco_decode_i_32(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<BookMetaDto> dco_decode_list_book_meta_dto(dynamic raw);
+
+  @protected
+  List<BookSourceDto> dco_decode_list_book_source_dto(dynamic raw);
+
+  @protected
+  List<BookTagDto> dco_decode_list_book_tag_dto(dynamic raw);
+
+  @protected
   List<DirEntry> dco_decode_list_dir_entry(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<ReadRecordDto> dco_decode_list_read_record_dto(dynamic raw);
+
+  @protected
+  List<SettingEntryDto> dco_decode_list_setting_entry_dto(dynamic raw);
+
+  @protected
+  List<TagDto> dco_decode_list_tag_dto(dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
+
+  @protected
   CropRect? dco_decode_opt_box_autoadd_crop_rect(dynamic raw);
 
   @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+
+  @protected
   PageImage dco_decode_page_image(dynamic raw);
+
+  @protected
+  ReadRecordDto dco_decode_read_record_dto(dynamic raw);
+
+  @protected
+  SettingEntryDto dco_decode_setting_entry_dto(dynamic raw);
+
+  @protected
+  TagDto dco_decode_tag_dto(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
@@ -85,10 +149,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookInfo sse_decode_book_info(SseDeserializer deserializer);
 
   @protected
+  BookMetaDto sse_decode_book_meta_dto(SseDeserializer deserializer);
+
+  @protected
+  BookSourceDto sse_decode_book_source_dto(SseDeserializer deserializer);
+
+  @protected
+  BookTagDto sse_decode_book_tag_dto(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  BookMetaDto sse_decode_box_autoadd_book_meta_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  BookSourceDto sse_decode_box_autoadd_book_source_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CropRect sse_decode_box_autoadd_crop_rect(SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
+  ReadRecordDto sse_decode_box_autoadd_read_record_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   CacheSize sse_decode_cache_size(SseDeserializer deserializer);
@@ -103,16 +194,64 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
+  int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<BookMetaDto> sse_decode_list_book_meta_dto(SseDeserializer deserializer);
+
+  @protected
+  List<BookSourceDto> sse_decode_list_book_source_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<BookTagDto> sse_decode_list_book_tag_dto(SseDeserializer deserializer);
+
+  @protected
   List<DirEntry> sse_decode_list_dir_entry(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<ReadRecordDto> sse_decode_list_read_record_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SettingEntryDto> sse_decode_list_setting_entry_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<TagDto> sse_decode_list_tag_dto(SseDeserializer deserializer);
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
   CropRect? sse_decode_opt_box_autoadd_crop_rect(SseDeserializer deserializer);
 
   @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
   PageImage sse_decode_page_image(SseDeserializer deserializer);
+
+  @protected
+  ReadRecordDto sse_decode_read_record_dto(SseDeserializer deserializer);
+
+  @protected
+  SettingEntryDto sse_decode_setting_entry_dto(SseDeserializer deserializer);
+
+  @protected
+  TagDto sse_decode_tag_dto(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
@@ -130,9 +269,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WebDavSession sse_decode_web_dav_session(SseDeserializer deserializer);
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
-
-  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -145,11 +281,41 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_book_info(BookInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_book_meta_dto(BookMetaDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_book_source_dto(BookSourceDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_book_tag_dto(BookTagDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_book_meta_dto(
+    BookMetaDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_book_source_dto(
+    BookSourceDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_crop_rect(
     CropRect self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_read_record_dto(
+    ReadRecordDto self,
     SseSerializer serializer,
   );
 
@@ -166,6 +332,33 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_book_meta_dto(
+    List<BookMetaDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_book_source_dto(
+    List<BookSourceDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_book_tag_dto(
+    List<BookTagDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_dir_entry(List<DirEntry> self, SseSerializer serializer);
 
   @protected
@@ -175,13 +368,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_read_record_dto(
+    List<ReadRecordDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_setting_entry_dto(
+    List<SettingEntryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_tag_dto(List<TagDto> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_crop_rect(
     CropRect? self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_page_image(PageImage self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_read_record_dto(ReadRecordDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_setting_entry_dto(
+    SettingEntryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_tag_dto(TagDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);
@@ -197,9 +423,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_web_dav_session(WebDavSession self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
 }
 
 // Section: wire_class

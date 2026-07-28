@@ -1,3 +1,4 @@
+import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/ui/home_page.dart';
@@ -6,6 +7,19 @@ import 'package:flutter/material.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
+
+  // SQLite 迁移：library.json → database.db（幂等）
+  if (!await dataIsMigrated()) {
+    final lib = await LibraryStore.instance.filePath();
+    try {
+      await dataMigrateFromJson(jsonPath: lib);
+    } catch (e) {
+      // 迁移失败不阻塞启动：回退到纯 JSON 模式
+      debugPrint('[main] SQLite 迁移失败，继续使用 JSON: $e');
+    }
+  }
+
+  // 加载数据（优先 SQLite，fallback JSON）
   await LibraryStore.instance.load();
   runApp(const RchApp());
 }

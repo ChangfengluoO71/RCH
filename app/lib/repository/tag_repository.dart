@@ -16,6 +16,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../src/rust/api/db.dart';
 import '../store/models.dart';
 
 /// 标签持久化/查询的统一入口（ADR-016/017）。
@@ -65,6 +66,9 @@ class TagRepository extends ChangeNotifier {
           if (val.isNotEmpty) _addTagAndLink(val, bookKey);
         }
       }
+
+      // 向后兼容：旧 hash ID → 新 name ID 合并归一化
+      _normalizeTagIds();
     } catch (e) {
       print('[TagRepository] load failed: $e');
     }
@@ -75,6 +79,69 @@ class TagRepository extends ChangeNotifier {
     'tags': _tags.values.map((t) => t.toJson()).toList(),
     'book_tags': _bookTags.map((bt) => bt.toJson()).toList(),
   };
+
+  // ---- SQLite 加载 / 持久化（ADR-013） ----
+
+  /// 从 SQLite 加载标签和关联。
+  Future<void> loadFromSqlite() async {
+    if (_loaded) return;
+    _loaded = true;
+
+    // Tags
+    final tagDtos = await dbLoadAllTags();
+    for (final dto in tagDtos) {
+      _tags[dto.id] = Tag(id: dto.id, name: dto.name, createdAt: dto.createdAt.toInt());
+    }
+
+    // BookTags
+    final btDtos = await dbLoadAllBookTags();
+    for (final dto in btDtos) {
+      _bookTags.add(BookTag(bookKey: dto.bookKey, tagId: dto.tagId));
+    }
+
+    // 归一化：旧版 hash 算法残留的旧 ID 合并到新 DJB2 ID
+    _normalizeTagIds();
+
+    notifyListeners();
+  }
+
+  /// 将当前标签数据写入 SQLite（增量 upsert）。
+  Future<void> saveToSqlite() async {
+    // Tags
+    for (final t in _tags.values) {
+      await dbEnsureTag(name: t.name);
+    }
+    // BookTags：全量替换（简单但有效；数据量大后可优化为增量）
+    // 先收集现有 SQLite 中的所有关联，然后增量同步
+    final existingDtos = await dbLoadAllBookTags();
+    final existing = <String>{};
+    for (final dto in existingDtos) {
+      existing.add('${dto.bookKey}\x00${dto.tagId}');
+    }
+    final current = <String>{};
+    for (final bt in _bookTags) {
+      current.add('${bt.bookKey}\x00${bt.tagId}');
+    }
+    // 删除不再存在的
+    for (final key in existing) {
+      if (!current.contains(key)) {
+        final parts = key.split('\x00');
+        await dbUnlinkTag(bookKey: parts[0], tagName: _tagNameById(parts[1]));
+      }
+    }
+    // 添加新的
+    for (final key in current) {
+      if (!existing.contains(key)) {
+        final parts = key.split('\x00');
+        await dbLinkTag(bookKey: parts[0], tagName: _tagNameById(parts[1]));
+      }
+    }
+  }
+
+  /// 通过 tagId 查找标签名。
+  String _tagNameById(String tagId) {
+    return _tags[tagId]?.name ?? tagId;
+  }
 
   // ---- 标签 CRUD ----
 
@@ -192,8 +259,55 @@ class TagRepository extends ChangeNotifier {
     _bookTags.add(BookTag(bookKey: bookKey, tagId: tagId));
   }
 
+  /// 迁移 / 加载后归一化：旧版 hash 算法残留的旧 ID 合并到新 DJB2 ID。
+  ///
+  /// 背景：v0.1 DVD 使用 `hashCode → base36` 生成 tag ID，v0.2 改用 DJB2，
+  /// 直接迁移过来的旧 ID 会导致 `bookKeysForTag()` 用新 ID 查不到旧关联。
+  ///
+  /// 算法：遍历所有标签，对每个标签名重算新 ID。若新旧 ID 不同，
+  /// 则将旧 ID 下的 Tag 和 BookTag 关联全部合并到新 ID。
+  void _normalizeTagIds() {
+    final renames = <String, String>{}; // oldId → newId
+    for (final t in _tags.values.toList()) {
+      final newId = _tagId(t.name);
+      if (t.id != newId) {
+        renames[t.id] = newId;
+      }
+    }
+    if (renames.isEmpty) return;
+
+    // 合并 Tag 实体
+    for (final entry in renames.entries) {
+      final oldId = entry.key;
+      final newId = entry.value;
+      // 保留旧 tag 的 createdAt（如果有的话），新 tag 用更早的时间
+      final oldTag = _tags.remove(oldId);
+      final existing = _tags[newId];
+      if (existing != null && oldTag != null) {
+        // 两个都存在：保留更早的 createdAt
+        if (oldTag.createdAt < existing.createdAt) {
+          _tags[newId] = Tag(id: newId, name: existing.name, createdAt: oldTag.createdAt);
+        }
+      } else if (oldTag != null) {
+        _tags[newId] = Tag(id: newId, name: oldTag.name, createdAt: oldTag.createdAt);
+      }
+      // 迁移 BookTag 关联
+      final affected = _bookTags.where((bt) => bt.tagId == oldId).toList();
+      for (final bt in affected) {
+        _bookTags.remove(bt);
+        _bookTags.add(BookTag(bookKey: bt.bookKey, tagId: newId));
+      }
+    }
+  }
+
+  /// DJB2 hash of lowercased name → lowercase hex。
+  /// 必须与 Rust `db::tag_id()` 完全一致。
   static String _tagId(String name) {
-    // 用名称的小写 stable hash 作为 id
-    return name.toLowerCase().hashCode.toRadixString(36);
+    final lower = name.toLowerCase();
+    var hash = 5381;
+    for (var i = 0; i < lower.length; i++) {
+      hash = (hash * 33 + lower.codeUnitAt(i)) & 0xFFFFFFFF;
+    }
+    return hash.toRadixString(16);
   }
 }

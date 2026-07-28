@@ -5,13 +5,17 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../repository/tag_repository.dart';
+import '../src/rust/api/db.dart';
 import 'models.dart';
 
-/// 应用数据存储:书源 + 阅读记录,JSON 持久化到应用数据目录。
-/// ChangeNotifier:数据变化时通知 UI 重建。
+/// 应用数据存储：书源 + 阅读记录 + 元数据 + 设置 + 标签。
+/// ChangeNotifier：数据变化时通知 UI 重建。
 ///
-/// ADR-016/017: 标签相关操作全部委托给 TagRepository（Single Source of Truth），
-/// 不再直接遍历 BookMeta.tags。
+/// SQLite 数据层（ADR-013）：启动时优先从 database.db 加载，
+/// 若 SQLite 为空则回退到 library.json。
+/// 每次变更时写入 SQLite（同步），library.json 也同步备份。
+///
+/// ADR-016/017：标签相关操作全部委托给 TagRepository（Single Source of Truth）。
 class LibraryStore extends ChangeNotifier {
   LibraryStore._();
   static final LibraryStore instance = LibraryStore._();
@@ -27,6 +31,20 @@ class LibraryStore extends ChangeNotifier {
 
   Future<void> load() async {
     if (_loaded) return;
+    try {
+      // 尝试从 SQLite 加载
+      final migrated = await dataIsMigrated();
+      if (migrated) {
+        await _loadFromSqlite();
+        _loaded = true;
+        notifyListeners();
+        return;
+      }
+    } catch (e) {
+      debugPrint('[LibraryStore] SQLite load failed, fallback to JSON: $e');
+    }
+
+    // Fallback：从 library.json 加载
     try {
       final f = await _file();
       if (await f.exists()) {
@@ -51,8 +69,7 @@ class LibraryStore extends ChangeNotifier {
         }
       }
     } catch (e) {
-      // 读取失败则用空库重新来
-      print('[LibraryStore] load failed: $e');
+      debugPrint('[LibraryStore] load JSON failed: $e');
     }
     _loaded = true;
     notifyListeners();
@@ -60,13 +77,119 @@ class LibraryStore extends ChangeNotifier {
     _save();
   }
 
-  Future<File> _file() async {
-    final dir = await getApplicationSupportDirectory();
-    return File('${dir.path}${Platform.pathSeparator}library.json');
+  /// 从 SQLite 加载全量数据。
+  Future<void> _loadFromSqlite() async {
+    // Sources
+    final srcDtos = await dbLoadAllSources();
+    for (final dto in srcDtos) {
+      sources.add(BookSource(
+        id: dto.id,
+        type: dto.type,
+        name: dto.name,
+        path: dto.path,
+        url: dto.url,
+        username: dto.username,
+        password: dto.password,
+        note: dto.note,
+        capabilityLabel: dto.capabilityLabel,
+      ));
+    }
+
+    // Records
+    final recDtos = await dbLoadAllRecords();
+    for (final dto in recDtos) {
+      records[dto.key] = ReadRecord(
+        key: dto.key,
+        sourceId: dto.sourceId,
+        sourceType: dto.sourceType,
+        path: dto.path,
+        title: dto.title,
+        lastPage: dto.lastPage,
+        readCount: dto.readCount,
+        lastReadAt: dto.lastReadAt.toInt(),
+      );
+    }
+
+    // Metas
+    final metaDtos = await dbLoadAllMetas();
+    for (final dto in metaDtos) {
+      metas[dto.key] = BookMeta(
+        key: dto.key,
+        coverPage: dto.coverPage,
+        cropX: dto.cropX,
+        cropY: dto.cropY,
+        cropW: dto.cropW,
+        cropH: dto.cropH,
+        author: dto.author,
+        genre: dto.genre,
+        series: dto.series,
+        title: dto.title,
+        chineseTitle: dto.chineseTitle,
+        summary: dto.summary,
+        comment: dto.comment,
+      );
+    }
+
+    // Tags + BookTags
+    await TagRepository.instance.loadFromSqlite();
+
+    // Settings
+    final settingDtos = await dbLoadAllSettings();
+    final settingsMap = <String, dynamic>{};
+    for (final dto in settingDtos) {
+      settingsMap[dto.key] = _tryParseJson(dto.value);
+    }
+    if (settingsMap.isNotEmpty) {
+      settings = AppSettings.fromJson(settingsMap);
+    }
   }
 
-  /// 持久化: LibraryStore 数据 + TagRepository 数据合并写入。
+  /// 将 JSON 字符串解析为原始值（bool/int/double/String/List/Map）。
+  static Object? _tryParseJson(String raw) {
+    // 先尝试 jsonDecode（数字、布尔、数组、对象）
+    if (raw == 'true') return true;
+    if (raw == 'false') return false;
+    final i = int.tryParse(raw);
+    if (i != null) return i;
+    final d = double.tryParse(raw);
+    if (d != null) return d;
+    if ((raw.startsWith('{') || raw.startsWith('[')) && (raw.endsWith('}') || raw.endsWith(']'))) {
+      try {
+        return jsonDecode(raw);
+      } catch (_) {}
+    }
+    return raw; // 纯字符串
+  }
+
+  /// 返回 library.json 的完整路径（供迁移等使用）。
+  Future<String> filePath() async {
+    final dir = await getApplicationSupportDirectory();
+    return '${dir.path}${Platform.pathSeparator}library.json';
+  }
+
+  Future<File> _file() async {
+    return File(await filePath());
+  }
+
+  /// 公开的持久化入口：强制全量写入 SQLite + JSON 备份。
+  /// 供外部组件（如 book_detail_page）在直接操作 TagRepository 后调用。
+  Future<void> saveToDisk() async => _save();
+
+  /// 持久化：双写 SQLite（优先） + library.json（备份）。
+  ///
+  /// 每次变更时同步写入 SQLite，library.json 仅作备份（防 SQLite 损坏）。
+  /// 若 SQLite 写入失败，仍继续写 JSON（不丢数据）。
   Future<void> _save() async {
+    // 1) 写入 SQLite（新主存储）
+    try {
+      await _saveToSqlite();
+    } catch (e, st) {
+      debugPrint('[LibraryStore] SQLite save failed: $e');
+      debugPrintStack(stackTrace: st);
+      // 不抛异常，继续写 JSON 备份
+    }
+
+    // 2) 写入 JSON（备份）
     try {
       final f = await _file();
       final data = {
@@ -79,9 +202,70 @@ class LibraryStore extends ChangeNotifier {
       };
       await f.writeAsString(jsonEncode(data));
     } catch (e, st) {
-      debugPrint('Library save failed: $e');
+      debugPrint('Library JSON save failed: $e');
       debugPrintStack(stackTrace: st);
       rethrow;
+    }
+  }
+
+  /// 将当前全量数据写入 SQLite（增量 upsert）。
+  Future<void> _saveToSqlite() async {
+    // Sources
+    for (final s in sources) {
+      await dbUpsertSource(source: BookSourceDto(
+        id: s.id,
+        type: s.type,
+        name: s.name,
+        path: s.path,
+        url: s.url,
+        username: s.username,
+        password: s.password,
+        note: s.note,
+        capabilityLabel: s.capabilityLabel,
+      ));
+    }
+
+    // Records
+    for (final r in records.values) {
+      await dbUpsertRecord(record: ReadRecordDto(
+        key: r.key,
+        sourceId: r.sourceId,
+        sourceType: r.sourceType,
+        path: r.path,
+        title: r.title,
+        lastPage: r.lastPage,
+        readCount: r.readCount,
+        lastReadAt: r.lastReadAt,
+      ));
+    }
+
+    // Metas
+    for (final m in metas.values) {
+      await dbUpsertMeta(meta: BookMetaDto(
+        key: m.key,
+        coverPage: m.coverPage,
+        cropX: m.cropX,
+        cropY: m.cropY,
+        cropW: m.cropW,
+        cropH: m.cropH,
+        author: m.author,
+        genre: m.genre,
+        series: m.series,
+        title: m.title,
+        chineseTitle: m.chineseTitle,
+        summary: m.summary,
+        comment: m.comment,
+      ));
+    }
+
+    // Tags + BookTags
+    await TagRepository.instance.saveToSqlite();
+
+    // Settings（每个 key 一行）
+    final settingsJson = settings.toJson();
+    for (final entry in settingsJson.entries) {
+      final v = entry.value.toString();
+      await dbSaveSetting(key: entry.key, value: v);
     }
   }
 
@@ -120,8 +304,49 @@ class LibraryStore extends ChangeNotifier {
       r.lastPage = page;
     }
     records[key] = r;
+
+    // 自动添加"已读"元数据标签（每本打开过的漫画自动标记）
+    TagRepository.instance.link(key, '已读');
+
     notifyListeners();
-    _save();
+    // 直接写入 SQLite（阅读记录高频更新，不做全量 _save）
+    _saveRecordToSqlite(r);
+    _saveJsonBackup();
+  }
+
+  /// 单条记录写入 SQLite（高频更新时避免全量同步）。
+  Future<void> _saveRecordToSqlite(ReadRecord r) async {
+    try {
+      await dbUpsertRecord(record: ReadRecordDto(
+        key: r.key,
+        sourceId: r.sourceId,
+        sourceType: r.sourceType,
+        path: r.path,
+        title: r.title,
+        lastPage: r.lastPage,
+        readCount: r.readCount,
+        lastReadAt: r.lastReadAt,
+      ));
+    } catch (e) {
+      debugPrint('[LibraryStore] dbUpsertRecord failed: $e');
+    }
+  }
+
+  /// 仅写 JSON 备份（不含全量 SQLite 同步）。
+  Future<void> _saveJsonBackup() async {
+    try {
+      final f = await _file();
+      final data = {
+        'sources': sources.map((e) => e.toJson()).toList(),
+        'records': records.map((k, v) => MapEntry(k, v.toJson())),
+        'metas': metas.map((k, v) => MapEntry(k, v.toJson())),
+        'settings': settings.toJson(),
+        ...TagRepository.instance.toJson(),
+      };
+      await f.writeAsString(jsonEncode(data));
+    } catch (e) {
+      debugPrint('[LibraryStore] JSON backup failed: $e');
+    }
   }
 
   ReadRecord? recordOf(BookSource source, String path) =>
@@ -191,9 +416,11 @@ class LibraryStore extends ChangeNotifier {
     _save();
   }
 
-  /// 收集所有被用作元数据(作者/类别/系列)的标签名。
+  /// 收集所有被用作元数据(作者/类别/系列/已读)的标签名。
   Set<String> metaTagNames() {
-    final set = <String>{};
+    final set = <String>{
+      if (hasAnyRead()) '已读',
+    };
     for (final m in metas.values) {
       if (m.author.isNotEmpty) set.add(m.author);
       if (m.genre.isNotEmpty) set.add(m.genre);
@@ -201,6 +428,9 @@ class LibraryStore extends ChangeNotifier {
     }
     return set;
   }
+
+  /// 是否有任何漫画被打开过。
+  bool hasAnyRead() => records.values.any((r) => r.readCount > 0);
 
   /// 跨书源搜索：遍历所有书源下的所有 metas，不限于已打开过的漫画。
   List<({String bookKey, BookSource source, String path, String title})> globalSearch({
@@ -228,11 +458,23 @@ class LibraryStore extends ChangeNotifier {
     return results;
   }
 
-  /// 元数据栏标签名列表。
-  List<String> get metaFields => ['author', 'genre', 'series'];
+  /// 元数据栏标签名列表（含"已读"）。
+  List<String> get metaFields => ['author', 'genre', 'series', '已读'];
 
   /// 批量打标签（ADR-016/017: 同步到 TagRepository）。
+  /// "已读"作为元数据标签，直接走 TagRepository.link。
   void batchTag(BookSource src, Iterable<String> paths, String tag) {
+    // "已读"是元数据标签，不走 BookMeta.tags
+    if (tag == '已读') {
+      for (final p in paths) {
+        final key = '${src.type}|${src.id}|$p';
+        TagRepository.instance.link(key, '已读');
+      }
+      notifyListeners();
+      _save();
+      return;
+    }
+
     String? existingField;
     for (final m in metas.values) {
       if (m.author == tag) { existingField = 'author'; break; }
@@ -249,15 +491,12 @@ class LibraryStore extends ChangeNotifier {
           case 'author':
             if (m.author.isEmpty) { m.author = tag; TagRepository.instance.link(key, tag); }
             else if (!m.tags.contains(tag)) { m.tags.add(tag); TagRepository.instance.link(key, tag); }
-            break;
           case 'genre':
             if (m.genre.isEmpty) { m.genre = tag; TagRepository.instance.link(key, tag); }
             else if (!m.tags.contains(tag)) { m.tags.add(tag); TagRepository.instance.link(key, tag); }
-            break;
           case 'series':
             if (m.series.isEmpty) { m.series = tag; TagRepository.instance.link(key, tag); }
             else if (!m.tags.contains(tag)) { m.tags.add(tag); TagRepository.instance.link(key, tag); }
-            break;
         }
       }
     }
@@ -326,36 +565,49 @@ class LibraryStore extends ChangeNotifier {
     return list;
   }
 
-  /// 获取某标签下的所有漫画记录。
-  List<ReadRecord> recordsByTag(String tag) {
+/// 获取某标签下的所有漫画记录。
+/// 同时检查 TagRepository 的 book_tag 关联和 metas 中的元数据标签。
+List<ReadRecord> recordsByTag(String tag) {
     final result = <ReadRecord>[];
-    final bookKeys = TagRepository.instance.bookKeysForTag(tag);
     final seen = <String>{};
+
+    // 1. TagRepository 中的 book_tag 关联
+    final bookKeys = TagRepository.instance.bookKeysForTag(tag);
     for (final bk in bookKeys) {
       final existing = records[bk];
       if (existing != null) {
         result.add(existing);
-        seen.add(bk);
       } else {
         final parts = bk.split('|');
-        final stype = parts.length > 0 ? parts[0] : 'local';
+        final stype = parts.isNotEmpty ? parts[0] : 'local';
         final sid = parts.length > 1 ? parts[1] : '';
         final spath = parts.sublist(2).join('|');
         result.add(ReadRecord(key: bk, sourceType: stype, sourceId: sid, path: spath,
             title: spath.split('/').last, lastPage: 0, readCount: 0, lastReadAt: 0));
       }
+      seen.add(bk);
     }
-    // 也检查 metas 中的元数据标签
+
+    // 2. metas 中的元数据标签（author/genre/series）
+    //    与已读记录的 key 格式不同：metas key = "type|sourceId|path"，records key 一致
+    //    修复：有 records 的加进去，没 records 的也合成一条 ReadRecord
     for (final m in metas.values) {
-      if (m.author == tag || m.genre == tag || m.series == tag) {
-        if (!seen.contains(m.key)) {
-          final existing = records[m.key];
-          if (existing != null) {
-            result.add(existing);
-          }
-        }
+      if (m.author != tag && m.genre != tag && m.series != tag) continue;
+      if (seen.contains(m.key)) continue;
+      final existing = records[m.key];
+      if (existing != null) {
+        result.add(existing);
+      } else {
+        final parts = m.key.split('|');
+        final stype = parts.isNotEmpty ? parts[0] : 'local';
+        final sid = parts.length > 1 ? parts[1] : '';
+        final spath = parts.sublist(2).join('|');
+        result.add(ReadRecord(key: m.key, sourceType: stype, sourceId: sid, path: spath,
+            title: spath.split('/').last, lastPage: 0, readCount: 0, lastReadAt: 0));
       }
+      seen.add(m.key);
     }
+
     return result;
   }
 

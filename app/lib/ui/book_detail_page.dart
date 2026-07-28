@@ -1,3 +1,4 @@
+import 'package:app/repository/tag_repository.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -56,6 +57,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   @override Widget build(BuildContext context) {
     final record = LibraryStore.instance.recordOf(widget.source, widget.path);
+    final bookKey = '${widget.source.type}|${widget.source.id}|${widget.path}';
+    final hasReadTag = TagRepository.instance.bookKeysForTag('已读').contains(bookKey);
     return Scaffold(
       appBar: AppBar(title: const Text('漫画详情')),
       body: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -65,6 +68,27 @@ class _BookDetailPageState extends State<BookDetailPage> {
           SizedBox(width: 220, child: FilledButton.icon(onPressed: () => openBook(context, widget.source, widget.path, widget.title), icon: const Icon(Icons.menu_book), label: const Text('开始阅读'))),
           const SizedBox(height: 8),
           SizedBox(width: 220, child: OutlinedButton.icon(onPressed: () async { await Navigator.of(context).push(MaterialPageRoute(builder: (_) => CoverEditorPage(source: widget.source, path: widget.path, title: widget.title))); setState(() {}); }, icon: const Icon(Icons.crop), label: const Text('自定义封面'))),
+          const SizedBox(height: 8),
+          // 已读/未读切换按钮
+          SizedBox(
+            width: 220,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                setState(() {
+                  if (hasReadTag) {
+                    TagRepository.instance.unlink(bookKey, '已读');
+                  } else {
+                    TagRepository.instance.link(bookKey, '已读');
+                  }
+                });
+                LibraryStore.instance.saveToDisk();
+              },
+              icon: Icon(hasReadTag ? Icons.check_circle : Icons.radio_button_unchecked,
+                  size: 18, color: hasReadTag ? Colors.redAccent : Colors.grey),
+              label: Text(hasReadTag ? '已读' : '标记已读',
+                  style: TextStyle(color: hasReadTag ? Colors.redAccent : null)),
+            ),
+          ),
         ])),
         const VerticalDivider(width: 1),
         Expanded(child: ListView(padding: const EdgeInsets.all(20), children: [

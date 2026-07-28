@@ -279,3 +279,11 @@
   - `LibraryStore` / `TagRepository` 管理独立标签集合。
   - `library.json` 格式升级（向后兼容：无 `tags` 字段时从 `metas` 中回填）。
   - `allTags()` 改为 `TagRepository.tags()` 直接返回。
+
+## ADR-016 应用数据采用 Repository + Single Source of Truth
+
+- **日期**：2026-07-28
+- **状态**：已定
+- **背景**：标签补全问题暴露出状态来源分散（BookMeta、LibraryStore、Widget、搜索框等）。
+- **决策**：所有业务状态只能通过 Repository 修改；Widget 禁止直接修改模型；Repository 是唯一持久化入口。
+- **影响**：后续搜索、标签、历史记录、设置全部改为 Repository API。

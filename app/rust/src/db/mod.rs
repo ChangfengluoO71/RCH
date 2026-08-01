@@ -142,6 +142,48 @@ fn init_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_book_tags_book ON book_tags(book_key);
         ",
     )?;
+    // 自愈：旧版 hash ID 标签 → 名字 ID（幂等，每次打开都执行）。
+    normalize_legacy_tag_ids(conn)?;
+    Ok(())
+}
+
+/// 归一化旧版 hash ID 标签。
+///
+/// 历史数据中 tags 行可能是 `id = 旧hash, name = 日漫`（id 与 tag_id(name) 不一致）。
+/// 新代码按名字计算 ID（`name.trim().to_lowercase()`），按新 ID 查不到时会 INSERT，
+/// 撞上 `tags.name UNIQUE` 导致 `UNIQUE constraint failed: tags.name`。
+///
+/// 这里把旧行迁移到名字 ID：确保新 ID 行存在 → 迁移 book_tags 关联 → 删除旧行。
+/// 幂等，可重复执行。
+fn normalize_legacy_tag_ids(conn: &Connection) -> Result<()> {
+    let legacy: Vec<(String, String, i64)> = conn
+        .prepare("SELECT id, name, created_at FROM tags")?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .filter(|(id, name, _)| {
+            let t = name.trim();
+            !t.is_empty() && *id != tag_id(t)
+        })
+        .collect();
+
+    for (old_id, name, created_at) in legacy {
+        let new_id = tag_id(&name);
+        // 原地改 id（name 唯一约束下不可能存在同 name 的新 id 行，不会冲突）
+        conn.execute(
+            "UPDATE tags SET id = ?1, name = ?2, created_at = ?3 WHERE id = ?4",
+            params![new_id, name, created_at, old_id],
+        )?;
+        conn.execute(
+            "UPDATE OR IGNORE book_tags SET tag_id = ?1 WHERE tag_id = ?2",
+            params![new_id, old_id],
+        )?;
+    }
     Ok(())
 }
 
@@ -642,6 +684,39 @@ pub fn ensure_tag(name: &str) -> Result<TagRow> {
         return Ok(tag);
     }
 
+    // 兼容旧数据：同 name 的旧 hash ID 行存在时，原地迁移到新 ID 再返回。
+    let by_name: Option<TagRow> = conn
+        .query_row(
+            "SELECT id, name, created_at FROM tags WHERE name = ?1",
+            params![name],
+            |row| {
+                Ok(TagRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            },
+        )
+        .ok();
+    if let Some(tag) = by_name {
+        if tag.id != id {
+            conn.execute(
+                "UPDATE tags SET id = ?1, name = ?2, created_at = ?3 WHERE id = ?4",
+                params![id, name, tag.created_at, tag.id],
+            )?;
+            conn.execute(
+                "UPDATE OR IGNORE book_tags SET tag_id = ?1 WHERE tag_id = ?2",
+                params![id, tag.id],
+            )?;
+            return Ok(TagRow {
+                id,
+                name: name.to_string(),
+                created_at: tag.created_at,
+            });
+        }
+        return Ok(tag);
+    }
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -919,4 +994,72 @@ pub fn total_cached_size() -> i64 {
 /// 标签名区分大小写显示，但 ID 统一用小写（方便去重）。
 fn tag_id(name: &str) -> String {
     name.trim().to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn memory_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE tags (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE book_tags (
+                book_key TEXT NOT NULL,
+                tag_id TEXT NOT NULL,
+                PRIMARY KEY (book_key, tag_id)
+            );
+            ",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn normalize_legacy_tag_ids_migrates_hash_rows() {
+        let conn = memory_conn();
+        conn.execute(
+            "INSERT INTO tags (id, name, created_at) VALUES ('2b6c5f54', '日漫', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO book_tags (book_key, tag_id) VALUES ('bk1', '2b6c5f54')",
+            [],
+        )
+        .unwrap();
+
+        normalize_legacy_tag_ids(&conn).unwrap();
+
+        let id: String = conn.query_row("SELECT id FROM tags", [], |r| r.get(0)).unwrap();
+        assert_eq!(id, "日漫");
+        let links: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM book_tags WHERE tag_id = '日漫'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(links, 1);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+
+        // 幂等：再次执行不报错、不变化
+        normalize_legacy_tag_ids(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
 }

@@ -1,4 +1,8 @@
 import 'package:app/repository/tag_repository.dart';
+import 'package:app/src/rust/api/ai.dart';
+import 'package:app/src/rust/api/book.dart';
+import 'package:app/src/rust/api/cache.dart';
+import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -18,6 +22,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
   late BookMeta _meta;
   late final TextEditingController _titleCtrl, _cnTitleCtrl, _authorCtrl, _genreCtrl, _seriesCtrl, _summaryCtrl, _commentCtrl;
   int _tagInputKey = 0;
+  bool _aiProcessing = false;
+  int _aiDone = 0;
+  int _aiPageCount = 0;
 
   @override void initState() { super.initState();
     _meta = LibraryStore.instance.metaOf(widget.source, widget.path);
@@ -32,6 +39,38 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   @override void dispose() { _titleCtrl.dispose(); _cnTitleCtrl.dispose(); _authorCtrl.dispose(); _genreCtrl.dispose(); _seriesCtrl.dispose(); _summaryCtrl.dispose(); _commentCtrl.dispose(); super.dispose(); }
 
+  // ---- 取消 AI 超分并删除缓存 ----
+
+  void _cancelAiSuperResolve() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('取消 AI 超分'),
+        content: const Text('将移除「AI超分」标签并清空本书的所有 AI 超分缓存。\n\n阅读时将从原始页面加载，可随时重新超分。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('返回')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              final store = LibraryStore.instance;
+              final bookKey = _meta.key;
+              // 移除 AI超分 标签
+              TagRepository.instance.unlink(bookKey, 'AI超分');
+              store.saveToDisk();
+              // 清空所有 AI 缓存（简单方案：清空 ai/ 目录）
+              try {
+                await clearAiCache();
+              } catch (_) {}
+              if (mounted) setState(() {});
+            },
+            child: const Text('确认取消'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _saveMeta() {
     _meta.title = _titleCtrl.text.trim();
     _meta.chineseTitle = _cnTitleCtrl.text.trim();
@@ -41,6 +80,74 @@ class _BookDetailPageState extends State<BookDetailPage> {
     _meta.summary = _summaryCtrl.text.trim();
     _meta.comment = _commentCtrl.text.trim();
     LibraryStore.instance.updateMeta(_meta);
+  }
+
+  // ---- 整本 AI 超分 ----
+
+  Future<void> _upscaleAll() async {
+    final bookKey = _meta.key;
+    setState(() { _aiProcessing = true; _aiDone = 0; _aiPageCount = 0; });
+
+    int total = 0;
+    int failed = 0;
+    try {
+      final isWebdav = widget.source.isWebDav;
+      final messenger = ScaffoldMessenger.of(context);
+      // 通过 openLocalBook 拿到 BookInfo，再用 bookPage 逐页取原始字节
+      final bk = isWebdav
+          ? await openWebdavBook(session: await webdavSessionFor(widget.source), path: widget.path)
+          : await openLocalBook(path: widget.path);
+      total = bk.pageCount;
+      if (mounted) setState(() => _aiPageCount = total);
+      int done = 0;
+      messenger.showSnackBar(SnackBar(content: Text('正在 AI 超分 $total 页...'), duration: const Duration(hours: 1)));
+      for (var i = 0; i < total; i++) {
+        if (!mounted) break;
+        try {
+          final pageBytes = await bookPage(handle: bk.handle, index: i);
+          await superResolve(pageBytes: pageBytes, scale: 2);
+          done++;
+        } catch (_) {
+          failed++;
+        }
+        if (mounted) setState(() => _aiDone = done);
+      }
+      messenger.hideCurrentSnackBar();
+      // 关闭 book session
+      try { closeBook(handle: bk.handle); } catch (_) {}
+
+      // 打上 "AI超分" 元数据标签
+      if (done > 0) {
+        TagRepository.instance.link(bookKey, 'AI超分');
+        LibraryStore.instance.saveToDisk();
+      }
+
+      if (mounted) {
+        if (done > 0) {
+          messenger.showSnackBar(SnackBar(content: Text(failed > 0 ? 'AI 超分完成: $done 页成功, $failed 页失败' : 'AI 超分完成: 全部 $done 页已完成 ✓'), duration: const Duration(seconds: 3)));
+        }
+        setState(() => _aiProcessing = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _aiProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('AI 超分失败: $e'), duration: const Duration(seconds: 4)));
+      }
+    }
+  }
+
+  void _showAiConfirm() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('整本 AI 超分'),
+        content: const Text('将对本书所有页面执行 2x AI 超分。\n\n• 每页需要 2-5 秒，整本耗时视页数而定\n• 超分结果写入 ai/ 缓存，下次秒开\n• 完成后自动打上「AI超分」元数据标签'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('取消')),
+          FilledButton(onPressed: () { Navigator.of(ctx).pop(); _upscaleAll(); }, child: const Text('开始超分')),
+        ],
+      ),
+    );
   }
 
   void _addTag(String t) { t = t.trim(); if (t.isEmpty || _meta.tags.contains(t)) return; setState(() => _meta.tags.add(t)); LibraryStore.instance.updateMeta(_meta); setState(() => _tagInputKey++); }
@@ -59,6 +166,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
     final record = LibraryStore.instance.recordOf(widget.source, widget.path);
     final bookKey = '${widget.source.type}|${widget.source.id}|${widget.path}';
     final hasReadTag = TagRepository.instance.bookKeysForTag('已读').contains(bookKey);
+    final hasAiTag = TagRepository.instance.bookKeysForTag('AI超分').contains(bookKey);
     return Scaffold(
       appBar: AppBar(title: const Text('漫画详情')),
       body: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -89,6 +197,38 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   style: TextStyle(color: hasReadTag ? Colors.redAccent : null)),
             ),
           ),
+          // 整本 AI 超分
+          SizedBox(width: 220, child: _aiProcessing
+            ? OutlinedButton.icon(
+                onPressed: null,
+                icon: const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                label: Text('AI 超分中... $_aiDone/$_aiPageCount'),
+              )
+            : hasAiTag
+              ? OutlinedButton.icon(
+                  onPressed: _showAiConfirm,
+                  icon: const Icon(Icons.auto_fix_high, size: 18, color: Colors.purple),
+                  label: const Text('重新 AI 超分', style: TextStyle(color: Colors.purple)),
+                )
+              : OutlinedButton.icon(
+                  onPressed: _showAiConfirm,
+                  icon: const Icon(Icons.auto_fix_high, size: 18),
+                  label: const Text('整本 AI 超分'),
+                ),
+          ),
+          // 取消 AI 超分并删除缓存
+          if (hasAiTag) ...[
+            SizedBox(width: 220, child: OutlinedButton.icon(
+              onPressed: _cancelAiSuperResolve,
+              icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+              label: const Text('取消 AI 超分', style: TextStyle(color: Colors.redAccent)),
+            )),
+            SizedBox(width: 220, child: OutlinedButton.icon(
+              onPressed: () => openBookNoAi(context, widget.source, widget.path, widget.title),
+              icon: const Icon(Icons.hide_image, size: 18),
+              label: const Text('阅读未超分版本'),
+            )),
+          ],
         ])),
         const VerticalDivider(width: 1),
         Expanded(child: ListView(padding: const EdgeInsets.all(20), children: [

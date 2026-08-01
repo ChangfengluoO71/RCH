@@ -300,14 +300,6 @@ class TagRepository extends ChangeNotifier {
     }
   }
 
-  /// DJB2 hash of lowercased name → lowercase hex。
-  /// 必须与 Rust `db::tag_id()` 完全一致。
-  static String _tagId(String name) {
-    final lower = name.toLowerCase();
-    var hash = 5381;
-    for (var i = 0; i < lower.length; i++) {
-      hash = (hash * 33 + lower.codeUnitAt(i)) & 0xFFFFFFFF;
-    }
-    return hash.toRadixString(16);
-  }
+  /// 标签名即 ID — trim 后小写，与 Rust `db::tag_id()` 完全一致。
+  static String _tagId(String name) => name.trim().toLowerCase();
 }

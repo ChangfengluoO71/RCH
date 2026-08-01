@@ -1542,6 +1542,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sevenz-rust",
+ "sha2",
  "tar",
  "tokio",
  "tracing",

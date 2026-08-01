@@ -6,6 +6,15 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **M2 AI 超分 Phase 1**：端侧 AI 超分引擎，右键单页超分 + 漫画详情页整本超分，自动打"AI超分"元数据标签
+- **M2 AI 超分 Phase 2**：CLI 目录批量模式 — `super_resolve_batch()` 一次调用处理整本漫画
+
+---
+
 ## [0.2.1] — 2026-07-28
 
 ### Added

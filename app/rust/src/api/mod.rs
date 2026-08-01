@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod book;
 pub mod cache;
 pub mod db;

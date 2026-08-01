@@ -106,3 +106,12 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# 复制 AI 超分引擎文件（exe + models/ + vcomp140.dll）到数据目录。
+set(AI_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ai")
+if(EXISTS "${AI_SOURCE_DIR}")
+  install(DIRECTORY "${AI_SOURCE_DIR}/"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/ai"
+    COMPONENT Runtime
+  )
+endif()

@@ -156,7 +156,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
               '旧版下载回退目录',
               () => _clear('清空旧下载缓存', clearDownloadCache)),
           _cacheRow(Icons.auto_awesome, 'AI 超分结果（ai/）', _sizes!.ai,
-              'AI 超分输出缓存（暂未启用）',
+              'AI 超分输出缓存',
               () => _clear('清空 AI 缓存', clearAiCache)),
           _cacheRow(Icons.storage, '临时文件（temp/）', _sizes!.temp,
               'CB7/CBR 解压中间产物',

@@ -21,6 +21,8 @@ Future<Uint8List> bookPage({required BigInt handle, required int index}) =>
 
 /// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
 /// 若 path 为目录,走 Folder 格式。
+/// 生成本地书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
+/// 封面结果写入磁盘缓存（cover/）供后续秒开。
 Future<PageImage> bookCover({
   required String path,
   required int page,

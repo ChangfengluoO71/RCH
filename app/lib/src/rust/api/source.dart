@@ -58,8 +58,8 @@ Future<bool> webdavHasRawCache({
 );
 
 /// 生成 WebDAV 书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
-/// 优先检查 raw/ 本地缓存(已下载过的漫画本地秒出);
-/// 无本地缓存时走 HTTP Range 流式请求。
+/// 封面结果写入磁盘缓存（cover/）供后续秒开。
+/// 优先走磁盘缓存 → raw/ 本地缓存 → HTTP Range 流式。
 Future<PageImage> webdavCover({
   required BigInt session,
   required String path,

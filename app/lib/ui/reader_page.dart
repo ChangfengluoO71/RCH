@@ -1,4 +1,5 @@
 import 'package:app/src/rust/api/book.dart';
+import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
@@ -8,9 +9,9 @@ import 'package:photo_view/photo_view.dart';
 
 class ReaderPage extends StatefulWidget {
   final String path; final String title; final BigInt? webdavSession;
-  final BookSource? source; final int initialPage;
+  final BookSource? source; final int initialPage; final bool skipAiCache;
   const ReaderPage({super.key, required this.path, required this.title,
-    this.webdavSession, this.source, this.initialPage = 0,});
+    this.webdavSession, this.source, this.initialPage = 0, this.skipAiCache = false,});
   @override State<ReaderPage> createState() => _ReaderPageState();
 }
 
@@ -66,7 +67,10 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _ensure(int i) { final b=_book; if(b==null||i<0||i>=b.pageCount)return;
     if(_bytes.containsKey(i)||_loading.contains(i))return;_loading.add(i);
-    bookPage(handle:b.handle,index:i).then((d){if(!mounted)return;setState((){_bytes[i]=d;_loading.remove(i);});}).catchError((_){if(mounted)setState(()=>_loading.remove(i));}); }
+    bookPage(handle:b.handle,index:i).then((d)async{if(!mounted)return;
+      if(widget.skipAiCache){if(mounted)setState((){_bytes[i]=d;_loading.remove(i);});return;}
+      try{final ai=await lookupCache(pageBytes:d.toList(),scale:2);if(ai!=null&&mounted)setState((){_bytes[i]=ai;_loading.remove(i);});else if(mounted)setState((){_bytes[i]=d;_loading.remove(i);});}catch(_){if(mounted)setState((){_bytes[i]=d;_loading.remove(i);});}
+    }).catchError((_){if(mounted)setState(()=>_loading.remove(i));}); }
 
   // ---- 双页配对 ----
   (int,int?) pairOf(int page) { if(_dual==DualPageMode.off)return(page,null);final b=_book;if(b==null)return(page,null);
@@ -200,6 +204,60 @@ class _ReaderPageState extends State<ReaderPage> {
     });
   }
 
+  // ---- 右键菜单 ----
+  void _onRightClick(TapUpDetails details) {
+    showMenu<String>(
+      position: RelativeRect.fromLTRB(
+        details.globalPosition.dx,
+        details.globalPosition.dy,
+        details.globalPosition.dx + 1,
+        details.globalPosition.dy + 1,
+      ),
+      context: context,
+      items: const [
+        PopupMenuItem(value: 'settings', child: ListTile(leading: Icon(Icons.tune), title: Text('阅读设置'), dense: true)),
+        PopupMenuItem(value: 'ai', child: ListTile(leading: Icon(Icons.auto_fix_high), title: Text('AI 超分 (2x)'), dense: true)),
+      ],
+    ).then((value) {
+      if (value == 'settings') _showSettings();
+      if (value == 'ai') _doAiSuperResolve();
+    });
+  }
+
+  Future<void> _doAiSuperResolve() async {
+    final bytes = _bytes[_page];
+    if (bytes == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('当前页尚未加载，请等待加载完成')),
+        );
+      }
+      return;
+    }
+    final b = _book;
+    if (b == null) return;
+
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('AI 超分处理中...'), duration: Duration(seconds: 2)),
+    );
+    try {
+      final result = await superResolve(pageBytes: bytes, scale: 2);
+      if (!mounted) return;
+      setState(() {
+        _bytes[_page] = result;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('AI 超分完成 ✓'), duration: Duration(seconds: 2)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('AI 超分失败: $e'), duration: const Duration(seconds: 4)),
+      );
+    }
+  }
+
   // ---- 设置 ----
   void _showSettings(){showModalBottomSheet(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,ss)=>Padding(padding:EdgeInsets.fromLTRB(20,12,20,24),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
     Center(child:Container(width:36,height:4,decoration:BoxDecoration(color:Colors.white24,borderRadius:BorderRadius.circular(2)))),const SizedBox(height:16),
@@ -211,8 +269,8 @@ class _ReaderPageState extends State<ReaderPage> {
     const SizedBox(height:8),Row(children:[const Text('拼接间隙:'),SizedBox(width:120,child:Slider(value:_gap.toDouble(),min:0,max:20,divisions:20,label:'${_gap}px',onChanged:(v){ss((){});setState((){_gap=v.toInt();});})),Text('${_gap}px')]),
     const SizedBox(height:10),Row(children:[const Text('首页单独显示(不参与拼接)'),const Spacer(),Switch(value:_skipCover,onChanged:(v){ss((){});setState((){_skipCover=v;});})]),
     const SizedBox(height:16),SwitchListTile(title:const Text('日漫模式点击区反向'),subtitle:const Text('打开后右侧区域变为前进'),dense:true,contentPadding:EdgeInsets.zero,value:_invert,onChanged:(v){ss((){});setState((){_invert=v;});}),
-    const SizedBox(height:16),const Text('🤖 AI 超分 (M2 上线)',style:TextStyle(color:Colors.white38,fontSize:12)),const SizedBox(height:6),
-    const SizedBox(width:double.infinity,child:Card(child:Padding(padding:EdgeInsets.all(12),child:Text('端侧 NCNN + Real-ESRGAN 超分引擎将在 M2 里程碑接入,老漫画焕发新生',style:TextStyle(fontSize:12,color:Colors.white54))))),
+    const SizedBox(height:16),const Text('🤖 AI 超分',style:TextStyle(color:Colors.white38,fontSize:12)),const SizedBox(height:6),
+    const SizedBox(width:double.infinity,child:Card(child:Padding(padding:EdgeInsets.all(12),child:Text('右键当前页选择 \'AI 超分 (2x)\' 即可端侧推理放大图片，已启用。',style:TextStyle(fontSize:12,color:Colors.white54))))),
   ]))));}
 
   @override Widget build(BuildContext context) { final b=_book;
@@ -221,7 +279,7 @@ class _ReaderPageState extends State<ReaderPage> {
     String pageLabel;if(b==null){pageLabel='';}else if(rightPg!=null){final l=leftPg+1,r=rightPg+1;pageLabel=isManga?'$r-$l / ${b.pageCount}':'$l-$r / ${b.pageCount}';}else{pageLabel='${_page+1} / ${b.pageCount}';}
     return Scaffold(
       appBar:AppBar(title:GestureDetector(onTap:_showJumpDialog,child:Text(b==null?widget.title:'${b.title}  ($pageLabel)',maxLines:1,overflow:TextOverflow.ellipsis)),actions:[IconButton(icon:const Icon(Icons.tune),tooltip:'阅读设置',onPressed:_showSettings)]),
-      body:Focus(focusNode:_focus,autofocus:true,onKeyEvent:_onKey,child:GestureDetector(onSecondaryTapUp:(_)=>_showSettings(),child:_buildBody())),
+      body:Focus(focusNode:_focus,autofocus:true,onKeyEvent:_onKey,child:GestureDetector(onSecondaryTapUp:_onRightClick,child:_buildBody())),
       bottomNavigationBar:_mode==ReadMode.webtoon||b==null?null:SafeArea(child:Padding(padding:EdgeInsets.symmetric(vertical:2),child:Row(mainAxisAlignment:MainAxisAlignment.center,children:[IconButton(icon:Icon(showL),onPressed:_back),GestureDetector(onTap:_showJumpDialog,child:Text(pageLabel,style:const TextStyle(decoration:TextDecoration.underline,decorationStyle:TextDecorationStyle.dotted))),IconButton(icon:Icon(showR),onPressed:_forward)]))),
     );
   }

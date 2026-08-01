@@ -25,12 +25,28 @@ Future<BigInt> webdavSessionFor(BookSource source) async {
   return s.id;
 }
 
-/// 打开一本书:WebDAV 重连、记录阅读、跳转上次进度。
+/// 打开一本书（使用 AI 超分版本，如果缓存存在）。
 Future<void> openBook(
   BuildContext context,
   BookSource source,
   String path,
   String title,
+) async => _open(context, source, path, title, false);
+
+/// 打开一本书（不使用 AI 超分缓存，始终读原始版本）。
+Future<void> openBookNoAi(
+  BuildContext context,
+  BookSource source,
+  String path,
+  String title,
+) async => _open(context, source, path, title, true);
+
+Future<void> _open(
+  BuildContext context,
+  BookSource source,
+  String path,
+  String title,
+  bool skipAiCache,
 ) async {
   BigInt? session;
   if (source.isWebDav) {
@@ -58,6 +74,7 @@ Future<void> openBook(
         webdavSession: session,
         source: source,
         initialPage: initialPage,
+        skipAiCache: skipAiCache,
       ),
     ),
   );

@@ -250,7 +250,13 @@ class LibraryStore extends ChangeNotifier {
 
   // ---- 标签相关（委托给 TagRepository + 跨模块协调） ----
 
-  Set<String> metaTagNames() => _books.metaTagNames(hasAnyRead: _records.hasAnyRead());
+  Set<String> metaTagNames() {
+    final set = _books.metaTagNames(hasAnyRead: _records.hasAnyRead());
+    // "AI超分" 是元数据标签 — 只要有任何漫画关联了它，就出现在元数据标签区
+    final allBookKeys = TagRepository.instance.bookKeysForTag('AI超分');
+    if (allBookKeys.isNotEmpty) set.add('AI超分');
+    return set;
+  }
 
   List<String> allTags() => TagRepository.instance.allNames();
 

@@ -300,6 +300,67 @@ pub fn db_save_setting(key: String, value: String) -> Result<(), String> {
     db::save_setting(&key, &value).map_err(|e| format!("{e}"))
 }
 
+/// AI 超分后台任务 DTO。
+pub struct AiTaskDto {
+    pub id: String,
+    pub book_key: String,
+    pub source_type: String,
+    pub source_id: String,
+    pub path: String,
+    pub title: String,
+    pub scale: i64,
+    pub total: i64,
+    pub done: i64,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// 写入/更新 AI 超分任务。
+pub fn db_upsert_ai_task(task: AiTaskDto) -> Result<(), String> {
+    db::upsert_ai_task(&db::AiTaskRow {
+        id: task.id,
+        book_key: task.book_key,
+        source_type: task.source_type,
+        source_id: task.source_id,
+        path: task.path,
+        title: task.title,
+        scale: task.scale,
+        total: task.total,
+        done: task.done,
+        status: task.status,
+        created_at: task.created_at,
+        updated_at: task.updated_at,
+    })
+    .map_err(|e| format!("{e}"))
+}
+
+/// 加载全部 AI 超分任务。
+pub fn db_load_all_ai_tasks() -> Vec<AiTaskDto> {
+    db::load_all_ai_tasks()
+        .into_iter()
+        .map(|t| AiTaskDto {
+            id: t.id,
+            book_key: t.book_key,
+            source_type: t.source_type,
+            source_id: t.source_id,
+            path: t.path,
+            title: t.title,
+            scale: t.scale,
+            total: t.total,
+            done: t.done,
+            status: t.status,
+            created_at: t.created_at,
+            updated_at: t.updated_at,
+        })
+        .collect()
+}
+
+/// 删除 AI 超分任务。
+pub fn db_delete_ai_task(id: String) -> Result<(), String> {
+    db::delete_ai_task(&id).map_err(|e| format!("{e}"))
+}
+
 pub fn db_delete_setting(key: String) -> Result<(), String> {
     db::delete_setting(&key).map_err(|e| format!("{e}"))
 }

@@ -1,6 +1,6 @@
-import 'dart:typed_data';
-
 import 'package:app/repository/tag_repository.dart';
+import 'package:app/store/ai_upscale_manager.dart';
+import 'package:app/store/webdav_session.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
@@ -23,12 +23,13 @@ class _BookDetailPageState extends State<BookDetailPage> {
   late BookMeta _meta;
   late final TextEditingController _titleCtrl, _cnTitleCtrl, _authorCtrl, _genreCtrl, _seriesCtrl, _summaryCtrl, _commentCtrl;
   int _tagInputKey = 0;
-  bool _aiProcessing = false;
-  int _aiDone = 0;
-  int _aiPageCount = 0;
+
+  bool get _bookAiActive =>
+      AiUpscaleManager.instance.tasks.any((t) => t.bookKey == _meta.key && t.isActive);
 
   @override void initState() { super.initState();
     _meta = LibraryStore.instance.metaOf(widget.source, widget.path);
+    AiUpscaleManager.instance.addListener(_onAiChanged);
     _titleCtrl = TextEditingController(text: _meta.title.isEmpty ? widget.title : _meta.title);
     _cnTitleCtrl = TextEditingController(text: _meta.chineseTitle);
     _authorCtrl = TextEditingController(text: _meta.author);
@@ -38,7 +39,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
     _commentCtrl = TextEditingController(text: _meta.comment);
   }
 
-  @override void dispose() { _titleCtrl.dispose(); _cnTitleCtrl.dispose(); _authorCtrl.dispose(); _genreCtrl.dispose(); _seriesCtrl.dispose(); _summaryCtrl.dispose(); _commentCtrl.dispose(); super.dispose(); }
+  void _onAiChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override void dispose() {
+    AiUpscaleManager.instance.removeListener(_onAiChanged);
+    _titleCtrl.dispose(); _cnTitleCtrl.dispose(); _authorCtrl.dispose(); _genreCtrl.dispose(); _seriesCtrl.dispose(); _summaryCtrl.dispose(); _commentCtrl.dispose(); super.dispose();
+  }
 
   // ---- 取消 AI 超分并删除缓存 ----
 
@@ -98,69 +106,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
   // ---- 整本 AI 超分 ----
 
   Future<void> _upscaleAll() async {
-    final bookKey = _meta.key;
-    setState(() { _aiProcessing = true; _aiDone = 0; _aiPageCount = 0; });
-
-    int total = 0;
-    int failed = 0;
-    try {
-      final isWebdav = widget.source.isWebDav;
-      final messenger = ScaffoldMessenger.of(context);
-      // 通过 openLocalBook 拿到 BookInfo，再用 bookPage 逐页取原始字节
-      final bk = isWebdav
-          ? await openWebdavBook(session: await webdavSessionFor(widget.source), path: widget.path)
-          : await openLocalBook(path: widget.path);
-      total = bk.pageCount;
-      if (mounted) setState(() => _aiPageCount = total);
-      int done = 0;
-      messenger.showSnackBar(SnackBar(content: Text('正在 AI 超分 $total 页...'), duration: const Duration(hours: 1)));
-      // 批量超分（Phase 2）：每 20 页一次 CLI 调用，避免整本一次性载入内存。
-      const chunk = 20;
-      for (var start = 0; start < total; start += chunk) {
-        if (!mounted) break;
-        final end = start + chunk < total ? start + chunk : total;
-        try {
-          final pages = <Uint8List>[];
-          for (var i = start; i < end; i++) {
-            pages.add(await bookPage(handle: bk.handle, index: i));
-          }
-          final results = await superResolveBatch(pages: pages, scale: 2);
-          for (final r in results) {
-            if (r.isNotEmpty) {
-              done++;
-            } else {
-              failed++;
-            }
-          }
-        } catch (_) {
-          failed += end - start;
-        }
-        if (mounted) setState(() => _aiDone = done + failed);
-      }
-      messenger.hideCurrentSnackBar();
-      // 关闭 book session
-      try { closeBook(handle: bk.handle); } catch (_) {}
-
-      // 打上 "AI超分" 元数据标签
-      if (done > 0) {
-        TagRepository.instance.link(bookKey, 'AI超分');
-        await LibraryStore.instance.saveToDisk();
-        if (LibraryStore.instance.lastSaveError != null && mounted) {
-          messenger.showSnackBar(SnackBar(content: const Text('标签已记录，但数据保存失败，请检查磁盘空间'), duration: Duration(seconds: 4)));
-        }
-      }
-
-      if (mounted) {
-        if (done > 0) {
-          messenger.showSnackBar(SnackBar(content: Text(failed > 0 ? 'AI 超分完成: $done 页成功, $failed 页失败' : 'AI 超分完成: 全部 $done 页已完成 ✓'), duration: const Duration(seconds: 3)));
-        }
-        setState(() => _aiProcessing = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _aiProcessing = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('AI 超分失败: $e'), duration: const Duration(seconds: 4)));
-      }
+    await AiUpscaleManager.instance.enqueue(
+      source: widget.source,
+      path: widget.path,
+      title: _meta.title.isEmpty ? widget.title : _meta.title,
+      scale: 2,
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已加入后台超分队列，可在右上角悬浮窗查看进度')),
+      );
     }
   }
 
@@ -226,11 +181,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
             ),
           ),
           // 整本 AI 超分
-          SizedBox(width: 220, child: _aiProcessing
+          SizedBox(width: 220, child: _bookAiActive
             ? OutlinedButton.icon(
                 onPressed: null,
                 icon: const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                label: Text('AI 超分中... $_aiDone/$_aiPageCount'),
+                label: const Text('后台超分中...'),
               )
             : hasAiTag
               ? OutlinedButton.icon(

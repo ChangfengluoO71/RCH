@@ -143,6 +143,22 @@ fn init_tables(conn: &Connection) -> Result<()> {
             value TEXT NOT NULL
         );
 
+        -- AI 超分后台任务队列（可跨重启续跑）
+        CREATE TABLE IF NOT EXISTS ai_tasks (
+            id TEXT PRIMARY KEY,
+            book_key TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            title TEXT NOT NULL,
+            scale INTEGER NOT NULL DEFAULT 2,
+            total INTEGER NOT NULL DEFAULT 0,
+            done INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'queued',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
         -- schema 版本
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
@@ -1009,6 +1025,71 @@ fn tag_id(name: &str) -> String {
     name.trim().to_lowercase()
 }
 
+#[derive(Debug, Clone)]
+pub struct AiTaskRow {
+    pub id: String,
+    pub book_key: String,
+    pub source_type: String,
+    pub source_id: String,
+    pub path: String,
+    pub title: String,
+    pub scale: i64,
+    pub total: i64,
+    pub done: i64,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// 写入/更新一条 AI 超分任务（INSERT OR REPLACE）。
+pub fn upsert_ai_task(t: &AiTaskRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO ai_tasks
+         (id, book_key, source_type, source_id, path, title, scale, total, done, status, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            t.id, t.book_key, t.source_type, t.source_id, t.path, t.title,
+            t.scale, t.total, t.done, t.status, t.created_at, t.updated_at
+        ],
+    )?;
+    Ok(())
+}
+
+/// 加载全部 AI 超分任务（按创建时间排序）。
+pub fn load_all_ai_tasks() -> Vec<AiTaskRow> {
+    let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT id, book_key, source_type, source_id, path, title, scale, total, done, status, created_at, updated_at FROM ai_tasks ORDER BY created_at")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(AiTaskRow {
+            id: row.get(0)?,
+            book_key: row.get(1)?,
+            source_type: row.get(2)?,
+            source_id: row.get(3)?,
+            path: row.get(4)?,
+            title: row.get(5)?,
+            scale: row.get(6)?,
+            total: row.get(7)?,
+            done: row.get(8)?,
+            status: row.get(9)?,
+            created_at: row.get(10)?,
+            updated_at: row.get(11)?,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+/// 删除一条 AI 超分任务。
+pub fn delete_ai_task(id: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    conn.execute("DELETE FROM ai_tasks WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1073,6 +1154,24 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn init_tables_creates_ai_tasks() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO ai_tasks (id, book_key, source_type, source_id, path, title, scale, total, done, status, created_at, updated_at)
+             VALUES ('t1', 'bk', 'local', 's1', '/p', 'T', 2, 10, 3, 'queued', 1, 1)",
+            [],
+        )
+        .unwrap();
+        let row: (String, i64) = conn
+            .query_row("SELECT id, done FROM ai_tasks", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(row, ("t1".to_string(), 3));
     }
 
 }

@@ -30,6 +30,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  AiTaskDto dco_decode_ai_task_dto(dynamic raw);
+
+  @protected
   BookInfo dco_decode_book_info(dynamic raw);
 
   @protected
@@ -43,6 +46,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  AiTaskDto dco_decode_box_autoadd_ai_task_dto(dynamic raw);
 
   @protected
   BookMetaDto dco_decode_box_autoadd_book_meta_dto(dynamic raw);
@@ -82,6 +88,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<AiTaskDto> dco_decode_list_ai_task_dto(dynamic raw);
 
   @protected
   List<BookMetaDto> dco_decode_list_book_meta_dto(dynamic raw);
@@ -170,6 +179,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  AiTaskDto sse_decode_ai_task_dto(SseDeserializer deserializer);
+
+  @protected
   BookInfo sse_decode_book_info(SseDeserializer deserializer);
 
   @protected
@@ -183,6 +195,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  AiTaskDto sse_decode_box_autoadd_ai_task_dto(SseDeserializer deserializer);
 
   @protected
   BookMetaDto sse_decode_box_autoadd_book_meta_dto(
@@ -230,6 +245,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<AiTaskDto> sse_decode_list_ai_task_dto(SseDeserializer deserializer);
 
   @protected
   List<BookMetaDto> sse_decode_list_book_meta_dto(SseDeserializer deserializer);
@@ -331,6 +349,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_ai_task_dto(AiTaskDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_book_info(BookInfo self, SseSerializer serializer);
 
   @protected
@@ -344,6 +365,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_ai_task_dto(
+    AiTaskDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_book_meta_dto(
@@ -398,6 +425,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_ai_task_dto(
+    List<AiTaskDto> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_book_meta_dto(

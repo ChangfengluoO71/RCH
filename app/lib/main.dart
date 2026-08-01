@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:app/src/rust/api/cache.dart';
 import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/frb_generated.dart';
+import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
+import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -35,6 +37,9 @@ Future<void> main() async {
 
   // 加载数据（优先 SQLite，fallback JSON）
   await LibraryStore.instance.load();
+
+  // 后台 AI 超分：加载持久化队列并续跑。
+  await AiUpscaleManager.instance.init();
 
   // 检测未完成的根目录迁移（源根上的 migration.partial 标记）。
   final root = await cacheRootPath();
@@ -107,6 +112,13 @@ class RchApp extends StatelessWidget {
         final dark = LibraryStore.instance.settings.themeMode != 'light';
         return MaterialApp(
           title: 'RCH',
+          navigatorKey: AiUpscaleManager.navigatorKey,
+          builder: (context, child) => Stack(
+            children: [
+              ?child,
+              const Align(alignment: Alignment.topRight, child: AiFloatingProgress()),
+            ],
+          ),
           theme: ThemeData.light(useMaterial3: true),
           darkTheme: ThemeData.dark(useMaterial3: true),
           themeMode: dark ? ThemeMode.dark : ThemeMode.light,

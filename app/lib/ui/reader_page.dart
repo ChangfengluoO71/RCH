@@ -1,6 +1,7 @@
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +22,7 @@ class _ReaderPageState extends State<ReaderPage> {
   double? _downloadProgress;
   final Map<int, Uint8List> _bytes = {}; final Set<int> _loading = {};
   bool _aiProcessing = false;
+  bool _useAiVersion = true;
   final PhotoViewController _photoCtrl = PhotoViewController();
   final TransformationController _dualZoomCtrl = TransformationController();
   final TransformationController _webtoonZoomCtrl = TransformationController();
@@ -31,7 +33,39 @@ class _ReaderPageState extends State<ReaderPage> {
   @override void initState() { super.initState();
     final g=LibraryStore.instance.settings;
     _mode=g.readMode; _invert=g.invertTap; _dual=g.dualPageMode; _gap=g.dualPageGap; _skipCover=g.skipFrontCover; _keys=g.keys;
-    _open(); }
+    _open();
+    AiUpscaleManager.instance.addListener(_onAiManager);
+    final s = widget.source;
+    AiUpscaleManager.instance.setReadingBook(s == null ? null : '${s.type}|${s.id}|${widget.path}');
+  }
+
+  void _onAiManager() {
+    final s = widget.source;
+    if (s == null) return;
+    final bookKey = '${s.type}|${s.id}|${widget.path}';
+    final m = AiUpscaleManager.instance;
+    if (m.forceAiVersionBookKey == bookKey) {
+      m.consumeForceAiVersion();
+      if (!_useAiVersion) _toggleAiVersion();
+    }
+  }
+
+  /// 原版 / 超分版本切换：清空当前视口页并重新加载，页码不变。
+  void _toggleAiVersion() {
+    setState(() {
+      _useAiVersion = !_useAiVersion;
+      for (var i = _page - 1; i <= _page + 2; i++) {
+        if (i >= 0) {
+          _bytes.remove(i);
+          _loading.remove(i);
+        }
+      }
+    });
+    _ensure(_page);
+    if (_isDual()) _ensure(_page + 1);
+    _ensure(_page + 1);
+    _ensure(_page + 2);
+  }
 
   Future<void> _open() async { try {
     if (widget.webdavSession != null) {
@@ -70,7 +104,7 @@ class _ReaderPageState extends State<ReaderPage> {
     if(_bytes.containsKey(i)||_loading.contains(i))return;_loading.add(i);
     bookPage(handle: b.handle, index: i).then((d) async {
       if (!mounted) return;
-      if (widget.skipAiCache) {
+      if (widget.skipAiCache || !_useAiVersion) {
         if (mounted) setState(() { _bytes[i] = d; _loading.remove(i); });
         return;
       }
@@ -145,7 +179,11 @@ class _ReaderPageState extends State<ReaderPage> {
     return KeyEventResult.ignored;
   }
 
-  @override void dispose(){final b=_book;if(b!=null)closeBook(handle:b.handle);_photoCtrl.dispose();_dualZoomCtrl.dispose();_webtoonZoomCtrl.dispose();_focus.dispose();_webtoonCtrl.dispose();super.dispose();}
+  @override void dispose(){
+    AiUpscaleManager.instance.removeListener(_onAiManager);
+    AiUpscaleManager.instance.setReadingBook(null);
+    final b=_book;if(b!=null)closeBook(handle:b.handle);_photoCtrl.dispose();_dualZoomCtrl.dispose();_webtoonZoomCtrl.dispose();_focus.dispose();_webtoonCtrl.dispose();super.dispose();
+  }
 
   // ========== 布局 ==========
   /// 构建 body: 下载进度 / 加载中 / 错误 / 阅读视图。
@@ -231,11 +269,13 @@ class _ReaderPageState extends State<ReaderPage> {
         details.globalPosition.dy + 1,
       ),
       context: context,
-      items: const [
+      items: [
+        PopupMenuItem(value: 'ai_version', child: ListTile(leading: Icon(_useAiVersion ? Icons.image_not_supported : Icons.auto_fix_high), title: Text(_useAiVersion ? '使用原版' : '使用超分版本'), dense: true)),
         PopupMenuItem(value: 'settings', child: ListTile(leading: Icon(Icons.tune), title: Text('阅读设置'), dense: true)),
         PopupMenuItem(value: 'ai', child: ListTile(leading: Icon(Icons.auto_fix_high), title: Text('AI 超分 (2x)'), dense: true)),
       ],
     ).then((value) {
+      if (value == 'ai_version') _toggleAiVersion();
       if (value == 'settings') _showSettings();
       if (value == 'ai') _doAiSuperResolve();
     });
@@ -308,7 +348,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final showL=isManga?Icons.chevron_left:Icons.chevron_right,showR=isManga?Icons.chevron_right:Icons.chevron_left;
     String pageLabel;if(b==null){pageLabel='';}else if(rightPg!=null){final l=leftPg+1,r=rightPg+1;pageLabel=isManga?'$r-$l / ${b.pageCount}':'$l-$r / ${b.pageCount}';}else{pageLabel='${_page+1} / ${b.pageCount}';}
     return Scaffold(
-      appBar:AppBar(title:GestureDetector(onTap:_showJumpDialog,child:Text(b==null?widget.title:'${b.title}  ($pageLabel)',maxLines:1,overflow:TextOverflow.ellipsis)),actions:[IconButton(icon:const Icon(Icons.tune),tooltip:'阅读设置',onPressed:_showSettings)]),
+      appBar:AppBar(title:GestureDetector(onTap:_showJumpDialog,child:Text(b==null?widget.title:'${b.title}  ($pageLabel)',maxLines:1,overflow:TextOverflow.ellipsis)),actions:[IconButton(icon:Icon(_useAiVersion ? Icons.auto_fix_high : Icons.image_not_supported),tooltip:_useAiVersion ? '当前为超分版本，点击切换原版' : '当前为原版，点击切换超分版本',onPressed:_toggleAiVersion),IconButton(icon:const Icon(Icons.tune),tooltip:'阅读设置',onPressed:_showSettings)]),
       body:Focus(focusNode:_focus,autofocus:true,onKeyEvent:_onKey,child:GestureDetector(onSecondaryTapUp:_onRightClick,child:_buildBody())),
       bottomNavigationBar:_mode==ReadMode.webtoon||b==null?null:SafeArea(child:Padding(padding:EdgeInsets.symmetric(vertical:2),child:Row(mainAxisAlignment:MainAxisAlignment.center,children:[IconButton(icon:Icon(showL),onPressed:_back),GestureDetector(onTap:_showJumpDialog,child:Text(pageLabel,style:const TextStyle(decoration:TextDecoration.underline,decorationStyle:TextDecorationStyle.dotted))),IconButton(icon:Icon(showR),onPressed:_forward)]))),
     );

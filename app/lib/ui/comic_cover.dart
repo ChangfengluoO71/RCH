@@ -6,7 +6,7 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/ui/common.dart';
-import 'package:app/ui/opener.dart';
+import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
 
 /// 封面加载任务队列 — 限制并发 FFI 调用数，避免数百个封面同时竞争线程池。

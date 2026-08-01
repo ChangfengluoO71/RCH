@@ -7,7 +7,7 @@ import 'package:app/store/models.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
-import 'package:app/ui/opener.dart';
+import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
 
 /// 书源浏览器:浏览某个书源的漫画。

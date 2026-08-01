@@ -4,7 +4,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
-import 'package:app/ui/opener.dart';
+import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
 
 /// 封面编辑器:翻页选一帧,拖框裁剪,保存为该漫画封面(页码 + 相对裁剪区域)。

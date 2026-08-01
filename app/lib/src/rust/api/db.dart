@@ -103,8 +103,84 @@ Future<List<SettingEntryDto>> dbLoadAllSettings() =>
 Future<void> dbSaveSetting({required String key, required String value}) =>
     RustLib.instance.api.crateApiDbDbSaveSetting(key: key, value: value);
 
+/// 写入/更新 AI 超分任务。
+Future<void> dbUpsertAiTask({required AiTaskDto task}) =>
+    RustLib.instance.api.crateApiDbDbUpsertAiTask(task: task);
+
+/// 加载全部 AI 超分任务。
+Future<List<AiTaskDto>> dbLoadAllAiTasks() =>
+    RustLib.instance.api.crateApiDbDbLoadAllAiTasks();
+
+/// 删除 AI 超分任务。
+Future<void> dbDeleteAiTask({required String id}) =>
+    RustLib.instance.api.crateApiDbDbDeleteAiTask(id: id);
+
 Future<void> dbDeleteSetting({required String key}) =>
     RustLib.instance.api.crateApiDbDbDeleteSetting(key: key);
+
+/// AI 超分后台任务 DTO。
+class AiTaskDto {
+  final String id;
+  final String bookKey;
+  final String sourceType;
+  final String sourceId;
+  final String path;
+  final String title;
+  final PlatformInt64 scale;
+  final PlatformInt64 total;
+  final PlatformInt64 done;
+  final String status;
+  final PlatformInt64 createdAt;
+  final PlatformInt64 updatedAt;
+
+  const AiTaskDto({
+    required this.id,
+    required this.bookKey,
+    required this.sourceType,
+    required this.sourceId,
+    required this.path,
+    required this.title,
+    required this.scale,
+    required this.total,
+    required this.done,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      bookKey.hashCode ^
+      sourceType.hashCode ^
+      sourceId.hashCode ^
+      path.hashCode ^
+      title.hashCode ^
+      scale.hashCode ^
+      total.hashCode ^
+      done.hashCode ^
+      status.hashCode ^
+      createdAt.hashCode ^
+      updatedAt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AiTaskDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          bookKey == other.bookKey &&
+          sourceType == other.sourceType &&
+          sourceId == other.sourceId &&
+          path == other.path &&
+          title == other.title &&
+          scale == other.scale &&
+          total == other.total &&
+          done == other.done &&
+          status == other.status &&
+          createdAt == other.createdAt &&
+          updatedAt == other.updatedAt;
+}
 
 /// 漫画元数据 DTO。
 class BookMetaDto {

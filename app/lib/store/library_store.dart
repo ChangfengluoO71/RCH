@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -38,6 +39,20 @@ class LibraryStore extends ChangeNotifier {
   AppSettings settings = AppSettings();
   bool _loaded = false;
 
+  // ---- 全量保存（防抖 + 生命周期 flush） ----
+
+  static const Duration _saveDebounceDuration = Duration(milliseconds: 800);
+  static const String _jsonReconcileDoneKey = 'json_reconcile_done';
+
+  Timer? _saveTimer;
+  Future<void> _saveQueue = Future<void>.value();
+  bool _saveDirty = false;
+  Completer<void>? _saveWaiter;
+  Object? _lastSaveError;
+
+  /// 最近一次持久化失败的原因（无失败为 null）。供 UI 观测。
+  Object? get lastSaveError => _lastSaveError;
+
   Future<void> load() async {
     if (_loaded) return;
     try {
@@ -46,6 +61,7 @@ class LibraryStore extends ChangeNotifier {
         await _loadFromSqlite();
         _loaded = true;
         notifyListeners();
+        await _reconcileFromJsonIfNeeded();
         return;
       }
     } catch (e) {
@@ -69,7 +85,7 @@ class LibraryStore extends ChangeNotifier {
     }
     _loaded = true;
     notifyListeners();
-    _save();
+    saveToDisk();
   }
 
   /// 从 SQLite 加载全量数据。
@@ -112,16 +128,67 @@ class LibraryStore extends ChangeNotifier {
 
   Future<File> _file() async => File(await filePath());
 
-  /// 公开的持久化入口：强制全量写入 SQLite + JSON 备份。
-  Future<void> saveToDisk() async => _save();
+  /// 公开的全量保存入口（防抖合并）：同一次操作风暴只落盘一次。
+  ///
+  /// 返回的 Future 在该轮保存真正完成后完成。错误不会抛出，
+  /// 而是记录到 [lastSaveError]，调用方 await 后自行检查。
+  Future<void> saveToDisk() {
+    _saveDirty = true;
+    final waiter = _saveWaiter ??= Completer<void>();
+    _saveTimer ??= Timer(_saveDebounceDuration, _kickSave);
+    return waiter.future;
+  }
+
+  /// 生命周期退出前强制落盘：等待所有排队与执行中的保存完成。
+  Future<void> flushPendingSave() async {
+    if (_saveTimer != null) {
+      _saveTimer!.cancel();
+      _saveTimer = null;
+    }
+    if (_saveDirty) _kickSave();
+    await _saveQueue;
+    final waiter = _saveWaiter;
+    _saveWaiter = null;
+    if (waiter != null && !waiter.isCompleted) {
+      waiter.complete();
+    }
+    _saveDirty = false;
+  }
+
+  void _kickSave() {
+    _saveTimer = null;
+    _saveQueue = _saveQueue.then((_) => _drainSaves());
+  }
+
+  /// 执行所有排队中的保存；失败记录到 [lastSaveError] 并完成等待者。
+  Future<void> _drainSaves() async {
+    while (_saveDirty) {
+      _saveDirty = false;
+      try {
+        await _save();
+        _lastSaveError = null;
+      } catch (e, st) {
+        _lastSaveError = e;
+        debugPrint('[LibraryStore] save failed: $e');
+        debugPrintStack(stackTrace: st);
+      }
+    }
+    final waiter = _saveWaiter;
+    _saveWaiter = null;
+    if (waiter == null || waiter.isCompleted) return;
+    waiter.complete();
+  }
 
   Future<void> _save() async {
+    Object? sqliteError;
     try {
       await _saveToSqlite();
     } catch (e, st) {
+      sqliteError = e;
       debugPrint('[LibraryStore] SQLite save failed: $e');
       debugPrintStack(stackTrace: st);
     }
+    // JSON 仅作导出备份（best-effort）：失败不影响 SQLite 结果，不抛给调用方。
     try {
       final f = await _file();
       final data = {
@@ -132,9 +199,11 @@ class LibraryStore extends ChangeNotifier {
       };
       await f.writeAsString(jsonEncode(data));
     } catch (e, st) {
-      debugPrint('Library JSON save failed: $e');
+      debugPrint('[LibraryStore] JSON export failed: $e');
       debugPrintStack(stackTrace: st);
-      rethrow;
+    }
+    if (sqliteError != null) {
+      throw sqliteError;
     }
   }
 
@@ -148,26 +217,63 @@ class LibraryStore extends ChangeNotifier {
     }
   }
 
+  // ---- 一次性对账：JSON → SQLite（O3-A） ----
+
+  /// SQLite 已迁移后首次启动读一次 library.json，把 SQLite 缺失的
+  /// 标签/关联/阅读记录补上并写回；完成后置标记，JSON 不再被自动读取。
+  Future<void> _reconcileFromJsonIfNeeded() async {
+    try {
+      final done = (await dbLoadAllSettings())
+          .any((d) => d.key == _jsonReconcileDoneKey);
+      if (done) return;
+
+      final f = await _file();
+      if (await f.exists()) {
+        final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+        // 合并 JSON 中 SQLite 缺失的标签/关联（幂等，含旧 hash ID 归一化）。
+        await TagRepository.instance.load(f, force: true);
+        await TagRepository.instance.saveToSqlite();
+
+        // 补缺失的阅读记录。
+        final recJ = (j['records'] as Map?) ?? {};
+        for (final entry in recJ.entries) {
+          final key = entry.key;
+          if (!_records.records.containsKey(key)) {
+            _records.records[key] =
+                ReadRecord.fromJson(Map<String, dynamic>.from(entry.value));
+            await _records.saveOneToSqlite(_records.records[key]!);
+          }
+        }
+        notifyListeners();
+      }
+      await dbSaveSetting(key: _jsonReconcileDoneKey, value: 'true');
+    } catch (e, st) {
+      // 对账失败不置标记，下次启动重试。
+      debugPrint('[LibraryStore] JSON reconcile failed: $e');
+      debugPrintStack(stackTrace: st);
+    }
+  }
+
   // ---- Source（委托给 BookRepository） ----
 
   void addSource(BookSource s) {
     _books.addSource(s);
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   void removeSource(String id) {
     _books.removeSource(id);
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   void updateSource(String id, {String? name, String? url, String? username, String? password, String? path, String? note}) {
     _books.updateSource(id, name: name, url: url, username: username, password: password, path: path, note: note);
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   void updateSourceCapability(String id, String label) {
     _books.updateSourceCapability(id, label);
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   BookSource? sourceById(String id) => _books.sourceById(id);
@@ -180,22 +286,30 @@ class LibraryStore extends ChangeNotifier {
       _records.removeByPrefix(prefix);
       _books.metas.removeWhere((k, _) => k.startsWith(prefix));
     }
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   // ---- Record（委托给 RecordRepository） ----
 
-  void recordRead({
+  Future<void> recordRead({
     required BookSource source,
     required String path,
     required String title,
     int? page,
-  }) {
+  }) async {
+    final key = RecordRepository.keyOf(source.type, source.id, path);
     final r = _records.upsert(source: source, path: path, title: title, page: page);
-    TagRepository.instance.link(RecordRepository.keyOf(source.type, source.id, path), '已读');
+    TagRepository.instance.link(key, '已读');
     notifyListeners();
-    _records.saveOneToSqlite(r);
-    _saveJsonBackup();
+    try {
+      // 轻量落盘（B 方案）：只写记录 + 标签关联，不写全量 JSON。
+      await _records.saveOneToSqlite(r);
+      await TagRepository.instance.persistBookLinks(key);
+    } catch (e, st) {
+      _lastSaveError = e;
+      debugPrint('[LibraryStore] recordRead save failed: $e');
+      debugPrintStack(stackTrace: st);
+    }
   }
 
   ReadRecord? recordOf(BookSource source, String path) => _records.of(source, path);
@@ -208,24 +322,9 @@ class LibraryStore extends ChangeNotifier {
   int purgeStaleRecords() {
     final removed = _records.purgeStale(sources);
     if (removed > 0) {
-      notifyListeners(); _save();
+      notifyListeners(); saveToDisk();
     }
     return removed;
-  }
-
-  Future<void> _saveJsonBackup() async {
-    try {
-      final f = await _file();
-      final data = {
-        ..._books.toJson(),
-        ..._records.toJson(),
-        'settings': settings.toJson(),
-        ...TagRepository.instance.toJson(),
-      };
-      await f.writeAsString(jsonEncode(data));
-    } catch (e) {
-      debugPrint('[LibraryStore] JSON backup failed: $e');
-    }
   }
 
   // ---- Meta（委托给 BookRepository） ----
@@ -238,14 +337,14 @@ class LibraryStore extends ChangeNotifier {
     for (final mt in m.metaTags) {
       if (mt.isNotEmpty) TagRepository.instance.link(m.key, mt);
     }
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   // ---- 设置 ----
 
   void updateSettings(AppSettings s) {
     settings = s;
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   // ---- 标签相关（委托给 TagRepository + 跨模块协调） ----
@@ -335,7 +434,7 @@ class LibraryStore extends ChangeNotifier {
       if (m.series == oldName) { m.series = newName; }
     }
     TagRepository.instance.rename(oldName, newName);
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   void deleteTag(String name) {
@@ -346,7 +445,7 @@ class LibraryStore extends ChangeNotifier {
       if (m.series == name) m.series = '';
     }
     TagRepository.instance.delete(name);
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 
   // ---- 跨书源搜索 ----
@@ -386,7 +485,7 @@ class LibraryStore extends ChangeNotifier {
         final key = '${src.type}|${src.id}|$p';
         TagRepository.instance.link(key, '已读');
       }
-      notifyListeners(); _save();
+      notifyListeners(); saveToDisk();
       return;
     }
 
@@ -415,6 +514,6 @@ class LibraryStore extends ChangeNotifier {
         }
       }
     }
-    notifyListeners(); _save();
+    notifyListeners(); saveToDisk();
   }
 }

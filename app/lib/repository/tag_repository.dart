@@ -32,8 +32,10 @@ class TagRepository extends ChangeNotifier {
 
   // ---- 加载 / 持久化 ----
 
-  Future<void> load(File file) async {
-    if (_loaded) return;
+  /// 从 JSON 加载/合并标签（[force] 用于启动一次性对账：
+  /// SQLite 已加载后仍强制合并 JSON 中缺失的标签，不重置现有数据）。
+  Future<void> load(File file, {bool force = false}) async {
+    if (_loaded && !force) return;
     _loaded = true;
     if (!await file.exists()) return;
     try {
@@ -135,6 +137,20 @@ class TagRepository extends ChangeNotifier {
         final parts = key.split('\x00');
         await dbLinkTag(bookKey: parts[0], tagName: _tagNameById(parts[1]));
       }
+    }
+  }
+
+  /// 只持久化某本书的标签与关联（翻页热路径用）。
+  ///
+  /// 与 [saveToSqlite] 的全量 diff 不同，这里不读全表，
+  /// 只对目标书做幂等 upsert（`已读` 等关联在 recordRead 后立刻落盘）。
+  Future<void> persistBookLinks(String bookKey) async {
+    for (final bt in _bookTags) {
+      if (bt.bookKey != bookKey) continue;
+      final name = _tags[bt.tagId]?.name;
+      if (name == null || name.isEmpty) continue;
+      await dbEnsureTag(name: name);
+      await dbLinkTag(bookKey: bookKey, tagName: name);
     }
   }
 

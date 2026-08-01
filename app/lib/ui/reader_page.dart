@@ -67,10 +67,26 @@ class _ReaderPageState extends State<ReaderPage> {
 
   void _ensure(int i) { final b=_book; if(b==null||i<0||i>=b.pageCount)return;
     if(_bytes.containsKey(i)||_loading.contains(i))return;_loading.add(i);
-    bookPage(handle:b.handle,index:i).then((d)async{if(!mounted)return;
-      if(widget.skipAiCache){if(mounted)setState((){_bytes[i]=d;_loading.remove(i);});return;}
-      try{final ai=await lookupCache(pageBytes:d.toList(),scale:2);if(ai!=null&&mounted)setState((){_bytes[i]=ai;_loading.remove(i);});else if(mounted)setState((){_bytes[i]=d;_loading.remove(i);});}catch(_){if(mounted)setState((){_bytes[i]=d;_loading.remove(i);});}
-    }).catchError((_){if(mounted)setState(()=>_loading.remove(i));}); }
+    bookPage(handle: b.handle, index: i).then((d) async {
+      if (!mounted) return;
+      if (widget.skipAiCache) {
+        if (mounted) setState(() { _bytes[i] = d; _loading.remove(i); });
+        return;
+      }
+      try {
+        final ai = await lookupCache(pageBytes: d.toList(), scale: 2);
+        if (ai != null && mounted) {
+          setState(() { _bytes[i] = ai; _loading.remove(i); });
+        } else if (mounted) {
+          setState(() { _bytes[i] = d; _loading.remove(i); });
+        }
+      } catch (_) {
+        if (mounted) setState(() { _bytes[i] = d; _loading.remove(i); });
+      }
+    }).catchError((_) {
+      if (mounted) setState(() => _loading.remove(i));
+    });
+  }
 
   // ---- 双页配对 ----
   (int,int?) pairOf(int page) { if(_dual==DualPageMode.off)return(page,null);final b=_book;if(b==null)return(page,null);
@@ -82,9 +98,9 @@ class _ReaderPageState extends State<ReaderPage> {
   // ---- 翻页 ----
   void _forward() { final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?-s:s); }
   void _back(){ final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?s:-s); }
-  void _go(int d) { final b=_book;if(b==null)return;final n=(_page+d).clamp(0,b.pageCount-1);
+  Future<void> _go(int d) async { final b=_book;if(b==null)return;final n=(_page+d).clamp(0,b.pageCount-1);
     if(n!=_page){setState(()=>_page=n);_photoCtrl.reset();_dualZoomCtrl.value=Matrix4.identity();for(var i=n-2;i<=n+2;i++){_ensure(i);}
-    final s=widget.source;if(s!=null)LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:n);}}
+    final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:n);}}}
 
   // ---- 缩放(仅 +/-/0 键,无滚轮) ----
   void _zoomIn() => _zoomBy(1.25);
@@ -198,7 +214,7 @@ class _ReaderPageState extends State<ReaderPage> {
         scaleEnabled: false, panEnabled: false,
         child: ListView.builder(controller:_webtoonCtrl,itemCount:b.pageCount,itemBuilder:(context,i){final bytes=_bytes[i];
           if(bytes==null){_ensure(i);return const SizedBox(height:200,child:Center(child:CircularProgressIndicator()));}
-          return GestureDetector(onTap:(){if(_page!=i){setState(()=>_page=i);final s=widget.source;if(s!=null)LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}},child:Image(image:ResizeImage(MemoryImage(bytes),width:vw.toInt()),fit:BoxFit.fitWidth),);
+          return GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:vw.toInt()),fit:BoxFit.fitWidth),);
         },),
       );
     });

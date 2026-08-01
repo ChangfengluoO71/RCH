@@ -119,7 +119,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
       // 打上 "AI超分" 元数据标签
       if (done > 0) {
         TagRepository.instance.link(bookKey, 'AI超分');
-        LibraryStore.instance.saveToDisk();
+        await LibraryStore.instance.saveToDisk();
+        if (LibraryStore.instance.lastSaveError != null && mounted) {
+          messenger.showSnackBar(SnackBar(content: const Text('标签已记录，但数据保存失败，请检查磁盘空间'), duration: Duration(seconds: 4)));
+        }
       }
 
       if (mounted) {

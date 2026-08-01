@@ -63,7 +63,7 @@ Future<void> _open(
   }
   final store = LibraryStore.instance;
   // 记录一次"打开"(readCount+1),并取出上次进度。
-  store.recordRead(source: source, path: path, title: title);
+  await store.recordRead(source: source, path: path, title: title);
   final initialPage = store.recordOf(source, path)?.lastPage ?? 0;
   if (!context.mounted) return;
   Navigator.of(context).push(

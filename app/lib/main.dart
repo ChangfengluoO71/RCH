@@ -39,9 +39,46 @@ class RchApp extends StatelessWidget {
           theme: ThemeData.light(useMaterial3: true),
           darkTheme: ThemeData.dark(useMaterial3: true),
           themeMode: dark ? ThemeMode.dark : ThemeMode.light,
-          home: const HomePage(),
+          home: const _LifecycleFlush(child: HomePage()),
         );
       },
     );
   }
+}
+
+/// 应用生命周期兜底：退出时强制 flush 待保存的库数据，
+/// 配合 LibraryStore 的防抖全量保存，避免正常退出丢标签。
+class _LifecycleFlush extends StatefulWidget {
+  const _LifecycleFlush({required this.child});
+  final Widget child;
+
+  @override
+  State<_LifecycleFlush> createState() => _LifecycleFlushState();
+}
+
+class _LifecycleFlushState extends State<_LifecycleFlush> {
+  late final AppLifecycleListener _listener;
+
+  @override
+  void initState() {
+    super.initState();
+    _listener = AppLifecycleListener(
+      onHide: _flush,
+      onPause: _flush,
+      onDetach: _flush,
+    );
+  }
+
+  Future<void> _flush() async {
+    await LibraryStore.instance.flushPendingSave();
+  }
+
+  @override
+  void dispose() {
+    _listener.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

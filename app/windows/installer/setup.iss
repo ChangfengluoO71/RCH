@@ -1,7 +1,7 @@
-; RCH v0.2.1 — Inno Setup 安装脚本
+; RCH v0.3.0 — Inno Setup 安装脚本
 
 #define MyAppName "RCH"
-#define MyAppVersion "0.2.1"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "RCH"
 #define MyAppURL "https://github.com/ChangfengluoO71/RCH"
 #define MyAppExeName "RCH.exe"
@@ -19,7 +19,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=C:\Users\cfl\Desktop\RCH\dist
-OutputBaseFilename=RCH-v0.2.1-windows-x64
+OutputBaseFilename=RCH-v0.3.0-windows-x64
 Compression=lzma2/max
 SolidCompression=yes
 PrivilegesRequired=admin

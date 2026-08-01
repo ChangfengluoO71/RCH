@@ -229,6 +229,9 @@ class AiUpscaleManager extends ChangeNotifier {
         task.updatedAt = DateTime.now().millisecondsSinceEpoch;
         await _persist(task);
         notifyListeners();
+        // 让出一帧：缓存全命中时任务可能在几十毫秒内跑完，
+        // 不等待会导致悬浮窗只看到 0 → 完成 的跳变。
+        await Future<void>.delayed(const Duration(milliseconds: 32));
       }
       try {
         closeBook(handle: bk.handle);

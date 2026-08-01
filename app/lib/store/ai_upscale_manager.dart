@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../repository/tag_repository.dart';
 import '../src/rust/api/ai.dart';
@@ -89,7 +91,8 @@ class AiUpscaleManager extends ChangeNotifier {
   /// 全局导航 key：完成提示对话框使用。
   static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-  static const int _chunk = 20;
+  // 块越小进度更新越频繁（10 页/块：33 页 → 4 次可见更新，模型加载开销可接受）。
+  static const int _chunk = 10;
 
   final List<AiTask> _tasks = [];
   bool _workerRunning = false;
@@ -251,6 +254,7 @@ class AiUpscaleManager extends ChangeNotifier {
         task.updatedAt = DateTime.now().millisecondsSinceEpoch;
         await _persist(task);
         notifyListeners();
+        await _logProgress('进度 ${task.status.name} ${task.done}/${task.total} ${task.title}');
         // 让出一帧：缓存全命中时任务可能在几十毫秒内跑完，
         // 不等待会导致悬浮窗只看到 0 → 完成 的跳变。
         await Future<void>.delayed(const Duration(milliseconds: 32));
@@ -354,6 +358,16 @@ class AiUpscaleManager extends ChangeNotifier {
   Future<void> _persist(AiTask t) async {
     try {
       await dbUpsertAiTask(task: t.toDto());
+    } catch (_) {}
+  }
+
+  /// 追加进度日志（定位"不显示中间进度"用）：每块变化都会落盘。
+  static Future<void> _logProgress(String msg) async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final f = File('${dir.path}${Platform.pathSeparator}ai_progress.log');
+      await f.writeAsString('${DateTime.now().toIso8601String()} $msg\n',
+          mode: FileMode.append);
     } catch (_) {}
   }
 

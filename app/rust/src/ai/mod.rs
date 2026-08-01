@@ -323,4 +323,16 @@ mod tests {
     fn test_key_differs_by_scale() {
         assert_ne!(cache_key("abc", 2), cache_key("abc", 4));
     }
+
+    #[test]
+    fn webp_decode_probe() {
+        // 临时探针：验证 image crate 能否解码真实 WebP 页面（用户漫画页为 WebP）。
+        let path = std::env::temp_dir().join("rch_probe_page.webp");
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("跳过：缺少探针文件 {:?}", path);
+            return;
+        };
+        let img = image::load_from_memory(&bytes).expect("WEBP 解码失败");
+        println!("WEBP 解码成功: {}x{}", img.width(), img.height());
+    }
 }

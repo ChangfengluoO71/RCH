@@ -27,6 +27,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
   bool get _bookAiActive =>
       AiUpscaleManager.instance.tasks.any((t) => t.bookKey == _meta.key && t.isActive);
 
+  /// 详情页按钮实时进度（恢复旧版逐页进度显示的体验）。
+  String get _aiActiveLabel {
+    for (final t in AiUpscaleManager.instance.tasks) {
+      if (t.bookKey == _meta.key && t.isActive) {
+        return '后台超分中 ${t.done}/${t.total}';
+      }
+    }
+    return '后台超分中...';
+  }
+
   @override void initState() { super.initState();
     _meta = LibraryStore.instance.metaOf(widget.source, widget.path);
     AiUpscaleManager.instance.addListener(_onAiChanged);
@@ -185,7 +195,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
             ? OutlinedButton.icon(
                 onPressed: null,
                 icon: const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                label: const Text('后台超分中...'),
+                label: Text(_aiActiveLabel),
               )
             : hasAiTag
               ? OutlinedButton.icon(

@@ -31,7 +31,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   String get _aiActiveLabel {
     for (final t in AiUpscaleManager.instance.tasks) {
       if (t.bookKey == _meta.key && t.isActive) {
-        return '后台超分中 ${t.done}/${t.total}';
+        return t.total > 0 ? '后台超分中 ${t.done}/${t.total}' : '后台超分中...';
       }
     }
     return '后台超分中...';

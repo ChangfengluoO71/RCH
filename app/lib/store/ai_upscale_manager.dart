@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -90,9 +89,6 @@ class AiUpscaleManager extends ChangeNotifier {
 
   /// 全局导航 key：完成提示对话框使用。
   static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-  // 块越小进度更新越频繁（10 页/块：33 页 → 4 次可见更新，模型加载开销可接受）。
-  static const int _chunk = 10;
 
   final List<AiTask> _tasks = [];
   bool _workerRunning = false;
@@ -234,30 +230,24 @@ class AiUpscaleManager extends ChangeNotifier {
       await _persist(task);
       notifyListeners();
 
-      for (var start = 0; start < task.total; start += _chunk) {
+      // 逐页处理：每页完成立即更新进度。
+      // 调试构建下 image 编解码较慢（每页约 5-10 秒），
+      // 批量模式会让界面长时间停在 0/N，逐页才能恢复流畅的进度递增。
+      for (var i = 0; i < task.total; i++) {
         if (task.status == AiTaskStatus.canceled) break;
-        final end = start + _chunk < task.total ? start + _chunk : task.total;
         try {
-          final pages = <Uint8List>[];
-          for (var i = start; i < end; i++) {
-            pages.add(await bookPage(handle: bk.handle, index: i)
-                .timeout(const Duration(seconds: 60)));
-          }
-          final results = await superResolveBatch(pages: pages, scale: task.scale)
-              .timeout(const Duration(minutes: 5));
-          for (final r in results) {
-            if (r.isNotEmpty) task.done++;
-          }
+          final pageBytes = await bookPage(handle: bk.handle, index: i)
+              .timeout(const Duration(seconds: 60));
+          final result = await superResolve(pageBytes: pageBytes, scale: task.scale)
+              .timeout(const Duration(minutes: 2));
+          if (result.isNotEmpty) task.done++;
         } catch (_) {
-          // 整块失败：跳过，任务继续
+          // 单页失败：跳过，任务继续
         }
         task.updatedAt = DateTime.now().millisecondsSinceEpoch;
         await _persist(task);
         notifyListeners();
         await _logProgress('进度 ${task.status.name} ${task.done}/${task.total} ${task.title}');
-        // 让出一帧：缓存全命中时任务可能在几十毫秒内跑完，
-        // 不等待会导致悬浮窗只看到 0 → 完成 的跳变。
-        await Future<void>.delayed(const Duration(milliseconds: 32));
       }
       try {
         closeBook(handle: bk.handle);

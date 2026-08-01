@@ -82,6 +82,8 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
   Widget _taskTile(AiTask t) {
     final label = t.status == AiTaskStatus.running ? 'AI 超分中' : '排队中';
     final progress = t.total > 0 ? t.done / t.total : 0.0;
+    // 排队中（total 未知）不显示误导性的 0/0。
+    final countText = t.total > 0 ? '${t.done}/${t.total}' : '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Column(
@@ -91,7 +93,7 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('$label ${t.done}/${t.total}',
+              Text(countText.isEmpty ? label : '$label $countText',
                   style: const TextStyle(color: Colors.white, fontSize: 12)),
               const SizedBox(width: 10),
               InkWell(

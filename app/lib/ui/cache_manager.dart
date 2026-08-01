@@ -3,9 +3,12 @@ import 'dart:io';
 
 import 'package:app/src/rust/api/cache.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/store/cache_root_marker.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// 缓存管理面板：展示7类缓存各占空间、独立清理按钮、自定义缓存目录。
 class CacheManagerPanel extends StatefulWidget {
@@ -52,72 +55,184 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
 
   Future<void> _changeCacheDir() async {
     final current = await cacheRootPath();
-    final defaultPath = await defaultCacheRootPath();
+    final supportDir = (await getApplicationSupportDirectory()).path;
     if (!mounted) return;
 
-    final controller = TextEditingController(text: current);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('自定义缓存目录'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('当前: $current',
-                style: const TextStyle(fontSize: 12, color: Colors.white54)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              decoration: InputDecoration(
-                labelText: '新缓存目录路径',
-                hintText: '留空恢复默认 ($defaultPath)',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '修改后需要将旧目录内容手动迁移到新目录，应用不会自动迁移。',
-              style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')),
-          FilledButton(
-            onPressed: () => Navigator.of(c).pop(controller.text.trim()),
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-    if (result == null || !mounted) return;
-
-    // 检查目录是否存在/可创建
-    final newPath = result.isEmpty ? '' : result;
-    if (newPath.isNotEmpty) {
-      final dir = Directory(newPath);
-      if (!await dir.exists()) {
-        try {
-          await dir.create(recursive: true);
-        } catch (e) {
-          if (mounted) _snack('无法创建目录: $e');
-          return;
-        }
+    final picked = await getDirectoryPath(initialDirectory: current);
+    if (picked == null || !mounted) return;
+    final newPath = picked.trim();
+    if (_samePath(current, newPath)) {
+      _snack('当前已是该缓存目录');
+      return;
+    }
+    if (_isSupportDirOrRelated(newPath, supportDir)) {
+      _snack('不能选择应用支持目录或其父/子目录');
+      return;
+    }
+    final dir = Directory(newPath);
+    if (!await dir.exists()) {
+      try {
+        await dir.create(recursive: true);
+      } catch (e) {
+        _snack('无法创建目录: $e');
+        return;
       }
     }
 
+    final needed = await _rootSize(current);
+    final free = await availableSpace(path: newPath);
+    if (free < needed) {
+      _snack('目标盘空间不足：需要 ${fmtSize(needed)}，可用 ${fmtSize(free)}');
+      return;
+    }
+
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('迁移根目录'),
+        content: Text('将整个根目录（数据库 + 缓存，约 ${fmtSize(needed)}）从：\n$current\n\n迁移到：\n$newPath\n\n书源、标签、阅读记录随数据库一起迁移。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确认迁移')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final ok = await _runMigration(from: current, to: newPath);
+    if (!ok || !mounted) return;
+
     await setCacheRootPath(path: newPath);
-
-    // 持久化设置
+    await writeCacheRootMarker(newPath);
     final store = LibraryStore.instance;
-    store.settings.cacheDir = newPath.isEmpty ? null : newPath;
+    store.settings.cacheDir = newPath;
     store.updateSettings(store.settings);
-
+    await deleteMigratedItems(root: current);
     if (mounted) {
-      _snack(newPath.isEmpty ? '已恢复默认缓存目录' : '缓存目录已更改为: $newPath');
+      _snack('根目录已切换并完成迁移');
       await _refresh();
     }
+  }
+
+  Future<void> _restoreDefaultCacheDir() async {
+    final current = await cacheRootPath();
+    final defaultPath = await defaultCacheRootPath();
+    final supportDir = (await getApplicationSupportDirectory()).path;
+    if (!mounted) return;
+    if (_samePath(current, defaultPath)) {
+      _snack('当前已是默认缓存目录');
+      return;
+    }
+    if (_isSupportDirOrRelated(defaultPath, supportDir)) {
+      _snack('默认目录与应用支持目录冲突，无法恢复');
+      return;
+    }
+    final needed = await _rootSize(current);
+    final free = await availableSpace(path: defaultPath);
+    if (free < needed) {
+      _snack('默认盘空间不足：需要 ${fmtSize(needed)}，可用 ${fmtSize(free)}');
+      return;
+    }
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('恢复默认缓存目录'),
+        content: Text('将整个根目录（约 ${fmtSize(needed)}）从：\n$current\n\n迁回默认目录：\n$defaultPath'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确认恢复')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final ok = await _runMigration(from: current, to: defaultPath);
+    if (!ok || !mounted) return;
+
+    await setCacheRootPath(path: '');
+    await writeCacheRootMarker('');
+    final store = LibraryStore.instance;
+    store.settings.cacheDir = null;
+    store.updateSettings(store.settings);
+    await deleteMigratedItems(root: current);
+    if (mounted) {
+      _snack('已恢复默认缓存目录');
+      await _refresh();
+    }
+  }
+
+  /// 根目录待迁移总量：缓存大小 + database.db（若存在）。
+  Future<BigInt> _rootSize(String root) async {
+    final sizes = await cacheSizes();
+    var total = sizes.page +
+        sizes.raw +
+        sizes.cover +
+        sizes.thumb +
+        sizes.ai +
+        sizes.download;
+    try {
+      final db = File('$root${Platform.pathSeparator}database.db');
+      if (await db.exists()) {
+        total += BigInt.from(await db.length());
+      }
+    } catch (_) {}
+    return total;
+  }
+
+  Future<bool> _runMigration({required String from, required String to}) async {
+    final supportDir = (await getApplicationSupportDirectory()).path;
+    if (!mounted) return false;
+    final notifier = ValueNotifier<double>(0);
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('迁移根目录'),
+        content: ValueListenableBuilder<double>(
+          valueListenable: notifier,
+          builder: (_, v, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(value: v > 0 ? v : null),
+              const SizedBox(height: 8),
+              Text('迁移中 ${(v * 100).toStringAsFixed(0)}% ...'),
+            ],
+          ),
+        ),
+      ),
+    ));
+    final timer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
+      final p = await migrationProgress();
+      final total = p.$2;
+      notifier.value = total == BigInt.zero ? 0 : p.$1 / total;
+    });
+    try {
+      await migrateCacheRoot(from: from, to: to, supportDir: supportDir);
+      notifier.value = 1;
+      return true;
+    } catch (e) {
+      _snack('迁移失败: $e');
+      return false;
+    } finally {
+      timer.cancel();
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    }
+  }
+
+  bool _samePath(String a, String b) {
+    String n(String x) {
+      final t = x.trim().replaceAll('\\', '/');
+      return t.endsWith('/') ? t.substring(0, t.length - 1) : t;
+    }
+    return n(a).toLowerCase() == n(b).toLowerCase();
+  }
+
+  bool _isSupportDirOrRelated(String path, String supportDir) {
+    final p = path.replaceAll('\\', '/').toLowerCase();
+    final s = supportDir.replaceAll('\\', '/').toLowerCase();
+    return p == s || s.startsWith('$p/') || p.startsWith('$s/');
   }
 
   void _snack(String msg) {
@@ -184,6 +299,15 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
                 onPressed: _changeCacheDir,
                 icon: const Icon(Icons.folder_open, size: 18),
                 label: const Text('更改缓存目录'),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _restoreDefaultCacheDir,
+                icon: const Icon(Icons.settings_backup_restore, size: 18),
+                label: const Text('恢复默认缓存目录'),
               ),
             ),
             const SizedBox(height: 4),

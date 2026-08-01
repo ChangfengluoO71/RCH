@@ -67,6 +67,38 @@ Future<void> setCacheRootPath({required String path}) =>
 Future<String> defaultCacheRootPath() =>
     RustLib.instance.api.crateApiCacheDefaultCacheRootPath();
 
+/// 迁移应用根目录（database.db + cache/ + download/ + 根级文件），排除支持目录。
+/// 成功返回复制的字节数；调用方随后 set_cache_root_path + delete_migrated_items。
+Future<BigInt> migrateCacheRoot({
+  required String from,
+  required String to,
+  required String supportDir,
+}) => RustLib.instance.api.crateApiCacheMigrateCacheRoot(
+  from: from,
+  to: to,
+  supportDir: supportDir,
+);
+
+/// 迁移进度（已复制字节, 总字节），供 Dart 轮询。
+Future<(BigInt, BigInt)> migrationProgress() =>
+    RustLib.instance.api.crateApiCacheMigrationProgress();
+
+/// 目标盘可用空间（字节）。路径不存在返回 0。
+Future<BigInt> availableSpace({required String path}) =>
+    RustLib.instance.api.crateApiCacheAvailableSpace(path: path);
+
+/// 删除根目录下已迁移的项目（database.db、cache/、download/），返回释放字节。
+Future<BigInt> deleteMigratedItems({required String root}) =>
+    RustLib.instance.api.crateApiCacheDeleteMigratedItems(root: root);
+
+/// 读取未完成迁移标记（from, to）；无标记返回 null。
+Future<(String, String)?> pendingMigration({required String root}) =>
+    RustLib.instance.api.crateApiCachePendingMigration(root: root);
+
+/// 清除迁移标记。
+Future<void> clearMigrationMarker({required String root}) =>
+    RustLib.instance.api.crateApiCacheClearMigrationMarker(root: root);
+
 /// 缓存分类大小信息。
 class CacheSize {
   /// 页面缓存(字节)，L2 磁盘页面缓存（page/）。

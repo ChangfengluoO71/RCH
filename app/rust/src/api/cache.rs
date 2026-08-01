@@ -111,4 +111,35 @@ pub fn default_cache_root_path() -> String {
     }
 }
 
+/// 迁移应用根目录（database.db + cache/ + download/ + 根级文件），排除支持目录。
+/// 成功返回复制的字节数；调用方随后 set_cache_root_path + delete_migrated_items。
+pub fn migrate_cache_root(from: String, to: String, support_dir: String) -> Result<u64, String> {
+    cache::migrate_cache_root(&from, &to, &support_dir).map_err(|e| format!("{e}"))
+}
+
+/// 迁移进度（已复制字节, 总字节），供 Dart 轮询。
+pub fn migration_progress() -> (u64, u64) {
+    cache::migration_progress()
+}
+
+/// 目标盘可用空间（字节）。路径不存在返回 0。
+pub fn available_space(path: String) -> u64 {
+    cache::available_space(&path)
+}
+
+/// 删除根目录下已迁移的项目（database.db、cache/、download/），返回释放字节。
+pub fn delete_migrated_items(root: String) -> Result<u64, String> {
+    cache::delete_migrated_items(&root).map_err(|e| format!("{e}"))
+}
+
+/// 读取未完成迁移标记（from, to）；无标记返回 null。
+pub fn pending_migration(root: String) -> Option<(String, String)> {
+    cache::migration_pending(&root)
+}
+
+/// 清除迁移标记。
+pub fn clear_migration_marker(root: String) {
+    cache::clear_migration_marker(&root);
+}
+
 use std::path::PathBuf;

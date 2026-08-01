@@ -1,9 +1,9 @@
 //! 磁盘缓存管理：五级缓存目录 + 大小计算 + 清理 + 封面缓存读写 + 自定义缓存根目录。
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock, RwLock};
 
 /// 用户自定义缓存根目录（设置后可迁移缓存到其他磁盘）。
 static CUSTOM_CACHE_ROOT: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
@@ -224,6 +224,237 @@ pub fn clear_all_caches() -> Result<u64> {
         + clear_download_cache()?)
 }
 
+// ====== 应用根目录迁移（O1-A：复制 + 校验 + 成功后删源） ======
+
+const MIGRATION_MARKER: &str = "migration.partial";
+
+static MIGRATION_COPIED: OnceLock<AtomicU64> = OnceLock::new();
+static MIGRATION_TOTAL: OnceLock<AtomicU64> = OnceLock::new();
+static MIGRATION_TARGETS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+
+fn migration_copied() -> &'static AtomicU64 {
+    MIGRATION_COPIED.get_or_init(|| AtomicU64::new(0))
+}
+fn migration_total() -> &'static AtomicU64 {
+    MIGRATION_TOTAL.get_or_init(|| AtomicU64::new(0))
+}
+fn migration_targets() -> &'static Mutex<Vec<PathBuf>> {
+    MIGRATION_TARGETS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 当前迁移进度（已复制字节, 总字节）。供 Dart 轮询。
+pub fn migration_progress() -> (u64, u64) {
+    (
+        migration_copied().load(Ordering::Relaxed),
+        migration_total().load(Ordering::Relaxed),
+    )
+}
+
+fn file_count(p: &Path) -> u64 {
+    let mut n = 0u64;
+    if let Ok(entries) = std::fs::read_dir(p) {
+        for e in entries.flatten() {
+            if let Ok(meta) = e.metadata() {
+                if meta.is_file() {
+                    n += 1;
+                } else if meta.is_dir() {
+                    n += file_count(&e.path());
+                }
+            }
+        }
+    }
+    n
+}
+
+fn copy_tree(src: &Path, dst: &Path) -> Result<u64> {
+    if !src.exists() {
+        return Ok(0);
+    }
+    std::fs::create_dir_all(dst)?;
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(src)? {
+        let e = entry?;
+        let from = e.path();
+        let to = dst.join(e.file_name());
+        let meta = e.metadata()?;
+        if meta.is_dir() {
+            total += copy_tree(&from, &to)?;
+        } else if meta.is_file() {
+            std::fs::copy(&from, &to)?;
+            total += meta.len();
+            migration_copied().fetch_add(meta.len(), Ordering::Relaxed);
+        }
+    }
+    Ok(total)
+}
+
+/// 目标盘可用空间（字节）。路径不存在返回 0。
+pub fn available_space(path: &str) -> u64 {
+    let p = PathBuf::from(path);
+    if p.exists() {
+        fs2::available_space(&p).unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+/// 迁移应用根目录：database.db + cache/ + download/ + 根级普通文件。
+///
+/// - 排除嵌套的应用支持目录（library.json 所在）与迁移标记本身；
+/// - 开始写 `migration.partial` 标记（含 from/to，支持启动恢复），
+///   成功或优雅失败时移除；
+/// - 失败时清理目标已复制内容，源保持不变；
+/// - 成功后由调用方删除源项目（delete_migrated_items）。
+pub fn migrate_cache_root(from: &str, to: &str, support_dir: &str) -> Result<u64> {
+    let from_p = PathBuf::from(from);
+    let to_p = PathBuf::from(to);
+    let support_p = PathBuf::from(support_dir);
+
+    if from_p == to_p || from_p.starts_with(&to_p) || to_p.starts_with(&from_p) {
+        bail!("目标目录不能与源目录相同或互为子目录");
+    }
+    if from_p.parent() == Some(&from_p) || to_p.parent() == Some(&to_p) {
+        bail!("缓存目录不能是磁盘根目录");
+    }
+
+    // 收集待迁移项目：database.db、cache/、download/、根级普通文件。
+    struct Item {
+        name: String,
+        is_dir: bool,
+    }
+    let mut items: Vec<Item> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&from_p) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name == MIGRATION_MARKER {
+                continue;
+            }
+            let p = e.path();
+            if p == support_p || support_p.starts_with(&p) {
+                continue; // 嵌套支持目录（或其内部）不迁移
+            }
+            let meta = match e.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.is_dir() {
+                if name == "cache" || name == "download" {
+                    items.push(Item { name, is_dir: true });
+                }
+                // 其他未知目录不迁移
+            } else if meta.is_file() {
+                items.push(Item { name, is_dir: false });
+            }
+        }
+    }
+
+    let mut grand_total = 0u64;
+    for it in &items {
+        let s = from_p.join(&it.name);
+        grand_total += if it.is_dir {
+            dir_size(&s)
+        } else {
+            std::fs::metadata(&s).map(|m| m.len()).unwrap_or(0)
+        };
+    }
+    migration_copied().store(0, Ordering::Relaxed);
+    migration_total().store(grand_total, Ordering::Relaxed);
+    migration_targets().lock().unwrap().clear();
+
+    let marker = from_p.join(MIGRATION_MARKER);
+    let marker_json = serde_json::json!({ "from": from, "to": to });
+    std::fs::write(&marker, serde_json::to_vec_pretty(&marker_json)?)?;
+
+    let result = (|| -> Result<u64> {
+        let mut copied_total = 0u64;
+        for it in &items {
+            let s = from_p.join(&it.name);
+            let t = to_p.join(&it.name);
+            if it.is_dir {
+                copied_total += copy_tree(&s, &t)?;
+            } else {
+                std::fs::copy(&s, &t)?;
+                let len = std::fs::metadata(&s).map(|m| m.len()).unwrap_or(0);
+                copied_total += len;
+                migration_copied().fetch_add(len, Ordering::Relaxed);
+            }
+            migration_targets().lock().unwrap().push(t);
+        }
+        // 校验：目录文件数量一致、文件大小一致。
+        for it in &items {
+            let s = from_p.join(&it.name);
+            let t = to_p.join(&it.name);
+            if it.is_dir {
+                if file_count(&s) != file_count(&t) {
+                    bail!("迁移校验失败：{} 文件数量不一致", it.name);
+                }
+            } else {
+                let sl = std::fs::metadata(&s).map(|m| m.len()).unwrap_or(0);
+                let tl = std::fs::metadata(&t).map(|m| m.len()).unwrap_or(0);
+                if sl == 0 || sl != tl {
+                    bail!("迁移校验失败：{} 大小不一致", it.name);
+                }
+            }
+        }
+        Ok(copied_total)
+    })();
+
+    match result {
+        Ok(n) => {
+            let _ = std::fs::remove_file(&marker);
+            Ok(n)
+        }
+        Err(e) => {
+            for t in migration_targets().lock().unwrap().iter() {
+                let _ = std::fs::remove_dir_all(t);
+            }
+            let _ = std::fs::remove_file(&marker);
+            Err(e)
+        }
+    }
+}
+
+/// 读取未完成的迁移标记（from, to）。
+pub fn migration_pending(root: &str) -> Option<(String, String)> {
+    let p = PathBuf::from(root).join(MIGRATION_MARKER);
+    if !p.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&p).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let from = v["from"].as_str()?.to_string();
+    let to = v["to"].as_str()?.to_string();
+    Some((from, to))
+}
+
+/// 清除迁移标记。
+pub fn clear_migration_marker(root: &str) {
+    let _ = std::fs::remove_file(PathBuf::from(root).join(MIGRATION_MARKER));
+}
+
+/// 删除根目录下已迁移的项目（database.db、cache/、download/），返回释放字节。
+pub fn delete_migrated_items(root: &str) -> Result<u64> {
+    let root_p = PathBuf::from(root);
+    if root_p.parent() == Some(&root_p) {
+        bail!("缓存目录不能是磁盘根目录");
+    }
+    let mut freed = 0u64;
+    for name in ["database.db", "cache", "download"] {
+        let p = root_p.join(name);
+        if !p.starts_with(&root_p) || !p.exists() {
+            continue;
+        }
+        let meta = std::fs::metadata(&p)?;
+        freed += if meta.is_dir() { dir_size(&p) } else { meta.len() };
+        if meta.is_dir() {
+            std::fs::remove_dir_all(&p)?;
+        } else {
+            std::fs::remove_file(&p)?;
+        }
+    }
+    Ok(freed)
+}
+
 /// 确保所有缓存目录存在。
 pub fn ensure_all_cache_dirs() -> Result<()> {
     CacheDir::Page.ensure()?;
@@ -272,5 +503,69 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         assert_eq!(dir_size(&tmp), 0);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn migrate_copies_db_cache_download_skips_support() {
+        let base = std::env::temp_dir().join("rch_test_migrate_v2");
+        let from = base.join("from");
+        let to = base.join("to");
+        let support = from.join("RCH");
+        let _ = std::fs::remove_dir_all(&base);
+
+        std::fs::create_dir_all(from.join("cache/page")).unwrap();
+        std::fs::create_dir_all(from.join("download")).unwrap();
+        std::fs::create_dir_all(&support).unwrap();
+        std::fs::write(from.join("database.db"), vec![1u8; 500]).unwrap();
+        std::fs::write(from.join("cache/page/a.bin"), vec![2u8; 100]).unwrap();
+        std::fs::write(from.join("download/b.zip"), vec![3u8; 200]).unwrap();
+        std::fs::write(from.join("note.txt"), b"root file").unwrap();
+        std::fs::write(support.join("library.json"), b"{}").unwrap();
+
+        let n = migrate_cache_root(
+            from.to_str().unwrap(),
+            to.to_str().unwrap(),
+            support.to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(n, 500 + 100 + 200 + 9);
+        assert!(to.join("database.db").exists());
+        assert!(to.join("cache/page/a.bin").exists());
+        assert!(to.join("download/b.zip").exists());
+        assert!(to.join("note.txt").exists());
+        // 支持目录不迁移；成功迁移后标记被清除
+        assert!(!to.join("RCH").exists());
+        assert!(!from.join(MIGRATION_MARKER).exists());
+
+        let freed = delete_migrated_items(from.to_str().unwrap()).unwrap();
+        assert!(freed >= 800);
+        assert!(!from.join("database.db").exists());
+        assert!(!from.join("cache").exists());
+        assert!(!from.join("download").exists());
+        assert!(from.join("RCH").exists()); // 支持目录保留
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn migrate_rejects_unsafe_paths() {
+        let base = std::env::temp_dir().join("rch_test_migrate_safe_v2");
+        let a = base.join("a");
+        let support = base.join("sup");
+        let _ = std::fs::create_dir_all(&a);
+        let _ = std::fs::create_dir_all(&support);
+        assert!(
+            migrate_cache_root(a.to_str().unwrap(), a.to_str().unwrap(), support.to_str().unwrap())
+                .is_err()
+        );
+        assert!(
+            migrate_cache_root(base.to_str().unwrap(), a.to_str().unwrap(), support.to_str().unwrap())
+                .is_err()
+        );
+        assert!(
+            migrate_cache_root(a.to_str().unwrap(), base.to_str().unwrap(), support.to_str().unwrap())
+                .is_err()
+        );
+        assert!(migrate_cache_root("C:\\", "D:\\tmp_x2", support.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

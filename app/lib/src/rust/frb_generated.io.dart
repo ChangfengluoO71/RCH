@@ -60,6 +60,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ReadRecordDto dco_decode_box_autoadd_read_record_dto(dynamic raw);
 
   @protected
+  (String, String) dco_decode_box_autoadd_record_string_string(dynamic raw);
+
+  @protected
   CacheSize dco_decode_cache_size(dynamic raw);
 
   @protected
@@ -120,6 +123,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
   @protected
+  (String, String)? dco_decode_opt_box_autoadd_record_string_string(
+    dynamic raw,
+  );
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -127,6 +135,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReadRecordDto dco_decode_read_record_dto(dynamic raw);
+
+  @protected
+  (String, String) dco_decode_record_string_string(dynamic raw);
+
+  @protected
+  (BigInt, BigInt) dco_decode_record_u_64_u_64(dynamic raw);
 
   @protected
   SettingEntryDto dco_decode_setting_entry_dto(dynamic raw);
@@ -188,6 +202,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReadRecordDto sse_decode_box_autoadd_read_record_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  (String, String) sse_decode_box_autoadd_record_string_string(
     SseDeserializer deserializer,
   );
 
@@ -260,6 +279,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
 
   @protected
+  (String, String)? sse_decode_opt_box_autoadd_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
@@ -267,6 +291,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReadRecordDto sse_decode_read_record_dto(SseDeserializer deserializer);
+
+  @protected
+  (String, String) sse_decode_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  (BigInt, BigInt) sse_decode_record_u_64_u_64(SseDeserializer deserializer);
 
   @protected
   SettingEntryDto sse_decode_setting_entry_dto(SseDeserializer deserializer);
@@ -337,6 +369,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_read_record_dto(
     ReadRecordDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_record_string_string(
+    (String, String) self,
     SseSerializer serializer,
   );
 
@@ -425,6 +463,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_record_string_string(
+    (String, String)? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_list_prim_u_8_strict(
     Uint8List? self,
     SseSerializer serializer,
@@ -435,6 +479,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_read_record_dto(ReadRecordDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_record_string_string(
+    (String, String) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_record_u_64_u_64(
+    (BigInt, BigInt) self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_setting_entry_dto(

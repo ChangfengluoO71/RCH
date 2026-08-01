@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-/// 对单张页面图片执行 AI 超分（4x）。
+/// 对单张页面图片执行 AI 超分（默认 2x，scale 参数传给 CLI 的 -s）。
 /// scale 参数用于传递给 CLI 的 -s 参数。
 Future<Uint8List> superResolve({
   required List<int> pageBytes,
@@ -32,5 +32,14 @@ Future<List<Uint8List>> superResolveBatch({
   required int scale,
 }) => RustLib.instance.api.crateApiAiSuperResolveBatch(
   pages: pages,
+  scale: scale,
+);
+
+/// 删除某页的 AI 超分缓存（取消整本超分时按页清理，不影响其他书）。
+Future<void> deleteAiCacheForPage({
+  required List<int> pageBytes,
+  required int scale,
+}) => RustLib.instance.api.crateApiAiDeleteAiCacheForPage(
+  pageBytes: pageBytes,
   scale: scale,
 );

@@ -59,7 +59,7 @@ flutter run -d windows
 - **流畅翻页**:L1 内存 LRU 缓存 + L2 磁盘缓存(读过的页写盘) + 后台并行预取
 - **`+/-/0` 键缩放**(日漫/美漫/条漫三模式统一)
 - **WebDAV 下载进度**: 首次下载显示百分比进度条 + 进度数字，每 300ms 轮询 Rust 端进度
-- **AI 超分**: 右键菜单单页 4x 超分 + 详情页整本超分，端侧推理，结果缓存 ai/ 目录
+- **AI 超分**: 右键菜单单页 2x 超分 + 详情页整本超分，端侧推理，结果缓存 ai/ 目录
 
 ### 主界面
 - **左侧导航**:最近阅读 / 最多阅读 / 标签管理 / 书源列表 / 设置
@@ -110,7 +110,7 @@ flutter run -d windows
 - 应用数据持久化:SQLite 主存储 + library.json 备份(sources/metas/records/tags/settings)
 - 下载进度: Rust 端 AtomicU64 线程安全进度追踪 + Flutter 端每 300ms 轮询更新
 - 五级缓存目录: raw / cover / thumb / ai / temp, 分类独立大小查询与清理
-- AI 超分: 4x Real-ESRGAN animevideov3 (CLI 批量推理), ONNX 模型已备, 结果写入 ai/ 磁盘缓存
+- AI 超分: 2x Real-ESRGAN animevideov3 (CLI 批量推理), 结果写入 ai/ 磁盘缓存
 
 ## 待建设（按优先级）
 

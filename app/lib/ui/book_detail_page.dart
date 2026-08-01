@@ -1,7 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:app/repository/tag_repository.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/book.dart';
-import 'package:app/src/rust/api/cache.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
@@ -55,13 +56,25 @@ class _BookDetailPageState extends State<BookDetailPage> {
               Navigator.of(ctx).pop();
               final store = LibraryStore.instance;
               final bookKey = _meta.key;
+              final messenger = ScaffoldMessenger.of(context);
+              messenger.showSnackBar(const SnackBar(content: Text('正在清除本书 AI 缓存...'), duration: Duration(seconds: 2)));
               // 移除 AI超分 标签
               TagRepository.instance.unlink(bookKey, 'AI超分');
-              store.saveToDisk();
-              // 清空所有 AI 缓存（简单方案：清空 ai/ 目录）
+              await store.saveToDisk();
+              // 只清本书的 AI 缓存：逐页按内容 hash 删除，不影响其他书
               try {
-                await clearAiCache();
-              } catch (_) {}
+                final isWebdav = widget.source.isWebDav;
+                final bk = isWebdav
+                    ? await openWebdavBook(session: await webdavSessionFor(widget.source), path: widget.path)
+                    : await openLocalBook(path: widget.path);
+                for (var i = 0; i < bk.pageCount; i++) {
+                  final bytes = await bookPage(handle: bk.handle, index: i);
+                  await deleteAiCacheForPage(pageBytes: bytes, scale: 2);
+                }
+                try { closeBook(handle: bk.handle); } catch (_) {}
+              } catch (e) {
+                messenger.showSnackBar(SnackBar(content: Text('清除 AI 缓存失败: $e')));
+              }
               if (mounted) setState(() {});
             },
             child: const Text('确认取消'),
@@ -101,16 +114,28 @@ class _BookDetailPageState extends State<BookDetailPage> {
       if (mounted) setState(() => _aiPageCount = total);
       int done = 0;
       messenger.showSnackBar(SnackBar(content: Text('正在 AI 超分 $total 页...'), duration: const Duration(hours: 1)));
-      for (var i = 0; i < total; i++) {
+      // 批量超分（Phase 2）：每 20 页一次 CLI 调用，避免整本一次性载入内存。
+      const chunk = 20;
+      for (var start = 0; start < total; start += chunk) {
         if (!mounted) break;
+        final end = start + chunk < total ? start + chunk : total;
         try {
-          final pageBytes = await bookPage(handle: bk.handle, index: i);
-          await superResolve(pageBytes: pageBytes, scale: 2);
-          done++;
+          final pages = <Uint8List>[];
+          for (var i = start; i < end; i++) {
+            pages.add(await bookPage(handle: bk.handle, index: i));
+          }
+          final results = await superResolveBatch(pages: pages, scale: 2);
+          for (final r in results) {
+            if (r.isNotEmpty) {
+              done++;
+            } else {
+              failed++;
+            }
+          }
         } catch (_) {
-          failed++;
+          failed += end - start;
         }
-        if (mounted) setState(() => _aiDone = done);
+        if (mounted) setState(() => _aiDone = done + failed);
       }
       messenger.hideCurrentSnackBar();
       // 关闭 book session

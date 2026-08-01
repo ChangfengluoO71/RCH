@@ -1,1407 +1,0 @@
-
-pytorch
-2.13.0+cpu:‰“
-	
-input
-body.0.weight
-body.0.biasconv2dnode_conv2d"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J’
-	namespace„: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.0: torch.nn.modules.conv.Conv2d/conv2d: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J´
-pkg.torch.onnx.fx_node™%conv2d : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%x, %p_body_0_weight, %p_body_0_bias, [1, 1], [1, 1]), kwargs = {})J>
-pkg.torch.onnx.name_scopes ['', 'body', 'body.0', 'conv2d']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-ô
-conv2d
-val_5prelu
-node_prelu"PReluJ•
-	namespace‡: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.1: torch.nn.modules.activation.PReLU/prelu: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J–
-pkg.torch.onnx.fx_node|%prelu : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d, %p_body_1_weight), kwargs = {})J=
-pkg.torch.onnx.name_scopes['', 'body', 'body.1', 'prelu']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-œ	
-prelu
-body.2.weight
-body.2.biasconv2d_1node_conv2d_1"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J”
-	namespace†: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.2: torch.nn.modules.conv.Conv2d/conv2d_1: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']Jº
-pkg.torch.onnx.fx_nodeŸ%conv2d_1 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu, %p_body_2_weight, %p_body_2_bias, [1, 1], [1, 1]), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.2', 'conv2d_1']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-ƒ
-conv2d_1
-val_6prelu_1node_prelu_1"PReluJ—
-	namespace‰: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.3: torch.nn.modules.activation.PReLU/prelu_1: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J›
-pkg.torch.onnx.fx_node€%prelu_1 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_1, %p_body_3_weight), kwargs = {})J?
-pkg.torch.onnx.name_scopes!['', 'body', 'body.3', 'prelu_1']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
- 	
-prelu_1
-body.4.weight
-body.4.biasconv2d_2node_conv2d_2"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J”
-	namespace†: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.4: torch.nn.modules.conv.Conv2d/conv2d_2: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¼
-pkg.torch.onnx.fx_node¡%conv2d_2 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_1, %p_body_4_weight, %p_body_4_bias, [1, 1], [1, 1]), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.4', 'conv2d_2']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-ƒ
-conv2d_2
-val_7prelu_2node_prelu_2"PReluJ—
-	namespace‰: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.5: torch.nn.modules.activation.PReLU/prelu_2: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J›
-pkg.torch.onnx.fx_node€%prelu_2 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_2, %p_body_5_weight), kwargs = {})J?
-pkg.torch.onnx.name_scopes!['', 'body', 'body.5', 'prelu_2']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
- 	
-prelu_2
-body.6.weight
-body.6.biasconv2d_3node_conv2d_3"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J”
-	namespace†: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.6: torch.nn.modules.conv.Conv2d/conv2d_3: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¼
-pkg.torch.onnx.fx_node¡%conv2d_3 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_2, %p_body_6_weight, %p_body_6_bias, [1, 1], [1, 1]), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.6', 'conv2d_3']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-ƒ
-conv2d_3
-val_8prelu_3node_prelu_3"PReluJ—
-	namespace‰: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.7: torch.nn.modules.activation.PReLU/prelu_3: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J›
-pkg.torch.onnx.fx_node€%prelu_3 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_3, %p_body_7_weight), kwargs = {})J?
-pkg.torch.onnx.name_scopes!['', 'body', 'body.7', 'prelu_3']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
- 	
-prelu_3
-body.8.weight
-body.8.biasconv2d_4node_conv2d_4"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J”
-	namespace†: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.8: torch.nn.modules.conv.Conv2d/conv2d_4: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¼
-pkg.torch.onnx.fx_node¡%conv2d_4 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_3, %p_body_8_weight, %p_body_8_bias, [1, 1], [1, 1]), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.8', 'conv2d_4']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-ƒ
-conv2d_4
-val_9prelu_4node_prelu_4"PReluJ—
-	namespace‰: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.9: torch.nn.modules.activation.PReLU/prelu_4: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J›
-pkg.torch.onnx.fx_node€%prelu_4 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_4, %p_body_9_weight), kwargs = {})J?
-pkg.torch.onnx.name_scopes!['', 'body', 'body.9', 'prelu_4']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-¦	
-prelu_4
-body.10.weight
-body.10.biasconv2d_5node_conv2d_5"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J•
-	namespace‡: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.10: torch.nn.modules.conv.Conv2d/conv2d_5: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¾
-pkg.torch.onnx.fx_node£%conv2d_5 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_4, %p_body_10_weight, %p_body_10_bias, [1, 1], [1, 1]), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.10', 'conv2d_5']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-‡
-conv2d_5
-val_10prelu_5node_prelu_5"PReluJ˜
-	namespaceŠ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.11: torch.nn.modules.activation.PReLU/prelu_5: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']Jœ
-pkg.torch.onnx.fx_node%prelu_5 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_5, %p_body_11_weight), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.11', 'prelu_5']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-¦	
-prelu_5
-body.12.weight
-body.12.biasconv2d_6node_conv2d_6"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J•
-	namespace‡: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.12: torch.nn.modules.conv.Conv2d/conv2d_6: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¾
-pkg.torch.onnx.fx_node£%conv2d_6 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_5, %p_body_12_weight, %p_body_12_bias, [1, 1], [1, 1]), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.12', 'conv2d_6']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-‡
-conv2d_6
-val_11prelu_6node_prelu_6"PReluJ˜
-	namespaceŠ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.13: torch.nn.modules.activation.PReLU/prelu_6: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']Jœ
-pkg.torch.onnx.fx_node%prelu_6 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_6, %p_body_13_weight), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.13', 'prelu_6']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-¦	
-prelu_6
-body.14.weight
-body.14.biasconv2d_7node_conv2d_7"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J•
-	namespace‡: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.14: torch.nn.modules.conv.Conv2d/conv2d_7: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¾
-pkg.torch.onnx.fx_node£%conv2d_7 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_6, %p_body_14_weight, %p_body_14_bias, [1, 1], [1, 1]), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.14', 'conv2d_7']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-‡
-conv2d_7
-val_12prelu_7node_prelu_7"PReluJ˜
-	namespaceŠ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.15: torch.nn.modules.activation.PReLU/prelu_7: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']Jœ
-pkg.torch.onnx.fx_node%prelu_7 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_7, %p_body_15_weight), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.15', 'prelu_7']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-¦	
-prelu_7
-body.16.weight
-body.16.biasconv2d_8node_conv2d_8"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J•
-	namespace‡: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.16: torch.nn.modules.conv.Conv2d/conv2d_8: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¾
-pkg.torch.onnx.fx_node£%conv2d_8 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_7, %p_body_16_weight, %p_body_16_bias, [1, 1], [1, 1]), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.16', 'conv2d_8']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-‡
-conv2d_8
-val_13prelu_8node_prelu_8"PReluJ˜
-	namespaceŠ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.17: torch.nn.modules.activation.PReLU/prelu_8: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']Jœ
-pkg.torch.onnx.fx_node%prelu_8 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_8, %p_body_17_weight), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.17', 'prelu_8']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-¦	
-prelu_8
-body.18.weight
-body.18.biasconv2d_9node_conv2d_9"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J•
-	namespace‡: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.18: torch.nn.modules.conv.Conv2d/conv2d_9: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¾
-pkg.torch.onnx.fx_node£%conv2d_9 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_8, %p_body_18_weight, %p_body_18_bias, [1, 1], [1, 1]), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.18', 'conv2d_9']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-‡
-conv2d_9
-val_14prelu_9node_prelu_9"PReluJ˜
-	namespaceŠ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.19: torch.nn.modules.activation.PReLU/prelu_9: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']Jœ
-pkg.torch.onnx.fx_node%prelu_9 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_9, %p_body_19_weight), kwargs = {})J@
-pkg.torch.onnx.name_scopes"['', 'body', 'body.19', 'prelu_9']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-«	
-prelu_9
-body.20.weight
-body.20.bias	conv2d_10node_conv2d_10"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.20: torch.nn.modules.conv.Conv2d/conv2d_10: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']J¿
-pkg.torch.onnx.fx_node¤%conv2d_10 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_9, %p_body_20_weight, %p_body_20_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.20', 'conv2d_10']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-
-	conv2d_10
-val_15prelu_10node_prelu_10"PReluJ™
-	namespace‹: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.21: torch.nn.modules.activation.PReLU/prelu_10: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J
-pkg.torch.onnx.fx_nodeƒ%prelu_10 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_10, %p_body_21_weight), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.21', 'prelu_10']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-­	
-prelu_10
-body.22.weight
-body.22.bias	conv2d_11node_conv2d_11"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.22: torch.nn.modules.conv.Conv2d/conv2d_11: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']JÀ
-pkg.torch.onnx.fx_node¥%conv2d_11 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_10, %p_body_22_weight, %p_body_22_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.22', 'conv2d_11']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-
-	conv2d_11
-val_16prelu_11node_prelu_11"PReluJ™
-	namespace‹: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.23: torch.nn.modules.activation.PReLU/prelu_11: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J
-pkg.torch.onnx.fx_nodeƒ%prelu_11 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_11, %p_body_23_weight), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.23', 'prelu_11']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-­	
-prelu_11
-body.24.weight
-body.24.bias	conv2d_12node_conv2d_12"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.24: torch.nn.modules.conv.Conv2d/conv2d_12: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']JÀ
-pkg.torch.onnx.fx_node¥%conv2d_12 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_11, %p_body_24_weight, %p_body_24_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.24', 'conv2d_12']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-
-	conv2d_12
-val_17prelu_12node_prelu_12"PReluJ™
-	namespace‹: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.25: torch.nn.modules.activation.PReLU/prelu_12: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J
-pkg.torch.onnx.fx_nodeƒ%prelu_12 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_12, %p_body_25_weight), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.25', 'prelu_12']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-­	
-prelu_12
-body.26.weight
-body.26.bias	conv2d_13node_conv2d_13"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.26: torch.nn.modules.conv.Conv2d/conv2d_13: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']JÀ
-pkg.torch.onnx.fx_node¥%conv2d_13 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_12, %p_body_26_weight, %p_body_26_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.26', 'conv2d_13']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-
-	conv2d_13
-val_18prelu_13node_prelu_13"PReluJ™
-	namespace‹: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.27: torch.nn.modules.activation.PReLU/prelu_13: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J
-pkg.torch.onnx.fx_nodeƒ%prelu_13 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_13, %p_body_27_weight), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.27', 'prelu_13']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-­	
-prelu_13
-body.28.weight
-body.28.bias	conv2d_14node_conv2d_14"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.28: torch.nn.modules.conv.Conv2d/conv2d_14: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']JÀ
-pkg.torch.onnx.fx_node¥%conv2d_14 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_13, %p_body_28_weight, %p_body_28_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.28', 'conv2d_14']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-
-	conv2d_14
-val_19prelu_14node_prelu_14"PReluJ™
-	namespace‹: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.29: torch.nn.modules.activation.PReLU/prelu_14: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J
-pkg.torch.onnx.fx_nodeƒ%prelu_14 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_14, %p_body_29_weight), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.29', 'prelu_14']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-­	
-prelu_14
-body.30.weight
-body.30.bias	conv2d_15node_conv2d_15"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.30: torch.nn.modules.conv.Conv2d/conv2d_15: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']JÀ
-pkg.torch.onnx.fx_node¥%conv2d_15 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_14, %p_body_30_weight, %p_body_30_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.30', 'conv2d_15']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-
-	conv2d_15
-val_20prelu_15node_prelu_15"PReluJ™
-	namespace‹: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.31: torch.nn.modules.activation.PReLU/prelu_15: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J
-pkg.torch.onnx.fx_nodeƒ%prelu_15 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_15, %p_body_31_weight), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.31', 'prelu_15']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-­	
-prelu_15
-body.32.weight
-body.32.bias	conv2d_16node_conv2d_16"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.32: torch.nn.modules.conv.Conv2d/conv2d_16: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']JÀ
-pkg.torch.onnx.fx_node¥%conv2d_16 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_15, %p_body_32_weight, %p_body_32_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.32', 'conv2d_16']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-
-	conv2d_16
-val_21prelu_16node_prelu_16"PReluJ™
-	namespace‹: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.33: torch.nn.modules.activation.PReLU/prelu_16: aten.prelu.defaultJŸ
-pkg.torch.onnx.class_hierarchy}['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.activation.PReLU', 'aten.prelu.default']J
-pkg.torch.onnx.fx_nodeƒ%prelu_16 : [num_users=1] = call_function[target=torch.ops.aten.prelu.default](args = (%conv2d_16, %p_body_33_weight), kwargs = {})JA
-pkg.torch.onnx.name_scopes#['', 'body', 'body.33', 'prelu_16']J¶
-pkg.torch.onnx.stack_trace—File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\activation.py", line 1648, in forward
-    return F.prelu(input, self.weight)
-­	
-prelu_16
-body.34.weight
-body.34.bias	conv2d_17node_conv2d_17"Conv*
-group *
-auto_pad"NOTSET *
-	dilations@@ *
-strides@@ *
-pads@@@@ J–
-	namespaceˆ: __main__.AnimeVideoV3/body: torch.nn.modules.container.Sequential/body.34: torch.nn.modules.conv.Conv2d/conv2d_17: aten.conv2d.defaultJ›
-pkg.torch.onnx.class_hierarchyy['__main__.AnimeVideoV3', 'torch.nn.modules.container.Sequential', 'torch.nn.modules.conv.Conv2d', 'aten.conv2d.default']JÀ
-pkg.torch.onnx.fx_node¥%conv2d_17 : [num_users=1] = call_function[target=torch.ops.aten.conv2d.default](args = (%prelu_16, %p_body_34_weight, %p_body_34_bias, [1, 1], [1, 1]), kwargs = {})JB
-pkg.torch.onnx.name_scopes$['', 'body', 'body.34', 'conv2d_17']JÅ
-pkg.torch.onnx.stack_trace¦File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 52, in forward
-    feat = self.body(x)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\container.py", line 253, in forward
-    input = module(input)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\conv.py", line 565, in forward
-    return self._conv_forward(input, self.weight, self.bias)
-•
-	conv2d_17pixel_shufflenode_pixel_shuffle"DepthToSpace*
-	blocksize *
-mode"CRD J‚
-	namespaceu: __main__.AnimeVideoV3/shuffle: torch.nn.modules.pixelshuffle.PixelShuffle/pixel_shuffle: aten.pixel_shuffle.defaultJ‡
-pkg.torch.onnx.class_hierarchye['__main__.AnimeVideoV3', 'torch.nn.modules.pixelshuffle.PixelShuffle', 'aten.pixel_shuffle.default']J›
-pkg.torch.onnx.fx_node€%pixel_shuffle : [num_users=1] = call_function[target=torch.ops.aten.pixel_shuffle.default](args = (%conv2d_17, 4), kwargs = {})J>
-pkg.torch.onnx.name_scopes ['', 'shuffle', 'pixel_shuffle']JÇ
-pkg.torch.onnx.stack_trace¨File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 53, in forward
-    out = self.shuffle(feat)
-  File "D:\miniconda\envs\rch-onnx\Lib\site-packages\torch\nn\modules\pixelshuffle.py", line 62, in forward
-    return F.pixel_shuffle(input, self.upscale_factor)
-˜
-input
- 
-val_22upsample_nearest2dnode_upsample_nearest2d"Resize*
-mode"nearest *
-cubic_coeff_a  @¿ */
-coordinate_transformation_mode"
-asymmetric *
-exclude_outside  *
-nearest_mode"floor *
-	antialias  *
-extrapolation_value     *&
-keep_aspect_ratio_policy"stretch JT
-	namespaceG: __main__.AnimeVideoV3/upsample_nearest2d: aten.upsample_nearest2d.vecJZ
-pkg.torch.onnx.class_hierarchy8['__main__.AnimeVideoV3', 'aten.upsample_nearest2d.vec']J¨
-pkg.torch.onnx.fx_node%upsample_nearest2d : [num_users=1] = call_function[target=torch.ops.aten.upsample_nearest2d.vec](args = (%x, None, [4.0, 4.0]), kwargs = {})J8
-pkg.torch.onnx.name_scopes['', 'upsample_nearest2d']JÏ
-pkg.torch.onnx.stack_trace°File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 54, in forward
-    base = nn.functional.interpolate(x, scale_factor=4, mode='nearest')
-¾
-pixel_shuffle
-upsample_nearest2doutputnode_add_185"AddJ=
-	namespace0: __main__.AnimeVideoV3/add_185: aten.add.TensorJN
-pkg.torch.onnx.class_hierarchy,['__main__.AnimeVideoV3', 'aten.add.Tensor']J 
-pkg.torch.onnx.fx_node…%add_185 : [num_users=1] = call_function[target=torch.ops.aten.add.Tensor](args = (%pixel_shuffle, %upsample_nearest2d), kwargs = {})J-
-pkg.torch.onnx.name_scopes['', 'add_185']Jœ
-pkg.torch.onnx.stack_trace~File "c:\Users\cfl\Desktop\RCH\.trellis\tasks\07-31-m2-ai-upscaler\convert_onnx.py", line 55, in forward
-    return out + base
-main_graph*”@Bbody.0.biasJ€¤Y>œœ=ğS’@trÁ¡Ã>ã1	=ş×Ü>ÂèM>$]½=HŒ>¯Ák-Ê>$¡?zûÒ>`Ö> ).<¬O€Àız/?‹ü+½¨¯à>*;ZÀÅ´?f±ÀŞá¾0ÜH=bb?>ğ=]?Ú7P>ÀŞğÀì:=İh?‘o?Lşg¾
-TÀ`Tê¿Â4C>ˆçÀĞÛœ=v‡d¿ö$>á™'¾QÖH@ÄÀ0ôZ>Åà:>¹zUÁ³ñ?R”R¿èH´¼)€Ğ=¼ôB?¨§«½8w#>5í>_Vá>ÃiEÁÍ©{>”¸%Á†b?m Ğ>¬ü£½2Å>°å‡>ü À*”@Bbody.2.biasJ€Æì?À«¿êª@ER?vGk¿ô AÙÎ?L3|?£AFxõ@7(@K/@@~ËİÁH@>…Ú}?âDÁÚÛ*Á7´+@˜K©@÷‚¾Ä€m¿Ä9(A±NIAˆ@†óÏ@LB@@qT½9ş@ƒ–@\+?ÿß?ÊAÀn•?ò99@à2?¾1í1À3€”À2V-Àe¬@l!?\*W?ÌñS@‘„Æ@Ğ‘@hèù?l•áÀà@Ã?^b7?×*@ œ
-¾äN@Ùìâ>‚@²Æp@í"©¿‚z£Á°q	@Ó9³¿ X±>„a¿†ÔÂ?Ù¿º¬,AÑà‡@*”@Bbody.4.biasJ€İsY?Xú¢>¡Õ¾½Îä?D¬	ÀŞê^@:ı¾^zŸ¾uk?š©ç?>U@z/¿’¨z@ºeÎ?=ú¾:W¿vë¿ M½Ğ¾¨¿&u?J®¾²>oÀËI@Ş¾©¿æ ¢?ô¡?Bã ¿ 6Ö?˜;@}bh@#“¿öÔÀ†ì
-@¶Ä&¿rÙ@&Û–>5Ág?M>?^"¹?´|©?yG>@¶,È?äLÛ>_DÕ?Æ¿^$0?B½?GÅ!?’ë¬?ø>*ò0>œÆ½Ìí[?”­? >ı½ÿ6t?tÒ¡?	@4&>H*©>>ˆ¿•Ãİ?½Ïñ?*”@Bbody.6.biasJ€Ø%¿Z#@ª@®1h¿Ê¼'@¤@@c·Ç>ÅI°>læU@»è)@˜‡#@¢\˜¿3.@,:@><¢“¼.{E?6m¿ƒ(Ì¿R5À:˜Ø¿[ŸV?º™ÀèÙ½@bø5@ú²h¿˜h/¿j«9?wßN?î§Œ@Ò>”@ 	¿às¬¾·Jå?YĞ&¿ÜØÔ>‹N\Àhu6?ö³R@M¤¾áY¨>L¯˜¿¸%¤¾DÊ @œÍ¯@†|/@äSÀBïO¾Æq@•yº?Ì"GÀ:ô¾Vé‘=â*¿F²«¾˜®õ¾Ğ|7?X”%>—ÿ?ü›ó?º•?r<ª¿€i<³t@D'z¿*”@Bbody.8.biasJ€°Ma??®1y@øô“?	1e?”“¾ CÀâo‘>+R@Zæq@¹—@Æ×@Àa¾ï?ÌÄ@u«Ó>0ï>aU¿úl@áõì?ÊÎ¡@qPÀúó@‡½@RÆ¿K’L>fFN?¹°L>ÊH=@
-ô@+ú?ª›5?¬ÕW?d¸€?*Ö¯@‚ŠÇ?65?u±â?õıÃ?İ9#@9â¥@´s"¿¹uÀÚ?Uª§¿¤7æ?.°Š?ò®Ã¼¾;@õ%@Öâ@Ñ§?ñ7F>’íz¿­&á@b`E@ÙšD@«‘@Dï-¿¶@$³º>àxÛ¾\+¯¿Z>›¶@*•@Bbody.10.biasJ€|„û½ƒ%:@FÂ@@v€@é%(?Œ:‡?d½l@Ê’’?ı<@öZ>?Ñ:i@ŠTÔ?~S˜¿‹+ø@Jy/¾p¶š@2ˆÀG$?à¼Q¼!'?³2!¿Ù(@@…qÄ@4¡¿7Ù¾…JÃ¿á™?RÃ¿q¨A@€zAt…k@1~Aù™[@9¦?€{­¼a‘¬?>@Ë5¿Âı'@ôpu@ôSd@Î‘¹@„ì¿—ì?’‚M@)@$ê>~«@
-‘?sßÓ?Àó¦=ró‹>6ÑY?~@ÀŞ@ ø³@E8î@ÿ?Hì`>ÜÎ?¹•?xP¿îµ¾@.ü˜@*•@Bbody.12.biasJ€hÔ¦½JÂ2@4¿R q@ ƒb¿Ô? @6‰À´NÎ¾¾À @¤’™>f®e?z³?g«@Ú•ã@@?;çe[¿¨'G¿ŒØ†?’P5@õş«@pş @X9Ô¿hº?yÙ¢@Z›0¿˜"¸?róË¾$~ ¿«ñ¿t‡Š@Ï6¨?Ø‡~@l@:“@ËÜ@do?§yq¿³aÆ@££@†„œ?h™¤=6Wå¾Í’£¿Ò@Ãª[?k?0@(G(=ˆŸÕ¾Øê@(ëÃ¿.•H?4[]½˜µ
-À›Ä¿ªB˜@@9ş? .›@Š~ã@5¢ŠÀè @bÒ‚@Èâ@¿ŒÛ?ûßÑ@*•@Bbody.14.biasJ€[‡¿Š";@·¿€5@ä·¦¿\ï¼>gRÀ5‘½¾ö?€i½>ÉŠ@~¿¡f?¢Ù(¿·äÊ>º0t?^'@£ÈÃ?ül@PË¦¿y?>Ã*@‡3—?½?>T>¼™@Î’;> -­@gl5À…¶@ ğ`=‚"J?®ğ@Ûí@	µ|?†B@Šy?|ÍÏÀ˜z¾ÚCUÀ@Åc¾î/Â¾Ğ¾£>Ä6_?À]3ª¿8Šs¼àÄ%@z/¿ó'À·À AB½¨Ì>Ö`JÀ¤™„@8¹A í¿@^Èœ¿’ßWÀPNr?ô·? €%½¿•ø¿bn@*•@Bbody.16.biasJ€NÖï¾7+>xkV@µTƒ?%¤¹?¸.HÀ¶–r?P Ó¾6‹¿¡|¸¿(¶Î@T“>ñ¿¿¼ã¿¦Ñ¬¾Æ/NÀşZQ@m?æv£¿ÕÀN·W>N—¿ÊO @ü‰s?†¶L?$÷¹?¤pH½*¿T&@Œr@2?|N%@ØP?1@µ_†@õR-? Æ@ûü#@xœ@’Oî?eæR@Œ>?ìÍ”@ŠŒÀ±OS?¢â„¿àº8¼à|³?ø‚?ÿüÑ?v­¿o2¾ñò_¿.1¿±’?»F@Ø5h@ Ú¹ºŠ&@D‡J>‚,¾?©„­¿°¯I?Ärê¿*•@Bbody.18.biasJ€|Œ:>íT@d?ÿ”.¿úŞDÀôºÎÀm­­¿ÔáV½Åã?‘˜?ìkë?Å‡¿ S|@Š¸¿Ë=ç¾T?Ôı@/ºß¿€6“:
-õ@.›¿\ëÁ¿AVÃ?
-wJ?<¥>Ì™ ?‘\€¾ğ·(=ÆÏZ@dÜ€À–Q@)¯?˜Ôù?À]¾í÷?"g|?ÁM¿ï…Å@ªNg@
-G@.¡\@bjœ¿è_>fÙ¤?Ek5?BÈ¿&ÏR½HŠ>…åˆ¿ZßŞ¿ P0¿9Dß½*¤?†.?"©> «ş?>T?àóÜ?ˆyê?„M@
-5¿>é[·?û<?Àfœ¿*•@Bbody.20.biasJ€Ğ£<g¡c>`“?á.e¾CŠ?¨Ñ@äÀ¿UÀ9u©¿7(¶?üR¿Ñ4@dâ@î´@²°Ö>İ¿@È²¸¾xõ”ÀZç=É7¿<P³@\™<?=‰?õƒ?˜—?qw­@ÛrÚ¿÷1×?êC?@Ïˆà¿–ìî>ô,?C @€ş/@m‚v?Qü>o@Ô‚y@Å¤¾˜Ü@Ã¯¾GN¿ª²T@_#¿d¼“>¿Uâ>æ¨>†Nú?ïZ=@©Ö¾¸ ¿ü5
-À˜ŒÀ™µï¿ılS@$Ô¿*P¿‘ğ1¿(Z©@6?y¿äxı?â° >l<¿*•@Bbody.22.biasJ€@ˆ5¿ÖqŒ@Pá>/Ê@´VH@™"@pY¶?ô(Àë?³½¿’gD@œ“?Ÿ*@Û¹Š?„²¾.Ô,?ÆX¡@p«Ñ<`¿Àë<ëQ3¿¾’õ?àC€?±O¶?f¿6Y¿*”/ÀÔÀù?D@œ?\à­@ªï@Z¸w?¶ Œ?Ø?é>·•,@øÀUç”¾sí?P½O?]»Â?D->Ÿ&ª=ÈÇ„>`*?Øëô=ç­µ>è¹>Šp˜?æ©¾O»ËÀâ/¿$‰ƒ¼:-™?hÜÔ?‹‚?ÿ‘@©¹a@Ø·\@`’Ï½1¯?îRü¿-5Ë?½”?­©?*•@Bbody.24.biasJ€ÆBŠ¾—Q@FQ›¿ÈÏu=@œ]‰¿>×?IP˜¿ê3@wÏä?¬/>P#`¿—û?ş	œ?>Ì>ıÇN@fÊ@DYÙ?jAGÀ+Ò>­:À¬´ã>@’¡@Ÿğú>RÌ£¿şW°?ÄùÑ¿X2>Èer?¤.Ü?$õ	>ObD@é8@ü_*@aş5¿ÂŒÄ¿²†?à­—¾ 
-V>ì]@’»€¾ò
-?e—¾jİÜ¾@¢v»æ@G¿¿R)?“«·?8`¶?ÕÉ?âä.>kÎ±>(º¾	Yş>Öç…@"x*@ÿ@¯å!¿½³!?æV?òÏ¹?Hë@¥1?*•@Bbody.26.biasJ€q‘“¿çå“?¹§ã¿~¸?®Õ@w Á;â?&8¶¾õ.¹?¸ró=¦®hÀ¯˜»¾š¿ÖP@"x¿lò?°î?Õ¯?"f–>(¹õ>8şˆ?Bµ.¿6ª>ƒìı>á*Ï¿Ú{>ši¿dHÙ¿¸ƒ­>Åü?Cg?"^½ÀƒĞ¾*€í>,¥> İ¨¼æÒ¾ì_T>DL?pÆº¾½¯?	ÀÂÁ?>\Q'¿C¤k?ÿ£?¦x¿¨Æç¾bd¿57â¾’î>”º·½\BN?ÅÄô?€}-=Ó¤>Ğpğ>Vl@?¡·¸?¡> ?uZY?aİ!?*Hƒ>n=>*•@Bbody.28.biasJ€ˆ8 ¿–ıç>2®3¿ĞSå½ıù¿ˆl¢='@¿ úM>+¿Î„¾
->¦¿på;¿R‚¾>GV¾˜²9½„¯3¾d5’½Æ¿>å=Ü‘>•\‚¿ø$=Y³>‚9A¾¦º¿nD¿²á²>¾ó]ÀÁZ¿	G=> éÛ;À¯U?³8,¿®2t¿e­3? Ç>äi¹?z¿²¾¼ì>m¾¿@Lú>\7s¾ÑZÔ¾báª?œ²‘=¼Ú]>&|¨¿²Á2¾¿6i> )½=K$¸>ì‡>ÜNc>ğ
-«¾_·K?j?¾Ş¥Àl>fÙl?àOÕ½Hªˆ=šŠò>8À¤½?Õ?*•@Bbody.30.biasJ€.û=2+Ë=[{=Ú¾şGU>m¾´ƒ¦¾Ô¼A>°ä'>èCø=l–Ö¾û‘>æÿw>|Õ>Ş€¾¾v:=5(Ô>ãÚª>l[?l· =åúÒ¾Ætx=´ê=rŸ>¦ä„½¸	8>‚? [=ît¾Àµ£;¼7>ah§½j¥S¾Ãœå½Ë£¾’=?” ï½ÿ£„>$Ä/¿à’u=t¨>>X’=ÀµY¾ä´Y¿‚3?×>û…Ø>>‚Ÿ>`¾Ì‘^=J¶g>¾>àğ>öY¡=‚¾ªìí¾‹–C¾:Ó=A¬x>„vÊ½ïj½ˆK†>JM>w¡{>*•@Bbody.32.biasJ€âå÷=¨ø<`õB<>#ß½pNµ<¨¼ª¾RÈ¢=•É½€µ=,ş•=Ú¯ë½÷y½´w¾Àı‡»6*Ä=X.O=š£<Öç½XÎ¾Â>Â¾¾Ìõ·=4ï>°P½;LAü=ÀË(»´¨/½}Â•=›âO½&\½3z½;|½âÓ<ùĞë½á½ Tİ¹PÄ*½¸™¼vhÌ¼ÜUÆ¼ÀR»,‚E=¢Lñ<@ü=”Ğ¼°AÔ½X#Ë<8Õ½@§u<í¾ì C½¨j<(¦½½6)ş¼°Ó¶<ŠÍ¼ÀrB½R}À=À„š;\)½÷=­=˜Xç<ê3Ì=*Õ0Bbody.34.biasJÀî„<Õ„<HYŠ<–„<Ir‡<…<nJˆ<øÉˆ<fâ‰<æœ‹<M‹<G†<\1ƒ<¶ã‡<¼†<"7…<Ğ(—<rB”<€”<˜”<æZ”<®·“<‰¿œ<ïT•<ÈO•<X˜<q’<x©‘<Ã”<ÌG”<b<–<îœ–<¥—O<¢iP<`L<2sD<³U<º‘X<ú~\<Ä|R<‹|S<$O<¿†h<ŠZS<ÕX<šN<]<ı¿L<*g@Bbody.0.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset0j
-length6912p*n@@Bbody.2.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset117504j
-length147456p*n@@Bbody.4.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset264960j
-length147456p*n@@Bbody.6.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset412416j
-length147456p*n@@Bbody.8.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset559872j
-length147456p*o@@Bbody.10.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset707328j
-length147456p*o@@Bbody.12.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset854784j
-length147456p*p@@Bbody.14.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset1002240j
-length147456p*p@@Bbody.16.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset1149696j
-length147456p*p@@Bbody.18.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset1297152j
-length147456p*p@@Bbody.20.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset1444608j
-length147456p*p@@Bbody.22.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset1592064j
-length147456p*p@@Bbody.24.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset1739520j
-length147456p*p@@Bbody.26.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset1886976j
-length147456p*p@@Bbody.28.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset2034432j
-length147456p*p@@Bbody.30.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset2181888j
-length147456p*p@@Bbody.32.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset2329344j
-length147456p*m0@Bbody.34.weightj-
-location!realesr-animevideov3-x4.onnx.dataj
-offset6912j
-length110592p*”@Bval_5J€p„:ÒRP¿³á:?IŒ»nâq¿Nhä¾RìÍ½óL¿R¿ƒ¿hû>ıóÍ¼"t1>ÉŸR»#Ğ„¿Ğ‚‹>.f¾°òg¾ N°¿9?¿tİ?!$`?[8<  7?ì‹¾ÈD>ò{?:CÓ¾‹$u?Œª¹ºd»Ê½QÈÎ¾k s;üˆ= úºh~ú¼@&¿Æ{7<öì¾$f¾}Æ$?q+<æ»Ş¾çÖ½˜Iw?Í°‡¾*ƒº‰
-? ?t¾‚)>|Eˆ¿¢)¿ƒv?˜Á*¿O/[¿.ÀM¿›¨íº„´¿¶á9.±<ßA»,èí¾¸ñt>ıx?è×½*”@Bval_6J€:
-?*0§=f²å>İ¯½¨ƒ¾¤(ö>†47¿œÄ²½îPŒ=JÃÇ>@îË¹PZ<,ò¼Bœâ=1?V¸=t•ª>cà¾°Ã¿ºÖ¶=`XT»G7½Şƒ„¼îúV½K†?¡iv¾‹x£>RÂ”>Û.%¼2º>#H>Ú¸«<Ûñ´»V¾ç¾òÛ³¾”¾Î¼=R¾Æ-W»q:¾’9Á½œ¦½«Ö™½O¿Œbº;'áî½Õz?P¼¨Y¾",¿êÊŠ=®E‚?ØßK½Eú‘½œ²†¾è8ğ=±q<¾Ö‘½ˆ5g¾àğØ¾zâ ¾²J¸½œoR<§¿*”@Bval_7J€½X?’Êa¿~ˆ?š“¾Àº’>Z‘?sÚÙ¾WÁ›>œ]-¾\?àiÔ=Ê	T¿æ8?uŞä>n’?³>&|?è¨ú¾4ªL¿hp¿a2æ;¾w5½uà>ô9§>h B?ÔS?HÅ?^}(¾ü\?Í¬>µ—J¿èˆÓ½<B¾'Mm>wª¼9»¾îñè¾W³>Z ¿(èÌ>Úİå=X!İ=Ï>áAJ¿‚¶>¢	¾8ît?Ü‘Ù>š·>Üß>>ÌV¿A~?$Z(¿ÈûC¾g“>ş%q¾(ĞÓ>Ø&(:3ÀN<úê1¿X C¿ {¾!>ô›¾*”@Bval_8J€Zõ•?Ì†Å¼ÆVË=NR?ÚR@?Rï>p¶Î>	¾¾„PD½ ¥¤>d™¬>çY=†qÿ¾ô–:?Ï—?N ¶=Ò².?H„a?Ù¾Òêc¾Œi®<N2¯¼_	?û8O>zÛ?*³ä=JI£>`—w>â.?¢%>¼À±¼$ƒ=Ğ¿f>Xı®>½ø%?lè>
-ˆ¾äù¸>%]¾&*¿Ö\?ƒ ¾Ù‚>R	d>ÊÎ=ªNÒ½(k~?yÎš>Í¹™>X–3?Üm
-¿û±‹?¢î¾¾Â²¾<v’¾a2½^‹Î>,?ÃFd½Ê¸>`>õ¾´âÖ>r`c>:]<?*”@Bval_9J€ß?ğ$½x…>ÜM¡>ÃTL=Äm	¾(`n?Ú-†?°1¹>æ£Ğ>È¡ô½CÔN¾=n×¾ì=^ˆ?şy><Ó>tFc?+ÊX?ï>Ö=F? Q5¾JC÷>2]<"Òw?Ş‘>€?îi,>€ê"?¶dş>’!?2!>f²:¾5Ÿ=N’½©–?€Ë¾>Š>?ÆŸ-? ‰y?Ff½¾æÓ#¾~÷=‡M>„¯?..¾˜/?nz”½æëH>@mK?úá_?t×?³æh?²
-²=ø?òä¯½d—§»´œ;?ª‡‹>°oŸ¾ú$½ú"é¾Íê>©?*•@Bval_10J€8½F?G0<õL
-?¥¾oÈ[?,æ½ò]O?,S]¿y.¾‚ã½ˆ™l>Tò>¶bã=ê0À<š(:?~™M>bA‘¾p ‚?L1•?ÜH³>îÆ7?¸Şm¾2C;<ŠvV?|e?Dn	?š—¿ıô=DÀ;¤ >İ!<Ì2L>¸·p½ãåY¼ìÚû>p„…? Ãv>¸8?+…>òáf>Y7 ?z§½,á<?NÕÙ>uh‡>ÊàA?¶Á…?®Ë)?¨”å½®6?&n?jõ%?º?®„C>¬Z-?ıƒû>a­Í½‚é=¦Ğ¾R§R¾v03>Šl€¾ÚQ`>8·Á>*•@Bval_11J€ì6y?G>fT¡½È&?¶hF?@Û½d¿z?‚Â˜?Œ„?„Ğ?‡¼_?¶ï
-=Âº>8s?ı†ª?z˜ê¾¢S?.Úx?t?tò>*Ò>²œ=Îò›>¹Oº>ÎÅ–?¦½z?ºm²?ùL=9P^?ˆá<?”è¾'Ï½ºJš¾47?p?Ÿğe?ÌÚ
-¿tr_?\Şv¾<Ë>W›ˆ½ğFË¾Ú¯¾ÈZ!?€MÇ>8oÔ>ìØv?*H½wˆˆ>’ær<¡ t?ƒo?˜<H?%jh?9h>šÇ>¨c'>¸Õ(=kP½Ü™j½¢‚¾êÜ=Ñ’;?°?*•@Bval_12J€ö£?î×‚¾”.>âXD>ô…f?Ññ¦>to}?&S>?HÅ;?RÖE¾$«°>æ¿¾„T?a6f?Êê×?óüÃ½†/›=®ÿ>-\„?åE?7+º=Ë/ä¹6ß&?”ÎR?xz‹?|,w?pw>?X‹s>z¥½œ9‘>0W¨=I•	>”·¾‘u„>6Ä>4Ô…?ÎÑ–>\ã¾rí>4œ½iË;¨DÏ>b$ó=Z÷M?Ü°b?üoù½â-n?Ú£Ñ>®#q¾nb#?È§|?T*²?ò
-??Ğ<>ès¤>*ÃH?‰«_>¤sÕ=~]¾~€?<¥B<<É=¿ÔŸÌ=¤VQ?*•@Bval_13J€ğ!?Pó>t4>¥d>:r¾@ˆ”=p-ƒ?ºÓ?¶d5?£!ş=†ÖV?àT(¾Ü/½†<5?dÖÊ½’9>P‰½m?š—x¼RÙÕ>”®¸=øÛƒ>Jíy?r·U?Q7€?íÃc?nq?æG>…ì2?Œ|§<ha<=\ 
-¾HD[>·F0>ä’q?nÉ„>:Fô=¨ ?\EÌ;# >ğ…?È ~=Tg?&Kd? ¾£w?(Óº>¾Şm¾bx0>Ò}k?r^¡?úÂM?umN½7|½^¦Ô>õÓ>´PÉ>`¯>Òe¾úm½e…œ=VÎ?àsu?*•@Bval_14J€deÓ?_>iSì>ÓG¾=/°w½mE¾…Ng?P€C> ²x>Y¨>Àøf?n˜/¿À@> ²+¾”õ.?ı|±>¾¼µ>J<Ï=ÅĞt?ŞÊ¤>”/>ï?RƒŸ>´T?ú(‰?ä?ıÜ>¼˜,¾¬¨à>3¸u½í½‰=ş„s>llJ?›Ä=ˆ3ù=¤Ğ‰?±Ù=Á3¹;P">\¹É=€`Ü=˜ë’=ÄÜ4¿°>k?“§\?¼¾jÜj?æÏq>Ì=àY?4¨‡?#d?D³k>TŠÅ¾Æj¾R¨?`¼€:´=„¤½§?Ğï0¾ÿ¨¾Œ‚>Fng?*•@Bval_15J€knG?ù?oÖ>æD¿ƒÏ{<JÚ{¼Àâ‚?¢?õÚ>Ü°=®w%?¨ï>}´>ÌÙU>ÊÕ©?×¬ı»©«½Ñ£¶>Âw?(³¦¾öâ=fÜ¾S#è>{çd?oŸc?N‡Q?ÈŠ-?‡qX»¢Yˆ>vh\?Æ1#?‘·©=ÌË?V Î>‘y> _}?ºz0>¬#0?FI»¾˜uŒ¾Áh¿¤ó=3ÍÛ>Î“…?RÃ½¤½ ¿ö!„?ÉÍ:¾ ½o÷ö>„?&P,?,½e?×NÑ¾êí|¾'ZÇ=LO@¿R›ü=ğ%¾†3Õ>í‹¿Àô?t¿®>°b?*•@Bval_16J€ÒZ‚?ÆøG=8ˆm=¥|õ>’Ê½R®¼ÄGL?Áã?^#>¬ìĞ=(‰?t"O¾êQƒ> Px¾–k~?
-‹»½¸²>Æİª¾ˆpk? Ğ¿2ïk?×å9½ØÛè>Š²)?H8†?±uy½¾*? š0>W'D=ä®?zƒ¾ª‚Ò¾o2ï>£K<¿D>`ÿ?­áç¾]G²;ˆVŒ½6\q>xï½‰¹Œ¿Ç°¾Œ«g?B>!½˜ş#¿ÿÃ?œ‚½>|¾*3Ş¾6„?QÍ°?ÔŞe?³ş
-¾5â=8Ø´>£"™=|Bã>ÜÁÀ>ª -?48²¾çñ>N7?êg:?*•@Bval_17J€À!p?Œò¬>ø°j¾×½‰¼8˜	¾9z?B'D?Dò9?•}/=ÒÚŞ>0«!¿0™²¾“œŒ<,Óe?!›ø>èU>Å?Xö?>¢?Näú½¬ >#ú=ºB?Ü’w?±ü[?zI?®ÆN¾xX>.+Ğ½¶æ;¿&6>/¤?’18>Î€>æ‹?¨X9>'Á¾¿´¾’5¥>7»¿«ó½iì¿¾KJ?Èº?ÄfŠ=Öƒ?zŒ>`º=„¼Q>&Ûq?RFx?† ~¾»C<"Å¾ ±¡>Ä¿>Ì†¾Y®>¢’C?şİ¯¾_WÀ=ğx< ,:¾*•@Bval_18J€H¹H?ôBF>ÀÇ»«À*¼mÃ¼>zÆ½2\?†—\?À1<¡¾8`:tİ¿ä#?Ú†S=;U…?ú¹è>P„É>BÁø>şF3?¬J”»T•ü½*â‹¾:Ä¦¾l¸?R×T?2ö?HS?ˆ…Â;Äª$¿
-İ>@Â.>ÌW(¿l#J¿»áK¿vd¾öwd?V§¶¾bBñ>ÂV"¾ej¾³¸<ãSÑ>7×Ñ½¾>bk?E`†¾Ø‚?¦m€¾Æ ?X>?ıİx?¦At?¤>R<?÷âó¾¦÷¾ ÍÇ=[A¾ÒZ>¸5_?Ú½¿<¶æ¾¸ˆ¿èY?*•@Bval_19J€¸`h?”‘Ï>×½¾}Ø ¿f)M>hÓ¾JV?œm?®?	>Dõ¾rŒ§>^È>Ü‰À¼Ô>Fep?¶e‘>òPY>|åD>YØ>Y½¼Úw<ú1™¼Û B¾>L?p?”#?`ø_?â½A™¿¾²+??°Ä½…A?—„¿|LD¾[ç5>Ù¡ã>Uß=–^½İ‹˜¼WÃ0¿
-vş½© ½j®Ç¾K<1¼{ó>­+Ï¾ò±^?›4¿BK#¾_€a?=P€?Âï}?üß5¾†–½Ïiİ>³½¾ø½=M¾"„¯>ÿn?Ô0…>İ)>ï7¡=®œ>*•@Bval_20J€ôªh?üŠ =X\>9çB>Œ¼¾“N>FÅZ?;S?y¥>”O%½ø>ûG>È=¶öf?®‚¸=î¾ïãº>&Ô3¼âX?šœ$>\¬h?ÊAš½†¿L½Şp?Òy•<\0i?•‹_?ø±¶>g-d>öœ*>İ#?„Ë\=ßTŸ½L¥;½x A¾Ş:2?lÎŒ¾ôRŸ¾ƒ“¼È)¼;µo?¥\?¯Çƒ¾àe>Ê¸À>ŞÓÄ¼.+1>üla?„xˆ¾ß?”}?ö´]?°Æ>R«Ø¾Ô÷S>¼d»¾ÎªL>¨¾uB ¼V:g?½±¾æ8=½¼F½%PL?*•@Bval_21J€ù#ø:ãù³<¢œ<­s<©œª;hÎÌ<Ü_;¬–>˜Ê+<š? 9…Jâ;ü°¾<lç;®E~?^õb?u+?š^?¦bı=Â½à>¿`: nc¹_.<ÌÔ <±#>„î=º©º>–ô>«<ìù;œœI=$<4ì‡;şş´=ê.-?È•‘<8oQ?3û<À8=Ùdq;œ#£<ü6§;íÿ®<pË*ºµµ »=‰=¿;Z»šl=A”;|¤²;„¼¤<o<d_=vi;=%4W;==0ò@¹ˆ‡=˜	Z<ùg0?˜rè¸8¡Q<\şŞ=šÒp;2Ü¾>*Bval_22J  €?  €?  €@  €@ZÕ
-input&
-$ 
-batch
-
-height
-width"=
-/pkg.torch.export.graph_signature.InputSpec.kind
-USER_INPUT"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"&
-!pkg.torch.onnx.original_node_namexb£
-output*
-($
-batch
-
-
-4*height
-	4*width"?
-0pkg.torch.export.graph_signature.OutputSpec.kindUSER_OUTPUT",
-!pkg.torch.onnx.original_node_nameadd_185jÊ
-body.0.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"2
-!pkg.torch.onnx.original_node_namep_body_0_biasjÊ
-body.2.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"2
-!pkg.torch.onnx.original_node_namep_body_2_biasjÊ
-body.4.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"2
-!pkg.torch.onnx.original_node_namep_body_4_biasjÊ
-body.6.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"2
-!pkg.torch.onnx.original_node_namep_body_6_biasjÊ
-body.8.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"2
-!pkg.torch.onnx.original_node_namep_body_8_biasjÌ
-body.10.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_10_biasjÌ
-body.12.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_12_biasjÌ
-body.14.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_14_biasjÌ
-body.16.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_16_biasjÌ
-body.18.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_18_biasjÌ
-body.20.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_20_biasjÌ
-body.22.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_22_biasjÌ
-body.24.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_24_biasjÌ
-body.26.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_26_biasjÌ
-body.28.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_28_biasjÌ
-body.30.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_30_biasjÌ
-body.32.bias
-
-
-@"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_32_biasjÌ
-body.34.bias
-
-
-0"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"3
-!pkg.torch.onnx.original_node_namep_body_34_biasjÚ
-body.0.weight
-
-@
-
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"4
-!pkg.torch.onnx.original_node_namep_body_0_weightjÚ
-body.2.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"4
-!pkg.torch.onnx.original_node_namep_body_2_weightjÚ
-body.4.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"4
-!pkg.torch.onnx.original_node_namep_body_4_weightjÚ
-body.6.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"4
-!pkg.torch.onnx.original_node_namep_body_6_weightjÚ
-body.8.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"4
-!pkg.torch.onnx.original_node_namep_body_8_weightjÜ
-body.10.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_10_weightjÜ
-body.12.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_12_weightjÜ
-body.14.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_14_weightjÜ
-body.16.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_16_weightjÜ
-body.18.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_18_weightjÜ
-body.20.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_20_weightjÜ
-body.22.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_22_weightjÜ
-body.24.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_24_weightjÜ
-body.26.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_26_weightjÜ
-body.28.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_28_weightjÜ
-body.30.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_30_weightjÜ
-body.32.weight
-
-@
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_32_weightjÜ
-body.34.weight
-
-0
-@
-
-"<
-/pkg.torch.export.graph_signature.InputSpec.kind	PARAMETER"=
-5pkg.torch.export.graph_signature.InputSpec.persistentNone"5
-!pkg.torch.onnx.original_node_namep_body_34_weightjc
-val_5
-
-
-@
-
-"B
-$pkg.onnxscript.optimizer.folded_from['body.1.weight', 'val_4']jc
-val_6
-
-
-@
-
-"B
-$pkg.onnxscript.optimizer.folded_from['body.3.weight', 'val_4']jc
-val_7
-
-
-@
-
-"B
-$pkg.onnxscript.optimizer.folded_from['body.5.weight', 'val_4']jc
-val_8
-
-
-@
-
-"B
-$pkg.onnxscript.optimizer.folded_from['body.7.weight', 'val_4']jc
-val_9
-
-
-@
-
-"B
-$pkg.onnxscript.optimizer.folded_from['body.9.weight', 'val_4']je
-val_10
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.11.weight', 'val_4']je
-val_11
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.13.weight', 'val_4']je
-val_12
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.15.weight', 'val_4']je
-val_13
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.17.weight', 'val_4']je
-val_14
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.19.weight', 'val_4']je
-val_15
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.21.weight', 'val_4']je
-val_16
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.23.weight', 'val_4']je
-val_17
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.25.weight', 'val_4']je
-val_18
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.27.weight', 'val_4']je
-val_19
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.29.weight', 'val_4']je
-val_20
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.31.weight', 'val_4']je
-val_21
-
-
-@
-
-"C
-$pkg.onnxscript.optimizer.folded_from['body.33.weight', 'val_4']j
-val_22
-
-
-j0
-conv2d&
-$ 
-batch
-@
-height
-widthj/
-prelu&
-$ 
-batch
-@
-height
-widthj2
-conv2d_1&
-$ 
-batch
-@
-height
-widthj1
-prelu_1&
-$ 
-batch
-@
-height
-widthj2
-conv2d_2&
-$ 
-batch
-@
-height
-widthj1
-prelu_2&
-$ 
-batch
-@
-height
-widthj2
-conv2d_3&
-$ 
-batch
-@
-height
-widthj1
-prelu_3&
-$ 
-batch
-@
-height
-widthj2
-conv2d_4&
-$ 
-batch
-@
-height
-widthj1
-prelu_4&
-$ 
-batch
-@
-height
-widthj2
-conv2d_5&
-$ 
-batch
-@
-height
-widthj1
-prelu_5&
-$ 
-batch
-@
-height
-widthj2
-conv2d_6&
-$ 
-batch
-@
-height
-widthj1
-prelu_6&
-$ 
-batch
-@
-height
-widthj2
-conv2d_7&
-$ 
-batch
-@
-height
-widthj1
-prelu_7&
-$ 
-batch
-@
-height
-widthj2
-conv2d_8&
-$ 
-batch
-@
-height
-widthj1
-prelu_8&
-$ 
-batch
-@
-height
-widthj2
-conv2d_9&
-$ 
-batch
-@
-height
-widthj1
-prelu_9&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_10&
-$ 
-batch
-@
-height
-widthj2
-prelu_10&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_11&
-$ 
-batch
-@
-height
-widthj2
-prelu_11&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_12&
-$ 
-batch
-@
-height
-widthj2
-prelu_12&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_13&
-$ 
-batch
-@
-height
-widthj2
-prelu_13&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_14&
-$ 
-batch
-@
-height
-widthj2
-prelu_14&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_15&
-$ 
-batch
-@
-height
-widthj2
-prelu_15&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_16&
-$ 
-batch
-@
-height
-widthj2
-prelu_16&
-$ 
-batch
-@
-height
-widthj3
-	conv2d_17&
-$ 
-batch
-0
-height
-widthj;
-pixel_shuffle*
-($
-batch
-
-
-4*height
-	4*widthj@
-upsample_nearest2d*
-($
-batch
-
-
-4*height
-	4*width‚Ë
-0pkg.torch.export.ExportedProgram.graph_signature–
-# inputs
-p_body_0_weight: PARAMETER target='body.0.weight'
-p_body_0_bias: PARAMETER target='body.0.bias'
-p_body_1_weight: PARAMETER target='body.1.weight'
-p_body_2_weight: PARAMETER target='body.2.weight'
-p_body_2_bias: PARAMETER target='body.2.bias'
-p_body_3_weight: PARAMETER target='body.3.weight'
-p_body_4_weight: PARAMETER target='body.4.weight'
-p_body_4_bias: PARAMETER target='body.4.bias'
-p_body_5_weight: PARAMETER target='body.5.weight'
-p_body_6_weight: PARAMETER target='body.6.weight'
-p_body_6_bias: PARAMETER target='body.6.bias'
-p_body_7_weight: PARAMETER target='body.7.weight'
-p_body_8_weight: PARAMETER target='body.8.weight'
-p_body_8_bias: PARAMETER target='body.8.bias'
-p_body_9_weight: PARAMETER target='body.9.weight'
-p_body_10_weight: PARAMETER target='body.10.weight'
-p_body_10_bias: PARAMETER target='body.10.bias'
-p_body_11_weight: PARAMETER target='body.11.weight'
-p_body_12_weight: PARAMETER target='body.12.weight'
-p_body_12_bias: PARAMETER target='body.12.bias'
-p_body_13_weight: PARAMETER target='body.13.weight'
-p_body_14_weight: PARAMETER target='body.14.weight'
-p_body_14_bias: PARAMETER target='body.14.bias'
-p_body_15_weight: PARAMETER target='body.15.weight'
-p_body_16_weight: PARAMETER target='body.16.weight'
-p_body_16_bias: PARAMETER target='body.16.bias'
-p_body_17_weight: PARAMETER target='body.17.weight'
-p_body_18_weight: PARAMETER target='body.18.weight'
-p_body_18_bias: PARAMETER target='body.18.bias'
-p_body_19_weight: PARAMETER target='body.19.weight'
-p_body_20_weight: PARAMETER target='body.20.weight'
-p_body_20_bias: PARAMETER target='body.20.bias'
-p_body_21_weight: PARAMETER target='body.21.weight'
-p_body_22_weight: PARAMETER target='body.22.weight'
-p_body_22_bias: PARAMETER target='body.22.bias'
-p_body_23_weight: PARAMETER target='body.23.weight'
-p_body_24_weight: PARAMETER target='body.24.weight'
-p_body_24_bias: PARAMETER target='body.24.bias'
-p_body_25_weight: PARAMETER target='body.25.weight'
-p_body_26_weight: PARAMETER target='body.26.weight'
-p_body_26_bias: PARAMETER target='body.26.bias'
-p_body_27_weight: PARAMETER target='body.27.weight'
-p_body_28_weight: PARAMETER target='body.28.weight'
-p_body_28_bias: PARAMETER target='body.28.bias'
-p_body_29_weight: PARAMETER target='body.29.weight'
-p_body_30_weight: PARAMETER target='body.30.weight'
-p_body_30_bias: PARAMETER target='body.30.bias'
-p_body_31_weight: PARAMETER target='body.31.weight'
-p_body_32_weight: PARAMETER target='body.32.weight'
-p_body_32_bias: PARAMETER target='body.32.bias'
-p_body_33_weight: PARAMETER target='body.33.weight'
-p_body_34_weight: PARAMETER target='body.34.weight'
-p_body_34_bias: PARAMETER target='body.34.bias'
-x: USER_INPUT
-
-# outputs
-add_185: USER_OUTPUT
-‚q
-2pkg.torch.export.ExportedProgram.range_constraints;{s77: VR[0, int_oo], s53: VR[0, int_oo], s0: VR[0, int_oo]}B
- 

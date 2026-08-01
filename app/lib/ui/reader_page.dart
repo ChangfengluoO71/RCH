@@ -20,6 +20,7 @@ class _ReaderPageState extends State<ReaderPage> {
   /// WebDAV 下载进度: 0.0~1.0, null=非 WebDAV 或已完成。
   double? _downloadProgress;
   final Map<int, Uint8List> _bytes = {}; final Set<int> _loading = {};
+  bool _aiProcessing = false;
   final PhotoViewController _photoCtrl = PhotoViewController();
   final TransformationController _dualZoomCtrl = TransformationController();
   final TransformationController _webtoonZoomCtrl = TransformationController();
@@ -241,6 +242,16 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _doAiSuperResolve() async {
+    if (_aiProcessing) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('AI 超分处理中，请稍候')),
+        );
+      }
+      return;
+    }
+    _aiProcessing = true;
+    try {
     final bytes = _bytes[_page];
     if (bytes == null) {
       if (mounted) {
@@ -271,6 +282,9 @@ class _ReaderPageState extends State<ReaderPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('AI 超分失败: $e'), duration: const Duration(seconds: 4)),
       );
+    }
+    } finally {
+      _aiProcessing = false;
     }
   }
 

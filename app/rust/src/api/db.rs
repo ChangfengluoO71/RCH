@@ -15,6 +15,11 @@ pub fn data_is_migrated() -> bool {
     db::is_migrated()
 }
 
+/// 重开数据库连接（根目录切换后调用，使后续读写指向新根目录的数据库）。
+pub fn reopen_data_db() -> Result<(), String> {
+    db::reopen_data_db().map_err(|e| format!("{e}"))
+}
+
 /// 从 library.json 全量导入 SQLite。`json_path` 为 library.json 完整路径。
 /// 幂等：已迁移过的数据不重复导入。
 pub fn data_migrate_from_json(json_path: String) -> Result<(), String> {

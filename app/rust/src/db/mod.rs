@@ -40,6 +40,19 @@ pub fn get() -> &'static std::sync::Mutex<Connection> {
     })
 }
 
+/// 重开数据库连接（应用根目录切换后调用）。
+///
+/// 连接惰性打开且绑定旧根目录的文件，切换根后必须重开，
+/// 否则后续写入仍落在旧文件，且旧文件被占用无法删除。
+/// 打开/初始化新库失败时保持旧连接不变，返回错误。
+pub fn reopen_data_db() -> Result<()> {
+    let new_conn = Connection::open(db_path()).context("无法打开 SQLite 数据库")?;
+    init_tables(&new_conn)?;
+    let mut guard = get().lock().unwrap();
+    *guard = new_conn;
+    Ok(())
+}
+
 /// 初始化所有表（幂等 CREATE TABLE IF NOT EXISTS）。
 fn init_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:app/src/rust/api/cache.dart';
+import 'package:app/src/rust/api/db.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -100,15 +101,25 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     );
     if (confirmed != true || !mounted) return;
 
+    // 迁移前先把排队中的保存落盘，降低复制热库的不一致风险。
+    await LibraryStore.instance.flushPendingSave();
     final ok = await _runMigration(from: current, to: newPath);
     if (!ok || !mounted) return;
 
     await setCacheRootPath(path: newPath);
     await writeCacheRootMarker(newPath);
+    // 重开数据库连接：后续读写指向新根，旧文件不再被占用。
+    await reopenDataDb();
     final store = LibraryStore.instance;
     store.settings.cacheDir = newPath;
     store.updateSettings(store.settings);
-    await deleteMigratedItems(root: current);
+    try {
+      await deleteMigratedItems(root: current);
+    } catch (e) {
+      if (mounted) _snack('迁移完成，但旧目录清理失败（可稍后手动删除）: $e');
+      await _refresh();
+      return;
+    }
     if (mounted) {
       _snack('根目录已切换并完成迁移');
       await _refresh();
@@ -148,15 +159,23 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     );
     if (confirmed != true || !mounted) return;
 
+    await LibraryStore.instance.flushPendingSave();
     final ok = await _runMigration(from: current, to: defaultPath);
     if (!ok || !mounted) return;
 
     await setCacheRootPath(path: '');
     await writeCacheRootMarker('');
+    await reopenDataDb();
     final store = LibraryStore.instance;
     store.settings.cacheDir = null;
     store.updateSettings(store.settings);
-    await deleteMigratedItems(root: current);
+    try {
+      await deleteMigratedItems(root: current);
+    } catch (e) {
+      if (mounted) _snack('已恢复默认目录，但旧目录清理失败（可稍后手动删除）: $e');
+      await _refresh();
+      return;
+    }
     if (mounted) {
       _snack('已恢复默认缓存目录');
       await _refresh();
@@ -232,7 +251,8 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
   bool _isSupportDirOrRelated(String path, String supportDir) {
     final p = path.replaceAll('\\', '/').toLowerCase();
     final s = supportDir.replaceAll('\\', '/').toLowerCase();
-    return p == s || s.startsWith('$p/') || p.startsWith('$s/');
+    // 只拒绝"支持目录本身或其内部"；默认根是支持目录的父目录（%APPDATA%\RCH），必须允许。
+    return p == s || p.startsWith('$s/');
   }
 
   void _snack(String msg) {

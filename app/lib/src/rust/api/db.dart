@@ -10,6 +10,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 Future<bool> dataIsMigrated() =>
     RustLib.instance.api.crateApiDbDataIsMigrated();
 
+/// 重开数据库连接（根目录切换后调用，使后续读写指向新根目录的数据库）。
+Future<void> reopenDataDb() => RustLib.instance.api.crateApiDbReopenDataDb();
+
 /// 从 library.json 全量导入 SQLite。`json_path` 为 library.json 完整路径。
 /// 幂等：已迁移过的数据不重复导入。
 Future<void> dataMigrateFromJson({required String jsonPath}) =>

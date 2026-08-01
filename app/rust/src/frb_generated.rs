@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -701345180;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 280996968;
 
 // Section: executor
 
@@ -1851,6 +1851,38 @@ fn wire__crate__api__cache__pending_migration_impl(
         },
     )
 }
+fn wire__crate__api__db__reopen_data_db_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "reopen_data_db",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::db::reopen_data_db()?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__cache__set_cache_root_path_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2791,23 +2823,24 @@ fn pde_ffi_dispatcher_primary_impl(
         52 => wire__crate__api__source__open_webdav_book_impl(port, ptr, rust_vec_len, data_len),
         53 => wire__crate__api__cache__page_cache_size_impl(port, ptr, rust_vec_len, data_len),
         54 => wire__crate__api__cache__pending_migration_impl(port, ptr, rust_vec_len, data_len),
-        55 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        58 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        59 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        60 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        61 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        62 => wire__crate__api__source__webdav_download_progress_impl(
+        55 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        57 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        60 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        61 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        62 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__source__webdav_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        63 => {
+        64 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        64 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

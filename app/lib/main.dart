@@ -171,10 +171,15 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
       await migrateCacheRoot(from: from, to: to, supportDir: supportDir);
       await setCacheRootPath(path: to);
       await writeCacheRootMarker(to);
+      await reopenDataDb();
       final store = LibraryStore.instance;
       store.settings.cacheDir = to;
       store.updateSettings(store.settings);
-      await deleteMigratedItems(root: from);
+      try {
+        await deleteMigratedItems(root: from);
+      } catch (_) {
+        // 旧目录清理失败不阻断恢复完成提示
+      }
       messenger.showSnackBar(const SnackBar(content: Text('缓存迁移已恢复完成')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('恢复迁移失败: $e')));

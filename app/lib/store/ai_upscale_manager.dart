@@ -96,12 +96,14 @@ class AiUpscaleManager extends ChangeNotifier {
   String? _readingBookKey;
   String? _forceAiVersionBookKey;
   String? _lastCompletedTitle;
+  String? _lastFailedMessage;
   Timer? _completedTimer;
 
   List<AiTask> get tasks => List.unmodifiable(_tasks);
   String? get readingBookKey => _readingBookKey;
   String? get forceAiVersionBookKey => _forceAiVersionBookKey;
   String? get lastCompletedTitle => _lastCompletedTitle;
+  String? get lastFailedMessage => _lastFailedMessage;
 
   /// 启动时加载持久化任务并续跑。
   Future<void> init() async {
@@ -110,8 +112,15 @@ class AiUpscaleManager extends ChangeNotifier {
       _tasks.clear();
       for (final dto in dtos) {
         final t = AiTask.fromDto(dto);
-        if (t.isActive) t.status = AiTaskStatus.queued; // 重启恢复
-        _tasks.add(t);
+        if (t.isActive) {
+          t.status = AiTaskStatus.queued; // 重启恢复
+          _tasks.add(t);
+        } else {
+          // 清理上次残留的 done/canceled 行
+          try {
+            await dbDeleteAiTask(id: t.id);
+          } catch (_) {}
+        }
       }
     } catch (_) {}
     notifyListeners();
@@ -146,9 +155,14 @@ class AiUpscaleManager extends ChangeNotifier {
   Future<void> cancel(String id) async {
     final t = _byId(id);
     if (t == null || !t.isActive) return;
+    final wasRunning = t.status == AiTaskStatus.running;
     t.status = AiTaskStatus.canceled;
     t.updatedAt = DateTime.now().millisecondsSinceEpoch;
     await _persist(t);
+    if (!wasRunning) {
+      // 尚未开始执行（排队中）→ 直接移除，避免残留 canceled 行
+      await _deleteAndRemove(t);
+    }
     notifyListeners();
   }
 
@@ -176,7 +190,12 @@ class AiUpscaleManager extends ChangeNotifier {
       while (true) {
         final task = _nextQueued();
         if (task == null) break;
-        await _runTask(task);
+        try {
+          await _runTask(task);
+        } catch (e) {
+          debugPrint('[AiUpscale] 任务异常: $e');
+          await _finishFailed(task, '$e');
+        }
       }
     } finally {
       _workerRunning = false;
@@ -205,7 +224,8 @@ class AiUpscaleManager extends ChangeNotifier {
     try {
       final bk = source.isWebDav
           ? await openWebdavBook(session: await webdavSessionFor(source), path: task.path)
-          : await openLocalBook(path: task.path);
+              .timeout(const Duration(seconds: 60))
+          : await openLocalBook(path: task.path).timeout(const Duration(seconds: 60));
       task.total = bk.pageCount;
       task.updatedAt = DateTime.now().millisecondsSinceEpoch;
       await _persist(task);
@@ -217,9 +237,11 @@ class AiUpscaleManager extends ChangeNotifier {
         try {
           final pages = <Uint8List>[];
           for (var i = start; i < end; i++) {
-            pages.add(await bookPage(handle: bk.handle, index: i));
+            pages.add(await bookPage(handle: bk.handle, index: i)
+                .timeout(const Duration(seconds: 60)));
           }
-          final results = await superResolveBatch(pages: pages, scale: task.scale);
+          final results = await superResolveBatch(pages: pages, scale: task.scale)
+              .timeout(const Duration(minutes: 5));
           for (final r in results) {
             if (r.isNotEmpty) task.done++;
           }
@@ -267,31 +289,41 @@ class AiUpscaleManager extends ChangeNotifier {
     await _persist(task);
     await _deleteAndRemove(task);
     debugPrint('[AiUpscale] 任务失败: $reason');
+    _showFailedNotice('《${task.title}》超分失败: $reason');
+    notifyListeners();
+  }
+
+  void _showFailedNotice(String message) {
+    _lastFailedMessage = message;
+    _completedTimer?.cancel();
+    _completedTimer = Timer(const Duration(seconds: 5), () {
+      _lastFailedMessage = null;
+      notifyListeners();
+    });
     notifyListeners();
   }
 
   /// 完成提示：正在阅读该书 → 弹切换对话框；否则悬浮窗显示"完成"提示条。
   Future<void> _notifyCompletion(AiTask task) async {
     final ctx = navigatorKey.currentContext;
-    if (ctx == null) return;
-    if (_readingBookKey == task.bookKey) {
-      final go = await showDialog<bool>(
-        context: ctx,
-        builder: (c) => AlertDialog(
-          title: const Text('AI 超分完成'),
-          content: Text('《${task.title}》已超分完毕，是否全部加载为超分版本？'),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('暂不')),
-            FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('加载超分版本')),
-          ],
-        ),
-      );
-      if (go == true) {
-        _forceAiVersionBookKey = task.bookKey;
-        notifyListeners();
-      }
-    } else {
+    if (ctx == null || _readingBookKey != task.bookKey) {
       _showCompletedNotice(task.title);
+      return;
+    }
+    final go = await showDialog<bool>(
+      context: ctx,
+      builder: (c) => AlertDialog(
+        title: const Text('AI 超分完成'),
+        content: Text('《${task.title}》已超分完毕，是否全部加载为超分版本？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('暂不')),
+          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('加载超分版本')),
+        ],
+      ),
+    );
+    if (go == true) {
+      _forceAiVersionBookKey = task.bookKey;
+      notifyListeners();
     }
   }
 

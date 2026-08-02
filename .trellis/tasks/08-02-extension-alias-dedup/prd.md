@@ -34,4 +34,17 @@
 
 ## Open Questions
 
-- 无阻塞问题。归并触发时机（启动迁移 vs 惰性首次访问）按 R3 推荐启动迁移（量小时无感）。
+- 无阻塞问题。
+
+## Decisions（2026-08-02 二次修订）
+
+- 规范映射：zip 家族（`.zip/.cbz/.cbr/.rar/.cb7/.7z/.cbt/.tar`）**剥离扩展名** → 与同名漫画文件夹视为同一本；`.azw/.azw3→.mobi`；其余格式不变。所有 key 统一走 `bookKeyOf(type, id, normalizeComicPath(path))`（记录/元数据/标签/AI 任务/封面缓存共用）。此规则与"刷新自动转 CBZ"呼应：文件夹 / zip 与生成的 .cbz 为同一本书。
+- 归并规则：阅读记录 readCount 累加、lastPage/lastReadAt 取大；元数据 tags/rotations 合并、字段取非空；标签关联经 `TagRepository.remapBookKey` 迁移。
+- 迁移时机：启动 `load()` 后执行（幂等）；旧 key 行保留在 SQLite 中，每次启动再合并，物理清理留待数据层同步任务。
+
+## Verification（2026-08-02）
+
+- [x] `flutter analyze` 0 issues
+- [x] `cargo test --lib` 34 passed
+- [x] 别名规范化单测（[app/test/comic_path_alias_test.dart]）
+- [ ] `flutter run` 实测：zip 改名 cbz 后进度/标签/封面保留、不重复

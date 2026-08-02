@@ -3,7 +3,7 @@
   "name": "extension-alias-dedup",
   "title": "漫画后缀名变更识别（zip→cbz 视为同一本）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

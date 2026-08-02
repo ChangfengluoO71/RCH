@@ -2474,6 +2474,7 @@ impl SseDecode for crate::api::db::BookMetaDto {
         let mut var_chineseTitle = <String>::sse_decode(deserializer);
         let mut var_summary = <String>::sse_decode(deserializer);
         let mut var_comment = <String>::sse_decode(deserializer);
+        let mut var_rotations = <String>::sse_decode(deserializer);
         return crate::api::db::BookMetaDto {
             key: var_key,
             cover_page: var_coverPage,
@@ -2488,6 +2489,7 @@ impl SseDecode for crate::api::db::BookMetaDto {
             chinese_title: var_chineseTitle,
             summary: var_summary,
             comment: var_comment,
+            rotations: var_rotations,
         };
     }
 }
@@ -3104,6 +3106,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::db::BookMetaDto {
             self.chinese_title.into_into_dart().into_dart(),
             self.summary.into_into_dart().into_dart(),
             self.comment.into_into_dart().into_dart(),
+            self.rotations.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3378,6 +3381,7 @@ impl SseEncode for crate::api::db::BookMetaDto {
         <String>::sse_encode(self.chinese_title, serializer);
         <String>::sse_encode(self.summary, serializer);
         <String>::sse_encode(self.comment, serializer);
+        <String>::sse_encode(self.rotations, serializer);
     }
 }
 

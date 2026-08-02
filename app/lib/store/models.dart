@@ -1,5 +1,6 @@
 // 数据模型:书源与阅读记录(JSON 持久化)。
 
+import 'dart:convert';
 import 'package:flutter/services.dart';
 
 /// 书源:本地目录或 WebDAV。
@@ -257,6 +258,8 @@ class BookMeta {
   int coverPage;
   double? cropX, cropY, cropW, cropH; // 裁剪区域(相对 0-1),null=整页
   List<String> tags;
+  /// 每页旋转: pageIndex -> 度数(0/90/180/270)。仅记录非 0 的页。
+  Map<int, int> rotations;
   // 元数据标签(作者/类别/系列,智能扫描用)
   String author;   // 作者
   String genre;    // 类别
@@ -274,6 +277,7 @@ class BookMeta {
     this.cropW,
     this.cropH,
     List<String>? tags,
+    Map<int, int>? rotations,
     this.author = '',
     this.genre = '',
     this.series = '',
@@ -281,7 +285,8 @@ class BookMeta {
     this.comment = '',
     this.title = '',
     this.chineseTitle = '',
-  }) : tags = tags ?? [];
+  })  : tags = tags ?? [],
+        rotations = rotations ?? {};
 
   bool get hasCrop => cropX != null;
 
@@ -302,6 +307,7 @@ class BookMeta {
         'chineseTitle': chineseTitle,
         'summary': summary,
         'comment': comment,
+        'rotations': rotations.map((k, v) => MapEntry('$k', v)),
       };
 
   factory BookMeta.fromJson(Map<String, dynamic> j) => BookMeta(
@@ -319,7 +325,33 @@ class BookMeta {
         chineseTitle: (j['chineseTitle'] as String?) ?? '',
         summary: (j['summary'] as String?) ?? '',
         comment: (j['comment'] as String?) ?? '',
+        rotations: parseBookRotations(j['rotations']),
       );
+}
+
+/// 解析每页旋转数据：兼容 JSON 对象（{"0":90}）或 JSON 字符串。
+Map<int, int> parseBookRotations(dynamic raw) {
+  final out = <int, int>{};
+  Object? data = raw;
+  if (raw is String) {
+    try {
+      data = jsonDecode(raw);
+    } catch (_) {
+      return out;
+    }
+  }
+  if (data is Map) {
+    for (final e in data.entries) {
+      final k = int.tryParse('${e.key}');
+      final v = e.value is num
+          ? (e.value as num).toInt()
+          : int.tryParse('${e.value}');
+      if (k != null && k >= 0 && v != null && v > 0) {
+        out[k] = v;
+      }
+    }
+  }
+  return out;
 }
 
 // ============================================================

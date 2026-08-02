@@ -198,6 +198,9 @@ class BookMetaDto {
   final String summary;
   final String comment;
 
+  /// 每页旋转（JSON 文本，如 {"0":90}）。
+  final String rotations;
+
   const BookMetaDto({
     required this.key,
     required this.coverPage,
@@ -212,6 +215,7 @@ class BookMetaDto {
     required this.chineseTitle,
     required this.summary,
     required this.comment,
+    required this.rotations,
   });
 
   @override
@@ -228,7 +232,8 @@ class BookMetaDto {
       title.hashCode ^
       chineseTitle.hashCode ^
       summary.hashCode ^
-      comment.hashCode;
+      comment.hashCode ^
+      rotations.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -247,7 +252,8 @@ class BookMetaDto {
           title == other.title &&
           chineseTitle == other.chineseTitle &&
           summary == other.summary &&
-          comment == other.comment;
+          comment == other.comment &&
+          rotations == other.rotations;
 }
 
 /// 书源 DTO（扁平结构，对应 Dart BookSource）。

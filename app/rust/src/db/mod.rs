@@ -119,7 +119,8 @@ fn init_tables(conn: &Connection) -> Result<()> {
             title TEXT NOT NULL DEFAULT '',
             chinese_title TEXT NOT NULL DEFAULT '',
             summary TEXT NOT NULL DEFAULT '',
-            comment TEXT NOT NULL DEFAULT ''
+            comment TEXT NOT NULL DEFAULT '',
+            rotations TEXT NOT NULL DEFAULT '{}'
         );
 
         -- 标签实体
@@ -171,6 +172,18 @@ fn init_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_book_tags_book ON book_tags(book_key);
         ",
     )?;
+    // 旧库升级：补 rotations 列（每页旋转，JSON 文本，如 {"0":90}）。
+    let meta_cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(book_metas)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .collect();
+    if !meta_cols.iter().any(|c| c == "rotations") {
+        conn.execute(
+            "ALTER TABLE book_metas ADD COLUMN rotations TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )?;
+    }
     // 自愈：旧版 hash ID 标签 → 名字 ID（幂等，每次打开都执行）。
     normalize_legacy_tag_ids(conn)?;
     Ok(())
@@ -304,11 +317,15 @@ pub fn migrate_from_library_json(json_path: &str) -> Result<()> {
         // ---- book_metas ----
         if let Some(metas) = j.get("metas").and_then(|v| v.as_object()) {
             for (key, m) in metas {
+                let rotations = m
+                    .get("rotations")
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "{}".to_string());
                 conn.execute(
                     "INSERT OR IGNORE INTO book_metas
                      (key, cover_page, crop_x, crop_y, crop_w, crop_h,
-                      author, genre, series, title, chinese_title, summary, comment)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                      author, genre, series, title, chinese_title, summary, comment, rotations)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                     params![
                         key,
                         m["coverPage"].as_i64().unwrap_or(0),
@@ -323,6 +340,7 @@ pub fn migrate_from_library_json(json_path: &str) -> Result<()> {
                         m["chineseTitle"].as_str().unwrap_or(""),
                         m["summary"].as_str().unwrap_or(""),
                         m["comment"].as_str().unwrap_or(""),
+                        rotations,
                     ],
                 )?;
             }
@@ -564,6 +582,7 @@ pub struct BookMetaRow {
     pub chinese_title: String,
     pub summary: String,
     pub comment: String,
+    pub rotations: String,
 }
 
 pub fn load_all_metas() -> Vec<BookMetaRow> {
@@ -571,7 +590,8 @@ pub fn load_all_metas() -> Vec<BookMetaRow> {
     let mut stmt = conn
         .prepare(
             "SELECT key, cover_page, crop_x, crop_y, crop_w, crop_h,
-                    author, genre, series, title, chinese_title, summary, comment
+                    author, genre, series, title, chinese_title, summary, comment,
+                    rotations
              FROM book_metas",
         )
         .unwrap();
@@ -590,6 +610,7 @@ pub fn load_all_metas() -> Vec<BookMetaRow> {
             chinese_title: row.get(10)?,
             summary: row.get(11)?,
             comment: row.get(12)?,
+            rotations: row.get(13)?,
         })
     })
     .unwrap()
@@ -602,8 +623,8 @@ pub fn upsert_meta(m: &BookMetaRow) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO book_metas
          (key, cover_page, crop_x, crop_y, crop_w, crop_h,
-          author, genre, series, title, chinese_title, summary, comment)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+          author, genre, series, title, chinese_title, summary, comment, rotations)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             m.key,
             m.cover_page,
@@ -618,6 +639,7 @@ pub fn upsert_meta(m: &BookMetaRow) -> Result<()> {
             m.chinese_title,
             m.summary,
             m.comment,
+            m.rotations,
         ],
     )?;
     Ok(())
@@ -1172,6 +1194,20 @@ mod tests {
             })
             .unwrap();
         assert_eq!(row, ("t1".to_string(), 3));
+    }
+
+    #[test]
+    fn init_tables_creates_rotations_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        conn.execute("INSERT INTO book_metas (key) VALUES ('k1')", [])
+            .unwrap();
+        let rotations: String = conn
+            .query_row("SELECT rotations FROM book_metas WHERE key = 'k1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(rotations, "{}");
     }
 
 }

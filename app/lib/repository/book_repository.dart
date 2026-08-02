@@ -4,6 +4,8 @@
 // 只负责纯数据 CRUD + SQLite 持久化，不负责通知 UI 和跨模块协调。
 // UI 通知和跨模块逻辑由 LibraryStore（facade）统一管理。
 
+import 'dart:convert';
+
 import '../src/rust/api/db.dart';
 import '../store/models.dart';
 
@@ -115,6 +117,7 @@ class BookRepository {
         chineseTitle: dto.chineseTitle,
         summary: dto.summary,
         comment: dto.comment,
+        rotations: parseBookRotations(dto.rotations),
       );
     }
   }
@@ -148,6 +151,7 @@ class BookRepository {
         chineseTitle: m.chineseTitle,
         summary: m.summary,
         comment: m.comment,
+        rotations: jsonEncode(m.rotations.map((k, v) => MapEntry('$k', v))),
       ));
     }
   }

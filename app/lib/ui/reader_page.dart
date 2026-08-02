@@ -23,6 +23,8 @@ class _ReaderPageState extends State<ReaderPage> {
   final Map<int, Uint8List> _bytes = {}; final Set<int> _loading = {};
   bool _aiProcessing = false;
   bool _useAiVersion = true;
+  bool _rotationMode = false; // 右键「界面旋转」进入旋转模式
+  final Map<int, int> _rotations = {}; // pageIndex -> 度数(0/90/180/270)
   final PhotoViewController _photoCtrl = PhotoViewController();
   /// PhotoView 内部缩放状态机(initial/zoomedIn/zoomedOut)。必须与 _photoCtrl 一起
   /// 重置,否则翻页/0 键复位后仍按旧的 zoomedIn 状态推导缩放(表现为页面卡在放大、
@@ -37,6 +39,10 @@ class _ReaderPageState extends State<ReaderPage> {
   @override void initState() { super.initState();
     final g=LibraryStore.instance.settings;
     _mode=g.readMode; _invert=g.invertTap; _dual=g.dualPageMode; _gap=g.dualPageGap; _skipCover=g.skipFrontCover; _keys=g.keys;
+    final s0 = widget.source;
+    if (s0 != null) {
+      _rotations.addAll(LibraryStore.instance.metaOf(s0, widget.path).rotations);
+    }
     _open();
     AiUpscaleManager.instance.addListener(_onAiManager);
     final s = widget.source;
@@ -73,6 +79,37 @@ class _ReaderPageState extends State<ReaderPage> {
     if (_isDual()) _ensure(_page + 1);
     _ensure(_page + 1);
     _ensure(_page + 2);
+  }
+
+  // ---- 页面旋转(每页独立,右键「界面旋转」进入) ----
+  int _rotationOf(int page) => _rotations[page] ?? 0;
+
+  void _toggleRotationMode() {
+    if (_mode == ReadMode.webtoon) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('条漫模式暂不支持旋转')),
+      );
+      return;
+    }
+    setState(() => _rotationMode = !_rotationMode);
+  }
+
+  void _rotatePage(int page) {
+    final next = (_rotationOf(page) + 90) % 360;
+    setState(() {
+      if (next == 0) {
+        _rotations.remove(page);
+      } else {
+        _rotations[page] = next;
+      }
+    });
+    final s = widget.source;
+    if (s == null) return;
+    final m = LibraryStore.instance.metaOf(s, widget.path);
+    m.rotations
+      ..clear()
+      ..addAll(_rotations);
+    LibraryStore.instance.updateMeta(m);
   }
 
   Future<void> _open() async { try {
@@ -222,7 +259,27 @@ class _ReaderPageState extends State<ReaderPage> {
     return _buildMangaOrComic();
   }
 
-  Widget _buildImage(Uint8List bytes)=> PhotoView(controller:_photoCtrl,scaleStateController:_scaleStateCtrl,imageProvider:ResizeImage(MemoryImage(bytes),width:2000),backgroundDecoration:const BoxDecoration(color:Colors.black),initialScale:PhotoViewComputedScale.contained,minScale:PhotoViewComputedScale.contained,maxScale:PhotoViewComputedScale.covered*8);
+  Widget _buildImage(Uint8List bytes) {
+    final viewer = PhotoView(controller:_photoCtrl,scaleStateController:_scaleStateCtrl,imageProvider:ResizeImage(MemoryImage(bytes),width:2000),backgroundDecoration:const BoxDecoration(color:Colors.black),initialScale:PhotoViewComputedScale.contained,minScale:PhotoViewComputedScale.contained,maxScale:PhotoViewComputedScale.covered*8);
+    final q = _rotationOf(_page) ~/ 90;
+    return q == 0 ? viewer : RotatedBox(quarterTurns: q, child: viewer);
+  }
+
+  Widget _rotationButton(int page) => Tooltip(
+        message: '旋转该页（当前 ${_rotationOf(page)}°）',
+        child: Material(
+          color: Colors.black54,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () => _rotatePage(page),
+            child: const Padding(
+              padding: EdgeInsets.all(8),
+              child: Icon(Icons.rotate_right, size: 22, color: Colors.white),
+            ),
+          ),
+        ),
+      );
 
   Widget _buildMangaOrComic() { final bytes=_bytes[_page]; final isManga=_mode==ReadMode.manga;
     VoidCallback leftAction =isManga?(_invert?_back:_forward):(_invert?_forward:_back);
@@ -236,6 +293,14 @@ class _ReaderPageState extends State<ReaderPage> {
       Positioned(left:0,top:0,bottom:0,width:80,child:GestureDetector(behavior:HitTestBehavior.opaque,onTap:leftAction)),
       Positioned(right:0,top:0,bottom:0,width:80,child:GestureDetector(behavior:HitTestBehavior.opaque,onTap:rightAction)),
       if(_loading.isNotEmpty)const Positioned(top:8,right:8,child:SizedBox(width:20,height:20,child:CircularProgressIndicator(strokeWidth:2))),
+      if (_rotationMode) ...[
+        if (rightPg == null)
+          Positioned(left: 0, right: 0, bottom: 10, child: Center(child: _rotationButton(_page)))
+        else ...[
+          Positioned(left: 12, bottom: 10, child: _rotationButton(leftPg)),
+          Positioned(right: 12, bottom: 10, child: _rotationButton(rightPg)),
+        ],
+      ],
     ]);
   }
 
@@ -245,8 +310,8 @@ class _ReaderPageState extends State<ReaderPage> {
       transformationController: _dualZoomCtrl, minScale: 1.0, maxScale: 4.0,
       scaleEnabled: false, panEnabled: true,
       child: LayoutBuilder(builder:(context,c){final div=_gap.clamp(0,20);final halfW=((c.maxWidth-div)/2).round().clamp(1,4096);
-        Widget tile(Uint8List b)=>ClipRect(child:FittedBox(fit:BoxFit.contain,child:SizedBox(width:halfW.toDouble(),child:Image(image:ResizeImage(MemoryImage(b),width:halfW),fit:BoxFit.contain))));
-        Widget leftWidget=tile(leftBytes);Widget rightWidget=rightBytes!=null?tile(rightBytes):const Center(child:SizedBox(width:24,height:24,child:CircularProgressIndicator(strokeWidth:2)));
+        Widget tile(Uint8List b, int idx)=>ClipRect(child:FittedBox(fit:BoxFit.contain,child:RotatedBox(quarterTurns:_rotationOf(idx)~/90,child:SizedBox(width:halfW.toDouble(),child:Image(image:ResizeImage(MemoryImage(b),width:halfW),fit:BoxFit.contain)))));
+        Widget leftWidget=tile(leftBytes,leftIdx);Widget rightWidget=rightBytes!=null?tile(rightBytes,rightIdx):const Center(child:SizedBox(width:24,height:24,child:CircularProgressIndicator(strokeWidth:2)));
         return Row(mainAxisSize:MainAxisSize.min,children:[if(isManga)rightWidget,if(isManga&&div>0)SizedBox(width:div.toDouble()),leftWidget,if(!isManga&&div>0)SizedBox(width:div.toDouble()),if(!isManga)rightWidget,]);
       }),
     ));
@@ -281,11 +346,13 @@ class _ReaderPageState extends State<ReaderPage> {
         PopupMenuItem(value: 'ai_version', child: ListTile(leading: Icon(_useAiVersion ? Icons.image_not_supported : Icons.auto_fix_high), title: Text(_useAiVersion ? '使用原版' : '使用超分版本'), dense: true)),
         PopupMenuItem(value: 'settings', child: ListTile(leading: Icon(Icons.tune), title: Text('阅读设置'), dense: true)),
         PopupMenuItem(value: 'ai', child: ListTile(leading: Icon(Icons.auto_fix_high), title: Text('AI 超分 (2x)'), dense: true)),
+        PopupMenuItem(value: 'rotate', child: ListTile(leading: Icon(_rotationMode ? Icons.rotate_left : Icons.rotate_right), title: Text(_rotationMode ? '退出旋转模式' : '界面旋转'), dense: true)),
       ],
     ).then((value) {
       if (value == 'ai_version') _toggleAiVersion();
       if (value == 'settings') _showSettings();
       if (value == 'ai') _doAiSuperResolve();
+      if (value == 'rotate') _toggleRotationMode();
     });
   }
 

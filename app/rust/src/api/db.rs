@@ -152,6 +152,8 @@ pub struct BookMetaDto {
     pub chinese_title: String,
     pub summary: String,
     pub comment: String,
+    /// 每页旋转（JSON 文本，如 {"0":90}）。
+    pub rotations: String,
 }
 
 pub fn db_load_all_metas() -> Vec<BookMetaDto> {
@@ -171,6 +173,7 @@ pub fn db_load_all_metas() -> Vec<BookMetaDto> {
             chinese_title: m.chinese_title,
             summary: m.summary,
             comment: m.comment,
+            rotations: m.rotations,
         })
         .collect()
 }
@@ -190,6 +193,7 @@ pub fn db_upsert_meta(meta: BookMetaDto) -> Result<(), String> {
         chinese_title: meta.chinese_title,
         summary: meta.summary,
         comment: meta.comment,
+        rotations: meta.rotations,
     })
     .map_err(|e| format!("{e}"))
 }

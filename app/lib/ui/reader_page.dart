@@ -24,6 +24,10 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _aiProcessing = false;
   bool _useAiVersion = true;
   final PhotoViewController _photoCtrl = PhotoViewController();
+  /// PhotoView 内部缩放状态机(initial/zoomedIn/zoomedOut)。必须与 _photoCtrl 一起
+  /// 重置,否则翻页/0 键复位后仍按旧的 zoomedIn 状态推导缩放(表现为页面卡在放大、
+  /// 拖拽区失效)。
+  final PhotoViewScaleStateController _scaleStateCtrl = PhotoViewScaleStateController();
   final TransformationController _dualZoomCtrl = TransformationController();
   final TransformationController _webtoonZoomCtrl = TransformationController();
   final FocusNode _focus = FocusNode(); final ScrollController _webtoonCtrl = ScrollController();
@@ -61,6 +65,10 @@ class _ReaderPageState extends State<ReaderPage> {
         }
       }
     });
+    _photoCtrl.reset();
+    _scaleStateCtrl.reset();
+    _dualZoomCtrl.value = Matrix4.identity();
+    _webtoonZoomCtrl.value = Matrix4.identity();
     _ensure(_page);
     if (_isDual()) _ensure(_page + 1);
     _ensure(_page + 1);
@@ -134,7 +142,7 @@ class _ReaderPageState extends State<ReaderPage> {
   void _forward() { final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?-s:s); }
   void _back(){ final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?s:-s); }
   Future<void> _go(int d) async { final b=_book;if(b==null)return;final n=(_page+d).clamp(0,b.pageCount-1);
-    if(n!=_page){setState(()=>_page=n);_photoCtrl.reset();_dualZoomCtrl.value=Matrix4.identity();for(var i=n-2;i<=n+2;i++){_ensure(i);}
+    if(n!=_page){setState(()=>_page=n);_photoCtrl.reset();_scaleStateCtrl.reset();_dualZoomCtrl.value=Matrix4.identity();for(var i=n-2;i<=n+2;i++){_ensure(i);}
     final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:n);}}}
 
   // ---- 缩放(仅 +/-/0 键,无滚轮) ----
@@ -143,7 +151,7 @@ class _ReaderPageState extends State<ReaderPage> {
   void _zoomReset() {
     if (_mode == ReadMode.webtoon) { _webtoonZoomCtrl.value = Matrix4.identity(); }
     else if (_isDual()) { _dualZoomCtrl.value = Matrix4.identity(); }
-    else { _photoCtrl.reset(); }
+    else { _photoCtrl.reset(); _scaleStateCtrl.reset(); }
   }
   void _zoomBy(double f) {
     if (_mode == ReadMode.webtoon) { _zoomIV(_webtoonZoomCtrl, f); }
@@ -157,7 +165,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
   void _showJumpDialog() { final b=_book;if(b==null)return;final ctrl=TextEditingController();
     showDialog(context:context,builder:(ctx)=>AlertDialog(title:const Text('跳转到页码'),content:TextField(controller:ctrl,keyboardType:TextInputType.number,autofocus:true,decoration:const InputDecoration(hintText:'输入页码',border:OutlineInputBorder()),onSubmitted:(v){_doJump(v,ctrl,ctx);}),actions:[TextButton(onPressed:()=>Navigator.of(ctx).pop(),child:const Text('取消')),FilledButton(onPressed:(){_doJump(ctrl.text,ctrl,ctx);},child:const Text('跳转'))]));}
-  void _doJump(String v, TextEditingController ctrl, BuildContext ctx) { final b=_book;if(b==null)return;final p=int.tryParse(v.trim());if(p!=null){final n=(p-1).clamp(0,b.pageCount-1);setState(()=>_page=n);_photoCtrl.reset();_dualZoomCtrl.value=Matrix4.identity();_ensure(n-2);_ensure(n-1);_ensure(n);_ensure(n+1);_ensure(n+2);}Navigator.of(ctx).pop();}
+  void _doJump(String v, TextEditingController ctrl, BuildContext ctx) { final b=_book;if(b==null)return;final p=int.tryParse(v.trim());if(p!=null){final n=(p-1).clamp(0,b.pageCount-1);setState(()=>_page=n);_photoCtrl.reset();_scaleStateCtrl.reset();_dualZoomCtrl.value=Matrix4.identity();_ensure(n-2);_ensure(n-1);_ensure(n);_ensure(n+1);_ensure(n+2);}Navigator.of(ctx).pop();}
 
   // ---- 键盘(可自定义的 5 个动作) ----
   KeyEventResult _onKey(FocusNode n, KeyEvent e) {
@@ -182,7 +190,7 @@ class _ReaderPageState extends State<ReaderPage> {
   @override void dispose(){
     AiUpscaleManager.instance.removeListener(_onAiManager);
     AiUpscaleManager.instance.setReadingBook(null);
-    final b=_book;if(b!=null)closeBook(handle:b.handle);_photoCtrl.dispose();_dualZoomCtrl.dispose();_webtoonZoomCtrl.dispose();_focus.dispose();_webtoonCtrl.dispose();super.dispose();
+    final b=_book;if(b!=null)closeBook(handle:b.handle);_photoCtrl.dispose();_scaleStateCtrl.dispose();_dualZoomCtrl.dispose();_webtoonZoomCtrl.dispose();_focus.dispose();_webtoonCtrl.dispose();super.dispose();
   }
 
   // ========== 布局 ==========
@@ -214,7 +222,7 @@ class _ReaderPageState extends State<ReaderPage> {
     return _buildMangaOrComic();
   }
 
-  Widget _buildImage(Uint8List bytes)=> PhotoView(controller:_photoCtrl,imageProvider:ResizeImage(MemoryImage(bytes),width:2000),backgroundDecoration:const BoxDecoration(color:Colors.black),initialScale:PhotoViewComputedScale.contained,minScale:PhotoViewComputedScale.contained,maxScale:PhotoViewComputedScale.covered*8);
+  Widget _buildImage(Uint8List bytes)=> PhotoView(controller:_photoCtrl,scaleStateController:_scaleStateCtrl,imageProvider:ResizeImage(MemoryImage(bytes),width:2000),backgroundDecoration:const BoxDecoration(color:Colors.black),initialScale:PhotoViewComputedScale.contained,minScale:PhotoViewComputedScale.contained,maxScale:PhotoViewComputedScale.covered*8);
 
   Widget _buildMangaOrComic() { final bytes=_bytes[_page]; final isManga=_mode==ReadMode.manga;
     VoidCallback leftAction =isManga?(_invert?_back:_forward):(_invert?_forward:_back);
@@ -235,7 +243,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final isManga=_mode==ReadMode.manga;_ensure(rightIdx);
     return Center(child: InteractiveViewer(
       transformationController: _dualZoomCtrl, minScale: 1.0, maxScale: 4.0,
-      scaleEnabled: false, panEnabled: false,
+      scaleEnabled: false, panEnabled: true,
       child: LayoutBuilder(builder:(context,c){final div=_gap.clamp(0,20);final halfW=((c.maxWidth-div)/2).round().clamp(1,4096);
         Widget tile(Uint8List b)=>ClipRect(child:FittedBox(fit:BoxFit.contain,child:SizedBox(width:halfW.toDouble(),child:Image(image:ResizeImage(MemoryImage(b),width:halfW),fit:BoxFit.contain))));
         Widget leftWidget=tile(leftBytes);Widget rightWidget=rightBytes!=null?tile(rightBytes):const Center(child:SizedBox(width:24,height:24,child:CircularProgressIndicator(strokeWidth:2)));

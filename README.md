@@ -82,27 +82,6 @@ flutter run -d windows
 - **五级缓存管理面板**：页面 / 整本下载 / 封面 / 旧下载 / AI 超分分类展示占用空间，可单独清理
 - 全程无账号体系，不上传任何数据
 
-## 📦 版本历史
-
-| 版本 | 日期 | 摘要 |
-|------|------|------|
-| [v0.3.1](https://github.com/ChangfengluoO71/RCH/releases) | 2026-08-02 | 阅读器页面旋转、自动转 CBZ、标签分层折叠、AI 任务拖拽排序、漫画排序等 |
-| [v0.3.0](https://github.com/ChangfengluoO71/RCH/releases/tag/v0.3.0) | 2026-08-02 | AI 超分后台队列、缓存目录迁移重构、标签持久化修复 |
-| v0.2.1 | 2026-07-28 | 封面磁盘缓存、封面加载并发控制、Repository 层重构 |
-| v0.1.0 | 2026-07-28 | 流式阅读引擎、8 种格式、WebDAV、标签/搜索/封面系统 |
-
-完整变更记录见 [CHANGELOG.md](CHANGELOG.md)。
-
-> **版本规则**：自 0.3.0 起，每次发布仅递增最后一位补丁号（0.3.0 → 0.3.1 → 0.3.2），新功能与修复统一按此推进。
-
-## 🛠️ 开发
-
-- **技术栈**：Flutter（Dart）负责界面，Rust 负责核心（流式解析、缓存、解码、AI 调度），通过 `flutter_rust_bridge` 桥接
-- **架构说明**：[docs/architecture.md](docs/architecture.md)；设计目标 [SPEC.md](SPEC.md)；任务看板 [TODO.md](TODO.md)；重大决策 [DECISION.md](DECISION.md)；开发历史 [LOG.md](LOG.md)
-- **Rust 单元测试**：`cd app/rust && cargo test`
-- **修改 Rust API 后重新生成桥接**：`cd app && flutter_rust_bridge_codegen generate`
-- 贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-
 ## 📄 许可证
 
 [MIT](LICENSE)

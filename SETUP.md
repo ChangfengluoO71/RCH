@@ -134,3 +134,32 @@ cmake --version   # 需 ≥ 3.16
 | [RustRover](https://www.jetbrains.com/rust/) | Rust IDE |
 | [VS Code](https://code.visualstudio.com/) + Dart/Flutter 插件 | Flutter 开发 |
 | [Git for Windows](https://git-scm.com/downloads/win) | 终端的 Git Bash |
+
+## 发布（构建安装包）
+
+固定流程（历史版本 v0.1.x ~ v0.3.x 均按此执行）：
+
+```powershell
+# 1. 升版本号（保持三处一致）：
+#    app/pubspec.yaml  version: x.y.z+n
+#    app/windows/runner/Runner.rc  VERSION_AS_NUMBER / VERSION_AS_STRING
+#    app/windows/installer/setup.iss  MyAppVersion / OutputBaseFilename
+
+# 2. Release 构建（产物：app/build/windows/x64/runner/Release/RCH.exe）
+cd app
+flutter build windows --release
+
+# 3. Inno Setup 打包（需安装 Inno Setup 6，winget install JRSoftware.InnoSetup）
+#    产物：dist/RCH-vX.Y.Z-windows-x64.exe
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" app/windows/installer/setup.iss
+
+# 4. 提交版本变更 + 打 tag + 推送
+git add CHANGELOG.md app/pubspec.yaml app/windows/runner/Runner.rc app/windows/installer/setup.iss
+git commit -m "release: vX.Y.Z — 摘要"
+git tag -a vX.Y.Z -m "RCH vX.Y.Z"
+git push origin master --tags
+
+# 5. 创建/更新 GitHub Release（草稿→上传安装包→发布）
+gh release create vX.Y.Z --title "RCH vX.Y.Z" --notes-file release_notes_vX.Y.Z.md --draft
+gh release upload vX.Y.Z dist/RCH-vX.Y.Z-windows-x64.exe
+```

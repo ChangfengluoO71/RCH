@@ -605,6 +605,7 @@ fn parse_multistatus(xml: &str) -> Result<Vec<Entry>> {
                             path,
                             is_dir: c.is_dir,
                             size: c.size,
+                            mtime: 0,
                         });
                     }
                 } else if name == field {

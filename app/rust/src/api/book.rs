@@ -148,6 +148,8 @@ pub struct DirEntry {
     pub path: String,
     pub is_dir: bool,
     pub size: u64,
+    /// 修改时间（unix 秒）；来源无此信息时为 0（如 WebDAV）。
+    pub mtime: i64,
 }
 
 /// 列出本地目录内容(目录在前,自然排序)。
@@ -160,6 +162,7 @@ pub async fn list_local_dir(path: String) -> Result<Vec<DirEntry>> {
             path: e.path,
             is_dir: e.is_dir,
             size: e.size,
+            mtime: e.mtime,
         })
         .collect())
 }

@@ -16,6 +16,8 @@ pub struct Entry {
     pub path: String,
     pub is_dir: bool,
     pub size: u64,
+    /// 修改时间（unix 秒）；来源无此信息时为 0（如 WebDAV）。
+    pub mtime: i64,
 }
 
 /// 统一可随机访问的只读字节源。

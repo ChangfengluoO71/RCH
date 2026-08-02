@@ -33,6 +33,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   String? _error;
   BigInt? _session;
   bool _posterMode = true; // true=海报墙, false=简略列表
+  String _sort = 'alpha'; // alpha=按字母, added=按加入时间(最新在前)
   bool _converting = false; // 自动转 CBZ 执行中（防并发触发）
   bool _showConvertProgress = false; // 底部转换进度条可见
   int _convertDone = 0;
@@ -237,6 +238,18 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 漫画文件夹也作为漫画条目参与过滤。
   bool _isComicDir(String path) => _comicDirs[path] == true;
 
+  /// 排序：目录保持在前；按字母用自然序（数字感知），按加入时间用 mtime 降序（最新在前，
+  /// mtime=0 视为最旧排最后，同值按名称兜底）。
+  int _compareEntries(DirEntry a, DirEntry b) {
+    if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
+    if (_sort == 'added') {
+      final ma = a.mtime > 0 ? a.mtime : -1;
+      final mb = b.mtime > 0 ? b.mtime : -1;
+      if (ma != mb) return mb.compareTo(ma);
+    }
+    return _naturalCompare(a.name, b.name);
+  }
+
   List<DirEntry> get _filtered {
     Iterable<DirEntry> list = _entries;
     // 隐藏已被自动转换为同名 .cbz 的源条目
@@ -258,8 +271,29 @@ class _SourceBrowserState extends State<SourceBrowser> {
         return meta != null && widget.selectedTags.every((t) => meta.tags.contains(t) || meta.metaTags.contains(t));
       });
     }
-    return list.toList();
+    return list.toList()..sort(_compareEntries);
   }
+
+  /// 名称自然排序（数字感知）：file2 < file10。
+  static int _naturalCompare(String a, String b) {
+    final ra = _naturalSegments(a.toLowerCase());
+    final rb = _naturalSegments(b.toLowerCase());
+    final n = ra.length < rb.length ? ra.length : rb.length;
+    for (var i = 0; i < n; i++) {
+      final sa = ra[i], sb = rb[i];
+      final na = int.tryParse(sa), nb = int.tryParse(sb);
+      if (na != null && nb != null) {
+        if (na != nb) return na.compareTo(nb);
+      } else {
+        final c = sa.compareTo(sb);
+        if (c != 0) return c;
+      }
+    }
+    return a.toLowerCase().compareTo(b.toLowerCase());
+  }
+
+  static List<String> _naturalSegments(String s) =>
+      RegExp(r'\d+|\D+').allMatches(s).map((m) => m.group(0)!).toList();
 
   /// 已选中的漫画路径(用于批量标签)。
   final Set<String> _selectedPaths = {};
@@ -441,6 +475,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   onPressed: () => setState(() => _selectMode = true),
                 ),
               ],
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.sort),
+                tooltip: '排序',
+                initialValue: _sort,
+                onSelected: (v) => setState(() => _sort = v),
+                itemBuilder: (c) => const [
+                  PopupMenuItem(value: 'alpha', child: Text('按字母')),
+                  PopupMenuItem(value: 'added', child: Text('按加入时间')),
+                ],
+              ),
               IconButton(icon: Icon(_posterMode ? Icons.view_list : Icons.grid_view), tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙', onPressed: () => setState(() => _posterMode = !_posterMode)),
               IconButton(icon: const Icon(Icons.refresh), tooltip: '刷新', onPressed: _refresh),
             ]),

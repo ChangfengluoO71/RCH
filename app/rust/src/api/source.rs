@@ -87,6 +87,7 @@ pub async fn webdav_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
             path: e.path,
             is_dir: e.is_dir,
             size: e.size,
+            mtime: e.mtime,
         })
         .collect())
 }

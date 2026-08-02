@@ -2656,11 +2656,13 @@ impl SseDecode for crate::api::book::DirEntry {
         let mut var_path = <String>::sse_decode(deserializer);
         let mut var_isDir = <bool>::sse_decode(deserializer);
         let mut var_size = <u64>::sse_decode(deserializer);
+        let mut var_mtime = <i64>::sse_decode(deserializer);
         return crate::api::book::DirEntry {
             name: var_name,
             path: var_path,
             is_dir: var_isDir,
             size: var_size,
+            mtime: var_mtime,
         };
     }
 }
@@ -3284,6 +3286,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::book::DirEntry {
             self.path.into_into_dart().into_dart(),
             self.is_dir.into_into_dart().into_dart(),
             self.size.into_into_dart().into_dart(),
+            self.mtime.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -3520,6 +3523,7 @@ impl SseEncode for crate::api::book::DirEntry {
         <String>::sse_encode(self.path, serializer);
         <bool>::sse_encode(self.is_dir, serializer);
         <u64>::sse_encode(self.size, serializer);
+        <i64>::sse_encode(self.mtime, serializer);
     }
 }
 

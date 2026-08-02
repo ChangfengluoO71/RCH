@@ -2616,13 +2616,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   DirEntry dco_decode_dir_entry(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return DirEntry(
       name: dco_decode_String(arr[0]),
       path: dco_decode_String(arr[1]),
       isDir: dco_decode_bool(arr[2]),
       size: dco_decode_u_64(arr[3]),
+      mtime: dco_decode_i_64(arr[4]),
     );
   }
 
@@ -3085,11 +3086,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_path = sse_decode_String(deserializer);
     var var_isDir = sse_decode_bool(deserializer);
     var var_size = sse_decode_u_64(deserializer);
+    var var_mtime = sse_decode_i_64(deserializer);
     return DirEntry(
       name: var_name,
       path: var_path,
       isDir: var_isDir,
       size: var_size,
+      mtime: var_mtime,
     );
   }
 
@@ -3593,6 +3596,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.path, serializer);
     sse_encode_bool(self.isDir, serializer);
     sse_encode_u_64(self.size, serializer);
+    sse_encode_i_64(self.mtime, serializer);
   }
 
   @protected

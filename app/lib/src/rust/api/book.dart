@@ -115,16 +115,24 @@ class DirEntry {
   final bool isDir;
   final BigInt size;
 
+  /// 修改时间（unix 秒）；来源无此信息时为 0（如 WebDAV）。
+  final PlatformInt64 mtime;
+
   const DirEntry({
     required this.name,
     required this.path,
     required this.isDir,
     required this.size,
+    required this.mtime,
   });
 
   @override
   int get hashCode =>
-      name.hashCode ^ path.hashCode ^ isDir.hashCode ^ size.hashCode;
+      name.hashCode ^
+      path.hashCode ^
+      isDir.hashCode ^
+      size.hashCode ^
+      mtime.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -134,7 +142,8 @@ class DirEntry {
           name == other.name &&
           path == other.path &&
           isDir == other.isDir &&
-          size == other.size;
+          size == other.size &&
+          mtime == other.mtime;
 }
 
 /// 一页解码后的位图(RGBA8888)。

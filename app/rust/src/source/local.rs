@@ -61,6 +61,12 @@ pub fn list_dir(path: &str) -> io::Result<Vec<Entry>> {
             path: e.path().to_string_lossy().into_owned(),
             is_dir: md.is_dir(),
             size: md.len(),
+            mtime: md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
         });
     }
     out.sort_by(|a, b| {

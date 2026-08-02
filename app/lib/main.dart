@@ -111,6 +111,7 @@ class RchApp extends StatelessWidget {
       builder: (context, _) {
         final dark = LibraryStore.instance.settings.themeMode != 'light';
         return MaterialApp(
+          debugShowCheckedModeBanner: false,
           title: 'RCH',
           navigatorKey: AiUpscaleManager.navigatorKey,
           builder: (context, child) => Stack(

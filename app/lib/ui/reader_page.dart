@@ -404,7 +404,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   // ---- 设置 ----
-  void _showSettings(){showModalBottomSheet(context:context,builder:(ctx)=>StatefulBuilder(builder:(ctx,ss)=>Padding(padding:EdgeInsets.fromLTRB(20,12,20,24),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+  void _showSettings(){showModalBottomSheet(context:context,isScrollControlled:true,builder:(ctx)=>StatefulBuilder(builder:(ctx,ss)=>SingleChildScrollView(padding:EdgeInsets.fromLTRB(20,12,20,24),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
     Center(child:Container(width:36,height:4,decoration:BoxDecoration(color:Colors.white24,borderRadius:BorderRadius.circular(2)))),const SizedBox(height:16),
     const Text('阅读设置(仅对本会话)',style:TextStyle(fontSize:16,fontWeight:FontWeight.w600)),const SizedBox(height:12),
     const Text('阅读模式'),const SizedBox(height:6),

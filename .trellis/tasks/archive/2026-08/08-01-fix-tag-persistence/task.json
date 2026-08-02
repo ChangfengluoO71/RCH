@@ -1,0 +1,28 @@
+{
+  "id": "fix-tag-persistence",
+  "name": "fix-tag-persistence",
+  "title": "修复标签持久化 — 重启后标签丢失（AI超分/已读）",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-01",
+  "completedAt": "2026-08-01",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "priority": "P1"
+  }
+}

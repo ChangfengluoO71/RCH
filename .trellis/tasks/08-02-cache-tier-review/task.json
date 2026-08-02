@@ -1,0 +1,28 @@
+{
+  "id": "cache-tier-review",
+  "name": "cache-tier-review",
+  "title": "缓存层分析 — 缩略图(thumb)与旧下载目录(download)的作用与去留",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-02",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "priority": "P2"
+  }
+}

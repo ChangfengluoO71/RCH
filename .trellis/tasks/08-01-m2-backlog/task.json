@@ -1,0 +1,28 @@
+{
+  "id": "m2-backlog",
+  "name": "m2-backlog",
+  "title": "M2 AI 超分 后续需求 backlog（标签折叠/缩放区域/后缀识别/CBZ/后台超分）",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "priority": "P2"
+  }
+}

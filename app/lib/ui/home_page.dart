@@ -271,7 +271,7 @@ class _HomePageState extends State<HomePage> {
     }
     if (_tags.isNotEmpty) {
       list = list.where((r) {
-        final key = '${r.sourceType}|${r.sourceId}|${r.path}';
+        final key = bookKeyOf(r.sourceType, r.sourceId, r.path);
         final m = store.metas[key] ?? store.metas['${r.sourceId}|${r.path}'];
         return m != null && _tags.every((t) => m.tags.contains(t) || m.metaTags.contains(t));
       }).toList();
@@ -408,9 +408,25 @@ class _HomePageState extends State<HomePage> {
     final s = LibraryStore.instance.settings;
     return ListenableBuilder(listenable: LibraryStore.instance, builder: (c, _) => ListView(padding: const EdgeInsets.all(24), children: [
       const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const CacheManagerPanel(), const SizedBox(height: 28),
-      _readingDefaults(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
+      _readingDefaults(s), const SizedBox(height: 16), _localComics(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
     ]));
   }
+
+  Widget _localComics(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const Text('本地漫画', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
+    SwitchListTile(
+      title: const Text('自动转 CBZ'),
+      subtitle: const Text('刷新本地书源时，后台将漫画文件夹 / zip 打包为 CBZ；转换后与原内容视为同一本漫画（进度/标签保留）'),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      value: s.autoConvertCbz,
+      onChanged: (v) {
+        s.autoConvertCbz = v;
+        LibraryStore.instance.updateSettings(s);
+        setState(() {});
+      },
+    ),
+  ]);
 
   Widget _readingDefaults(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Text('阅读默认', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),

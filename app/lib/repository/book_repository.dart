@@ -59,7 +59,7 @@ class BookRepository {
 
   /// 获取（或创建）一本书的元数据。
   BookMeta metaOf(BookSource source, String path) {
-    final key = '${source.type}|${source.id}|$path';
+    final key = bookKeyOf(source.type, source.id, path);
     return metas.putIfAbsent(key, () => BookMeta(key: key));
   }
 

@@ -204,6 +204,7 @@ class AppSettings {
   bool skipFrontCover; // 首页不拼
   KeyBinds keys; // 自定义按键
   String? cacheDir; // 自定义缓存目录（null = 默认）
+  bool autoConvertCbz; // 刷新本地书源时自动将漫画文件夹/zip 转为 CBZ
 
   AppSettings({
     this.coverQuality = CoverQuality.medium,
@@ -215,6 +216,7 @@ class AppSettings {
     this.skipFrontCover = true,
     KeyBinds? keys,
     this.cacheDir,
+    this.autoConvertCbz = true,
   }) : keys = keys ?? KeyBinds();
 
   Map<String, dynamic> toJson() => {
@@ -227,6 +229,7 @@ class AppSettings {
         'skipFrontCover': skipFrontCover,
         'keys': keys.toJson(),
         if (cacheDir != null) 'cacheDir': cacheDir,
+        'autoConvertCbz': autoConvertCbz,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -248,6 +251,7 @@ class AppSettings {
         skipFrontCover: (j['skipFrontCover'] as bool?) ?? true,
         keys: KeyBinds.fromJson(j['keys'] as Map<String, dynamic>?),
         cacheDir: j['cacheDir'] as String?,
+        autoConvertCbz: (j['autoConvertCbz'] as bool?) ?? true,
       );
 }
 
@@ -353,6 +357,34 @@ Map<int, int> parseBookRotations(dynamic raw) {
   }
   return out;
 }
+
+/// 漫画路径规范化（与 Rust `document/mod.rs` 分发列表保持一致）：
+/// - zip 家族（zip/cbz/cbr/rar/cb7/7z/cbt/tar）去掉扩展名 → 与同名漫画文件夹
+///   视为同一本漫画。自动转 CBZ 后，文件夹/zip 与生成的 .cbz 的 key 一致，
+///   阅读进度、标签、封面无缝延续（呼应"后缀名变更识别"）。
+/// - mobi/azw/azw3 归一到 .mobi。
+/// - 其余格式（epub/pdf 等）保持不变。
+String normalizeComicPath(String path) {
+  final lower = path.toLowerCase();
+  for (final ext in const [
+    '.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar',
+  ]) {
+    if (lower.endsWith(ext)) {
+      return path.substring(0, path.length - ext.length);
+    }
+  }
+  if (lower.endsWith('.azw3')) {
+    return '${path.substring(0, path.length - 5)}.mobi';
+  }
+  if (lower.endsWith('.azw')) {
+    return '${path.substring(0, path.length - 4)}.mobi';
+  }
+  return path;
+}
+
+/// 书 key：type|sourceId|规范化路径。所有读取记录/元数据/标签关联统一走这里。
+String bookKeyOf(String sourceType, String sourceId, String path) =>
+    '$sourceType|$sourceId|${normalizeComicPath(path)}';
 
 // ============================================================
 // ADR-017: 标签独立建模 — Tag 实体 + BookTag 关联

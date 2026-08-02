@@ -198,6 +198,18 @@ class TagRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 将一本书的标签关联迁移到新 key（后缀别名归一化后用），合并去重。
+  void remapBookKey(String oldKey, String newKey) {
+    if (oldKey == newKey) return;
+    final moving = _bookTags.where((bt) => bt.bookKey == oldKey).toList();
+    if (moving.isEmpty) return;
+    _bookTags.removeWhere((bt) => bt.bookKey == oldKey);
+    for (final bt in moving) {
+      _bookTags.add(BookTag(bookKey: newKey, tagId: bt.tagId));
+    }
+    notifyListeners();
+  }
+
   /// 设置一本书的标签集（全量替换）。
   void setBookTags(String bookKey, List<String> tagNames) {
     // 移除旧关联

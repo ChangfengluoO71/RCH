@@ -121,7 +121,7 @@ class _ComicCoverState extends State<ComicCover> {
   bool get _shouldSkipLoad {
     if (!widget.source.isWebDav) return false;
     if (widget.force) return false;
-    final key = '${widget.source.type}|${widget.source.id}|${widget.path}';
+    final key = bookKeyOf(widget.source.type, widget.source.id, widget.path);
     return !LibraryStore.instance.records.containsKey(key);
   }
 

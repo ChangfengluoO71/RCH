@@ -46,13 +46,13 @@ class _ReaderPageState extends State<ReaderPage> {
     _open();
     AiUpscaleManager.instance.addListener(_onAiManager);
     final s = widget.source;
-    AiUpscaleManager.instance.setReadingBook(s == null ? null : '${s.type}|${s.id}|${widget.path}');
+    AiUpscaleManager.instance.setReadingBook(s == null ? null : bookKeyOf(s.type, s.id, widget.path));
   }
 
   void _onAiManager() {
     final s = widget.source;
     if (s == null) return;
-    final bookKey = '${s.type}|${s.id}|${widget.path}';
+    final bookKey = bookKeyOf(s.type, s.id, widget.path);
     final m = AiUpscaleManager.instance;
     if (m.forceAiVersionBookKey == bookKey) {
       m.consumeForceAiVersion();

@@ -59,9 +59,11 @@ class LibraryStore extends ChangeNotifier {
       final migrated = await dataIsMigrated();
       if (migrated) {
         await _loadFromSqlite();
+        await _reconcileFromJsonIfNeeded();
+        _migrateAliasKeys();
         _loaded = true;
         notifyListeners();
-        await _reconcileFromJsonIfNeeded();
+        saveToDisk();
         return;
       }
     } catch (e) {
@@ -85,6 +87,7 @@ class LibraryStore extends ChangeNotifier {
     }
     _loaded = true;
     notifyListeners();
+    _migrateAliasKeys();
     saveToDisk();
   }
 
@@ -101,6 +104,131 @@ class LibraryStore extends ChangeNotifier {
     }
     if (settingsMap.isNotEmpty) {
       settings = AppSettings.fromJson(settingsMap);
+    }
+  }
+
+  /// 后缀别名归并（zip↔cbz 等视为同一本）：对阅读记录/元数据/标签关联做
+  /// key 归一化迁移。幂等，重复执行无副作用；旧 key 行仍留在 SQLite 中，
+  /// 每次启动会被再次合并（数据层同步任务将统一清理）。
+  void _migrateAliasKeys() {
+    final recRepo = _records;
+    final bookRepo = _books;
+
+    // 1) 阅读记录：合并到规范化 key，保留最新进度与累计次数。
+    final mergedRecords = <String, ReadRecord>{};
+    for (final r in recRepo.records.values.toList()) {
+      final nk = bookKeyOf(r.sourceType, r.sourceId, r.path);
+      final existing = mergedRecords[nk];
+      if (nk == r.key) {
+        if (existing == null) {
+          mergedRecords[r.key] = r;
+        } else {
+          _mergeRecord(existing, r);
+        }
+      } else {
+        if (existing == null) {
+          mergedRecords[nk] = ReadRecord(
+            key: nk,
+            sourceId: r.sourceId,
+            sourceType: r.sourceType,
+            path: r.path,
+            title: r.title,
+            lastPage: r.lastPage,
+            readCount: r.readCount,
+            lastReadAt: r.lastReadAt,
+          );
+        } else {
+          _mergeRecord(existing, r);
+        }
+        TagRepository.instance.remapBookKey(r.key, nk);
+      }
+    }
+    recRepo.records
+      ..clear()
+      ..addAll(mergedRecords);
+
+    // 2) 元数据：合并到规范化 key。
+    final mergedMetas = <String, BookMeta>{};
+    for (final m in bookRepo.metas.values.toList()) {
+      final sep1 = m.key.indexOf('|');
+      final sep2 = sep1 >= 0 ? m.key.indexOf('|', sep1 + 1) : -1;
+      if (sep1 < 0 || sep2 < 0) {
+        mergedMetas[m.key] = m;
+        continue;
+      }
+      final st = m.key.substring(0, sep1);
+      final sid = m.key.substring(sep1 + 1, sep2);
+      final p = m.key.substring(sep2 + 1);
+      final nk = bookKeyOf(st, sid, p);
+      final existing = mergedMetas[nk];
+      if (nk == m.key) {
+        if (existing == null) {
+          mergedMetas[m.key] = m;
+        } else {
+          _mergeMeta(existing, m);
+        }
+      } else {
+        if (existing == null) {
+          mergedMetas[nk] = _copyMetaWithKey(m, nk);
+        } else {
+          _mergeMeta(existing, m);
+        }
+        TagRepository.instance.remapBookKey(m.key, nk);
+      }
+    }
+    bookRepo.metas
+      ..clear()
+      ..addAll(mergedMetas);
+  }
+
+  static void _mergeRecord(ReadRecord target, ReadRecord other) {
+    target.readCount += other.readCount;
+    if (other.lastPage > target.lastPage) target.lastPage = other.lastPage;
+    if (other.lastReadAt > target.lastReadAt) {
+      target.lastReadAt = other.lastReadAt;
+    }
+  }
+
+  static BookMeta _copyMetaWithKey(BookMeta m, String key) => BookMeta(
+        key: key,
+        coverPage: m.coverPage,
+        cropX: m.cropX,
+        cropY: m.cropY,
+        cropW: m.cropW,
+        cropH: m.cropH,
+        tags: [...m.tags],
+        rotations: {...m.rotations},
+        author: m.author,
+        genre: m.genre,
+        series: m.series,
+        summary: m.summary,
+        comment: m.comment,
+        title: m.title,
+        chineseTitle: m.chineseTitle,
+      );
+
+  static void _mergeMeta(BookMeta target, BookMeta other) {
+    for (final t in other.tags) {
+      if (!target.tags.contains(t)) target.tags.add(t);
+    }
+    for (final e in other.rotations.entries) {
+      target.rotations.putIfAbsent(e.key, () => e.value);
+    }
+    if (target.author.isEmpty) target.author = other.author;
+    if (target.genre.isEmpty) target.genre = other.genre;
+    if (target.series.isEmpty) target.series = other.series;
+    if (target.summary.isEmpty) target.summary = other.summary;
+    if (target.comment.isEmpty) target.comment = other.comment;
+    if (target.title.isEmpty) target.title = other.title;
+    if (target.chineseTitle.isEmpty) target.chineseTitle = other.chineseTitle;
+    if (!target.hasCrop && other.hasCrop) {
+      target.cropX = other.cropX;
+      target.cropY = other.cropY;
+      target.cropW = other.cropW;
+      target.cropH = other.cropH;
+    }
+    if (target.coverPage == 0 && other.coverPage != 0) {
+      target.coverPage = other.coverPage;
     }
   }
 
@@ -366,7 +494,7 @@ class LibraryStore extends ChangeNotifier {
       map[entry.key] = (entry.value, 0);
     }
     for (final r in records.values) {
-      final bookKey = '${r.sourceType}|${r.sourceId}|${r.path}';
+      final bookKey = bookKeyOf(r.sourceType, r.sourceId, r.path);
       final bookTags = TagRepository.instance.tagsForBook(bookKey);
       for (final t in bookTags) {
         final prev = map[t] ?? (0, 0);
@@ -482,7 +610,7 @@ class LibraryStore extends ChangeNotifier {
   void batchTag(BookSource src, Iterable<String> paths, String tag) {
     if (tag == '已读') {
       for (final p in paths) {
-        final key = '${src.type}|${src.id}|$p';
+        final key = bookKeyOf(src.type, src.id, p);
         TagRepository.instance.link(key, '已读');
       }
       notifyListeners(); saveToDisk();
@@ -497,7 +625,7 @@ class LibraryStore extends ChangeNotifier {
     }
     for (final p in paths) {
       final m = metaOf(src, p);
-      final key = '${src.type}|${src.id}|$p';
+      final key = bookKeyOf(src.type, src.id, p);
       if (existingField == null) {
         if (!m.tags.contains(tag)) { m.tags.add(tag); TagRepository.instance.link(key, tag); }
       } else {

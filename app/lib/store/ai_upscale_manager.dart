@@ -133,7 +133,7 @@ class AiUpscaleManager extends ChangeNotifier {
     required String title,
     int scale = 2,
   }) async {
-    final bookKey = '${source.type}|${source.id}|$path';
+    final bookKey = bookKeyOf(source.type, source.id, path);
     if (_tasks.any((t) => t.bookKey == bookKey && t.isActive)) return;
     final t = AiTask(
       id: '${DateTime.now().microsecondsSinceEpoch}',

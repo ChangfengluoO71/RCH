@@ -17,7 +17,7 @@ class RecordRepository {
   // ---- Key ----
 
   static String keyOf(String sourceType, String sourceId, String path) =>
-      '$sourceType|$sourceId|$path';
+      bookKeyOf(sourceType, sourceId, path);
 
   // ---- CRUD ----
 

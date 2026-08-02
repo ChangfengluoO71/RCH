@@ -157,7 +157,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   @override Widget build(BuildContext context) {
     final record = LibraryStore.instance.recordOf(widget.source, widget.path);
-    final bookKey = '${widget.source.type}|${widget.source.id}|${widget.path}';
+    final bookKey = bookKeyOf(widget.source.type, widget.source.id, widget.path);
     final hasReadTag = TagRepository.instance.bookKeysForTag('已读').contains(bookKey);
     final hasAiTag = TagRepository.instance.bookKeysForTag('AI超分').contains(bookKey);
     return Scaffold(

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:app/src/rust/api/book.dart';
+import 'package:app/src/rust/api/export.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
@@ -31,6 +33,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
   String? _error;
   BigInt? _session;
   bool _posterMode = true; // true=海报墙, false=简略列表
+  bool _converting = false; // 自动转 CBZ 执行中（防并发触发）
+  bool _showConvertProgress = false; // 底部转换进度条可见
+  int _convertDone = 0;
+  int _convertTotal = 0;
+  String _convertCurrent = '';
+  bool _convertCancelled = false; // 用户点击取消
 
   /// 漫画文件夹检测结果：path → true 表示该目录是漫画文件夹。
   /// 本地模式使用；WebDAV 暂不检测（避免大量网络请求）。
@@ -105,11 +113,134 @@ class _SourceBrowserState extends State<SourceBrowser> {
     if (_stack.isNotEmpty) _list(_stack.removeLast());
   }
 
+  /// 刷新：重新列出目录；本地来源且开启"自动转 CBZ"时，后台转换后再次列出。
+  Future<void> _refresh() async {
+    await _list(_path);
+    if (!mounted || widget.source.isWebDav) return;
+    await _autoConvertToCbz();
+    if (mounted) await _list(_path);
+  }
+
+  /// 后台自动转 CBZ：漫画文件夹 → `name.cbz`；zip → `stem.cbz`。
+  /// 转换产物与原路径 key 一致（见 normalizeComicPath），进度/标签自动延续。
+  Future<void> _autoConvertToCbz() async {
+    if (_converting) return;
+    if (!LibraryStore.instance.settings.autoConvertCbz) return;
+    _converting = true;
+    _convertCancelled = false;
+    try {
+      final tasks = <String>[]; // 目标 cbz 路径
+      final targets = <String, String>{}; // 目标 → 源
+      for (final e in _entries) {
+        final dirTarget = '${e.path}.cbz';
+        if (e.isDir) {
+          if (!await isComicFolder(dirPath: e.path)) continue;
+          if (!File(dirTarget).existsSync()) {
+            tasks.add(dirTarget);
+            targets[dirTarget] = e.path;
+          }
+        } else if (e.name.toLowerCase().endsWith('.zip')) {
+          final target = '${e.path.substring(0, e.path.length - 4)}.cbz';
+          if (!File(target).existsSync()) {
+            tasks.add(target);
+            targets[target] = e.path;
+          }
+        }
+      }
+      if (tasks.isEmpty) return;
+      _convertTotal = tasks.length;
+      _convertDone = 0;
+      if (mounted) setState(() => _showConvertProgress = true);
+      for (final target in tasks) {
+        if (_convertCancelled) break;
+        _convertCurrent = target.split(Platform.pathSeparator).last;
+        if (mounted) setState(() {});
+        try {
+          final src = targets[target]!;
+          if (Directory(src).existsSync()) {
+            await exportFolderToCbz(srcDir: src, outPath: target);
+          } else {
+            await exportZipAsCbz(srcPath: src, outPath: target);
+          }
+        } catch (_) {
+          // 单个失败不中断其余转换
+        }
+        _convertDone++;
+        if (mounted) setState(() {});
+      }
+      if (mounted) {
+        setState(() => _showConvertProgress = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_convertCancelled
+                ? '已取消转换（完成 $_convertDone/$_convertTotal 项）'
+                : 'CBZ 转换完成：$_convertDone/$_convertTotal 项'),
+          ),
+        );
+      }
+    } finally {
+      _converting = false;
+    }
+  }
+
+  /// 底部转换进度条（非模态，转换期间不阻塞浏览）。
+  Widget _convertProgressBar() => Material(
+        color: Colors.black87,
+        elevation: 6,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+          child: Row(children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '正在转 CBZ：$_convertDone/$_convertTotal（$_convertCurrent）',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  LinearProgressIndicator(
+                    value: _convertTotal == 0
+                        ? null
+                        : _convertDone / _convertTotal,
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              tooltip: '取消转换',
+              onPressed: () => setState(() {
+                _convertCancelled = true;
+                _showConvertProgress = false;
+              }),
+            ),
+          ]),
+        ),
+      );
+
+  /// 已被同名 .cbz 取代的源条目（文件夹 / zip）不再显示，避免书架重复。
+  bool _isConvertedOriginal(DirEntry e) {
+    if (e.isDir) {
+      if (_comicDirs[e.path] != true) return false;
+      return File('${e.path}.cbz').existsSync();
+    }
+    if (e.name.toLowerCase().endsWith('.zip')) {
+      return File('${e.path.substring(0, e.path.length - 4)}.cbz').existsSync();
+    }
+    return false;
+  }
+
   /// 漫画文件夹也作为漫画条目参与过滤。
   bool _isComicDir(String path) => _comicDirs[path] == true;
 
   List<DirEntry> get _filtered {
     Iterable<DirEntry> list = _entries;
+    // 隐藏已被自动转换为同名 .cbz 的源条目
+    list = list.where((e) => !_isConvertedOriginal(e));
     // 搜索
     if (widget.search.isNotEmpty) {
       final q = widget.search.toLowerCase();
@@ -121,7 +252,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       list = list.where((e) {
         // 普通文件夹（非漫画）不过滤
         if (e.isDir && !_isComicDir(e.path)) return true;
-        final newKey = '${widget.source.type}|${widget.source.id}|${e.path}';
+        final newKey = bookKeyOf(widget.source.type, widget.source.id, e.path);
         final legacyKey = '${widget.source.id}|${e.path}';
         final meta = store.metas[newKey] ?? store.metas[legacyKey];
         return meta != null && widget.selectedTags.every((t) => meta.tags.contains(t) || meta.metaTags.contains(t));
@@ -284,7 +415,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: LibraryStore.instance,
-      builder: (context, _) => Column(
+      builder: (context, _) => Stack(children: [
+      Column(
       children: [
         Material(
           color: Colors.black26,
@@ -310,14 +442,17 @@ class _SourceBrowserState extends State<SourceBrowser> {
                 ),
               ],
               IconButton(icon: Icon(_posterMode ? Icons.view_list : Icons.grid_view), tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙', onPressed: () => setState(() => _posterMode = !_posterMode)),
-              IconButton(icon: const Icon(Icons.refresh), tooltip: '刷新', onPressed: () => _list(_path)),
+              IconButton(icon: const Icon(Icons.refresh), tooltip: '刷新', onPressed: _refresh),
             ]),
           ),
         ),
         if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
         Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : _posterMode ? _gridView() : _listView()),
       ],
-      ),
+    ),
+    if (_showConvertProgress)
+      Positioned(left: 0, right: 0, bottom: 0, child: _convertProgressBar()),
+    ]),
     );
   }
 

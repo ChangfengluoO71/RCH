@@ -156,6 +156,7 @@ fn init_tables(conn: &Connection) -> Result<()> {
             total INTEGER NOT NULL DEFAULT 0,
             done INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'queued',
+            sort_order INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         );
@@ -181,6 +182,18 @@ fn init_tables(conn: &Connection) -> Result<()> {
     if !meta_cols.iter().any(|c| c == "rotations") {
         conn.execute(
             "ALTER TABLE book_metas ADD COLUMN rotations TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )?;
+    }
+    // 旧库升级：ai_tasks 补 sort_order 列（排队任务拖拽排序，重启后保持）。
+    let task_cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(ai_tasks)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .collect();
+    if !task_cols.iter().any(|c| c == "sort_order") {
+        conn.execute(
+            "ALTER TABLE ai_tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
     }
@@ -1059,6 +1072,7 @@ pub struct AiTaskRow {
     pub total: i64,
     pub done: i64,
     pub status: String,
+    pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -1068,21 +1082,21 @@ pub fn upsert_ai_task(t: &AiTaskRow) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO ai_tasks
-         (id, book_key, source_type, source_id, path, title, scale, total, done, status, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         (id, book_key, source_type, source_id, path, title, scale, total, done, status, sort_order, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             t.id, t.book_key, t.source_type, t.source_id, t.path, t.title,
-            t.scale, t.total, t.done, t.status, t.created_at, t.updated_at
+            t.scale, t.total, t.done, t.status, t.sort_order, t.created_at, t.updated_at
         ],
     )?;
     Ok(())
 }
 
-/// 加载全部 AI 超分任务（按创建时间排序）。
+/// 加载全部 AI 超分任务（进行中在前，排队按 sort_order、创建时间排序）。
 pub fn load_all_ai_tasks() -> Vec<AiTaskRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
-        .prepare("SELECT id, book_key, source_type, source_id, path, title, scale, total, done, status, created_at, updated_at FROM ai_tasks ORDER BY created_at")
+        .prepare("SELECT id, book_key, source_type, source_id, path, title, scale, total, done, status, sort_order, created_at, updated_at FROM ai_tasks ORDER BY (status = 'running') DESC, sort_order, created_at")
         .unwrap();
     stmt.query_map([], |row| {
         Ok(AiTaskRow {
@@ -1096,13 +1110,33 @@ pub fn load_all_ai_tasks() -> Vec<AiTaskRow> {
             total: row.get(7)?,
             done: row.get(8)?,
             status: row.get(9)?,
-            created_at: row.get(10)?,
-            updated_at: row.get(11)?,
+            sort_order: row.get(10)?,
+            created_at: row.get(11)?,
+            updated_at: row.get(12)?,
         })
     })
     .unwrap()
     .filter_map(|r| r.ok())
     .collect()
+}
+
+/// 按给定顺序重排排队任务的 sort_order（1..N）。调用方应只传排队中任务的 id，
+/// 进行中任务不受影响（保持在顶部）。
+pub fn reorder_ai_tasks(ids: &[String]) -> Result<()> {
+    let mut conn = get().lock().unwrap();
+    reorder_ai_tasks_on(&mut conn, ids)
+}
+
+fn reorder_ai_tasks_on(conn: &mut Connection, ids: &[String]) -> Result<()> {
+    let tx = conn.transaction()?;
+    for (i, id) in ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE ai_tasks SET sort_order = ?1 WHERE id = ?2",
+            params![(i + 1) as i64, id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 /// 删除一条 AI 超分任务。
@@ -1208,6 +1242,67 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rotations, "{}");
+    }
+
+    #[test]
+    fn ai_tasks_sort_order_migration_reorder_and_ordering() -> Result<(), Box<dyn std::error::Error>> {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // 模拟旧库：ai_tasks 无 sort_order 列
+        conn.execute_batch(
+            "CREATE TABLE ai_tasks (
+                id TEXT PRIMARY KEY,
+                book_key TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                scale INTEGER NOT NULL DEFAULT 2,
+                total INTEGER NOT NULL DEFAULT 0,
+                done INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'queued',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );",
+        )
+        .unwrap();
+        init_tables(&conn).unwrap(); // 触发迁移补列
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(ai_tasks)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .filter_map(|c| c.ok())
+            .collect();
+        assert!(cols.contains(&"sort_order".to_string()));
+
+        // 旧行默认 sort_order = 0
+        conn.execute(
+            "INSERT INTO ai_tasks (id, book_key, source_type, source_id, path, title, created_at, updated_at)
+             VALUES ('a', 'k', 'local', 's', 'p', 't', 1, 1)",
+            [],
+        )
+        .unwrap();
+        let so: i64 = conn
+            .query_row("SELECT sort_order FROM ai_tasks WHERE id = 'a'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(so, 0);
+
+        // reorder：只重排传入的排队任务
+        for (id, status) in [("b", "queued"), ("c", "queued"), ("d", "running")] {
+            conn.execute(
+                "INSERT INTO ai_tasks (id, book_key, source_type, source_id, path, title, status, sort_order, created_at, updated_at)
+                 VALUES (?1, 'k', 'local', 's', 'p', 't', ?2, 0, 1, 1)",
+                rusqlite::params![id, status],
+            )
+            .unwrap();
+        }
+        reorder_ai_tasks_on(&mut conn, &["c".into(), "b".into()])?;
+        let order: Vec<String> = conn
+            .prepare("SELECT id FROM ai_tasks ORDER BY (status = 'running') DESC, sort_order, created_at")?
+            .query_map([], |r| r.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        // running 固定在顶部；排队任务按 sort_order 升序；旧数据（sort_order=0）按创建时间兜底排前
+        assert_eq!(order, vec!["d", "a", "c", "b"]);
+        Ok(())
     }
 
 }

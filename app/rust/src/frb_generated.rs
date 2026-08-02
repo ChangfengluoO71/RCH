@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1982239768;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1938458008;
 
 // Section: executor
 
@@ -1198,6 +1198,39 @@ fn wire__crate__api__db__db_rename_tag_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::db::db_rename_tag(api_old_name, api_new_name)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__db__db_reorder_ai_tasks_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "db_reorder_ai_tasks",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_ids = <Vec<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::db::db_reorder_ai_tasks(api_ids)?;
                     Ok(output_ok)
                 })())
             }
@@ -2495,6 +2528,7 @@ impl SseDecode for crate::api::db::AiTaskDto {
         let mut var_total = <i64>::sse_decode(deserializer);
         let mut var_done = <i64>::sse_decode(deserializer);
         let mut var_status = <String>::sse_decode(deserializer);
+        let mut var_sortOrder = <i64>::sse_decode(deserializer);
         let mut var_createdAt = <i64>::sse_decode(deserializer);
         let mut var_updatedAt = <i64>::sse_decode(deserializer);
         return crate::api::db::AiTaskDto {
@@ -2508,6 +2542,7 @@ impl SseDecode for crate::api::db::AiTaskDto {
             total: var_total,
             done: var_done,
             status: var_status,
+            sort_order: var_sortOrder,
             created_at: var_createdAt,
             updated_at: var_updatedAt,
         };
@@ -3053,56 +3088,57 @@ fn pde_ffi_dispatcher_primary_impl(
         33 => wire__crate__api__db__db_load_all_sources_impl(port, ptr, rust_vec_len, data_len),
         34 => wire__crate__api__db__db_load_all_tags_impl(port, ptr, rust_vec_len, data_len),
         35 => wire__crate__api__db__db_rename_tag_impl(port, ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__db__db_save_setting_impl(port, ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__db__db_set_book_tags_impl(port, ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__db__db_unlink_tag_impl(port, ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__db__db_upsert_ai_task_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__db__db_upsert_meta_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__db__db_upsert_record_impl(port, ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__db__db_upsert_source_impl(port, ptr, rust_vec_len, data_len),
-        43 => {
+        36 => wire__crate__api__db__db_reorder_ai_tasks_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__db__db_save_setting_impl(port, ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__db__db_set_book_tags_impl(port, ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__db__db_unlink_tag_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__db__db_upsert_ai_task_impl(port, ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__db__db_upsert_meta_impl(port, ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__db__db_upsert_record_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__db__db_upsert_source_impl(port, ptr, rust_vec_len, data_len),
+        44 => {
             wire__crate__api__cache__default_cache_root_path_impl(port, ptr, rust_vec_len, data_len)
         }
-        44 => {
+        45 => {
             wire__crate__api__ai__delete_ai_cache_for_page_impl(port, ptr, rust_vec_len, data_len)
         }
-        45 => {
+        46 => {
             wire__crate__api__cache__delete_migrated_items_impl(port, ptr, rust_vec_len, data_len)
         }
-        46 => wire__crate__api__cache__download_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        47 => {
+        47 => wire__crate__api__cache__download_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        48 => {
             wire__crate__api__export__export_folder_to_cbz_impl(port, ptr, rust_vec_len, data_len)
         }
-        48 => wire__crate__api__export__export_zip_as_cbz_impl(port, ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__book__folder_cover_path_impl(port, ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__book__is_comic_folder_impl(port, ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__book__list_local_dir_impl(port, ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__ai__lookup_cache_impl(port, ptr, rust_vec_len, data_len),
-        55 => wire__crate__api__cache__migrate_cache_root_impl(port, ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__cache__migration_progress_impl(port, ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__book__open_local_book_impl(port, ptr, rust_vec_len, data_len),
-        58 => wire__crate__api__source__open_webdav_book_impl(port, ptr, rust_vec_len, data_len),
-        59 => wire__crate__api__cache__page_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        60 => wire__crate__api__cache__pending_migration_impl(port, ptr, rust_vec_len, data_len),
-        61 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
-        62 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        63 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        64 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        65 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        66 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        67 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        68 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        69 => wire__crate__api__source__webdav_download_progress_impl(
+        49 => wire__crate__api__export__export_zip_as_cbz_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__book__folder_cover_path_impl(port, ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__book__is_comic_folder_impl(port, ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__book__list_local_dir_impl(port, ptr, rust_vec_len, data_len),
+        55 => wire__crate__api__ai__lookup_cache_impl(port, ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__cache__migrate_cache_root_impl(port, ptr, rust_vec_len, data_len),
+        57 => wire__crate__api__cache__migration_progress_impl(port, ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__book__open_local_book_impl(port, ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__source__open_webdav_book_impl(port, ptr, rust_vec_len, data_len),
+        60 => wire__crate__api__cache__page_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        61 => wire__crate__api__cache__pending_migration_impl(port, ptr, rust_vec_len, data_len),
+        62 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        64 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        66 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        67 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        68 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        69 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        70 => wire__crate__api__source__webdav_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        70 => {
+        71 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        71 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        72 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3115,7 +3151,7 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        50 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3136,6 +3172,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::db::AiTaskDto {
             self.total.into_into_dart().into_dart(),
             self.done.into_into_dart().into_dart(),
             self.status.into_into_dart().into_dart(),
+            self.sort_order.into_into_dart().into_dart(),
             self.created_at.into_into_dart().into_dart(),
             self.updated_at.into_into_dart().into_dart(),
         ]
@@ -3428,6 +3465,7 @@ impl SseEncode for crate::api::db::AiTaskDto {
         <i64>::sse_encode(self.total, serializer);
         <i64>::sse_encode(self.done, serializer);
         <String>::sse_encode(self.status, serializer);
+        <i64>::sse_encode(self.sort_order, serializer);
         <i64>::sse_encode(self.created_at, serializer);
         <i64>::sse_encode(self.updated_at, serializer);
     }

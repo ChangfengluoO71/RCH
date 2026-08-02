@@ -316,6 +316,7 @@ pub struct AiTaskDto {
     pub total: i64,
     pub done: i64,
     pub status: String,
+    pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -333,6 +334,7 @@ pub fn db_upsert_ai_task(task: AiTaskDto) -> Result<(), String> {
         total: task.total,
         done: task.done,
         status: task.status,
+        sort_order: task.sort_order,
         created_at: task.created_at,
         updated_at: task.updated_at,
     })
@@ -354,10 +356,16 @@ pub fn db_load_all_ai_tasks() -> Vec<AiTaskDto> {
             total: t.total,
             done: t.done,
             status: t.status,
+            sort_order: t.sort_order,
             created_at: t.created_at,
             updated_at: t.updated_at,
         })
         .collect()
+}
+
+/// 按给定顺序重排排队任务的 sort_order（1..N）。调用方应只传排队中任务的 id。
+pub fn db_reorder_ai_tasks(ids: Vec<String>) -> Result<(), String> {
+    db::reorder_ai_tasks(&ids).map_err(|e| format!("{e}"))
 }
 
 /// 删除 AI 超分任务。

@@ -28,6 +28,7 @@ class AiTask {
     this.total = 0,
     this.done = 0,
     this.status = AiTaskStatus.queued,
+    this.sortOrder = 0,
     int? createdAt,
     int? updatedAt,
   })  : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch,
@@ -43,6 +44,8 @@ class AiTask {
   int total;
   int done;
   AiTaskStatus status;
+  /// 排队顺序（进行中固定为 0，排队任务从 1 递增；拖拽后持久化）。
+  int sortOrder;
   final int createdAt;
   int updatedAt;
 
@@ -59,6 +62,7 @@ class AiTask {
         total: total,
         done: done,
         status: status.name,
+        sortOrder: sortOrder,
         createdAt: createdAt,
         updatedAt: updatedAt,
       );
@@ -77,6 +81,7 @@ class AiTask {
           (s) => s.name == d.status,
           orElse: () => AiTaskStatus.queued,
         ),
+        sortOrder: d.sortOrder.toInt(),
         createdAt: d.createdAt.toInt(),
         updatedAt: d.updatedAt.toInt(),
       );
@@ -99,10 +104,26 @@ class AiUpscaleManager extends ChangeNotifier {
   Timer? _completedTimer;
 
   List<AiTask> get tasks => List.unmodifiable(_tasks);
+  /// 展示用活动任务：进行中固定在前，排队任务按 sortOrder 升序。
+  List<AiTask> get activeTasks {
+    final running = _tasks.where((t) => t.status == AiTaskStatus.running).toList();
+    final queued = _tasks.where((t) => t.status == AiTaskStatus.queued).toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    return [...running, ...queued];
+  }
   String? get readingBookKey => _readingBookKey;
   String? get forceAiVersionBookKey => _forceAiVersionBookKey;
   String? get lastCompletedTitle => _lastCompletedTitle;
   String? get lastFailedMessage => _lastFailedMessage;
+
+  /// 测试专用：直接注入任务列表。
+  @visibleForTesting
+  void debugSetTasks(List<AiTask> tasks) {
+    _tasks
+      ..clear()
+      ..addAll(tasks);
+    notifyListeners();
+  }
 
   /// 启动时加载持久化任务并续跑。
   Future<void> init() async {
@@ -143,6 +164,7 @@ class AiUpscaleManager extends ChangeNotifier {
       path: path,
       title: title,
       scale: scale,
+      sortOrder: _tasks.fold<int>(0, (m, e) => e.sortOrder > m ? e.sortOrder : m) + 1,
     );
     _tasks.add(t);
     await _persist(t);
@@ -162,6 +184,35 @@ class AiUpscaleManager extends ChangeNotifier {
       // 尚未开始执行（排队中）→ 直接移除，避免残留 canceled 行
       await _deleteAndRemove(t);
     }
+    notifyListeners();
+  }
+
+  /// 拖拽调整排队任务顺序。
+  /// [oldIndex]/[newIndex] 是 `activeTasks`（进行中在前）里的下标；进行中任务不可拖。
+  Future<void> reorderQueued(int oldIndex, int newIndex) async {
+    final active = activeTasks;
+    final runCount = active.where((t) => t.status == AiTaskStatus.running).length;
+    if (oldIndex < runCount || oldIndex >= active.length) return;
+    var ni = newIndex;
+    if (ni < runCount) ni = runCount; // 不允许插到进行中任务之前
+    if (ni > active.length) ni = active.length;
+
+    final moved = active[oldIndex];
+    final rest = active.toList()..removeAt(oldIndex);
+    final ordered = <AiTask>[...rest.take(ni), moved, ...rest.skip(ni)];
+    _tasks
+      ..clear()
+      ..addAll(ordered);
+
+    // 按 _tasks 新顺序重编号排队任务（不能再按旧的 sortOrder 排序，否则顺序不变）
+    final queued = _tasks.where((t) => t.status == AiTaskStatus.queued).toList();
+    for (var i = 0; i < queued.length; i++) {
+      queued[i].sortOrder = i + 1;
+    }
+    final ids = queued.map((t) => t.id).toList();
+    try {
+      await dbReorderAiTasks(ids: ids);
+    } catch (_) {}
     notifyListeners();
   }
 

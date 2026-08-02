@@ -111,6 +111,10 @@ Future<void> dbUpsertAiTask({required AiTaskDto task}) =>
 Future<List<AiTaskDto>> dbLoadAllAiTasks() =>
     RustLib.instance.api.crateApiDbDbLoadAllAiTasks();
 
+/// 按给定顺序重排排队任务的 sort_order（1..N）。调用方应只传排队中任务的 id。
+Future<void> dbReorderAiTasks({required List<String> ids}) =>
+    RustLib.instance.api.crateApiDbDbReorderAiTasks(ids: ids);
+
 /// 删除 AI 超分任务。
 Future<void> dbDeleteAiTask({required String id}) =>
     RustLib.instance.api.crateApiDbDbDeleteAiTask(id: id);
@@ -130,6 +134,7 @@ class AiTaskDto {
   final PlatformInt64 total;
   final PlatformInt64 done;
   final String status;
+  final PlatformInt64 sortOrder;
   final PlatformInt64 createdAt;
   final PlatformInt64 updatedAt;
 
@@ -144,6 +149,7 @@ class AiTaskDto {
     required this.total,
     required this.done,
     required this.status,
+    required this.sortOrder,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -160,6 +166,7 @@ class AiTaskDto {
       total.hashCode ^
       done.hashCode ^
       status.hashCode ^
+      sortOrder.hashCode ^
       createdAt.hashCode ^
       updatedAt.hashCode;
 
@@ -178,6 +185,7 @@ class AiTaskDto {
           total == other.total &&
           done == other.done &&
           status == other.status &&
+          sortOrder == other.sortOrder &&
           createdAt == other.createdAt &&
           updatedAt == other.updatedAt;
 }

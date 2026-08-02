@@ -4,6 +4,8 @@ All notable changes to RCH will be documented in this file.
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+> **版本规则（自 0.3.0 起）**：每次发布仅递增最后一位补丁号（`0.3.0 → 0.3.1 → 0.3.2 …`），不再使用主/次版本跳级。
+
 ---
 
 ## [0.3.0] — 2026-08-02

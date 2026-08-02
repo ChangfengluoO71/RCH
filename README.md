@@ -25,6 +25,8 @@ cd RCH/app
 flutter run -d windows
 ```
 
+**版本规范**：从 `0.3.0` 起，每次发布仅递增最后一位（`0.3.0 → 0.3.1 → 0.3.2 …`），新功能与修复统一按此推进。
+
 > **四层架构**：UI → Document → Cache → Network/AI。**阅读器永远只操作本地资源，网络只是同步层，AI 只是处理层。**
 > 当前阶段：**格式引擎已完成（8种格式），缓存基础设施已完成。**
 > 目标设计见 [SPEC.md](SPEC.md);任务看板见 [TODO.md](TODO.md);重大决策见 [DECISION.md](DECISION.md);开发历史见 [LOG.md](LOG.md)。

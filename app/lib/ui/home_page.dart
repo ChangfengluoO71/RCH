@@ -286,7 +286,8 @@ class _HomePageState extends State<HomePage> {
                 itemCount: list.length, itemBuilder: (c, i) {
                   final r = list[i]; final s = store.sourceById(r.sourceId);
                   if (s == null) return const SizedBox();
-                  return ComicCard(source: s, path: r.path, title: r.title, subtitle: '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次', onTap: () => openBook(context, s, r.path, r.title));
+                  return ComicCard(source: s, path: r.path, title: r.title, subtitle: '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BookDetailPage(source: s, path: r.path, title: r.title))));
                 }),
       ),
     ]);

@@ -183,7 +183,7 @@ pub fn super_resolve(page_bytes: &[u8], scale: u32) -> Result<Vec<u8>> {
     let _ = std::fs::remove_file(&output);
 
     let mut buf = Vec::new();
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, JPEG_QUALITY);
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, JPEG_QUALITY);
     rimg.write_with_encoder(enc)?;
     let dir = CacheDir::Ai.ensure()?;
     write_cache_atomic(&dir, &cache_key(&hash, scale), &buf)?;
@@ -272,7 +272,7 @@ pub fn super_resolve_batch(pages: &[Vec<u8>], scale: u32) -> Result<Vec<Vec<u8>>
         let out_file = out_dir.join(format!("{hash}.png"));
         if let Ok(img) = image::open(&out_file) {
             let mut buf = Vec::new();
-            let mut enc =
+            let enc =
                 image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, JPEG_QUALITY);
             if img.write_with_encoder(enc).is_ok() {
                 let _ = write_cache_atomic(&dir, &cache_key(hash, scale), &buf);

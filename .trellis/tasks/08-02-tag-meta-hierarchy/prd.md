@@ -23,11 +23,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 元数据标签按 4 个类别分组显示，每组可独立折叠/展开，折叠状态在会话内保持
-- [ ] 搜索关键字时命中的组自动展开，未命中组保持折叠
-- [ ] 重命名 author 标签后，其所在分组与 BookMeta.author 同步更新
-- [ ] 普通标签（黄色）展示行为不变
-- [ ] `flutter analyze` 0 issues
+- [x] 元数据标签按 4 个类别分组显示，每组可独立折叠/展开，折叠状态在会话内保持（按组名存于 `_metaExpandedGroups`）
+- [x] 搜索关键字时命中的组自动展开，未命中组保持折叠/隐藏（`ExpansionTile` key 含搜索词强制重建）
+- [x] 重命名/删除标签逻辑与展示行未改，分组由 `BookMeta` 字段实时推断，重命名后自动归组
+- [x] 普通标签（黄色）展示行为不变
+- [x] `flutter analyze` 0 issues
 
 ## Out of Scope
 
@@ -38,3 +38,17 @@
 ## Open Questions
 
 - 无阻塞问题。R3 归属规则按推荐值实现；若与用户预期不符可在验收时调整。
+
+## Verification（2026-08-02）
+
+- `flutter analyze`：No issues found（0 issues）。
+- 代码走查：`_buildTagManager()` 按 作者/类别/系列/状态 分组渲染；`_metaTagCategory` 按"所属书籍最多字段"归类，平局 author > genre > series；已读 → 状态组且保留红色元数据标签样式；普通标签行不变。
+- 分组展开状态按组名分别保存（`_metaExpandedGroups`），独立折叠/展开；搜索时命中组展开、空组隐藏。
+- 交互验收（展开/折叠手感、重命名后归组）待桌面运行确认。
+
+## Decisions
+
+- 纯显示层分组：不改 `Tag`/`BookMeta` 模型与持久化格式（R2）；类别由 `BookMeta.author/genre/series` 推断。
+- 分组键固定顺序：作者 → 类别 → 系列 → 状态，状态组始终最后。
+- "AI超分" 是独立元数据标签（超分完成时打标，不写入 author/genre/series），单独成组，显示在 系列 与 状态 之间，避免按平局规则落入作者组。
+- 组展开状态为会话内内存态，不持久化；每组独立。

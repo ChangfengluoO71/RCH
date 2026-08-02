@@ -25,7 +25,8 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController _searchCtrl = TextEditingController();
   bool _globalMode = false;          // false=筛选当前视图, true=跨书源搜索
   String? _detailTag;
-  bool _metaExpanded = false;
+  /// 元数据标签各组的展开状态（会话内保持，按类别名索引）。
+  final Map<String, bool> _metaExpandedGroups = {};
 
   @override
   void initState() {
@@ -361,6 +362,17 @@ class _HomePageState extends State<HomePage> {
     final metaTags = filtered.where((s) => metaSet.contains(s.$1)).toList();
     final normalTags = filtered.where((s) => !metaSet.contains(s.$1)).toList();
 
+    // 元数据标签按一级类别分组（显示层，不改模型）：作者/类别/系列/状态。
+    final metaGroups = <String, List<(String, int, int)>>{};
+    for (final t in metaTags) {
+      metaGroups.putIfAbsent(_metaTagCategory(t.$1), () => []).add(t);
+    }
+    final orderedGroups = <(String, List<(String, int, int)>)>[];
+    for (final cat in const ['作者', '类别', '系列', 'AI超分', '状态']) {
+      final g = metaGroups[cat];
+      if (g != null && g.isNotEmpty) orderedGroups.add((cat, g));
+    }
+
     Widget tile(t, bool isMeta) => ListTile(
       leading: Icon(Icons.label, size: 20, color: isMeta ? Colors.redAccent : Colors.amber),
       title: Text('${t.$1} (${t.$2} 本 · ${t.$3} 次阅读)'),
@@ -376,12 +388,36 @@ class _HomePageState extends State<HomePage> {
       Expanded(flex: 3, child: filtered.isEmpty
         ? const Center(child: Text('暂无标签', style: TextStyle(color: Colors.white38)))
         : ListView(children: [
-            if (metaTags.isNotEmpty) ExpansionTile(initiallyExpanded: _metaExpanded, onExpansionChanged: (v) => setState(() => _metaExpanded = v), leading: const Icon(Icons.label, color: Colors.redAccent), title: Text('元数据标签 (${metaTags.length})', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)), children: metaTags.map((t) => tile(t, true)).toList()),
+            ...orderedGroups.map((g) => ExpansionTile(
+              key: ValueKey('meta-${g.$1}-$q'),
+              initiallyExpanded: q.isNotEmpty ? true : (_metaExpandedGroups[g.$1] ?? false),
+              onExpansionChanged: (v) => setState(() => _metaExpandedGroups[g.$1] = v),
+              leading: const Icon(Icons.label, color: Colors.redAccent),
+              title: Text('${g.$1} (${g.$2.length})', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+              children: g.$2.map((t) => tile(t, true)).toList(),
+            )),
             ...normalTags.map((t) => tile(t, false)),
           ])),
       if (_detailTag != null) ...[const VerticalDivider(width: 1), Expanded(flex: 5, child: _buildTagDetail(_detailTag!))],
     ]);
   });
+
+  /// 元数据标签的一级类别（显示层分组，不改模型）：
+  /// 按"所属书籍最多的字段"归类，平局取 author > genre > series；已读 → 状态。
+  String _metaTagCategory(String tag) {
+    if (tag == '已读') return '状态';
+    // AI超分 是独立元数据标签（超分完成时打标），不归属于作者/类别/系列字段。
+    if (tag == 'AI超分') return 'AI超分';
+    var author = 0, genre = 0, series = 0;
+    for (final m in LibraryStore.instance.metas.values) {
+      if (m.author == tag) author++;
+      if (m.genre == tag) genre++;
+      if (m.series == tag) series++;
+    }
+    if (author >= genre && author >= series) return '作者';
+    if (genre >= series) return '类别';
+    return '系列';
+  }
 
   Widget _buildTagDetail(String tag) {
     final list = LibraryStore.instance.recordsByTag(tag);

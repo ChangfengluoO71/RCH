@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端 Pre-Development Checklist 与 Quality Check 入口"}
+{"file": ".trellis/spec/backend/sftp-source.md", "reason": "M5 书源实现模式参考：会话/ByteSource/raw 缓存/三态打开策略/russh 选型与 NASM 坑"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "DB 迁移约定（幂等 ALTER 加列模式，M5 port 列先例）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端（Flutter）约定入口"}
+{"file": ".trellis/tasks/08-03-m6-netdisk-official-api/research/baidu-openapi-contract.md", "reason": "百度开放平台 API 契约：OAuth/token/列目录/filemetas/下载 UA 限制"}
+{"file": ".trellis/tasks/08-03-m6-netdisk-official-api/research/115-openapi-contract.md", "reason": "115 开放平台 API 契约：设备码 PKCE/列目录/downurl/限速"}
+{"file": ".trellis/tasks/08-03-m6-netdisk-official-api/research/netdisk-direct-api-vs-aggregator.md", "reason": "本任务选型背景：为何直连百度/115 官方 API"}
+{"file": ".trellis/tasks/08-02-m5-book-sources/design.md", "reason": "M5 设计文档模板（书源扩展的完整结构参照）"}

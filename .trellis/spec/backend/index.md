@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [SFTP 书源规范](./sftp-source.md) | russh 选型、会话模式、API 契约 | Filled |
+| [网盘书源规范](./netdisk-source.md) | 百度/115 官方 API 鉴权、直链、缓存、已知坑 | Filled |
 
 ---
 

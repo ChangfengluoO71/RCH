@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端 Quality Check 入口"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量准则（测试/错误处理/日志）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理约定：中文提示、错误码映射"}
+{"file": ".trellis/spec/backend/sftp-source.md", "reason": "M5 书源规范：ByteSource/会话/清理前缀先例"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量准则（widget 测试/analyze）"}
+{"file": ".trellis/tasks/08-03-m6-netdisk-official-api/research/baidu-openapi-contract.md", "reason": "百度 API 契约（验证实现是否符合）"}
+{"file": ".trellis/tasks/08-03-m6-netdisk-official-api/research/115-openapi-contract.md", "reason": "115 API 契约（验证实现是否符合）"}

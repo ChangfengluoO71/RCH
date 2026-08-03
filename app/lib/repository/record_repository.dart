@@ -64,7 +64,7 @@ class RecordRepository {
       );
       if (src == null) {
         staleKeys.add(r.key);
-      } else if (!src.isWebDav && !File(r.path).existsSync()) {
+      } else if (src.isLocalFs && !File(r.path).existsSync()) {
         staleKeys.add(r.key);
       }
     }

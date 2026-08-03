@@ -394,8 +394,8 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners(); saveToDisk();
   }
 
-  void updateSource(String id, {String? name, String? url, String? username, String? password, String? path, String? note}) {
-    _books.updateSource(id, name: name, url: url, username: username, password: password, path: path, note: note);
+  void updateSource(String id, {String? name, String? url, String? username, String? password, int? port, String? path, String? note}) {
+    _books.updateSource(id, name: name, url: url, username: username, password: password, port: port, path: path, note: note);
     notifyListeners(); saveToDisk();
   }
 

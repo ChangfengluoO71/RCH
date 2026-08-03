@@ -5,6 +5,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
@@ -119,7 +120,7 @@ class _ComicCoverState extends State<ComicCover> {
   }
 
   bool get _shouldSkipLoad {
-    if (!widget.source.isWebDav) return false;
+    if (!widget.source.needsSession) return false;
     if (widget.force) return false;
     final key = bookKeyOf(widget.source.type, widget.source.id, widget.path);
     return !LibraryStore.instance.records.containsKey(key);
@@ -193,6 +194,23 @@ class _ComicCoverState extends State<ComicCover> {
       }
       final session = await webdavSessionFor(widget.source);
       final p = await webdavCover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop);
+      return await rgbaToImage(p.rgba, p.width, p.height);
+    } else if (widget.source.isSftp) {
+      try {
+        final session = await sftpSessionFor(widget.source);
+        final hasRaw = await sftpHasRawCache(session: session, path: widget.path);
+        if (!hasRaw) throw Exception('no raw cache');
+      } catch (_) {
+        throw Exception('not cached');
+      }
+      final session = await sftpSessionFor(widget.source);
+      final p = await sftpCover(
           session: session,
           path: widget.path,
           page: meta.coverPage,

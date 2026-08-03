@@ -1,5 +1,6 @@
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:app/ui/reader_page.dart';
 import 'package:flutter/material.dart';
@@ -28,13 +29,15 @@ Future<void> _open(
   bool skipAiCache,
 ) async {
   BigInt? session;
-  if (source.isWebDav) {
+  if (source.needsSession) {
     try {
-      session = await webdavSessionFor(source);
+      session = source.isWebDav
+          ? await webdavSessionFor(source)
+          : await sftpSessionFor(source);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('连接 WebDAV 失败:$e')),
+          SnackBar(content: Text('连接远程书源失败:$e')),
         );
       }
       return;

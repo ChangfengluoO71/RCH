@@ -72,7 +72,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1938458008;
+  int get rustContentHash => -284912288;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -240,9 +240,16 @@ abstract class RustLibApi extends BaseApi {
 
   Future<BookInfo> crateApiBookOpenLocalBook({required String path});
 
+  Future<BookInfo> crateApiSourceOpenSftpBook({
+    required BigInt session,
+    required String path,
+    required String strategy,
+  });
+
   Future<BookInfo> crateApiSourceOpenWebdavBook({
     required BigInt session,
     required String path,
+    required String strategy,
   });
 
   Future<BigInt> crateApiCachePageCacheSize();
@@ -254,6 +261,36 @@ abstract class RustLibApi extends BaseApi {
   Future<void> crateApiDbReopenDataDb();
 
   Future<void> crateApiCacheSetCacheRootPath({required String path});
+
+  Future<SftpSessionInfo> crateApiSourceSftpConnect({
+    required String host,
+    required int port,
+    required String username,
+    required String password,
+  });
+
+  Future<PageImage> crateApiSourceSftpCover({
+    required BigInt session,
+    required String path,
+    required int page,
+    required int width,
+    required int height,
+    CropRect? crop,
+  });
+
+  Future<void> crateApiSourceSftpDisconnect({required BigInt id});
+
+  Future<double> crateApiSourceSftpDownloadProgress({required BigInt session});
+
+  Future<bool> crateApiSourceSftpHasRawCache({
+    required BigInt session,
+    required String path,
+  });
+
+  Future<List<DirEntry>> crateApiSourceSftpList({
+    required BigInt session,
+    required String path,
+  });
 
   Future<Uint8List> crateApiAiSuperResolve({
     required List<int> pageBytes,
@@ -2009,9 +2046,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "open_local_book", argNames: ["path"]);
 
   @override
-  Future<BookInfo> crateApiSourceOpenWebdavBook({
+  Future<BookInfo> crateApiSourceOpenSftpBook({
     required BigInt session,
     required String path,
+    required String strategy,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -2019,6 +2057,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_64(session, serializer);
           sse_encode_String(path, serializer);
+          sse_encode_String(strategy, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -2030,8 +2069,44 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_book_info,
           decodeErrorData: sse_decode_AnyhowException,
         ),
+        constMeta: kCrateApiSourceOpenSftpBookConstMeta,
+        argValues: [session, path, strategy],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceOpenSftpBookConstMeta => const TaskConstMeta(
+    debugName: "open_sftp_book",
+    argNames: ["session", "path", "strategy"],
+  );
+
+  @override
+  Future<BookInfo> crateApiSourceOpenWebdavBook({
+    required BigInt session,
+    required String path,
+    required String strategy,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_String(strategy, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 60,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_book_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
         constMeta: kCrateApiSourceOpenWebdavBookConstMeta,
-        argValues: [session, path],
+        argValues: [session, path, strategy],
         apiImpl: this,
       ),
     );
@@ -2040,7 +2115,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiSourceOpenWebdavBookConstMeta =>
       const TaskConstMeta(
         debugName: "open_webdav_book",
-        argNames: ["session", "path"],
+        argNames: ["session", "path", "strategy"],
       );
 
   @override
@@ -2052,7 +2127,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 60,
+            funcId: 61,
             port: port_,
           );
         },
@@ -2082,7 +2157,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 61,
+            funcId: 62,
             port: port_,
           );
         },
@@ -2109,7 +2184,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 62,
+            funcId: 63,
             port: port_,
           );
         },
@@ -2137,7 +2212,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 63,
+            funcId: 64,
             port: port_,
           );
         },
@@ -2156,6 +2231,214 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "set_cache_root_path", argNames: ["path"]);
 
   @override
+  Future<SftpSessionInfo> crateApiSourceSftpConnect({
+    required String host,
+    required int port,
+    required String username,
+    required String password,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(host, serializer);
+          sse_encode_u_16(port, serializer);
+          sse_encode_String(username, serializer);
+          sse_encode_String(password, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 65,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_sftp_session_info,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSourceSftpConnectConstMeta,
+        argValues: [host, port, username, password],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceSftpConnectConstMeta => const TaskConstMeta(
+    debugName: "sftp_connect",
+    argNames: ["host", "port", "username", "password"],
+  );
+
+  @override
+  Future<PageImage> crateApiSourceSftpCover({
+    required BigInt session,
+    required String path,
+    required int page,
+    required int width,
+    required int height,
+    CropRect? crop,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_u_32(page, serializer);
+          sse_encode_u_32(width, serializer);
+          sse_encode_u_32(height, serializer);
+          sse_encode_opt_box_autoadd_crop_rect(crop, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 66,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_page_image,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSourceSftpCoverConstMeta,
+        argValues: [session, path, page, width, height, crop],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceSftpCoverConstMeta => const TaskConstMeta(
+    debugName: "sftp_cover",
+    argNames: ["session", "path", "page", "width", "height", "crop"],
+  );
+
+  @override
+  Future<void> crateApiSourceSftpDisconnect({required BigInt id}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(id, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 67,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSourceSftpDisconnectConstMeta,
+        argValues: [id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceSftpDisconnectConstMeta =>
+      const TaskConstMeta(debugName: "sftp_disconnect", argNames: ["id"]);
+
+  @override
+  Future<double> crateApiSourceSftpDownloadProgress({required BigInt session}) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 68,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_f_64,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSourceSftpDownloadProgressConstMeta,
+        argValues: [session],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceSftpDownloadProgressConstMeta =>
+      const TaskConstMeta(
+        debugName: "sftp_download_progress",
+        argNames: ["session"],
+      );
+
+  @override
+  Future<bool> crateApiSourceSftpHasRawCache({
+    required BigInt session,
+    required String path,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 69,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiSourceSftpHasRawCacheConstMeta,
+        argValues: [session, path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceSftpHasRawCacheConstMeta =>
+      const TaskConstMeta(
+        debugName: "sftp_has_raw_cache",
+        argNames: ["session", "path"],
+      );
+
+  @override
+  Future<List<DirEntry>> crateApiSourceSftpList({
+    required BigInt session,
+    required String path,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 70,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_dir_entry,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiSourceSftpListConstMeta,
+        argValues: [session, path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceSftpListConstMeta => const TaskConstMeta(
+    debugName: "sftp_list",
+    argNames: ["session", "path"],
+  );
+
+  @override
   Future<Uint8List> crateApiAiSuperResolve({
     required List<int> pageBytes,
     required int scale,
@@ -2169,7 +2452,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 64,
+            funcId: 71,
             port: port_,
           );
         },
@@ -2203,7 +2486,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 65,
+            funcId: 72,
             port: port_,
           );
         },
@@ -2233,7 +2516,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 66,
+            funcId: 73,
             port: port_,
           );
         },
@@ -2267,7 +2550,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 67,
+            funcId: 74,
             port: port_,
           );
         },
@@ -2310,7 +2593,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 68,
+            funcId: 75,
             port: port_,
           );
         },
@@ -2340,7 +2623,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 69,
+            funcId: 76,
             port: port_,
           );
         },
@@ -2370,7 +2653,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 70,
+            funcId: 77,
             port: port_,
           );
         },
@@ -2405,7 +2688,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 71,
+            funcId: 78,
             port: port_,
           );
         },
@@ -2440,7 +2723,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 72,
+            funcId: 79,
             port: port_,
           );
         },
@@ -2536,8 +2819,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BookSourceDto dco_decode_book_source_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return BookSourceDto(
       id: dco_decode_String(arr[0]),
       type: dco_decode_String(arr[1]),
@@ -2546,8 +2829,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       url: dco_decode_opt_String(arr[4]),
       username: dco_decode_opt_String(arr[5]),
       password: dco_decode_opt_String(arr[6]),
-      note: dco_decode_String(arr[7]),
-      capabilityLabel: dco_decode_String(arr[8]),
+      port: dco_decode_opt_box_autoadd_i_64(arr[7]),
+      note: dco_decode_String(arr[8]),
+      capabilityLabel: dco_decode_String(arr[9]),
     );
   }
 
@@ -2597,6 +2881,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   double dco_decode_box_autoadd_f_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as double;
+  }
+
+  @protected
+  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_i_64(raw);
   }
 
   @protected
@@ -2767,6 +3057,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_i_64(raw);
+  }
+
+  @protected
   (String, String)? dco_decode_opt_box_autoadd_record_string_string(
     dynamic raw,
   ) {
@@ -2846,6 +3142,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SftpSessionInfo dco_decode_sftp_session_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return SftpSessionInfo(
+      id: dco_decode_u_64(arr[0]),
+      root: dco_decode_String(arr[1]),
+      capabilityLabel: dco_decode_String(arr[2]),
+    );
+  }
+
+  @protected
   TagDto dco_decode_tag_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -2856,6 +3165,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       name: dco_decode_String(arr[1]),
       createdAt: dco_decode_i_64(arr[2]),
     );
+  }
+
+  @protected
+  int dco_decode_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -3000,6 +3315,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_url = sse_decode_opt_String(deserializer);
     var var_username = sse_decode_opt_String(deserializer);
     var var_password = sse_decode_opt_String(deserializer);
+    var var_port = sse_decode_opt_box_autoadd_i_64(deserializer);
     var var_note = sse_decode_String(deserializer);
     var var_capabilityLabel = sse_decode_String(deserializer);
     return BookSourceDto(
@@ -3010,6 +3326,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       url: var_url,
       username: var_username,
       password: var_password,
+      port: var_port,
       note: var_note,
       capabilityLabel: var_capabilityLabel,
     );
@@ -3061,6 +3378,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   double sse_decode_box_autoadd_f_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_f_64(deserializer));
+  }
+
+  @protected
+  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_i_64(deserializer));
   }
 
   @protected
@@ -3325,6 +3648,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_i_64(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   (String, String)? sse_decode_opt_box_autoadd_record_string_string(
     SseDeserializer deserializer,
   ) {
@@ -3407,12 +3741,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SftpSessionInfo sse_decode_sftp_session_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_u_64(deserializer);
+    var var_root = sse_decode_String(deserializer);
+    var var_capabilityLabel = sse_decode_String(deserializer);
+    return SftpSessionInfo(
+      id: var_id,
+      root: var_root,
+      capabilityLabel: var_capabilityLabel,
+    );
+  }
+
+  @protected
   TagDto sse_decode_tag_dto(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_id = sse_decode_String(deserializer);
     var var_name = sse_decode_String(deserializer);
     var var_createdAt = sse_decode_i_64(deserializer);
     return TagDto(id: var_id, name: var_name, createdAt: var_createdAt);
+  }
+
+  @protected
+  int sse_decode_u_16(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint16();
   }
 
   @protected
@@ -3524,6 +3877,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.url, serializer);
     sse_encode_opt_String(self.username, serializer);
     sse_encode_opt_String(self.password, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.port, serializer);
     sse_encode_String(self.note, serializer);
     sse_encode_String(self.capabilityLabel, serializer);
   }
@@ -3581,6 +3935,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_f_64(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_i_64(
+    PlatformInt64 self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_64(self, serializer);
   }
 
   @protected
@@ -3821,6 +4184,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_i_64(
+    PlatformInt64? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_i_64(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_record_string_string(
     (String, String)? self,
     SseSerializer serializer,
@@ -3901,11 +4277,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_sftp_session_info(
+    SftpSessionInfo self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.id, serializer);
+    sse_encode_String(self.root, serializer);
+    sse_encode_String(self.capabilityLabel, serializer);
+  }
+
+  @protected
   void sse_encode_tag_dto(TagDto self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.id, serializer);
     sse_encode_String(self.name, serializer);
     sse_encode_i_64(self.createdAt, serializer);
+  }
+
+  @protected
+  void sse_encode_u_16(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint16(self);
   }
 
   @protected

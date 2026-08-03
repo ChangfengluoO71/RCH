@@ -6,6 +6,7 @@ import 'package:app/src/rust/api/export.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
@@ -52,11 +53,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   Future<void> _init() async {
-    if (widget.source.isWebDav) {
+    if (widget.source.needsSession) {
       try {
-        _session = await webdavSessionFor(widget.source);
+        _session = widget.source.isWebDav
+            ? await webdavSessionFor(widget.source)
+            : await sftpSessionFor(widget.source);
       } catch (e) {
-        if (mounted) setState(() => _error = '连接 WebDAV 失败:$e');
+        if (mounted) setState(() => _error = '连接远程书源失败:$e');
         return;
       }
     }
@@ -70,9 +73,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
       _comicDirs.clear();
     });
     try {
-      final list = widget.source.isWebDav
-          ? await webdavList(session: _session!, path: path)
-          : await listLocalDir(path: path);
+      final list = switch (widget.source.type) {
+        'webdav' => await webdavList(session: _session!, path: path),
+        'sftp' => await sftpList(session: _session!, path: path),
+        _ => await listLocalDir(path: path),
+      };
       if (!mounted) return;
       setState(() {
         _path = path;
@@ -82,8 +87,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
                 ['.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar', '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3'].any((ext) => e.name.toLowerCase().endsWith(ext)))
             .toList();
       });
-      // 本地模式：异步检测子目录是否为漫画文件夹
-      if (!widget.source.isWebDav) {
+      // 本地文件系统（local/SMB）：异步检测子目录是否为漫画文件夹
+      if (widget.source.isLocalFs) {
         _detectComicFolders();
       }
     } catch (e) {
@@ -117,7 +122,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 刷新：重新列出目录；本地来源且开启"自动转 CBZ"时，后台转换后再次列出。
   Future<void> _refresh() async {
     await _list(_path);
-    if (!mounted || widget.source.isWebDav) return;
+    if (!mounted || !widget.source.isLocalFs) return;
     await _autoConvertToCbz();
     if (mounted) await _list(_path);
   }
@@ -306,21 +311,22 @@ class _SourceBrowserState extends State<SourceBrowser> {
     while (pending.isNotEmpty) {
       final p = pending.removeAt(0);
       try {
-        final list = widget.source.isWebDav
-            ? await webdavList(session: _session!, path: p)
-            : await listLocalDir(path: p);
+        final list = switch (widget.source.type) {
+          'webdav' => await webdavList(session: _session!, path: p),
+          'sftp' => await sftpList(session: _session!, path: p),
+          _ => await listLocalDir(path: p),
+        };
         for (final e in list) {
           if (e.isDir) {
-            // 检测子目录是否为漫画文件夹
-            if (widget.source.isWebDav) {
-              pending.add(e.path);
-            } else {
+            if (widget.source.isLocalFs) {
               final isComic = await isComicFolder(dirPath: e.path);
               if (isComic) {
                 result.add(e.path);
               } else {
                 pending.add(e.path);
               }
+            } else {
+              pending.add(e.path);
             }
           } else if ([
             '.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar',

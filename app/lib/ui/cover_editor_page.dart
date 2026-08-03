@@ -4,6 +4,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
 
@@ -42,10 +43,19 @@ class _CoverEditorPageState extends State<CoverEditorPage> {
 
   Future<void> _open() async {
     try {
-      final b = widget.source.isWebDav
-          ? await openWebdavBook(
-              session: await webdavSessionFor(widget.source), path: widget.path)
-          : await openLocalBook(path: widget.path);
+      final s = widget.source;
+      final strategy = LibraryStore.instance.settings.bookOpenStrategy.name;
+      final b = switch (s.type) {
+        'webdav' => await openWebdavBook(
+            session: await webdavSessionFor(s),
+            path: widget.path,
+            strategy: strategy),
+        'sftp' => await openSftpBook(
+            session: await sftpSessionFor(s),
+            path: widget.path,
+            strategy: strategy),
+        _ => await openLocalBook(path: widget.path),
+      };
       if (!mounted) return;
       setState(() => _book = b);
       await _load(0);

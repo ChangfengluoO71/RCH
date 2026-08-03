@@ -7,7 +7,9 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `downloads`, `get_session`, `next_id`, `sessions`
+// These functions are ignored because they are not marked as `pub`: `downloads`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `sessions`, `sftp_downloads`, `sftp_sessions`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `eq`
 
 /// 连接 WebDAV 服务器并自动探测能力,返回会话句柄与初始浏览路径。
 Future<WebDavSession> webdavConnect({
@@ -32,16 +34,19 @@ Future<List<DirEntry>> webdavList({
     RustLib.instance.api.crateApiSourceWebdavList(session: session, path: path);
 
 /// 打开 WebDAV 上的书籍。
-/// 策略: 先尝试整本下载到 raw/ 缓存, 后续基于本地缓存阅读。
+/// 策略(strategy): "auto" 先尝试整本下载到 raw/ 缓存, 失败回退流式;
+/// "download" 强制整本下载(失败报错); "stream" 直接流式(无 Range 服务器仍需整本)。
 /// 若已有缓存则直接复用(秒开)。
 /// 这是四层架构的关键: 阅读器只操作本地资源。
 /// 下载进度可通过 webdav_download_progress(session) 轮询。
 Future<BookInfo> openWebdavBook({
   required BigInt session,
   required String path,
+  required String strategy,
 }) => RustLib.instance.api.crateApiSourceOpenWebdavBook(
   session: session,
   path: path,
+  strategy: strategy,
 );
 
 /// 查询当前下载进度(0.0 ~ 1.0),若 session 不在下载中则返回 1.0。
@@ -55,6 +60,69 @@ Future<bool> webdavHasRawCache({
 }) => RustLib.instance.api.crateApiSourceWebdavHasRawCache(
   session: session,
   path: path,
+);
+
+/// 连接 SFTP 服务器（密码认证），返回会话句柄；root 固定为 `/`。
+Future<SftpSessionInfo> sftpConnect({
+  required String host,
+  required int port,
+  required String username,
+  required String password,
+}) => RustLib.instance.api.crateApiSourceSftpConnect(
+  host: host,
+  port: port,
+  username: username,
+  password: password,
+);
+
+/// 断开 SFTP 会话（在 blocking 线程释放连接与 runtime）。
+Future<void> sftpDisconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceSftpDisconnect(id: id);
+
+/// 列出 SFTP 目录内容（目录在前,自然排序）。
+Future<List<DirEntry>> sftpList({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceSftpList(session: session, path: path);
+
+/// 打开 SFTP 上的书籍，strategy 见 [`open_webdav_book`]。
+/// 整本下载优先（进度经 sftp_download_progress 轮询）；失败回退 SftpFile 流式。
+Future<BookInfo> openSftpBook({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenSftpBook(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 查询 SFTP 下载进度（0.0 ~ 1.0），非下载中返回 1.0。
+Future<double> sftpDownloadProgress({required BigInt session}) =>
+    RustLib.instance.api.crateApiSourceSftpDownloadProgress(session: session);
+
+/// 检查某 SFTP 漫画是否已有 raw/ 本地缓存。
+Future<bool> sftpHasRawCache({required BigInt session, required String path}) =>
+    RustLib.instance.api.crateApiSourceSftpHasRawCache(
+      session: session,
+      path: path,
+    );
+
+/// 生成 SFTP 书籍封面缩略图（优先 cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+Future<PageImage> sftpCover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceSftpCover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
 );
 
 /// 生成 WebDAV 书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
@@ -75,6 +143,33 @@ Future<PageImage> webdavCover({
   height: height,
   crop: crop,
 );
+
+/// SFTP 会话信息。
+class SftpSessionInfo {
+  final BigInt id;
+  final String root;
+
+  /// 能力标记（Dart 侧显示用）。
+  final String capabilityLabel;
+
+  const SftpSessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+  });
+
+  @override
+  int get hashCode => id.hashCode ^ root.hashCode ^ capabilityLabel.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SftpSessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel;
+}
 
 /// WebDAV 会话信息。
 class WebDavSession {

@@ -1,4 +1,5 @@
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/src/rust/api/book.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/ui/book_detail_page.dart';
@@ -202,8 +203,20 @@ class _HomePageState extends State<HomePage> {
 
   Widget _sourceTile(BookSource src) {
     final sel = _section == 'source' && _source?.id == src.id;
+    final icon = src.isWebDav
+        ? Icons.cloud
+        : src.isSftp
+            ? Icons.dns
+            : src.isSmb
+                ? Icons.lan
+                : Icons.folder;
+    final iconColor = src.isWebDav
+        ? Colors.lightBlueAccent
+        : src.isSftp
+            ? Colors.tealAccent
+            : Colors.amber;
     return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1), child: ListTile(
-      dense: true, leading: Icon(src.isWebDav ? Icons.cloud : Icons.folder, size: 20, color: src.isWebDav ? Colors.lightBlueAccent : Colors.amber),
+      dense: true, leading: Icon(icon, size: 20, color: iconColor),
       title: Row(mainAxisSize: MainAxisSize.min, children: [
         Text(src.capabilityDisplay.emoji, style: const TextStyle(fontSize: 12)), const SizedBox(width: 4),
         Flexible(child: Text(src.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14))),
@@ -320,16 +333,32 @@ class _HomePageState extends State<HomePage> {
   // ============================================================
   void _showEditSource(BookSource src) {
     final nameCtrl = TextEditingController(text: src.name), urlCtrl = TextEditingController(text: src.url ?? ''),
-        userCtrl = TextEditingController(text: src.username ?? ''), passCtrl = TextEditingController(text: src.password ?? ''),
+        userCtrl = TextEditingController(text: src.username ?? ''),
+        passCtrl = TextEditingController(text: src.password ?? ''),
+        portCtrl = TextEditingController(text: src.port?.toString() ?? ''),
         pathCtrl = TextEditingController(text: src.path), noteCtrl = TextEditingController(text: src.note);
     showDialog(context: context, builder: (ctx) => AlertDialog(title: Text('编辑书源: ${src.name}'),
       content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         _fd('名称', nameCtrl),
-        if (src.isWebDav) ...[_fd('服务器地址', urlCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径', pathCtrl)] else _fd('目录路径', pathCtrl),
+        if (src.isWebDav) ...[_fd('服务器地址', urlCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径', pathCtrl)]
+        else if (src.isSftp) ...[_fd('服务器地址', urlCtrl), _fd('端口(默认22)', portCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径(默认/)', pathCtrl)]
+        else if (src.isSmb) _fd('共享目录路径(UNC)', pathCtrl)
+        else _fd('目录路径', pathCtrl),
         _fd('备注', noteCtrl),
       ])),
       actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('取消')),
-        FilledButton(onPressed: () { LibraryStore.instance.updateSource(src.id, name: nameCtrl.text.trim(), url: urlCtrl.text.trim(), username: userCtrl.text.trim(), password: passCtrl.text.trim(), path: pathCtrl.text.trim(), note: noteCtrl.text.trim()); Navigator.of(ctx).pop(); }, child: const Text('保存'))]));
+        FilledButton(onPressed: () {
+          final port = src.isSftp ? int.tryParse(portCtrl.text.trim()) : null;
+          LibraryStore.instance.updateSource(src.id,
+              name: nameCtrl.text.trim(),
+              url: urlCtrl.text.trim(),
+              username: userCtrl.text.trim(),
+              password: passCtrl.text.trim(),
+              port: port,
+              path: pathCtrl.text.trim(),
+              note: noteCtrl.text.trim());
+          Navigator.of(ctx).pop();
+        }, child: const Text('保存'))]));
   }
   Widget _fd(String label, TextEditingController c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: TextField(controller: c, decoration: InputDecoration(labelText: label, border: const OutlineInputBorder(), isDense: true)));
   Widget _fdPw(String label, TextEditingController c) => Padding(padding: const EdgeInsets.only(bottom: 8), child: TextField(controller: c, obscureText: true, decoration: InputDecoration(labelText: label, border: const OutlineInputBorder(), isDense: true)));
@@ -338,14 +367,21 @@ class _HomePageState extends State<HomePage> {
     final ctrl = TextEditingController(text: src.note);
     showDialog(context: context, builder: (ctx) => AlertDialog(title: Text('书源详情: ${src.name}'),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(src.isWebDav ? 'WebDAV' : '本地目录', style: Theme.of(context).textTheme.bodySmall),
-        Text(src.isWebDav ? (src.url ?? '') : src.path, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+        Text(_sourceTypeLabel(src), style: Theme.of(context).textTheme.bodySmall),
+        Text(src.needsSession ? (src.url ?? '') : src.path, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 16), const Text('备注', style: TextStyle(fontWeight: FontWeight.w600)), const SizedBox(height: 8),
         TextField(controller: ctrl, maxLines: 3, decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true)),
       ]),
       actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('取消')),
         FilledButton(onPressed: () { src.note = ctrl.text.trim(); LibraryStore.instance.updateSource(src.id, note: src.note); Navigator.of(ctx).pop(); }, child: const Text('保存'))]));
   }
+
+  String _sourceTypeLabel(BookSource src) => switch (src.type) {
+        'webdav' => 'WebDAV',
+        'sftp' => 'SFTP',
+        'smb' => 'SMB 共享',
+        _ => '本地目录',
+      };
 
   void _deleteSource(BookSource src) {
     showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: Text('删除书源"${src.name}"?'), content: const Text('将同时删除该书源下的所有阅读记录和元数据'),
@@ -445,7 +481,7 @@ class _HomePageState extends State<HomePage> {
     final s = LibraryStore.instance.settings;
     return ListenableBuilder(listenable: LibraryStore.instance, builder: (c, _) => ListView(padding: const EdgeInsets.all(24), children: [
       const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const CacheManagerPanel(), const SizedBox(height: 28),
-      _readingDefaults(s), const SizedBox(height: 16), _localComics(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
+      _readingDefaults(s), const SizedBox(height: 16), _remoteSources(s), const SizedBox(height: 16), _localComics(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
     ]));
   }
 
@@ -453,7 +489,7 @@ class _HomePageState extends State<HomePage> {
     const Text('本地漫画', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
     SwitchListTile(
       title: const Text('自动转 CBZ'),
-      subtitle: const Text('刷新本地书源时，后台将漫画文件夹 / zip 打包为 CBZ；转换后与原内容视为同一本漫画（进度/标签保留）'),
+      subtitle: const Text('刷新本地 / SMB 书源时，后台将漫画文件夹 / zip 打包为 CBZ（需共享目录有写权限）；转换后与原内容视为同一本漫画（进度/标签保留）'),
       dense: true,
       contentPadding: EdgeInsets.zero,
       value: s.autoConvertCbz,
@@ -463,6 +499,25 @@ class _HomePageState extends State<HomePage> {
         setState(() {});
       },
     ),
+  ]);
+
+  Widget _remoteSources(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const Text('远程书源', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
+    Text('WebDAV / SFTP 打开漫画时的策略', style: Theme.of(context).textTheme.bodySmall), const SizedBox(height: 10),
+    SegmentedButton<BookOpenStrategy>(
+      segments: BookOpenStrategy.values
+          .map((st) => ButtonSegment(value: st, label: Text(st.label)))
+          .toList(),
+      selected: {s.bookOpenStrategy},
+      onSelectionChanged: (vs) {
+        s.bookOpenStrategy = vs.first;
+        LibraryStore.instance.updateSettings(s);
+        setState(() {});
+      },
+    ),
+    const SizedBox(height: 8),
+    Text('自动：先下载整本到缓存（有进度条），失败转流式；下载整本：适合网速快或想离线读；直接流式：即点即读、不占缓存',
+        style: Theme.of(context).textTheme.bodySmall),
   ]);
 
   Widget _readingDefaults(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -514,19 +569,70 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
 
 class AddSourceDialog extends StatefulWidget { const AddSourceDialog({super.key}); @override State<AddSourceDialog> createState() => _AddDialogState(); }
 class _AddDialogState extends State<AddSourceDialog> {
-  bool _w = true;
-  final _a = TextEditingController(), _b = TextEditingController(), _u = TextEditingController(), _p = TextEditingController(), _s = TextEditingController();
+  String _type = 'webdav';
+  final _a = TextEditingController(), _b = TextEditingController(), _u = TextEditingController(), _p = TextEditingController(), _s = TextEditingController(), _port = TextEditingController();
   bool _t = false; String? _e;
   Future<void> _submit() async {
     final n = _a.text.trim();
-    if (_w) { if (_u.text.trim().isEmpty) { setState(() => _e = '请填写服务器地址'); return; } setState(() { _t = true; _e = null; });
+    if (_type == 'webdav') { if (_u.text.trim().isEmpty) { setState(() => _e = '请填写服务器地址'); return; } setState(() { _t = true; _e = null; });
       try { final s = await webdavConnect(url: _u.text.trim(), username: _p.text.trim(), password: _s.text); LibraryStore.instance.addSource(BookSource(id: 'webdav_${DateTime.now().millisecondsSinceEpoch}', type: 'webdav', name: n.isEmpty ? _u.text.trim() : n, path: _b.text.trim().isEmpty ? s.root : _b.text.trim(), url: _u.text.trim(), username: _p.text.trim(), password: _s.text)); if (mounted) Navigator.of(context).pop(); } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
-    } else { if (_b.text.trim().isEmpty) { setState(() => _e = '请填写目录路径'); return; } LibraryStore.instance.addSource(BookSource(id: 'local_${DateTime.now().millisecondsSinceEpoch}', type: 'local', name: n.isEmpty ? _b.text.trim() : n, path: _b.text.trim())); if (mounted) Navigator.of(context).pop(); }
+    } else if (_type == 'sftp') {
+      if (_u.text.trim().isEmpty) { setState(() => _e = '请填写服务器地址'); return; }
+      setState(() { _t = true; _e = null; });
+      try {
+        final (host, port) = _sftpHostPort();
+        final s = await sftpConnect(host: host, port: port, username: _p.text.trim(), password: _s.text);
+        LibraryStore.instance.addSource(BookSource(id: 'sftp_${DateTime.now().millisecondsSinceEpoch}', type: 'sftp', name: n.isEmpty ? _u.text.trim() : n, path: _b.text.trim().isEmpty ? s.root : _b.text.trim(), url: _u.text.trim(), username: _p.text.trim(), password: _s.text, port: port));
+        if (mounted) Navigator.of(context).pop();
+      } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+    } else if (_type == 'smb') {
+      final path = _b.text.trim();
+      if (path.isEmpty || !path.startsWith(r'\\')) { setState(() => _e = '请填写 UNC 共享路径（以 \\ 开头，如 \\\\192.168.1.10\\comic）'); return; }
+      setState(() { _t = true; _e = null; });
+      try {
+        await listLocalDir(path: path); // 连通性测试（无权限/路径不存在会抛错）
+        LibraryStore.instance.addSource(BookSource(id: 'smb_${DateTime.now().millisecondsSinceEpoch}', type: 'smb', name: n.isEmpty ? path : n, path: path));
+        if (mounted) Navigator.of(context).pop();
+      } catch (e) { setState(() => _e = '无法访问该共享目录:$e'); } finally { if (mounted) setState(() => _t = false); }
+    } else {
+      if (_b.text.trim().isEmpty) { setState(() => _e = '请填写目录路径'); return; }
+      LibraryStore.instance.addSource(BookSource(id: 'local_${DateTime.now().millisecondsSinceEpoch}', type: 'local', name: n.isEmpty ? _b.text.trim() : n, path: _b.text.trim())); if (mounted) Navigator.of(context).pop();
+    }
   }
-  @override Widget build(BuildContext c) => AlertDialog(title: const Text('添加书源'), content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
-    SegmentedButton<bool>(segments: const [ButtonSegment(value: true, label: Text('WebDAV'), icon: Icon(Icons.cloud)), ButtonSegment(value: false, label: Text('本地目录'), icon: Icon(Icons.folder))], selected: {_w}, onSelectionChanged: (s) => setState(() => _w = s.first)),
+
+  /// 解析 SFTP 服务器地址：`host` / `host:port`，端口缺省取端口字段或 22。
+  (String, int) _sftpHostPort() {
+    final addr = _u.text.trim();
+    if (addr.contains(':')) {
+      final idx = addr.lastIndexOf(':');
+      final p = int.tryParse(addr.substring(idx + 1));
+      if (p != null && p > 0) return (addr.substring(0, idx), p);
+    }
+    return (addr, int.tryParse(_port.text.trim()) ?? 22);
+  }
+
+  @override Widget build(BuildContext c) => AlertDialog(title: const Text('添加书源'), content: SizedBox(width: 420, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    SegmentedButton<String>(segments: const [
+      ButtonSegment(value: 'local', label: Text('本地目录'), icon: Icon(Icons.folder)),
+      ButtonSegment(value: 'webdav', label: Text('WebDAV'), icon: Icon(Icons.cloud)),
+      ButtonSegment(value: 'smb', label: Text('SMB'), icon: Icon(Icons.lan)),
+      ButtonSegment(value: 'sftp', label: Text('SFTP'), icon: Icon(Icons.dns)),
+    ], selected: {_type}, onSelectionChanged: (s) => setState(() { _type = s.first; _e = null; })),
     const SizedBox(height: 16), TextField(controller: _a, decoration: const InputDecoration(labelText: '名称(可选)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
-    if (_w) ...[TextField(controller: _u, decoration: const InputDecoration(labelText: '服务器地址', hintText: 'https://nas:5006/dav', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10), TextField(controller: _p, decoration: const InputDecoration(labelText: '用户名', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10), TextField(controller: _s, obscureText: true, decoration: const InputDecoration(labelText: '密码', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10), TextField(controller: _b, decoration: const InputDecoration(labelText: '初始路径(可选,默认根目录)', border: OutlineInputBorder(), isDense: true))] else TextField(controller: _b, decoration: const InputDecoration(labelText: '目录路径', hintText: r'F:\comic\漫畫', border: OutlineInputBorder(), isDense: true)),
+    if (_type == 'local') TextField(controller: _b, decoration: const InputDecoration(labelText: '目录路径', hintText: r'F:\comic\漫畫', border: OutlineInputBorder(), isDense: true))
+    else if (_type == 'smb') TextField(controller: _b, decoration: const InputDecoration(labelText: '共享目录路径(UNC)', hintText: r'\\192.168.1.10\comic', border: OutlineInputBorder(), isDense: true))
+    else if (_type == 'webdav') ...[
+      TextField(controller: _u, decoration: const InputDecoration(labelText: '服务器地址', hintText: 'https://nas:5006/dav', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _p, decoration: const InputDecoration(labelText: '用户名', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _s, obscureText: true, decoration: const InputDecoration(labelText: '密码', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _b, decoration: const InputDecoration(labelText: '初始路径(可选,默认根目录)', border: OutlineInputBorder(), isDense: true)),
+    ] else ...[
+      TextField(controller: _u, decoration: const InputDecoration(labelText: '服务器地址', hintText: '192.168.1.10 或 nas:2222', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _port, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '端口(默认22)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _p, decoration: const InputDecoration(labelText: '用户名', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _s, obscureText: true, decoration: const InputDecoration(labelText: '密码', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _b, decoration: const InputDecoration(labelText: '初始路径(可选,默认/)', border: OutlineInputBorder(), isDense: true)),
+    ],
     if (_e != null) Padding(padding: const EdgeInsets.only(top: 10), child: Text(_e!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
-  ])), actions: [TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')), FilledButton(onPressed: _t ? null : _submit, child: Text(_t ? '测试中…' : '添加'))]);
+  ]))), actions: [TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')), FilledButton(onPressed: _t ? null : _submit, child: Text(_t ? '测试中…' : '添加'))]);
 }

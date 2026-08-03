@@ -6,12 +6,13 @@ import 'package:flutter/services.dart';
 /// 书源:本地目录或 WebDAV。
 class BookSource {
   final String id;
-  final String type; // 'local' | 'webdav'
+  final String type; // 'local' | 'webdav' | 'smb' | 'sftp'
   String name;
   String path; // local: 目录路径;webdav: 初始浏览路径
   String? url;
   String? username;
   String? password;
+  int? port; // SFTP 端口（默认 22）
   String note; // 用户备注
   String capabilityLabel; // "local" | "webdav_range" | "webdav_norange"
 
@@ -23,16 +24,26 @@ class BookSource {
     this.url,
     this.username,
     this.password,
+    this.port,
     this.note = '',
     this.capabilityLabel = '',
   });
 
   bool get isWebDav => type == 'webdav';
+  bool get isSftp => type == 'sftp';
+  bool get isSmb => type == 'smb';
+  /// 走本地文件系统链路的来源（本地目录 + SMB UNC）。
+  bool get isLocalFs => type == 'local' || type == 'smb';
+  /// 需要会话连接的远程来源（WebDAV / SFTP）。
+  bool get needsSession => type == 'webdav' || type == 'sftp';
 
   /// 能力标记的显示颜色。
   /// 🟢 本地/NAS  🟡 WebDAV(Range)  🔴 WebDAV(无Range)
   ({String emoji, String label}) get capabilityDisplay {
-    if (type == 'local') return (emoji: '\u{1F7E2}', label: '本地');
+    if (type == 'local' || type == 'smb') {
+      return (emoji: '\u{1F7E2}', label: type == 'smb' ? 'SMB 本地/NAS' : '本地');
+    }
+    if (type == 'sftp') return (emoji: '\u{1F7E1}', label: 'SFTP');
     if (capabilityLabel == 'local') return (emoji: '\u{1F7E2}', label: 'WebDAV 高速');
     if (capabilityLabel == 'webdav_range') return (emoji: '\u{1F7E1}', label: 'WebDAV 远程');
     return (emoji: '\u{1F534}', label: 'WebDAV 无Range');
@@ -46,6 +57,7 @@ class BookSource {
         if (url != null) 'url': url,
         if (username != null) 'username': username,
         if (password != null) 'password': password,
+        if (port != null) 'port': port,
         'note': note,
         if (capabilityLabel.isNotEmpty) 'capabilityLabel': capabilityLabel,
       };
@@ -58,6 +70,7 @@ class BookSource {
         url: j['url'] as String?,
         username: j['username'] as String?,
         password: j['password'] as String?,
+        port: j['port'] as int?,
         note: (j['note'] as String?) ?? '',
         capabilityLabel: (j['capabilityLabel'] as String?) ?? '',
       );
@@ -110,6 +123,19 @@ class ReadRecord {
 
 /// 封面质量(影响扫描速度与清晰度)。
 enum CoverQuality { low, medium, high }
+
+/// 远程书源（WebDAV / SFTP）打开书籍的策略。
+enum BookOpenStrategy {
+  /// 自动（默认）：先整本下载到缓存，失败回退流式。
+  auto('自动（先下载，失败转流式）'),
+  /// 优先下载整本：有进度条、之后秒开。
+  download('优先下载整本'),
+  /// 直接流式：即点即读、不占缓存。
+  stream('直接流式');
+
+  const BookOpenStrategy(this.label);
+  final String label;
+}
 
 /// 阅读模式。
 enum ReadMode {
@@ -205,6 +231,7 @@ class AppSettings {
   KeyBinds keys; // 自定义按键
   String? cacheDir; // 自定义缓存目录（null = 默认）
   bool autoConvertCbz; // 刷新本地书源时自动将漫画文件夹/zip 转为 CBZ
+  BookOpenStrategy bookOpenStrategy; // 远程书源打开策略（WebDAV/SFTP 共用）
 
   AppSettings({
     this.coverQuality = CoverQuality.medium,
@@ -217,6 +244,7 @@ class AppSettings {
     KeyBinds? keys,
     this.cacheDir,
     this.autoConvertCbz = true,
+    this.bookOpenStrategy = BookOpenStrategy.auto,
   }) : keys = keys ?? KeyBinds();
 
   Map<String, dynamic> toJson() => {
@@ -230,6 +258,7 @@ class AppSettings {
         'keys': keys.toJson(),
         if (cacheDir != null) 'cacheDir': cacheDir,
         'autoConvertCbz': autoConvertCbz,
+        'bookOpenStrategy': bookOpenStrategy.name,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -252,6 +281,10 @@ class AppSettings {
         keys: KeyBinds.fromJson(j['keys'] as Map<String, dynamic>?),
         cacheDir: j['cacheDir'] as String?,
         autoConvertCbz: (j['autoConvertCbz'] as bool?) ?? true,
+        bookOpenStrategy: BookOpenStrategy.values.firstWhere(
+          (s) => s.name == j['bookOpenStrategy'],
+          orElse: () => BookOpenStrategy.auto,
+        ),
       );
 }
 

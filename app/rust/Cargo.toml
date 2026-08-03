@@ -27,6 +27,8 @@ mobi = "0.8.0"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 sha2 = "0.10"
 fs2 = "0.4"
+russh = { version = "0.62.5", default-features = false, features = ["flate2", "ring", "rsa"] }
+russh-sftp = "2.3.0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

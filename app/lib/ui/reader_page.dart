@@ -113,10 +113,20 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _open() async { try {
-    if (widget.webdavSession != null) {
-      // WebDAV: 轮询下载进度
-      _startPollingProgress();
-      final b = await openWebdavBook(session: widget.webdavSession!, path: widget.path);
+    final src = widget.source;
+    final strategy = LibraryStore.instance.settings.bookOpenStrategy.name;
+    if (src?.isWebDav == true && widget.webdavSession != null) {
+      // 远程(WebDAV/SFTP)会话: 轮询下载进度后打开
+      _startPollingProgress(isWebdav: true);
+      final b = await openWebdavBook(
+          session: widget.webdavSession!, path: widget.path, strategy: strategy);
+      _downloadProgress = null;
+      if (!mounted) return;
+      setState(() { _book = b; });
+    } else if (src?.isSftp == true && widget.webdavSession != null) {
+      _startPollingProgress(isWebdav: false);
+      final b = await openSftpBook(
+          session: widget.webdavSession!, path: widget.path, strategy: strategy);
       _downloadProgress = null;
       if (!mounted) return;
       setState(() { _book = b; });
@@ -130,15 +140,17 @@ class _ReaderPageState extends State<ReaderPage> {
     _ensure(_page); _ensure(_page+1); _ensure(_page+2);
   } catch(e) { if (mounted) setState(() { _error = '$e'; _downloadProgress = null; }); } }
 
-  /// 轮询 WebDAV 下载进度,每 300ms 一次,直到 _book 出现或状态变化。
-  void _startPollingProgress() {
+  /// 轮询远程下载进度(WebDAV / SFTP),每 300ms 一次,直到 _book 出现或状态变化。
+  void _startPollingProgress({required bool isWebdav}) {
     _downloadProgress = 0.0;
     Future.doWhile(() async {
       if (_downloadProgress == null || _book != null || !mounted) return false;
       await Future.delayed(const Duration(milliseconds: 300));
       if (_downloadProgress == null || _book != null || !mounted) return false;
       try {
-        final p = await webdavDownloadProgress(session: widget.webdavSession!);
+        final p = isWebdav
+            ? await webdavDownloadProgress(session: widget.webdavSession!)
+            : await sftpDownloadProgress(session: widget.webdavSession!);
         if (mounted) setState(() { _downloadProgress = p; });
       } catch (_) {}
       return _downloadProgress != null && _book == null && mounted;

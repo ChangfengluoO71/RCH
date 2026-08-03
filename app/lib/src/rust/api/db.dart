@@ -273,6 +273,7 @@ class BookSourceDto {
   final String? url;
   final String? username;
   final String? password;
+  final PlatformInt64? port;
   final String note;
   final String capabilityLabel;
 
@@ -284,6 +285,7 @@ class BookSourceDto {
     this.url,
     this.username,
     this.password,
+    this.port,
     required this.note,
     required this.capabilityLabel,
   });
@@ -297,6 +299,7 @@ class BookSourceDto {
       url.hashCode ^
       username.hashCode ^
       password.hashCode ^
+      port.hashCode ^
       note.hashCode ^
       capabilityLabel.hashCode;
 
@@ -312,6 +315,7 @@ class BookSourceDto {
           url == other.url &&
           username == other.username &&
           password == other.password &&
+          port == other.port &&
           note == other.note &&
           capabilityLabel == other.capabilityLabel;
 }

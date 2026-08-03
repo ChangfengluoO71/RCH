@@ -27,6 +27,7 @@ class BookRepository {
     String? url,
     String? username,
     String? password,
+    int? port,
     String? path,
     String? note,
   }) {
@@ -36,6 +37,7 @@ class BookRepository {
         if (url != null) s.url = url;
         if (username != null) s.username = username;
         if (password != null) s.password = password;
+        if (port != null) s.port = port;
         if (path != null) s.path = path;
         if (note != null) s.note = note;
       }
@@ -95,6 +97,7 @@ class BookRepository {
         url: dto.url,
         username: dto.username,
         password: dto.password,
+        port: dto.port?.toInt(),
         note: dto.note,
         capabilityLabel: dto.capabilityLabel,
       ));
@@ -132,6 +135,7 @@ class BookRepository {
         url: s.url,
         username: s.username,
         password: s.password,
+        port: s.port,
         note: s.note,
         capabilityLabel: s.capabilityLabel,
       ));

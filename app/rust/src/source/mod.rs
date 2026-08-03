@@ -7,6 +7,7 @@
 use std::io::{self, Read, Seek, SeekFrom};
 
 pub mod local;
+pub mod sftp;
 pub mod webdav;
 
 /// 目录条目(书架 / 浏览用)。

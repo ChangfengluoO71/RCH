@@ -39,6 +39,7 @@ pub struct BookSourceDto {
     pub url: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    pub port: Option<i64>,
     pub note: String,
     pub capability_label: String,
 }
@@ -54,6 +55,7 @@ pub fn db_load_all_sources() -> Vec<BookSourceDto> {
             url: r.url,
             username: r.username,
             password: r.password,
+            port: r.port,
             note: r.note,
             capability_label: r.capability_label,
         })
@@ -69,6 +71,7 @@ pub fn db_upsert_source(source: BookSourceDto) -> Result<(), String> {
         url: source.url,
         username: source.username,
         password: source.password,
+        port: source.port,
         note: source.note,
         capability_label: source.capability_label,
     })

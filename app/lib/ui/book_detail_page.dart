@@ -1,5 +1,6 @@
 import 'package:app/repository/tag_repository.dart';
 import 'package:app/store/ai_upscale_manager.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/book.dart';
@@ -81,10 +82,19 @@ class _BookDetailPageState extends State<BookDetailPage> {
               await store.saveToDisk();
               // 只清本书的 AI 缓存：逐页按内容 hash 删除，不影响其他书
               try {
-                final isWebdav = widget.source.isWebDav;
-                final bk = isWebdav
-                    ? await openWebdavBook(session: await webdavSessionFor(widget.source), path: widget.path)
-                    : await openLocalBook(path: widget.path);
+                final s = widget.source;
+                final strategy = store.settings.bookOpenStrategy.name;
+                final bk = switch (s.type) {
+                  'webdav' => await openWebdavBook(
+                      session: await webdavSessionFor(s),
+                      path: widget.path,
+                      strategy: strategy),
+                  'sftp' => await openSftpBook(
+                      session: await sftpSessionFor(s),
+                      path: widget.path,
+                      strategy: strategy),
+                  _ => await openLocalBook(path: widget.path),
+                };
                 for (var i = 0; i < bk.pageCount; i++) {
                   final bytes = await bookPage(handle: bk.handle, index: i);
                   await deleteAiCacheForPage(pageBytes: bytes, scale: 2);

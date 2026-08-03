@@ -11,6 +11,7 @@ import '../src/rust/api/db.dart';
 import '../src/rust/api/source.dart';
 import 'library_store.dart';
 import 'models.dart';
+import 'sftp_session.dart';
 import 'webdav_session.dart';
 
 enum AiTaskStatus { queued, running, canceled, done }
@@ -272,10 +273,19 @@ class AiUpscaleManager extends ChangeNotifier {
     }
 
     try {
-      final bk = source.isWebDav
-          ? await openWebdavBook(session: await webdavSessionFor(source), path: task.path)
-              .timeout(const Duration(seconds: 60))
-          : await openLocalBook(path: task.path).timeout(const Duration(seconds: 60));
+      final strategy = store.settings.bookOpenStrategy.name;
+      final openFuture = switch (source.type) {
+        'webdav' => openWebdavBook(
+            session: await webdavSessionFor(source),
+            path: task.path,
+            strategy: strategy),
+        'sftp' => openSftpBook(
+            session: await sftpSessionFor(source),
+            path: task.path,
+            strategy: strategy),
+        _ => openLocalBook(path: task.path),
+      };
+      final bk = await openFuture.timeout(const Duration(seconds: 60));
       task.total = bk.pageCount;
       task.updatedAt = DateTime.now().millisecondsSinceEpoch;
       await _persist(task);

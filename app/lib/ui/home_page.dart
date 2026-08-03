@@ -2,6 +2,7 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/netdisk_credentials.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -9,6 +10,8 @@ import 'package:app/ui/opener.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -209,12 +212,20 @@ class _HomePageState extends State<HomePage> {
             ? Icons.dns
             : src.isSmb
                 ? Icons.lan
-                : Icons.folder;
+                : src.isBaidu
+                    ? Icons.cloud_queue
+                    : src.is115
+                        ? Icons.cloud_upload
+                        : Icons.folder;
     final iconColor = src.isWebDav
         ? Colors.lightBlueAccent
         : src.isSftp
             ? Colors.tealAccent
-            : Colors.amber;
+            : src.isBaidu
+                ? Colors.orangeAccent
+                : src.is115
+                    ? Colors.amber
+                    : Colors.amber;
     return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1), child: ListTile(
       dense: true, leading: Icon(icon, size: 20, color: iconColor),
       title: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -336,12 +347,18 @@ class _HomePageState extends State<HomePage> {
         userCtrl = TextEditingController(text: src.username ?? ''),
         passCtrl = TextEditingController(text: src.password ?? ''),
         portCtrl = TextEditingController(text: src.port?.toString() ?? ''),
-        pathCtrl = TextEditingController(text: src.path), noteCtrl = TextEditingController(text: src.note);
+        pathCtrl = TextEditingController(text: src.path), noteCtrl = TextEditingController(text: src.note),
+        tokenCtrl = TextEditingController(text: src.refreshToken ?? ''),
+        appKeyCtrl = TextEditingController(text: src.clientId ?? ''),
+        secretCtrl = TextEditingController(text: src.clientSecret ?? ''),
+        rootIdCtrl = TextEditingController(text: src.rootId ?? '');
     showDialog(context: context, builder: (ctx) => AlertDialog(title: Text('编辑书源: ${src.name}'),
       content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         _fd('名称', nameCtrl),
         if (src.isWebDav) ...[_fd('服务器地址', urlCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径', pathCtrl)]
         else if (src.isSftp) ...[_fd('服务器地址', urlCtrl), _fd('端口(默认22)', portCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径(默认/)', pathCtrl)]
+        else if (src.isBaidu) ...[_fd('根目录(默认/)', pathCtrl), _fdPw('refresh_token', tokenCtrl), _fd('AppKey(留空用内置)', appKeyCtrl), _fdPw('SecretKey(留空用内置)', secretCtrl)]
+        else if (src.is115) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('refresh_token', tokenCtrl), _fd('APP ID(留空用内置)', appKeyCtrl)]
         else if (src.isSmb) _fd('共享目录路径(UNC)', pathCtrl)
         else _fd('目录路径', pathCtrl),
         _fd('备注', noteCtrl),
@@ -356,6 +373,10 @@ class _HomePageState extends State<HomePage> {
               password: passCtrl.text.trim(),
               port: port,
               path: pathCtrl.text.trim(),
+              refreshToken: tokenCtrl.text.trim().isEmpty ? null : tokenCtrl.text.trim(),
+              clientId: appKeyCtrl.text.trim().isEmpty ? null : appKeyCtrl.text.trim(),
+              clientSecret: secretCtrl.text.trim().isEmpty ? null : secretCtrl.text.trim(),
+              rootId: rootIdCtrl.text.trim().isEmpty ? null : rootIdCtrl.text.trim(),
               note: noteCtrl.text.trim());
           Navigator.of(ctx).pop();
         }, child: const Text('保存'))]));
@@ -368,7 +389,9 @@ class _HomePageState extends State<HomePage> {
     showDialog(context: context, builder: (ctx) => AlertDialog(title: Text('书源详情: ${src.name}'),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
         Text(_sourceTypeLabel(src), style: Theme.of(context).textTheme.bodySmall),
-        Text(src.needsSession ? (src.url ?? '') : src.path, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+        Text(src.needsSession
+            ? (src.isBaidu || src.is115 ? src.path : (src.url ?? ''))
+            : src.path, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 16), const Text('备注', style: TextStyle(fontWeight: FontWeight.w600)), const SizedBox(height: 8),
         TextField(controller: ctrl, maxLines: 3, decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true)),
       ]),
@@ -380,6 +403,8 @@ class _HomePageState extends State<HomePage> {
         'webdav' => 'WebDAV',
         'sftp' => 'SFTP',
         'smb' => 'SMB 共享',
+        'baidu' => '百度网盘',
+        '115' => '115 网盘',
         _ => '本地目录',
       };
 
@@ -570,8 +595,18 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
 class AddSourceDialog extends StatefulWidget { const AddSourceDialog({super.key}); @override State<AddSourceDialog> createState() => _AddDialogState(); }
 class _AddDialogState extends State<AddSourceDialog> {
   String _type = 'webdav';
-  final _a = TextEditingController(), _b = TextEditingController(), _u = TextEditingController(), _p = TextEditingController(), _s = TextEditingController(), _port = TextEditingController();
+  bool _showAdv = false;
+  final _a = TextEditingController(), _b = TextEditingController(), _u = TextEditingController(), _p = TextEditingController(), _s = TextEditingController(), _port = TextEditingController(),
+      _token = TextEditingController(), _appKey = TextEditingController(), _secret = TextEditingController(), _rootId = TextEditingController();
   bool _t = false; String? _e;
+
+  String get _baiduKey =>
+      _appKey.text.trim().isNotEmpty ? _appKey.text.trim() : kBaiduDefaultAppKey;
+  String get _baiduSecret =>
+      _secret.text.trim().isNotEmpty ? _secret.text.trim() : kBaiduDefaultSecret;
+  String get _appId =>
+      _appKey.text.trim().isNotEmpty ? _appKey.text.trim() : kCloud115DefaultAppId;
+
   Future<void> _submit() async {
     final n = _a.text.trim();
     if (_type == 'webdav') { if (_u.text.trim().isEmpty) { setState(() => _e = '请填写服务器地址'); return; } setState(() { _t = true; _e = null; });
@@ -594,10 +629,124 @@ class _AddDialogState extends State<AddSourceDialog> {
         LibraryStore.instance.addSource(BookSource(id: 'smb_${DateTime.now().millisecondsSinceEpoch}', type: 'smb', name: n.isEmpty ? path : n, path: path));
         if (mounted) Navigator.of(context).pop();
       } catch (e) { setState(() => _e = '无法访问该共享目录:$e'); } finally { if (mounted) setState(() => _t = false); }
+    } else if (_type == 'baidu') {
+      await _submitBaidu(n);
+    } else if (_type == '115') {
+      await _submit115(n);
     } else {
       if (_b.text.trim().isEmpty) { setState(() => _e = '请填写目录路径'); return; }
       LibraryStore.instance.addSource(BookSource(id: 'local_${DateTime.now().millisecondsSinceEpoch}', type: 'local', name: n.isEmpty ? _b.text.trim() : n, path: _b.text.trim())); if (mounted) Navigator.of(context).pop();
     }
+  }
+
+  Future<void> _submitBaidu(String n) async {
+    final rt = _token.text.trim();
+    if (rt.isEmpty) { setState(() => _e = '请先授权登录或粘贴 refresh_token'); return; }
+    setState(() { _t = true; _e = null; });
+    try {
+      final s = await baiduConnect(
+          refreshToken: rt,
+          appKey: _baiduKey,
+          clientSecret: _baiduSecret,
+          root: _b.text.trim().isEmpty ? '/' : _b.text.trim());
+      LibraryStore.instance.addSource(BookSource(
+          id: 'baidu_${DateTime.now().millisecondsSinceEpoch}',
+          type: 'baidu',
+          name: n.isEmpty ? '百度网盘' : n,
+          path: s.root,
+          refreshToken: s.refreshToken,
+          clientId: _baiduKey,
+          clientSecret: _baiduSecret));
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+  }
+
+  Future<void> _submit115(String n) async {
+    final rt = _token.text.trim();
+    if (rt.isEmpty) { setState(() => _e = '请先扫码授权或粘贴 refresh_token'); return; }
+    setState(() { _t = true; _e = null; });
+    try {
+      final s = await cloud115Connect(
+          refreshToken: rt,
+          appId: _appId,
+          rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim());
+      LibraryStore.instance.addSource(BookSource(
+          id: '115_${DateTime.now().millisecondsSinceEpoch}',
+          type: '115',
+          name: n.isEmpty ? '115 网盘' : n,
+          path: s.root,
+          refreshToken: s.refreshToken,
+          clientId: _appId,
+          rootId: s.root));
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+  }
+
+  /// 百度 OAuth：浏览器授权 → 粘贴授权码 → 换 token。
+  Future<void> _baiduAuthorize() async {
+    if (_baiduKey.isEmpty || _baiduSecret.isEmpty) {
+      setState(() => _e = '未配置百度 AppKey/SecretKey（可在高级选项填写）');
+      return;
+    }
+    try {
+      final url = await baiduAuthUrl(appKey: _baiduKey);
+      await launchUrl(Uri.parse(url),
+          mode: LaunchMode.externalApplication);
+    } catch (_) {}
+    if (!mounted) return;
+    final codeCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('百度授权'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('浏览器已打开百度授权页，登录并同意后，把页面显示的授权码粘贴到这里。',
+              style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 10),
+          TextField(controller: codeCtrl,
+              decoration: const InputDecoration(labelText: '授权码', border: OutlineInputBorder(), isDense: true)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('换取 token')),
+        ],
+      ),
+    );
+    if (ok != true || codeCtrl.text.trim().isEmpty) return;
+    try {
+      final pair = await baiduExchangeCode(
+          appKey: _baiduKey, clientSecret: _baiduSecret, code: codeCtrl.text.trim());
+      if (mounted) setState(() { _token.text = pair.refreshToken; _e = null; });
+    } catch (e) { if (mounted) setState(() => _e = '授权失败:$e'); }
+  }
+
+  /// 115 设备码授权：弹二维码 → 手机扫码 → 自动填 refresh_token。
+  Future<void> _cloud115Authorize() async {
+    if (_appId.isEmpty) {
+      setState(() => _e = '未配置 115 APP ID（可在高级选项填写）');
+      return;
+    }
+    try {
+      final qr = await cloud115QrStart(appId: _appId);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (c) => _QrScanDialog(
+          payload: qr,
+          onResult: (status, _, rt) {
+            if (mounted) {
+              if (status == 2 && rt != null) {
+                setState(() { _token.text = rt; _e = null; });
+              } else if (status == -1) {
+                setState(() => _e = '二维码已过期，请重新获取');
+              } else if (status == -2) {
+                setState(() => _e = '已取消扫码');
+              }
+            }
+          },
+        ),
+      );
+    } catch (e) { if (mounted) setState(() => _e = '获取二维码失败:$e'); }
   }
 
   /// 解析 SFTP 服务器地址：`host` / `host:port`，端口缺省取端口字段或 22。
@@ -612,12 +761,20 @@ class _AddDialogState extends State<AddSourceDialog> {
   }
 
   @override Widget build(BuildContext c) => AlertDialog(title: const Text('添加书源'), content: SizedBox(width: 420, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-    SegmentedButton<String>(segments: const [
-      ButtonSegment(value: 'local', label: Text('本地目录'), icon: Icon(Icons.folder)),
-      ButtonSegment(value: 'webdav', label: Text('WebDAV'), icon: Icon(Icons.cloud)),
-      ButtonSegment(value: 'smb', label: Text('SMB'), icon: Icon(Icons.lan)),
-      ButtonSegment(value: 'sftp', label: Text('SFTP'), icon: Icon(Icons.dns)),
-    ], selected: {_type}, onSelectionChanged: (s) => setState(() { _type = s.first; _e = null; })),
+    DropdownMenu<String>(
+      initialSelection: _type,
+      label: const Text('类型'),
+      expandedInsets: EdgeInsets.zero,
+      dropdownMenuEntries: const [
+        DropdownMenuEntry(value: 'local', label: '本地目录', leadingIcon: Icon(Icons.folder)),
+        DropdownMenuEntry(value: 'webdav', label: 'WebDAV', leadingIcon: Icon(Icons.cloud)),
+        DropdownMenuEntry(value: 'smb', label: 'SMB', leadingIcon: Icon(Icons.lan)),
+        DropdownMenuEntry(value: 'sftp', label: 'SFTP', leadingIcon: Icon(Icons.dns)),
+        DropdownMenuEntry(value: 'baidu', label: '百度网盘', leadingIcon: Icon(Icons.cloud_queue)),
+        DropdownMenuEntry(value: '115', label: '115 网盘', leadingIcon: Icon(Icons.cloud_upload)),
+      ],
+      onSelected: (v) => setState(() { _type = v ?? 'webdav'; _e = null; _showAdv = false; }),
+    ),
     const SizedBox(height: 16), TextField(controller: _a, decoration: const InputDecoration(labelText: '名称(可选)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
     if (_type == 'local') TextField(controller: _b, decoration: const InputDecoration(labelText: '目录路径', hintText: r'F:\comic\漫畫', border: OutlineInputBorder(), isDense: true))
     else if (_type == 'smb') TextField(controller: _b, decoration: const InputDecoration(labelText: '共享目录路径(UNC)', hintText: r'\\192.168.1.10\comic', border: OutlineInputBorder(), isDense: true))
@@ -626,13 +783,89 @@ class _AddDialogState extends State<AddSourceDialog> {
       TextField(controller: _p, decoration: const InputDecoration(labelText: '用户名', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       TextField(controller: _s, obscureText: true, decoration: const InputDecoration(labelText: '密码', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       TextField(controller: _b, decoration: const InputDecoration(labelText: '初始路径(可选,默认根目录)', border: OutlineInputBorder(), isDense: true)),
-    ] else ...[
+    ] else if (_type == 'sftp') ...[
       TextField(controller: _u, decoration: const InputDecoration(labelText: '服务器地址', hintText: '192.168.1.10 或 nas:2222', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       TextField(controller: _port, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '端口(默认22)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       TextField(controller: _p, decoration: const InputDecoration(labelText: '用户名', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       TextField(controller: _s, obscureText: true, decoration: const InputDecoration(labelText: '密码', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       TextField(controller: _b, decoration: const InputDecoration(labelText: '初始路径(可选,默认/)', border: OutlineInputBorder(), isDense: true)),
+    ] else if (_type == 'baidu') ...[
+      TextField(controller: _b, decoration: const InputDecoration(labelText: '根目录(默认/)', hintText: '/漫画', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      OutlinedButton.icon(onPressed: _t ? null : _baiduAuthorize, icon: const Icon(Icons.login), label: const Text('授权登录')),
+      const SizedBox(height: 10),
+      TextField(controller: _token, obscureText: true, decoration: const InputDecoration(labelText: 'refresh_token(授权后自动填入，也可直接粘贴)', border: OutlineInputBorder(), isDense: true)),
+      const SizedBox(height: 6),
+      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（自填 AppKey/SecretKey）')),
+      if (_showAdv) ...[
+        TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'AppKey(留空用内置)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 8),
+        TextField(controller: _secret, obscureText: true, decoration: const InputDecoration(labelText: 'SecretKey(留空用内置)', border: OutlineInputBorder(), isDense: true)),
+      ],
+    ] else ...[
+      TextField(controller: _rootId, decoration: const InputDecoration(labelText: '根文件夹 ID(默认 0)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      OutlinedButton.icon(onPressed: _t ? null : _cloud115Authorize, icon: const Icon(Icons.qr_code), label: const Text('扫码授权')),
+      const SizedBox(height: 10),
+      TextField(controller: _token, obscureText: true, decoration: const InputDecoration(labelText: 'refresh_token(扫码后自动填入，也可直接粘贴)', border: OutlineInputBorder(), isDense: true)),
+      const SizedBox(height: 6),
+      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（自填 APP ID）')),
+      if (_showAdv) TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'APP ID(留空用内置)', border: OutlineInputBorder(), isDense: true)),
     ],
     if (_e != null) Padding(padding: const EdgeInsets.only(top: 10), child: Text(_e!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
   ]))), actions: [TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')), FilledButton(onPressed: _t ? null : _submit, child: Text(_t ? '测试中…' : '添加'))]);
+}
+
+/// 115 扫码授权对话框：渲染二维码并轮询状态。
+class _QrScanDialog extends StatefulWidget {
+  final Cloud115QrPayload payload;
+  final void Function(int status, String? accessToken, String? refreshToken) onResult;
+  const _QrScanDialog({required this.payload, required this.onResult});
+  @override State<_QrScanDialog> createState() => _QrScanDialogState();
+}
+
+class _QrScanDialogState extends State<_QrScanDialog> {
+  String _status = '请用 115 APP 扫码';
+
+  @override
+  void initState() {
+    super.initState();
+    _poll();
+  }
+
+  Future<void> _poll() async {
+    while (mounted) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+      try {
+        final r = await cloud115QrPoll(
+            uid: widget.payload.uid,
+            time: widget.payload.time,
+            sign: widget.payload.sign);
+        if (!mounted) return;
+        if (r.status == 2) {
+          widget.onResult(2, r.accessToken, r.refreshToken);
+          Navigator.of(context).pop();
+          return;
+        }
+        if (r.status == 1) {
+          setState(() => _status = '已扫码，请在手机上确认');
+        } else if (r.status == -1 || r.status == -2) {
+          widget.onResult(r.status, null, null);
+          Navigator.of(context).pop();
+          return;
+        }
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) => AlertDialog(
+        title: const Text('115 扫码授权'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          QrImageView(data: widget.payload.qrcode, size: 220),
+          const SizedBox(height: 10),
+          Text(_status, style: const TextStyle(fontSize: 12)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('关闭')),
+        ],
+      );
 }

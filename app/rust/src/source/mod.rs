@@ -5,10 +5,49 @@
 //! 编程,不关心底层是本地文件还是远程服务器。
 
 use std::io::{self, Read, Seek, SeekFrom};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub mod local;
+pub mod baidu;
+pub mod cloud115;
 pub mod sftp;
 pub mod webdav;
+
+/// 简单 API 节流器（网盘开放平台有频率限制，如 115 建议 1 r/s）。
+/// 持锁期间 sleep，天然串行化同一客户端的 API 调用。
+pub(crate) struct RateGate {
+    last: Mutex<Instant>,
+    interval: Duration,
+}
+
+impl RateGate {
+    pub fn new(per_sec: f64) -> Self {
+        let interval = if per_sec > 0.0 {
+            Duration::from_secs_f64(1.0 / per_sec)
+        } else {
+            Duration::ZERO
+        };
+        RateGate {
+            last: Mutex::new(Instant::now()),
+            interval,
+        }
+    }
+
+    /// 距上次调用不足间隔则 sleep 补齐；返回后可以发请求。
+    pub fn wait(&self) {
+        if self.interval.is_zero() {
+            return;
+        }
+        let mut last = self.last.lock().unwrap();
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(*last);
+        if elapsed < self.interval {
+            std::thread::sleep(self.interval - elapsed);
+        }
+        *last = Instant::now();
+    }
+}
 
 /// 目录条目(书架 / 浏览用)。
 #[derive(Debug, Clone)]

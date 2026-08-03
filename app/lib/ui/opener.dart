@@ -1,5 +1,7 @@
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/baidu_session.dart';
+import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:app/ui/reader_page.dart';
@@ -33,7 +35,11 @@ Future<void> _open(
     try {
       session = source.isWebDav
           ? await webdavSessionFor(source)
-          : await sftpSessionFor(source);
+          : source.isSftp
+              ? await sftpSessionFor(source)
+              : source.isBaidu
+                  ? await baiduSessionFor(source)
+                  : await cloud115SessionFor(source);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

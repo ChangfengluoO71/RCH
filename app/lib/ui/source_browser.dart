@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/export.dart';
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/store/baidu_session.dart';
+import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/sftp_session.dart';
@@ -57,7 +59,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
       try {
         _session = widget.source.isWebDav
             ? await webdavSessionFor(widget.source)
-            : await sftpSessionFor(widget.source);
+            : widget.source.isSftp
+                ? await sftpSessionFor(widget.source)
+                : widget.source.isBaidu
+                    ? await baiduSessionFor(widget.source)
+                    : await cloud115SessionFor(widget.source);
       } catch (e) {
         if (mounted) setState(() => _error = '连接远程书源失败:$e');
         return;
@@ -76,6 +82,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
       final list = switch (widget.source.type) {
         'webdav' => await webdavList(session: _session!, path: path),
         'sftp' => await sftpList(session: _session!, path: path),
+        'baidu' => await baiduList(session: _session!, path: path),
+        '115' => await cloud115List(session: _session!, path: path),
         _ => await listLocalDir(path: path),
       };
       if (!mounted) return;
@@ -314,6 +322,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
         final list = switch (widget.source.type) {
           'webdav' => await webdavList(session: _session!, path: p),
           'sftp' => await sftpList(session: _session!, path: p),
+          'baidu' => await baiduList(session: _session!, path: p),
+          '115' => await cloud115List(session: _session!, path: p),
           _ => await listLocalDir(path: p),
         };
         for (final e in list) {

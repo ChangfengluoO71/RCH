@@ -9,6 +9,8 @@ import '../src/rust/api/ai.dart';
 import '../src/rust/api/book.dart';
 import '../src/rust/api/db.dart';
 import '../src/rust/api/source.dart';
+import 'baidu_session.dart';
+import 'cloud115_session.dart';
 import 'library_store.dart';
 import 'models.dart';
 import 'sftp_session.dart';
@@ -281,6 +283,14 @@ class AiUpscaleManager extends ChangeNotifier {
             strategy: strategy),
         'sftp' => openSftpBook(
             session: await sftpSessionFor(source),
+            path: task.path,
+            strategy: strategy),
+        'baidu' => openBaiduBook(
+            session: await baiduSessionFor(source),
+            path: task.path,
+            strategy: strategy),
+        '115' => openCloud115Book(
+            session: await cloud115SessionFor(source),
             path: task.path,
             strategy: strategy),
         _ => openLocalBook(path: task.path),

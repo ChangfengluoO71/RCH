@@ -2505,6 +2505,7 @@ name = "rust_lib_app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "flate2",
  "flutter_rust_bridge",
  "fs2",

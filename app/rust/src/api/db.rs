@@ -40,6 +40,10 @@ pub struct BookSourceDto {
     pub username: Option<String>,
     pub password: Option<String>,
     pub port: Option<i64>,
+    pub refresh_token: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub root_id: Option<String>,
     pub note: String,
     pub capability_label: String,
 }
@@ -56,6 +60,10 @@ pub fn db_load_all_sources() -> Vec<BookSourceDto> {
             username: r.username,
             password: r.password,
             port: r.port,
+            refresh_token: r.refresh_token,
+            client_id: r.client_id,
+            client_secret: r.client_secret,
+            root_id: r.root_id,
             note: r.note,
             capability_label: r.capability_label,
         })
@@ -72,6 +80,10 @@ pub fn db_upsert_source(source: BookSourceDto) -> Result<(), String> {
         username: source.username,
         password: source.password,
         port: source.port,
+        refresh_token: source.refresh_token,
+        client_id: source.client_id,
+        client_secret: source.client_secret,
+        root_id: source.root_id,
         note: source.note,
         capability_label: source.capability_label,
     })

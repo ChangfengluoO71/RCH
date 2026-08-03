@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `downloads`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `sessions`, `sftp_downloads`, `sftp_sessions`
+// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `sessions`, `sftp_downloads`, `sftp_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `eq`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
 
 /// 连接 WebDAV 服务器并自动探测能力,返回会话句柄与初始浏览路径。
 Future<WebDavSession> webdavConnect({
@@ -143,6 +143,310 @@ Future<PageImage> webdavCover({
   height: height,
   crop: crop,
 );
+
+/// 构造百度 OAuth 授权链接（浏览器打开，redirect_uri=oob）。
+Future<String> baiduAuthUrl({required String appKey}) =>
+    RustLib.instance.api.crateApiSourceBaiduAuthUrl(appKey: appKey);
+
+/// 授权码换 token（不建会话）。
+Future<BaiduTokenPair> baiduExchangeCode({
+  required String appKey,
+  required String clientSecret,
+  required String code,
+}) => RustLib.instance.api.crateApiSourceBaiduExchangeCode(
+  appKey: appKey,
+  clientSecret: clientSecret,
+  code: code,
+);
+
+/// 连接百度网盘：刷新/校验 token + 连通性测试，返回会话与最新 refresh_token。
+Future<BaiduSessionInfo> baiduConnect({
+  required String refreshToken,
+  required String appKey,
+  required String clientSecret,
+  required String root,
+}) => RustLib.instance.api.crateApiSourceBaiduConnect(
+  refreshToken: refreshToken,
+  appKey: appKey,
+  clientSecret: clientSecret,
+  root: root,
+);
+
+/// 断开百度会话。
+Future<void> baiduDisconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceBaiduDisconnect(id: id);
+
+/// 列出百度网盘目录（按路径）。
+Future<List<DirEntry>> baiduList({
+  required BigInt session,
+  required String path,
+}) =>
+    RustLib.instance.api.crateApiSourceBaiduList(session: session, path: path);
+
+/// 打开百度网盘上的书籍（三态策略，镜像 open_webdav_book）。
+Future<BookInfo> openBaiduBook({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenBaiduBook(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 百度下载进度（0.0~1.0，非下载中返回 1.0）。
+Future<double> baiduDownloadProgress({required BigInt session}) =>
+    RustLib.instance.api.crateApiSourceBaiduDownloadProgress(session: session);
+
+/// 百度书籍是否已有 raw/ 本地缓存。
+Future<bool> baiduHasRawCache({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceBaiduHasRawCache(
+  session: session,
+  path: path,
+);
+
+/// 百度书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+Future<PageImage> baiduCover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceBaiduCover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
+);
+
+/// 开始 115 设备码授权（Dart 渲染二维码）。
+Future<Cloud115QrPayload> cloud115QrStart({required String appId}) =>
+    RustLib.instance.api.crateApiSourceCloud115QrStart(appId: appId);
+
+/// 轮询 115 扫码状态；status=2 返回 token。
+Future<Cloud115QrPollResult> cloud115QrPoll({
+  required String uid,
+  required PlatformInt64 time,
+  required String sign,
+}) => RustLib.instance.api.crateApiSourceCloud115QrPoll(
+  uid: uid,
+  time: time,
+  sign: sign,
+);
+
+/// 连接 115 网盘：刷新/校验 token + 连通性测试，返回会话与最新 refresh_token。
+Future<Cloud115SessionInfo> cloud115Connect({
+  required String refreshToken,
+  required String appId,
+  required String rootId,
+}) => RustLib.instance.api.crateApiSourceCloud115Connect(
+  refreshToken: refreshToken,
+  appId: appId,
+  rootId: rootId,
+);
+
+/// 断开 115 会话。
+Future<void> cloud115Disconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceCloud115Disconnect(id: id);
+
+/// 列出 115 目录（path 为文件夹 ID）。
+Future<List<DirEntry>> cloud115List({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceCloud115List(
+  session: session,
+  path: path,
+);
+
+/// 打开 115 上的书籍（path 为文件提取码，三态策略）。
+Future<BookInfo> openCloud115Book({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenCloud115Book(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 115 下载进度（0.0~1.0，非下载中返回 1.0）。
+Future<double> cloud115DownloadProgress({required BigInt session}) => RustLib
+    .instance
+    .api
+    .crateApiSourceCloud115DownloadProgress(session: session);
+
+/// 115 书籍是否已有 raw/ 本地缓存。
+Future<bool> cloud115HasRawCache({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceCloud115HasRawCache(
+  session: session,
+  path: path,
+);
+
+/// 115 书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+Future<PageImage> cloud115Cover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceCloud115Cover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
+);
+
+/// 百度会话信息。
+class BaiduSessionInfo {
+  final BigInt id;
+  final String root;
+  final String capabilityLabel;
+
+  /// 刷新后的 refresh_token（Dart 回写 DB）。
+  final String refreshToken;
+
+  const BaiduSessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+    required this.refreshToken,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      root.hashCode ^
+      capabilityLabel.hashCode ^
+      refreshToken.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BaiduSessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel &&
+          refreshToken == other.refreshToken;
+}
+
+/// 百度 token 对（授权码换 token / 刷新结果）。
+class BaiduTokenPair {
+  final String accessToken;
+  final String refreshToken;
+
+  const BaiduTokenPair({required this.accessToken, required this.refreshToken});
+
+  @override
+  int get hashCode => accessToken.hashCode ^ refreshToken.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BaiduTokenPair &&
+          runtimeType == other.runtimeType &&
+          accessToken == other.accessToken &&
+          refreshToken == other.refreshToken;
+}
+
+/// 115 扫码授权二维码载荷。
+class Cloud115QrPayload {
+  final String uid;
+  final PlatformInt64 time;
+  final String sign;
+  final String qrcode;
+
+  const Cloud115QrPayload({
+    required this.uid,
+    required this.time,
+    required this.sign,
+    required this.qrcode,
+  });
+
+  @override
+  int get hashCode =>
+      uid.hashCode ^ time.hashCode ^ sign.hashCode ^ qrcode.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115QrPayload &&
+          runtimeType == other.runtimeType &&
+          uid == other.uid &&
+          time == other.time &&
+          sign == other.sign &&
+          qrcode == other.qrcode;
+}
+
+/// 115 扫码轮询结果。
+class Cloud115QrPollResult {
+  final int status;
+  final String? accessToken;
+  final String? refreshToken;
+
+  const Cloud115QrPollResult({
+    required this.status,
+    this.accessToken,
+    this.refreshToken,
+  });
+
+  @override
+  int get hashCode =>
+      status.hashCode ^ accessToken.hashCode ^ refreshToken.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115QrPollResult &&
+          runtimeType == other.runtimeType &&
+          status == other.status &&
+          accessToken == other.accessToken &&
+          refreshToken == other.refreshToken;
+}
+
+/// 115 会话信息。
+class Cloud115SessionInfo {
+  final BigInt id;
+  final String root;
+  final String capabilityLabel;
+
+  /// 刷新后的 refresh_token（Dart 回写 DB）。
+  final String refreshToken;
+
+  const Cloud115SessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+    required this.refreshToken,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      root.hashCode ^
+      capabilityLabel.hashCode ^
+      refreshToken.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115SessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel &&
+          refreshToken == other.refreshToken;
+}
 
 /// SFTP 会话信息。
 class SftpSessionInfo {

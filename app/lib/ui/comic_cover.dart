@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/store/baidu_session.dart';
+import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/sftp_session.dart';
@@ -211,6 +213,41 @@ class _ComicCoverState extends State<ComicCover> {
       }
       final session = await sftpSessionFor(widget.source);
       final p = await sftpCover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop);
+      return await rgbaToImage(p.rgba, p.width, p.height);
+    } else if (widget.source.isBaidu) {
+      try {
+        final session = await baiduSessionFor(widget.source);
+        final hasRaw = await baiduHasRawCache(session: session, path: widget.path);
+        if (!hasRaw) throw Exception('no raw cache');
+      } catch (_) {
+        throw Exception('not cached');
+      }
+      final session = await baiduSessionFor(widget.source);
+      final p = await baiduCover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop);
+      return await rgbaToImage(p.rgba, p.width, p.height);
+    } else if (widget.source.is115) {
+      try {
+        final session = await cloud115SessionFor(widget.source);
+        final hasRaw =
+            await cloud115HasRawCache(session: session, path: widget.path);
+        if (!hasRaw) throw Exception('no raw cache');
+      } catch (_) {
+        throw Exception('not cached');
+      }
+      final session = await cloud115SessionFor(widget.source);
+      final p = await cloud115Cover(
           session: session,
           path: widget.path,
           page: meta.coverPage,

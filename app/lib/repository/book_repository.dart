@@ -29,6 +29,10 @@ class BookRepository {
     String? password,
     int? port,
     String? path,
+    String? refreshToken,
+    String? clientId,
+    String? clientSecret,
+    String? rootId,
     String? note,
   }) {
     for (final s in sources) {
@@ -39,6 +43,10 @@ class BookRepository {
         if (password != null) s.password = password;
         if (port != null) s.port = port;
         if (path != null) s.path = path;
+        if (refreshToken != null) s.refreshToken = refreshToken;
+        if (clientId != null) s.clientId = clientId;
+        if (clientSecret != null) s.clientSecret = clientSecret;
+        if (rootId != null) s.rootId = rootId;
         if (note != null) s.note = note;
       }
     }
@@ -98,6 +106,10 @@ class BookRepository {
         username: dto.username,
         password: dto.password,
         port: dto.port?.toInt(),
+        refreshToken: dto.refreshToken,
+        clientId: dto.clientId,
+        clientSecret: dto.clientSecret,
+        rootId: dto.rootId,
         note: dto.note,
         capabilityLabel: dto.capabilityLabel,
       ));
@@ -136,6 +148,10 @@ class BookRepository {
         username: s.username,
         password: s.password,
         port: s.port,
+        refreshToken: s.refreshToken,
+        clientId: s.clientId,
+        clientSecret: s.clientSecret,
+        rootId: s.rootId,
         note: s.note,
         capabilityLabel: s.capabilityLabel,
       ));

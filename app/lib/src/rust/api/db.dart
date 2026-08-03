@@ -274,6 +274,10 @@ class BookSourceDto {
   final String? username;
   final String? password;
   final PlatformInt64? port;
+  final String? refreshToken;
+  final String? clientId;
+  final String? clientSecret;
+  final String? rootId;
   final String note;
   final String capabilityLabel;
 
@@ -286,6 +290,10 @@ class BookSourceDto {
     this.username,
     this.password,
     this.port,
+    this.refreshToken,
+    this.clientId,
+    this.clientSecret,
+    this.rootId,
     required this.note,
     required this.capabilityLabel,
   });
@@ -300,6 +308,10 @@ class BookSourceDto {
       username.hashCode ^
       password.hashCode ^
       port.hashCode ^
+      refreshToken.hashCode ^
+      clientId.hashCode ^
+      clientSecret.hashCode ^
+      rootId.hashCode ^
       note.hashCode ^
       capabilityLabel.hashCode;
 
@@ -316,6 +328,10 @@ class BookSourceDto {
           username == other.username &&
           password == other.password &&
           port == other.port &&
+          refreshToken == other.refreshToken &&
+          clientId == other.clientId &&
+          clientSecret == other.clientSecret &&
+          rootId == other.rootId &&
           note == other.note &&
           capabilityLabel == other.capabilityLabel;
 }

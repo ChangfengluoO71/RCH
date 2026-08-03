@@ -207,6 +207,17 @@ fn init_tables(conn: &Connection) -> Result<()> {
     if !src_cols.iter().any(|c| c == "port") {
         conn.execute("ALTER TABLE book_sources ADD COLUMN port INTEGER", [])?;
     }
+    // 旧库升级：book_sources 补网盘书源列（refresh_token / client_id / client_secret / root_id）。
+    for (col, ddl) in [
+        ("refresh_token", "ALTER TABLE book_sources ADD COLUMN refresh_token TEXT"),
+        ("client_id", "ALTER TABLE book_sources ADD COLUMN client_id TEXT"),
+        ("client_secret", "ALTER TABLE book_sources ADD COLUMN client_secret TEXT"),
+        ("root_id", "ALTER TABLE book_sources ADD COLUMN root_id TEXT"),
+    ] {
+        if !src_cols.iter().any(|c| c == col) {
+            conn.execute(ddl, [])?;
+        }
+    }
     // 自愈：旧版 hash ID 标签 → 名字 ID（幂等，每次打开都执行）。
     normalize_legacy_tag_ids(conn)?;
     Ok(())
@@ -458,6 +469,10 @@ pub struct BookSourceRow {
     pub username: Option<String>,
     pub password: Option<String>,
     pub port: Option<i64>,
+    pub refresh_token: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub root_id: Option<String>,
     pub note: String,
     pub capability_label: String,
 }
@@ -465,7 +480,7 @@ pub struct BookSourceRow {
 pub fn load_all_sources() -> Vec<BookSourceRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
-        .prepare("SELECT id, type, name, path, url, username, password, port, note, capability_label FROM book_sources")
+        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, note, capability_label FROM book_sources")
         .unwrap();
     stmt.query_map([], |row| {
         Ok(BookSourceRow {
@@ -477,8 +492,12 @@ pub fn load_all_sources() -> Vec<BookSourceRow> {
             username: row.get(5)?,
             password: row.get(6)?,
             port: row.get(7)?,
-            note: row.get(8)?,
-            capability_label: row.get(9)?,
+            refresh_token: row.get(8)?,
+            client_id: row.get(9)?,
+            client_secret: row.get(10)?,
+            root_id: row.get(11)?,
+            note: row.get(12)?,
+            capability_label: row.get(13)?,
         })
     })
     .unwrap()
@@ -490,8 +509,8 @@ pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO book_sources
-         (id, type, name, path, url, username, password, port, note, capability_label)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, note, capability_label)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             s.id,
             s.r#type,
@@ -501,6 +520,10 @@ pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
             s.username,
             s.password,
             s.port,
+            s.refresh_token,
+            s.client_id,
+            s.client_secret,
+            s.root_id,
             s.note,
             s.capability_label,
         ],

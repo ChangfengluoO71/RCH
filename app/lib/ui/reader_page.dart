@@ -117,15 +117,33 @@ class _ReaderPageState extends State<ReaderPage> {
     final strategy = LibraryStore.instance.settings.bookOpenStrategy.name;
     if (src?.isWebDav == true && widget.webdavSession != null) {
       // 远程(WebDAV/SFTP)会话: 轮询下载进度后打开
-      _startPollingProgress(isWebdav: true);
+      _startPollingProgress(
+          progressFn: () => webdavDownloadProgress(session: widget.webdavSession!));
       final b = await openWebdavBook(
           session: widget.webdavSession!, path: widget.path, strategy: strategy);
       _downloadProgress = null;
       if (!mounted) return;
       setState(() { _book = b; });
     } else if (src?.isSftp == true && widget.webdavSession != null) {
-      _startPollingProgress(isWebdav: false);
+      _startPollingProgress(
+          progressFn: () => sftpDownloadProgress(session: widget.webdavSession!));
       final b = await openSftpBook(
+          session: widget.webdavSession!, path: widget.path, strategy: strategy);
+      _downloadProgress = null;
+      if (!mounted) return;
+      setState(() { _book = b; });
+    } else if (src?.isBaidu == true && widget.webdavSession != null) {
+      _startPollingProgress(
+          progressFn: () => baiduDownloadProgress(session: widget.webdavSession!));
+      final b = await openBaiduBook(
+          session: widget.webdavSession!, path: widget.path, strategy: strategy);
+      _downloadProgress = null;
+      if (!mounted) return;
+      setState(() { _book = b; });
+    } else if (src?.is115 == true && widget.webdavSession != null) {
+      _startPollingProgress(
+          progressFn: () => cloud115DownloadProgress(session: widget.webdavSession!));
+      final b = await openCloud115Book(
           session: widget.webdavSession!, path: widget.path, strategy: strategy);
       _downloadProgress = null;
       if (!mounted) return;
@@ -140,17 +158,15 @@ class _ReaderPageState extends State<ReaderPage> {
     _ensure(_page); _ensure(_page+1); _ensure(_page+2);
   } catch(e) { if (mounted) setState(() { _error = '$e'; _downloadProgress = null; }); } }
 
-  /// 轮询远程下载进度(WebDAV / SFTP),每 300ms 一次,直到 _book 出现或状态变化。
-  void _startPollingProgress({required bool isWebdav}) {
+  /// 轮询远程下载进度(WebDAV / SFTP / 百度 / 115),每 300ms 一次,直到 _book 出现或状态变化。
+  void _startPollingProgress({required Future<double> Function() progressFn}) {
     _downloadProgress = 0.0;
     Future.doWhile(() async {
       if (_downloadProgress == null || _book != null || !mounted) return false;
       await Future.delayed(const Duration(milliseconds: 300));
       if (_downloadProgress == null || _book != null || !mounted) return false;
       try {
-        final p = isWebdav
-            ? await webdavDownloadProgress(session: widget.webdavSession!)
-            : await sftpDownloadProgress(session: widget.webdavSession!);
+        final p = await progressFn();
         if (mounted) setState(() { _downloadProgress = p; });
       } catch (_) {}
       return _downloadProgress != null && _book == null && mounted;

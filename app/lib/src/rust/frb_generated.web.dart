@@ -36,6 +36,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AiTaskDto dco_decode_ai_task_dto(dynamic raw);
 
   @protected
+  BaiduSessionInfo dco_decode_baidu_session_info(dynamic raw);
+
+  @protected
+  BaiduTokenPair dco_decode_baidu_token_pair(dynamic raw);
+
+  @protected
   BookInfo dco_decode_book_info(dynamic raw);
 
   @protected
@@ -76,6 +82,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CacheSize dco_decode_cache_size(dynamic raw);
+
+  @protected
+  Cloud115QrPayload dco_decode_cloud_115_qr_payload(dynamic raw);
+
+  @protected
+  Cloud115QrPollResult dco_decode_cloud_115_qr_poll_result(dynamic raw);
+
+  @protected
+  Cloud115SessionInfo dco_decode_cloud_115_session_info(dynamic raw);
 
   @protected
   CropRect dco_decode_crop_rect(dynamic raw);
@@ -197,6 +212,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AiTaskDto sse_decode_ai_task_dto(SseDeserializer deserializer);
 
   @protected
+  BaiduSessionInfo sse_decode_baidu_session_info(SseDeserializer deserializer);
+
+  @protected
+  BaiduTokenPair sse_decode_baidu_token_pair(SseDeserializer deserializer);
+
+  @protected
   BookInfo sse_decode_book_info(SseDeserializer deserializer);
 
   @protected
@@ -245,6 +266,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CacheSize sse_decode_cache_size(SseDeserializer deserializer);
+
+  @protected
+  Cloud115QrPayload sse_decode_cloud_115_qr_payload(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115QrPollResult sse_decode_cloud_115_qr_poll_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115SessionInfo sse_decode_cloud_115_session_info(
+    SseDeserializer deserializer,
+  );
 
   @protected
   CropRect sse_decode_crop_rect(SseDeserializer deserializer);
@@ -379,6 +415,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_ai_task_dto(AiTaskDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_baidu_session_info(
+    BaiduSessionInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_baidu_token_pair(
+    BaiduTokenPair self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_book_info(BookInfo self, SseSerializer serializer);
 
   @protected
@@ -440,6 +488,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_cache_size(CacheSize self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_115_qr_payload(
+    Cloud115QrPayload self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_qr_poll_result(
+    Cloud115QrPollResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_session_info(
+    Cloud115SessionInfo self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_crop_rect(CropRect self, SseSerializer serializer);

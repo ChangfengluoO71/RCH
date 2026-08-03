@@ -2,6 +2,8 @@
 
 use super::book::{register_book, BookInfo, CropRect, DirEntry, PageImage};
 use crate::document;
+use crate::source::baidu::{self as baidu_source, BaiduClient};
+use crate::source::cloud115::{self as cloud115_source, Cloud115Client};
 use crate::source::sftp::{self as sftp_source, SftpClient};
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
 use crate::cache;
@@ -11,11 +13,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 static SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<WebDavClient>>>> = OnceLock::new();
 static SFTP_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<SftpClient>>>> = OnceLock::new();
+static BAIDU_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<BaiduClient>>>> = OnceLock::new();
+static CLOUD115_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<Cloud115Client>>>> = OnceLock::new();
 static NEXT: OnceLock<Mutex<u64>> = OnceLock::new();
 
 /// 正在进行的下载进度追踪表(session_id -> DownloadProgress)。
 static DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static SFTP_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
+static BAIDU_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
+static CLOUD115_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 
 fn downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
     DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -31,6 +37,22 @@ fn sftp_sessions() -> &'static Mutex<HashMap<u64, Arc<SftpClient>>> {
 
 fn sftp_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
     SFTP_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn baidu_sessions() -> &'static Mutex<HashMap<u64, Arc<BaiduClient>>> {
+    BAIDU_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn baidu_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
+    BAIDU_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cloud115_sessions() -> &'static Mutex<HashMap<u64, Arc<Cloud115Client>>> {
+    CLOUD115_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cloud115_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
+    CLOUD115_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn next_id() -> u64 {
@@ -56,6 +78,24 @@ fn get_sftp_session(id: u64) -> Result<Arc<SftpClient>> {
         .get(&id)
         .map(Arc::clone)
         .ok_or_else(|| anyhow::anyhow!("无效的 SFTP 会话: {id}"))
+}
+
+fn get_baidu_session(id: u64) -> Result<Arc<BaiduClient>> {
+    baidu_sessions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(Arc::clone)
+        .ok_or_else(|| anyhow::anyhow!("无效的百度网盘会话: {id}"))
+}
+
+fn get_cloud115_session(id: u64) -> Result<Arc<Cloud115Client>> {
+    cloud115_sessions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(Arc::clone)
+        .ok_or_else(|| anyhow::anyhow!("无效的 115 网盘会话: {id}"))
 }
 
 /// 打开策略（全局设置传入）：auto=先下载失败转流式，download=强制整本，stream=直接流式。
@@ -490,6 +530,520 @@ pub async fn webdav_cover(
         .or_else(|| Some(std::path::PathBuf::from(&path)));
     if let Some(ref wp) = cache_write_path {
         let _ = cache::cover_cache_write(&wp.to_string_lossy(), page, width, height, crop_tuple, &img.rgba);
+    }
+    Ok(PageImage {
+        rgba: img.rgba,
+        width: img.width,
+        height: img.height,
+    })
+}
+
+// ============================================================
+// 百度网盘书源（官方开放平台 API）
+// ============================================================
+
+/// 百度 token 对（授权码换 token / 刷新结果）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BaiduTokenPair {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
+/// 百度会话信息。
+pub struct BaiduSessionInfo {
+    pub id: u64,
+    pub root: String,
+    pub capability_label: String,
+    /// 刷新后的 refresh_token（Dart 回写 DB）。
+    pub refresh_token: String,
+}
+
+/// 构造百度 OAuth 授权链接（浏览器打开，redirect_uri=oob）。
+pub fn baidu_auth_url(app_key: String) -> String {
+    baidu_source::auth_url(&app_key)
+}
+
+/// 授权码换 token（不建会话）。
+pub async fn baidu_exchange_code(
+    app_key: String,
+    client_secret: String,
+    code: String,
+) -> Result<BaiduTokenPair> {
+    let pair = tokio::task::spawn_blocking(move || {
+        baidu_source::exchange_code(&app_key, &client_secret, &code)
+    })
+    .await??;
+    Ok(BaiduTokenPair {
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+    })
+}
+
+/// 连接百度网盘：刷新/校验 token + 连通性测试，返回会话与最新 refresh_token。
+pub async fn baidu_connect(
+    refresh_token: String,
+    app_key: String,
+    client_secret: String,
+    root: String,
+) -> Result<BaiduSessionInfo> {
+    let (client, new_rt, root) =
+        tokio::task::spawn_blocking(move || -> Result<(BaiduClient, String, String)> {
+            let client = BaiduClient::new(&app_key, &client_secret, &refresh_token, &root)?;
+            let pair = client.refresh()?;
+            client.list(client.root())?; // 连通性测试
+            let root = client.root().to_string();
+            Ok((client, pair.refresh_token, root))
+        })
+        .await??;
+    let id = next_id();
+    baidu_sessions().lock().unwrap().insert(id, Arc::new(client));
+    Ok(BaiduSessionInfo {
+        id,
+        root,
+        capability_label: "baidu".to_string(),
+        refresh_token: new_rt,
+    })
+}
+
+/// 断开百度会话。
+pub async fn baidu_disconnect(id: u64) {
+    let client = baidu_sessions().lock().unwrap().remove(&id);
+    if let Some(client) = client {
+        let _ = tokio::task::spawn_blocking(move || drop(client)).await;
+    }
+}
+
+/// 列出百度网盘目录（按路径）。
+pub async fn baidu_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
+    let client = get_baidu_session(session)?;
+    let entries = tokio::task::spawn_blocking(move || client.list(&path)).await??;
+    Ok(entries
+        .into_iter()
+        .map(|e| DirEntry {
+            name: e.name,
+            path: e.path,
+            is_dir: e.is_dir,
+            size: e.size,
+            mtime: e.mtime,
+        })
+        .collect())
+}
+
+/// 打开百度网盘上的书籍（三态策略，镜像 open_webdav_book）。
+pub async fn open_baidu_book(
+    session: u64,
+    path: String,
+    strategy: String,
+) -> Result<BookInfo> {
+    let client = get_baidu_session(session)?;
+    let origin = client.origin();
+    let cache_ns = format!("baidu|{}|{}", origin, path);
+    let strat = parse_strategy(&strategy);
+
+    let progress = if strat != OpenStrategy::Stream {
+        let (client, path) = (Arc::clone(&client), path.clone());
+        let size = tokio::task::spawn_blocking(move || client.dlink(&path).map(|(_, s)| s))
+            .await??;
+        let p = Arc::new(DownloadProgress::new(size));
+        baidu_downloads().lock().unwrap().insert(session, Arc::clone(&p));
+        Some(p)
+    } else {
+        None
+    };
+
+    let book = {
+        let client = Arc::clone(&client);
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+            let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                let src = crate::source::local::LocalFile::open(&local_path)?;
+                document::open_document(src, &path)
+            };
+            let open_stream = |client: Arc<BaiduClient>| -> Result<Box<dyn document::Document>> {
+                let (link, size) = client.dlink(&path)?;
+                if client.probe_range(&link) {
+                    let src = baidu_source::BaiduFile::new(client, path.clone(), size, link);
+                    document::open_document(src, &path)
+                } else {
+                    // 不支持 Range：整本下载后本地读
+                    let local_path = client.download_to_raw_cache(&path, None)?;
+                    open_local(local_path)
+                }
+            };
+            match strat {
+                OpenStrategy::Download => {
+                    let local_path = client.download_to_raw_cache(&path, progress)?;
+                    tracing::info!("百度网盘整本已缓存: {}", local_path.display());
+                    open_local(local_path)
+                }
+                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
+                    Ok(local_path) => {
+                        tracing::info!("百度网盘整本已缓存: {}", local_path.display());
+                        open_local(local_path)
+                    }
+                    Err(e) => {
+                        tracing::warn!("百度网盘整本下载失败，回退流式: {e}");
+                        open_stream(Arc::clone(&client))
+                    }
+                },
+            }
+        })
+        .await??
+    };
+
+    if strat != OpenStrategy::Stream {
+        baidu_downloads().lock().unwrap().remove(&session);
+    }
+    Ok(register_book(book, &cache_ns))
+}
+
+/// 百度下载进度（0.0~1.0，非下载中返回 1.0）。
+pub fn baidu_download_progress(session: u64) -> f64 {
+    baidu_downloads()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .map(|p| p.fraction())
+        .unwrap_or(1.0)
+}
+
+/// 百度书籍是否已有 raw/ 本地缓存。
+pub fn baidu_has_raw_cache(session: u64, path: String) -> bool {
+    let client = match get_baidu_session(session) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    baidu_source::raw_cache_path(&client.origin(), &path).is_some()
+}
+
+/// 百度书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+pub async fn baidu_cover(
+    session: u64,
+    path: String,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<CropRect>,
+) -> Result<PageImage> {
+    let client = get_baidu_session(session)?;
+    let origin = client.origin();
+    let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
+    let cache_lookup_path = baidu_source::raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref lookup) = cache_lookup_path {
+        let lookup_str = lookup.to_string_lossy();
+        if let Some((rgba, w, h)) =
+            cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
+        {
+            return Ok(PageImage { rgba, width: w, height: h });
+        }
+    }
+    let origin_clone = origin.clone();
+    let path_clone = path.clone();
+    let client_clone = Arc::clone(&client);
+    let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        if let Some(local_path) = baidu_source::raw_cache_path(&origin_clone, &path_clone) {
+            let src = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(src, &path_clone)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let (link, size) = client_clone.dlink(&path_clone)?;
+        if !client_clone.probe_range(&link) {
+            let local_path = client_clone.download_to_raw_cache(&path_clone, None)?;
+            let src = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(src, &path_clone)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let src = baidu_source::BaiduFile::new(
+            client_clone,
+            path_clone.clone(),
+            size,
+            link,
+        );
+        let book = document::open_document(src, &path_clone)?;
+        let bytes = book.page_bytes(page)?;
+        let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+        crate::decode::decode_cover(&bytes, width, height, crop)
+    })
+    .await??;
+    let cache_write_path = baidu_source::raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref wp) = cache_write_path {
+        let _ = cache::cover_cache_write(
+            &wp.to_string_lossy(),
+            page,
+            width,
+            height,
+            crop_tuple,
+            &img.rgba,
+        );
+    }
+    Ok(PageImage {
+        rgba: img.rgba,
+        width: img.width,
+        height: img.height,
+    })
+}
+
+// ============================================================
+// 115 网盘书源（官方开放平台 API）
+// ============================================================
+
+/// 115 扫码授权二维码载荷。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Cloud115QrPayload {
+    pub uid: String,
+    pub time: i64,
+    pub sign: String,
+    pub qrcode: String,
+}
+
+/// 115 扫码轮询结果。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Cloud115QrPollResult {
+    pub status: i32,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+}
+
+/// 115 会话信息。
+pub struct Cloud115SessionInfo {
+    pub id: u64,
+    pub root: String,
+    pub capability_label: String,
+    /// 刷新后的 refresh_token（Dart 回写 DB）。
+    pub refresh_token: String,
+}
+
+/// 开始 115 设备码授权（Dart 渲染二维码）。
+pub async fn cloud115_qr_start(app_id: String) -> Result<Cloud115QrPayload> {
+    let p = tokio::task::spawn_blocking(move || cloud115_source::qr_start(&app_id)).await??;
+    Ok(Cloud115QrPayload {
+        uid: p.uid,
+        time: p.time,
+        sign: p.sign,
+        qrcode: p.qrcode,
+    })
+}
+
+/// 轮询 115 扫码状态；status=2 返回 token。
+pub async fn cloud115_qr_poll(
+    uid: String,
+    time: i64,
+    sign: String,
+) -> Result<Cloud115QrPollResult> {
+    let r = tokio::task::spawn_blocking(move || cloud115_source::qr_poll(&uid, time, &sign))
+        .await??;
+    Ok(Cloud115QrPollResult {
+        status: r.status,
+        access_token: r.access_token,
+        refresh_token: r.refresh_token,
+    })
+}
+
+/// 连接 115 网盘：刷新/校验 token + 连通性测试，返回会话与最新 refresh_token。
+pub async fn cloud115_connect(
+    refresh_token: String,
+    app_id: String,
+    root_id: String,
+) -> Result<Cloud115SessionInfo> {
+    let (client, new_rt, root) =
+        tokio::task::spawn_blocking(move || -> Result<(Cloud115Client, String, String)> {
+            let client = Cloud115Client::new(&app_id, &refresh_token, &root_id)?;
+            let (_, rt) = client.refresh()?;
+            client.user_info()?; // 连通性测试
+            let root = client.root_id().to_string();
+            Ok((client, rt, root))
+        })
+        .await??;
+    let id = next_id();
+    cloud115_sessions().lock().unwrap().insert(id, Arc::new(client));
+    Ok(Cloud115SessionInfo {
+        id,
+        root,
+        capability_label: "115".to_string(),
+        refresh_token: new_rt,
+    })
+}
+
+/// 断开 115 会话。
+pub async fn cloud115_disconnect(id: u64) {
+    let client = cloud115_sessions().lock().unwrap().remove(&id);
+    if let Some(client) = client {
+        let _ = tokio::task::spawn_blocking(move || drop(client)).await;
+    }
+}
+
+/// 列出 115 目录（path 为文件夹 ID）。
+pub async fn cloud115_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
+    let client = get_cloud115_session(session)?;
+    let entries = tokio::task::spawn_blocking(move || client.list(&path)).await??;
+    Ok(entries
+        .into_iter()
+        .map(|e| DirEntry {
+            name: e.name,
+            path: e.path,
+            is_dir: e.is_dir,
+            size: e.size,
+            mtime: e.mtime,
+        })
+        .collect())
+}
+
+/// 打开 115 上的书籍（path 为文件提取码，三态策略）。
+pub async fn open_cloud115_book(
+    session: u64,
+    path: String,
+    strategy: String,
+) -> Result<BookInfo> {
+    let client = get_cloud115_session(session)?;
+    let origin = client.origin();
+    let cache_ns = format!("115|{}|{}", origin, path);
+    let strat = parse_strategy(&strategy);
+
+    let progress = if strat != OpenStrategy::Stream {
+        let p = Arc::new(DownloadProgress::new(0)); // 115 直链不带大小，下载响应后更新
+        cloud115_downloads().lock().unwrap().insert(session, Arc::clone(&p));
+        Some(p)
+    } else {
+        None
+    };
+
+    let book = {
+        let client = Arc::clone(&client);
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+            let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                let src = crate::source::local::LocalFile::open(&local_path)?;
+                document::open_document(src, &path)
+            };
+            let open_stream = |client: Arc<Cloud115Client>| -> Result<Box<dyn document::Document>> {
+                let (url, _) = client.downurl(&path)?;
+                let size = client
+                    .probe_size(&url)
+                    .ok_or_else(|| anyhow::anyhow!("115 直链不支持 Range，请改用整本下载策略"))?;
+                let src = cloud115_source::Cloud115File::new(client, path.clone(), size, url);
+                document::open_document(src, &path)
+            };
+            match strat {
+                OpenStrategy::Download => {
+                    let local_path = client.download_to_raw_cache(&path, &path, progress)?;
+                    tracing::info!("115 整本已缓存: {}", local_path.display());
+                    open_local(local_path)
+                }
+                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Auto => {
+                    match client.download_to_raw_cache(&path, &path, progress) {
+                        Ok(local_path) => {
+                            tracing::info!("115 整本已缓存: {}", local_path.display());
+                            open_local(local_path)
+                        }
+                        Err(e) => {
+                            tracing::warn!("115 整本下载失败，回退流式: {e}");
+                            open_stream(Arc::clone(&client))
+                        }
+                    }
+                }
+            }
+        })
+        .await??
+    };
+
+    if strat != OpenStrategy::Stream {
+        cloud115_downloads().lock().unwrap().remove(&session);
+    }
+    Ok(register_book(book, &cache_ns))
+}
+
+/// 115 下载进度（0.0~1.0，非下载中返回 1.0）。
+pub fn cloud115_download_progress(session: u64) -> f64 {
+    cloud115_downloads()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .map(|p| p.fraction())
+        .unwrap_or(1.0)
+}
+
+/// 115 书籍是否已有 raw/ 本地缓存。
+pub fn cloud115_has_raw_cache(session: u64, path: String) -> bool {
+    let client = match get_cloud115_session(session) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    cloud115_source::raw_cache_path(&client.origin(), &path).is_some()
+}
+
+/// 115 书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+pub async fn cloud115_cover(
+    session: u64,
+    path: String,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<CropRect>,
+) -> Result<PageImage> {
+    let client = get_cloud115_session(session)?;
+    let origin = client.origin();
+    let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
+    let cache_lookup_path = cloud115_source::raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref lookup) = cache_lookup_path {
+        let lookup_str = lookup.to_string_lossy();
+        if let Some((rgba, w, h)) =
+            cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
+        {
+            return Ok(PageImage { rgba, width: w, height: h });
+        }
+    }
+    let origin_clone = origin.clone();
+    let path_clone = path.clone();
+    let client_clone = Arc::clone(&client);
+    let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        if let Some(local_path) = cloud115_source::raw_cache_path(&origin_clone, &path_clone) {
+            let src = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(src, &path_clone)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let (url, _) = client_clone.downurl(&path_clone)?;
+        let size = match client_clone.probe_size(&url) {
+            Some(s) => s,
+            None => {
+                let local_path =
+                    client_clone.download_to_raw_cache(&path_clone, &path_clone, None)?;
+                let src = crate::source::local::LocalFile::open(&local_path)?;
+                let book = document::open_document(src, &path_clone)?;
+                let bytes = book.page_bytes(page)?;
+                let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+                return crate::decode::decode_cover(&bytes, width, height, crop);
+            }
+        };
+        let src =
+            cloud115_source::Cloud115File::new(client_clone, path_clone.clone(), size, url);
+        let book = document::open_document(src, &path_clone)?;
+        let bytes = book.page_bytes(page)?;
+        let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+        crate::decode::decode_cover(&bytes, width, height, crop)
+    })
+    .await??;
+    let cache_write_path = cloud115_source::raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref wp) = cache_write_path {
+        let _ = cache::cover_cache_write(
+            &wp.to_string_lossy(),
+            page,
+            width,
+            height,
+            crop_tuple,
+            &img.rgba,
+        );
     }
     Ok(PageImage {
         rgba: img.rgba,

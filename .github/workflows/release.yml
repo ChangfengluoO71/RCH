@@ -44,13 +44,13 @@ jobs:
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer\setup.iss'
 
       - name: Prepare release body
-        shell: powershell
+        shell: bash
         run: |
-          $tag = $env:GITHUB_REF_NAME
-          $body = "RCH $tag — 详见 CHANGELOG.md"
-          $notes = "release_notes_$tag.md"
-          if (Test-Path $notes) { $body = Get-Content $notes -Raw }
-          Set-Content -Path "$env:RUNNER_TEMP\release_body.md" -Value $body -Encoding UTF8
+          tag="${GITHUB_REF_NAME}"
+          body="RCH ${tag} - see CHANGELOG.md for details"
+          notes="${GITHUB_WORKSPACE}/release_notes_${tag}.md"
+          if [ -f "$notes" ]; then body=$(cat "$notes"); fi
+          printf '%s' "$body" > "$RUNNER_TEMP/release_body.md"
 
       - name: Upload installer to GitHub Release
         uses: softprops/action-gh-release@v2

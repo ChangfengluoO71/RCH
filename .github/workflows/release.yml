@@ -1,0 +1,59 @@
+name: Release
+
+# 打 tag（v*）时自动构建 Windows 安装包并发布到 GitHub Release，
+# 不再依赖本地打包环境。本地流程见 SETUP.md「发布」章节。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build & Publish Windows Installer
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44'
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y --no-progress
+
+      - name: Package installer
+        shell: powershell
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer\setup.iss'
+
+      - name: Prepare release body
+        shell: powershell
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $body = "RCH $tag — 详见 CHANGELOG.md"
+          $notes = "release_notes_$tag.md"
+          if (Test-Path $notes) { $body = Get-Content $notes -Raw }
+          Set-Content -Path "$env:RUNNER_TEMP\release_body.md" -Value $body -Encoding UTF8
+
+      - name: Upload installer to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/RCH-v*.exe
+          body_path: ${{ runner.temp }}/release_body.md

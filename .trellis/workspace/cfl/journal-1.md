@@ -46,3 +46,24 @@
 
 - 用户本地 flutter run 实测旋转与缩放手感
 - 剩余规划任务待开工（M5 书源 / 标签分层 / 后缀识别 / 转 CBZ / AVIF）
+
+
+## Session 2: M6 网盘直连书源 + v0.3.2 发布
+
+**Date**: 2026-08-03
+**Task**: M6 网盘直连书源 + v0.3.2 发布
+**Branch**: `master`
+
+### Summary
+
+M5 收尾提交；M6 实现百度/115 官方 API 书源（OAuth/设备码授权、三态打开、封面缓存、token 回写）；联调通过；归档 M5/M6；发布 v0.3.2（README/CHANGELOG 更新）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de8de58` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-08-02
+- **Total Sessions**: 2
+- **Last Active**: 2026-08-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~48 | Active |
+| `journal-1.md` | ~69 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-08-03 | M6 网盘直连书源 + v0.3.2 发布 | `de8de58` | `master` |
 | 1 | 2026-08-02 | 修复缩放拖动 Bug + 实现阅读器页面旋转（含批量规划） | `c2cfc69`, `e7a4dac`, `8f28e26`, `59d2f48` | `master` |
 <!-- @@@/auto:session-history -->
 

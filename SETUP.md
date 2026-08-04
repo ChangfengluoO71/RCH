@@ -72,7 +72,7 @@ cd app/rust
 cargo build
 ```
 
-首次构建会下载依赖、编译 pdfium 等原生库，可能需要 5-15 分钟。
+首次构建会下载依赖，可能需要 5-15 分钟。PDF 解析在**运行时**动态加载 `pdfium.dll`，见下方「PDF 支持依赖」。
 
 ### 6. 生成桥接代码（仅修改 Rust API 后需要）
 
@@ -87,6 +87,19 @@ flutter_rust_bridge_codegen generate
 cd app
 flutter run -d windows
 ```
+
+### PDF 支持依赖
+
+打开 PDF 需要 `pdfium.dll` 与 `RCH.exe` 同目录（应用会依次查找进程工作目录、exe 所在目录、PATH、系统目录）。首次构建后从 [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries/releases) 下载 Windows x64 版本并放到构建输出目录：
+
+```powershell
+$ProgressPreference = 'SilentlyContinue'
+Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.tgz" -OutFile "$env:TEMP\pdfium-win-x64.tgz"
+tar -xzf "$env:TEMP\pdfium-win-x64.tgz" -C "$env:TEMP"
+Copy-Item "$env:TEMP\bin\pdfium.dll" "build\windows\x64\runner\Debug\pdfium.dll"
+```
+
+正式安装包由 CI（`.github/workflows/release.yml`）自动捆绑该 dll，无需手动处理。
 
 ## 测试
 
@@ -118,6 +131,10 @@ pdfium 需要 Python 3 + CMake 在 PATH 中：
 python --version  # 需 ≥ 3.8
 cmake --version   # 需 ≥ 3.16
 ```
+
+### 打开 PDF 报「无法加载 pdfium 动态库」
+
+缺少 `pdfium.dll`。按上方「PDF 支持依赖」下载并放到 `RCH.exe` 同目录后重启应用。
 
 ### `flutter run` 报 "MissingPluginException"（Windows）
 

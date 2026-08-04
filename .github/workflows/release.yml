@@ -35,6 +35,16 @@ jobs:
       - name: Build Windows Release
         run: flutter build windows --release
 
+      - name: Bundle PDFium runtime
+        shell: powershell
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $tgz = "$env:RUNNER_TEMP\pdfium-win-x64.tgz"
+          Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.tgz" -OutFile $tgz -UseBasicParsing
+          tar -xzf $tgz -C "$env:RUNNER_TEMP"
+          Copy-Item "$env:RUNNER_TEMP\bin\pdfium.dll" "build\windows\x64\runner\Release\pdfium.dll"
+          Copy-Item "$env:RUNNER_TEMP\LICENSE" "build\windows\x64\runner\Release\pdfium-LICENSE.txt"
+
       - name: Install Inno Setup
         shell: powershell
         run: choco install innosetup -y --no-progress

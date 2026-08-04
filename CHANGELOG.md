@@ -8,6 +8,18 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.3.3] — 2026-08-04
+
+### Added
+
+- **夸克网盘书源**：Cookie 认证（pan.quark.cn 登录后粘贴）+ fid 目录浏览 + 三态打开策略（整本下载 / 流式阅读）+ 封面与本地缓存 + cookie 持久化回写
+
+### Fixed
+
+- EPUB 图片路径按 HTML 目录解析（修复 ChainLP 漫画 EPUB 打开失败）
+- PDF 阅读缺 pdfium.dll：exe 同目录查找 + 友好报错 + CI 发布捆绑 dll
+- 双页拼接亚像素溢出（round→floor），消除阅读时 `RIGHT OVERFLOWED` 黄黑条遮挡画面
+
 ## [0.3.2] — 2026-08-03
 
 ### Added

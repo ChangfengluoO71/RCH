@@ -345,7 +345,10 @@ class _ReaderPageState extends State<ReaderPage> {
     return Center(child: InteractiveViewer(
       transformationController: _dualZoomCtrl, minScale: 1.0, maxScale: 4.0,
       scaleEnabled: false, panEnabled: true,
-      child: LayoutBuilder(builder:(context,c){final div=_gap.clamp(0,20);final halfW=((c.maxWidth-div)/2).round().clamp(1,4096);
+      child: LayoutBuilder(builder:(context,c){final div=_gap.clamp(0,20);
+        // 向下取整保证 2*halfW+div <= maxWidth，避免双页拼接 Row 亚像素溢出
+        // （round() 向上取整会偶发 RIGHT OVERFLOWED BY 0.x PIXELS 遮挡画面）。
+        final halfW=((c.maxWidth-div)/2).floor().clamp(1,4096);
         Widget tile(Uint8List b, int idx)=>ClipRect(child:FittedBox(fit:BoxFit.contain,child:RotatedBox(quarterTurns:_rotationOf(idx)~/90,child:SizedBox(width:halfW.toDouble(),child:Image(image:ResizeImage(MemoryImage(b),width:halfW),fit:BoxFit.contain)))));
         Widget leftWidget=tile(leftBytes,leftIdx);Widget rightWidget=rightBytes!=null?tile(rightBytes,rightIdx):const Center(child:SizedBox(width:24,height:24,child:CircularProgressIndicator(strokeWidth:2)));
         return Row(mainAxisSize:MainAxisSize.min,children:[if(isManga)rightWidget,if(isManga&&div>0)SizedBox(width:div.toDouble()),leftWidget,if(!isManga&&div>0)SizedBox(width:div.toDouble()),if(!isManga)rightWidget,]);

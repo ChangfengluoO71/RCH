@@ -47,6 +47,7 @@ impl<S: ByteSource> EpubBook<S> {
             .unwrap_or_default();
 
         let mut image_paths = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for idref in &spine {
             if let Some(href) = manifest.get(idref) {
                 let full = resolve_path(&opf_dir, href);
@@ -54,14 +55,21 @@ impl<S: ByteSource> EpubBook<S> {
                 if lower.ends_with(".xhtml") || lower.ends_with(".html") || lower.ends_with(".htm") {
                     if let Ok(html) = read_zip_entry(&mut zip, &full) {
                         if let Some(img_path) = extract_img_src(&html) {
-                            let img_full = resolve_path(&opf_dir, &img_path);
-                            if is_image_ext(&img_full) {
+                            // img src 相对于 HTML 文件所在目录，而不是 OPF 目录。
+                            let html_dir = full
+                                .rsplit_once('/')
+                                .map(|(d, _)| format!("{}/", d))
+                                .unwrap_or_default();
+                            let img_full = resolve_path(&html_dir, &img_path);
+                            if is_image_ext(&img_full) && seen.insert(img_full.clone()) {
                                 image_paths.push(img_full);
                             }
                         }
                     }
                 } else if is_image_ext(&full) {
-                    image_paths.push(full);
+                    if seen.insert(full.clone()) {
+                        image_paths.push(full);
+                    }
                 }
             }
         }
@@ -333,5 +341,55 @@ mod tests {
     fn test_extract_img_src() {
         let html = br#"<html><body><img src="page001.jpg" alt="page"/></body></html>"#;
         assert_eq!(extract_img_src(html), Some("page001.jpg".to_string()));
+    }
+
+    /// 回归：OPF 在根目录、HTML 在 content/、图片在 content/resources/ 的漫画 EPUB。
+    /// img src 应相对 HTML 目录解析（曾按 OPF 目录解析成 resources/P00001.jpg 而找不到）。
+    #[test]
+    fn open_epub_with_html_subdir_images() {
+        use crate::source::local::LocalFile;
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join(format!(
+            "rch_epub_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sample.epub");
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut w = zip::ZipWriter::new(file);
+            let opt = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            w.start_file("mimetype", opt).unwrap();
+            w.write_all(b"application/epub+zip").unwrap();
+            w.start_file("META-INF/container.xml", opt).unwrap();
+            w.write_all(
+                br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="metadata.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#,
+            )
+            .unwrap();
+            w.start_file("metadata.opf", opt).unwrap();
+            w.write_all(
+                br#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0"><metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">t</dc:title></metadata><manifest><item id="id1" href="content/resources/P00001.jpg" media-type="image/jpeg"/><item id="id2" href="content/index_P00001.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="id2"/></spine></package>"#,
+            )
+            .unwrap();
+            w.start_file("content/index_P00001.xhtml", opt).unwrap();
+            w.write_all(br#"<html><body><img src="resources/P00001.jpg"/></body></html>"#)
+                .unwrap();
+            w.start_file("content/resources/P00001.jpg", opt).unwrap();
+            w.write_all(&[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]).unwrap();
+            w.finish().unwrap();
+        }
+
+        let src = LocalFile::open(&path).unwrap();
+        let book = EpubBook::open(src, "sample.epub").unwrap();
+        assert_eq!(book.page_count(), 1);
+        let bytes = book.page_bytes(0).unwrap();
+        assert_eq!(bytes, [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

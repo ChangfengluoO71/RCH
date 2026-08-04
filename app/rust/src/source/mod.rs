@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 pub mod local;
 pub mod baidu;
 pub mod cloud115;
+pub mod quark;
 pub mod sftp;
 pub mod webdav;
 

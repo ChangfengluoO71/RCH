@@ -7,6 +7,7 @@ import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/quark_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/store/webdav_session.dart';
@@ -248,6 +249,24 @@ class _ComicCoverState extends State<ComicCover> {
       }
       final session = await cloud115SessionFor(widget.source);
       final p = await cloud115Cover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop);
+      return await rgbaToImage(p.rgba, p.width, p.height);
+    } else if (widget.source.isQuark) {
+      try {
+        final session = await quarkSessionFor(widget.source);
+        final hasRaw =
+            await quarkHasRawCache(session: session, path: widget.path);
+        if (!hasRaw) throw Exception('no raw cache');
+      } catch (_) {
+        throw Exception('not cached');
+      }
+      final session = await quarkSessionFor(widget.source);
+      final p = await quarkCover(
           session: session,
           path: widget.path,
           page: meta.coverPage,

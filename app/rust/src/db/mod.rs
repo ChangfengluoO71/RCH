@@ -213,6 +213,7 @@ fn init_tables(conn: &Connection) -> Result<()> {
         ("client_id", "ALTER TABLE book_sources ADD COLUMN client_id TEXT"),
         ("client_secret", "ALTER TABLE book_sources ADD COLUMN client_secret TEXT"),
         ("root_id", "ALTER TABLE book_sources ADD COLUMN root_id TEXT"),
+        ("cookie", "ALTER TABLE book_sources ADD COLUMN cookie TEXT"),
     ] {
         if !src_cols.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
@@ -473,6 +474,7 @@ pub struct BookSourceRow {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub root_id: Option<String>,
+    pub cookie: Option<String>,
     pub note: String,
     pub capability_label: String,
 }
@@ -480,7 +482,7 @@ pub struct BookSourceRow {
 pub fn load_all_sources() -> Vec<BookSourceRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
-        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, note, capability_label FROM book_sources")
+        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label FROM book_sources")
         .unwrap();
     stmt.query_map([], |row| {
         Ok(BookSourceRow {
@@ -496,8 +498,9 @@ pub fn load_all_sources() -> Vec<BookSourceRow> {
             client_id: row.get(9)?,
             client_secret: row.get(10)?,
             root_id: row.get(11)?,
-            note: row.get(12)?,
-            capability_label: row.get(13)?,
+            cookie: row.get(12)?,
+            note: row.get(13)?,
+            capability_label: row.get(14)?,
         })
     })
     .unwrap()
@@ -509,8 +512,8 @@ pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO book_sources
-         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, note, capability_label)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             s.id,
             s.r#type,
@@ -524,6 +527,7 @@ pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
             s.client_id,
             s.client_secret,
             s.root_id,
+            s.cookie,
             s.note,
             s.capability_label,
         ],

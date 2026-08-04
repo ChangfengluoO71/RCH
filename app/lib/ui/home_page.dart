@@ -3,6 +3,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/netdisk_credentials.dart';
+import 'package:app/store/quark_session.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -214,8 +215,10 @@ class _HomePageState extends State<HomePage> {
                 ? Icons.lan
                 : src.isBaidu
                     ? Icons.cloud_queue
-                    : src.is115
-                        ? Icons.cloud_upload
+                : src.is115
+                    ? Icons.cloud_upload
+                    : src.isQuark
+                        ? Icons.cloud_done
                         : Icons.folder;
     final iconColor = src.isWebDav
         ? Colors.lightBlueAccent
@@ -225,7 +228,9 @@ class _HomePageState extends State<HomePage> {
                 ? Colors.orangeAccent
                 : src.is115
                     ? Colors.amber
-                    : Colors.amber;
+                    : src.isQuark
+                        ? Colors.cyanAccent
+                        : Colors.amber;
     return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1), child: ListTile(
       dense: true, leading: Icon(icon, size: 20, color: iconColor),
       title: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -351,7 +356,8 @@ class _HomePageState extends State<HomePage> {
         tokenCtrl = TextEditingController(text: src.refreshToken ?? ''),
         appKeyCtrl = TextEditingController(text: src.clientId ?? ''),
         secretCtrl = TextEditingController(text: src.clientSecret ?? ''),
-        rootIdCtrl = TextEditingController(text: src.rootId ?? '');
+        rootIdCtrl = TextEditingController(text: src.rootId ?? ''),
+        cookieCtrl = TextEditingController(text: src.cookie ?? '');
     showDialog(context: context, builder: (ctx) => AlertDialog(title: Text('编辑书源: ${src.name}'),
       content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         _fd('名称', nameCtrl),
@@ -359,6 +365,7 @@ class _HomePageState extends State<HomePage> {
         else if (src.isSftp) ...[_fd('服务器地址', urlCtrl), _fd('端口(默认22)', portCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径(默认/)', pathCtrl)]
         else if (src.isBaidu) ...[_fd('根目录(默认/)', pathCtrl), _fdPw('refresh_token', tokenCtrl), _fd('AppKey(留空用内置)', appKeyCtrl), _fdPw('SecretKey(留空用内置)', secretCtrl)]
         else if (src.is115) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('refresh_token', tokenCtrl), _fd('APP ID(留空用内置)', appKeyCtrl)]
+        else if (src.isQuark) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('Cookie', cookieCtrl)]
         else if (src.isSmb) _fd('共享目录路径(UNC)', pathCtrl)
         else _fd('目录路径', pathCtrl),
         _fd('备注', noteCtrl),
@@ -377,7 +384,9 @@ class _HomePageState extends State<HomePage> {
               clientId: appKeyCtrl.text.trim().isEmpty ? null : appKeyCtrl.text.trim(),
               clientSecret: secretCtrl.text.trim().isEmpty ? null : secretCtrl.text.trim(),
               rootId: rootIdCtrl.text.trim().isEmpty ? null : rootIdCtrl.text.trim(),
+              cookie: cookieCtrl.text.trim().isEmpty ? null : cookieCtrl.text.trim(),
               note: noteCtrl.text.trim());
+          if (src.isQuark) clearQuarkSession(src.id);
           Navigator.of(ctx).pop();
         }, child: const Text('保存'))]));
   }
@@ -390,7 +399,7 @@ class _HomePageState extends State<HomePage> {
       content: Column(mainAxisSize: MainAxisSize.min, children: [
         Text(_sourceTypeLabel(src), style: Theme.of(context).textTheme.bodySmall),
         Text(src.needsSession
-            ? (src.isBaidu || src.is115 ? src.path : (src.url ?? ''))
+            ? (src.isBaidu || src.is115 || src.isQuark ? src.path : (src.url ?? ''))
             : src.path, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 16), const Text('备注', style: TextStyle(fontWeight: FontWeight.w600)), const SizedBox(height: 8),
         TextField(controller: ctrl, maxLines: 3, decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true)),
@@ -405,6 +414,7 @@ class _HomePageState extends State<HomePage> {
         'smb' => 'SMB 共享',
         'baidu' => '百度网盘',
         '115' => '115 网盘',
+        'quark' => '夸克网盘',
         _ => '本地目录',
       };
 
@@ -597,7 +607,7 @@ class _AddDialogState extends State<AddSourceDialog> {
   String _type = 'webdav';
   bool _showAdv = false;
   final _a = TextEditingController(), _b = TextEditingController(), _u = TextEditingController(), _p = TextEditingController(), _s = TextEditingController(), _port = TextEditingController(),
-      _token = TextEditingController(), _appKey = TextEditingController(), _secret = TextEditingController(), _rootId = TextEditingController();
+      _token = TextEditingController(), _appKey = TextEditingController(), _secret = TextEditingController(), _rootId = TextEditingController(), _cookie = TextEditingController();
   bool _t = false; String? _e;
 
   String get _baiduKey =>
@@ -633,6 +643,8 @@ class _AddDialogState extends State<AddSourceDialog> {
       await _submitBaidu(n);
     } else if (_type == '115') {
       await _submit115(n);
+    } else if (_type == 'quark') {
+      await _submitQuark(n);
     } else {
       if (_b.text.trim().isEmpty) { setState(() => _e = '请填写目录路径'); return; }
       LibraryStore.instance.addSource(BookSource(id: 'local_${DateTime.now().millisecondsSinceEpoch}', type: 'local', name: n.isEmpty ? _b.text.trim() : n, path: _b.text.trim())); if (mounted) Navigator.of(context).pop();
@@ -678,6 +690,25 @@ class _AddDialogState extends State<AddSourceDialog> {
           refreshToken: s.refreshToken,
           clientId: _appId,
           rootId: s.root));
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+  }
+
+  Future<void> _submitQuark(String n) async {
+    final cookie = _cookie.text.trim();
+    if (cookie.isEmpty) { setState(() => _e = '请粘贴夸克网盘 Cookie（pan.quark.cn 登录后 F12 复制）'); return; }
+    setState(() { _t = true; _e = null; });
+    try {
+      final s = await quarkConnect(
+          cookie: cookie,
+          rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim());
+      LibraryStore.instance.addSource(BookSource(
+          id: 'quark_${DateTime.now().millisecondsSinceEpoch}',
+          type: 'quark',
+          name: n.isEmpty ? '夸克网盘' : n,
+          path: s.root,
+          rootId: s.root,
+          cookie: s.cookie));
       if (mounted) Navigator.of(context).pop();
     } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
   }
@@ -772,6 +803,7 @@ class _AddDialogState extends State<AddSourceDialog> {
         DropdownMenuEntry(value: 'sftp', label: 'SFTP', leadingIcon: Icon(Icons.dns)),
         DropdownMenuEntry(value: 'baidu', label: '百度网盘', leadingIcon: Icon(Icons.cloud_queue)),
         DropdownMenuEntry(value: '115', label: '115 网盘', leadingIcon: Icon(Icons.cloud_upload)),
+        DropdownMenuEntry(value: 'quark', label: '夸克网盘', leadingIcon: Icon(Icons.cloud_done)),
       ],
       onSelected: (v) => setState(() { _type = v ?? 'webdav'; _e = null; _showAdv = false; }),
     ),
@@ -800,6 +832,9 @@ class _AddDialogState extends State<AddSourceDialog> {
         TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'AppKey(留空用内置)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 8),
         TextField(controller: _secret, obscureText: true, decoration: const InputDecoration(labelText: 'SecretKey(留空用内置)', border: OutlineInputBorder(), isDense: true)),
       ],
+    ] else if (_type == 'quark') ...[
+      TextField(controller: _rootId, decoration: const InputDecoration(labelText: '根文件夹 ID(默认 0)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      TextField(controller: _cookie, obscureText: true, decoration: const InputDecoration(labelText: 'Cookie(pan.quark.cn 登录后 F12 复制)', hintText: 'stoken=...; pds=...; __puus=...', border: OutlineInputBorder(), isDense: true)),
     ] else ...[
       TextField(controller: _rootId, decoration: const InputDecoration(labelText: '根文件夹 ID(默认 0)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       OutlinedButton.icon(onPressed: _t ? null : _cloud115Authorize, icon: const Icon(Icons.qr_code), label: const Text('扫码授权')),

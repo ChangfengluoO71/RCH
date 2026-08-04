@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1020421671;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -386406877;
 
 // Section: executor
 
@@ -2704,6 +2704,49 @@ fn wire__crate__api__book__open_local_book_impl(
         },
     )
 }
+fn wire__crate__api__source__open_quark_book_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "open_quark_book",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_strategy = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::source::open_quark_book(
+                            api_session,
+                            api_path,
+                            api_strategy,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__source__open_sftp_book_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2849,6 +2892,241 @@ fn wire__crate__api__cache__pending_migration_impl(
                         Result::<_, ()>::Ok(crate::api::cache::pending_migration(api_root))?;
                     Ok(output_ok)
                 })())
+            }
+        },
+    )
+}
+fn wire__crate__api__source__quark_connect_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "quark_connect",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_cookie = <String>::sse_decode(&mut deserializer);
+            let api_root_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok =
+                            crate::api::source::quark_connect(api_cookie, api_root_id).await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__source__quark_cover_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "quark_cover",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_page = <u32>::sse_decode(&mut deserializer);
+            let api_width = <u32>::sse_decode(&mut deserializer);
+            let api_height = <u32>::sse_decode(&mut deserializer);
+            let api_crop = <Option<crate::api::book::CropRect>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::source::quark_cover(
+                            api_session,
+                            api_path,
+                            api_page,
+                            api_width,
+                            api_height,
+                            api_crop,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__source__quark_disconnect_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "quark_disconnect",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_id = <u64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, ()>(
+                    (move || async move {
+                        let output_ok = Result::<_, ()>::Ok({
+                            crate::api::source::quark_disconnect(api_id).await;
+                        })?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__source__quark_download_progress_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "quark_download_progress",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(
+                        crate::api::source::quark_download_progress(api_session),
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__source__quark_has_raw_cache_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "quark_has_raw_cache",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(crate::api::source::quark_has_raw_cache(
+                        api_session,
+                        api_path,
+                    ))?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__source__quark_list_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "quark_list",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok =
+                            crate::api::source::quark_list(api_session, api_path).await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
             }
         },
     )
@@ -3649,6 +3927,7 @@ impl SseDecode for crate::api::db::BookSourceDto {
         let mut var_clientId = <Option<String>>::sse_decode(deserializer);
         let mut var_clientSecret = <Option<String>>::sse_decode(deserializer);
         let mut var_rootId = <Option<String>>::sse_decode(deserializer);
+        let mut var_cookie = <Option<String>>::sse_decode(deserializer);
         let mut var_note = <String>::sse_decode(deserializer);
         let mut var_capabilityLabel = <String>::sse_decode(deserializer);
         return crate::api::db::BookSourceDto {
@@ -3664,6 +3943,7 @@ impl SseDecode for crate::api::db::BookSourceDto {
             client_id: var_clientId,
             client_secret: var_clientSecret,
             root_id: var_rootId,
+            cookie: var_cookie,
             note: var_note,
             capability_label: var_capabilityLabel,
         };
@@ -4026,6 +4306,22 @@ impl SseDecode for crate::api::book::PageImage {
     }
 }
 
+impl SseDecode for crate::api::source::QuarkSessionInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <u64>::sse_decode(deserializer);
+        let mut var_root = <String>::sse_decode(deserializer);
+        let mut var_capabilityLabel = <String>::sse_decode(deserializer);
+        let mut var_cookie = <String>::sse_decode(deserializer);
+        return crate::api::source::QuarkSessionInfo {
+            id: var_id,
+            root: var_root,
+            capability_label: var_capabilityLabel,
+            cookie: var_cookie,
+        };
+    }
+}
+
 impl SseDecode for crate::api::db::ReadRecordDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4271,36 +4567,48 @@ fn pde_ffi_dispatcher_primary_impl(
         74 => wire__crate__api__source__open_baidu_book_impl(port, ptr, rust_vec_len, data_len),
         75 => wire__crate__api__source__open_cloud115_book_impl(port, ptr, rust_vec_len, data_len),
         76 => wire__crate__api__book__open_local_book_impl(port, ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__source__open_sftp_book_impl(port, ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__source__open_webdav_book_impl(port, ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__cache__page_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__cache__pending_migration_impl(port, ptr, rust_vec_len, data_len),
-        81 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
-        85 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        86 => {
-            wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
-        }
-        87 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
-        88 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        90 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        91 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        94 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__source__webdav_download_progress_impl(
+        77 => wire__crate__api__source__open_quark_book_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__source__open_sftp_book_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__source__open_webdav_book_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__cache__page_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__cache__pending_migration_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__source__quark_connect_impl(port, ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__source__quark_cover_impl(port, ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__source__quark_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__source__quark_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        96 => {
+        86 => wire__crate__api__source__quark_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__source__quark_list_impl(port, ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        89 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
+        91 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
+        92 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        93 => {
+            wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
+        }
+        94 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
+        95 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
+        96 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        97 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        98 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        102 => wire__crate__api__source__webdav_download_progress_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        103 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        97 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        104 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4454,6 +4762,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::db::BookSourceDto {
             self.client_id.into_into_dart().into_dart(),
             self.client_secret.into_into_dart().into_dart(),
             self.root_id.into_into_dart().into_dart(),
+            self.cookie.into_into_dart().into_dart(),
             self.note.into_into_dart().into_dart(),
             self.capability_label.into_into_dart().into_dart(),
         ]
@@ -4629,6 +4938,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::book::PageImage>
     for crate::api::book::PageImage
 {
     fn into_into_dart(self) -> crate::api::book::PageImage {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::source::QuarkSessionInfo {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.root.into_into_dart().into_dart(),
+            self.capability_label.into_into_dart().into_dart(),
+            self.cookie.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::source::QuarkSessionInfo
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::source::QuarkSessionInfo>
+    for crate::api::source::QuarkSessionInfo
+{
+    fn into_into_dart(self) -> crate::api::source::QuarkSessionInfo {
         self
     }
 }
@@ -4834,6 +5166,7 @@ impl SseEncode for crate::api::db::BookSourceDto {
         <Option<String>>::sse_encode(self.client_id, serializer);
         <Option<String>>::sse_encode(self.client_secret, serializer);
         <Option<String>>::sse_encode(self.root_id, serializer);
+        <Option<String>>::sse_encode(self.cookie, serializer);
         <String>::sse_encode(self.note, serializer);
         <String>::sse_encode(self.capability_label, serializer);
     }
@@ -5115,6 +5448,16 @@ impl SseEncode for crate::api::book::PageImage {
         <Vec<u8>>::sse_encode(self.rgba, serializer);
         <u32>::sse_encode(self.width, serializer);
         <u32>::sse_encode(self.height, serializer);
+    }
+}
+
+impl SseEncode for crate::api::source::QuarkSessionInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.root, serializer);
+        <String>::sse_encode(self.capability_label, serializer);
+        <String>::sse_encode(self.cookie, serializer);
     }
 }
 

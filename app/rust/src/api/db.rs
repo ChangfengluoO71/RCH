@@ -44,6 +44,7 @@ pub struct BookSourceDto {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub root_id: Option<String>,
+    pub cookie: Option<String>,
     pub note: String,
     pub capability_label: String,
 }
@@ -64,6 +65,7 @@ pub fn db_load_all_sources() -> Vec<BookSourceDto> {
             client_id: r.client_id,
             client_secret: r.client_secret,
             root_id: r.root_id,
+            cookie: r.cookie,
             note: r.note,
             capability_label: r.capability_label,
         })
@@ -84,6 +86,7 @@ pub fn db_upsert_source(source: BookSourceDto) -> Result<(), String> {
         client_id: source.client_id,
         client_secret: source.client_secret,
         root_id: source.root_id,
+        cookie: source.cookie,
         note: source.note,
         capability_label: source.capability_label,
     })

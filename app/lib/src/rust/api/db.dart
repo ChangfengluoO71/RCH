@@ -278,6 +278,7 @@ class BookSourceDto {
   final String? clientId;
   final String? clientSecret;
   final String? rootId;
+  final String? cookie;
   final String note;
   final String capabilityLabel;
 
@@ -294,6 +295,7 @@ class BookSourceDto {
     this.clientId,
     this.clientSecret,
     this.rootId,
+    this.cookie,
     required this.note,
     required this.capabilityLabel,
   });
@@ -312,6 +314,7 @@ class BookSourceDto {
       clientId.hashCode ^
       clientSecret.hashCode ^
       rootId.hashCode ^
+      cookie.hashCode ^
       note.hashCode ^
       capabilityLabel.hashCode;
 
@@ -332,6 +335,7 @@ class BookSourceDto {
           clientId == other.clientId &&
           clientSecret == other.clientSecret &&
           rootId == other.rootId &&
+          cookie == other.cookie &&
           note == other.note &&
           capabilityLabel == other.capabilityLabel;
 }

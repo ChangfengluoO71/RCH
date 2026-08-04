@@ -2,6 +2,7 @@ import 'package:app/repository/tag_repository.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/store/quark_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:app/src/rust/api/ai.dart';
@@ -101,6 +102,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
                       strategy: strategy),
                   '115' => await openCloud115Book(
                       session: await cloud115SessionFor(s),
+                      path: widget.path,
+                      strategy: strategy),
+                  'quark' => await openQuarkBook(
+                      session: await quarkSessionFor(s),
                       path: widget.path,
                       strategy: strategy),
                   _ => await openLocalBook(path: widget.path),

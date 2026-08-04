@@ -8,6 +8,7 @@ import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/quark_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -63,7 +64,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
                 ? await sftpSessionFor(widget.source)
                 : widget.source.isBaidu
                     ? await baiduSessionFor(widget.source)
-                    : await cloud115SessionFor(widget.source);
+                    : widget.source.isQuark
+                        ? await quarkSessionFor(widget.source)
+                        : await cloud115SessionFor(widget.source);
       } catch (e) {
         if (mounted) setState(() => _error = '连接远程书源失败:$e');
         return;
@@ -84,6 +87,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
         'sftp' => await sftpList(session: _session!, path: path),
         'baidu' => await baiduList(session: _session!, path: path),
         '115' => await cloud115List(session: _session!, path: path),
+        'quark' => await quarkList(session: _session!, path: path),
         _ => await listLocalDir(path: path),
       };
       if (!mounted) return;
@@ -324,6 +328,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           'sftp' => await sftpList(session: _session!, path: p),
           'baidu' => await baiduList(session: _session!, path: p),
           '115' => await cloud115List(session: _session!, path: p),
+          'quark' => await quarkList(session: _session!, path: p),
           _ => await listLocalDir(path: p),
         };
         for (final e in list) {

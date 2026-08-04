@@ -13,6 +13,7 @@ import 'baidu_session.dart';
 import 'cloud115_session.dart';
 import 'library_store.dart';
 import 'models.dart';
+import 'quark_session.dart';
 import 'sftp_session.dart';
 import 'webdav_session.dart';
 
@@ -291,6 +292,10 @@ class AiUpscaleManager extends ChangeNotifier {
             strategy: strategy),
         '115' => openCloud115Book(
             session: await cloud115SessionFor(source),
+            path: task.path,
+            strategy: strategy),
+        'quark' => openQuarkBook(
+            session: await quarkSessionFor(source),
             path: task.path,
             strategy: strategy),
         _ => openLocalBook(path: task.path),

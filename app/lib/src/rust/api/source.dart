@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `sessions`, `sftp_downloads`, `sftp_sessions`
+// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `quark_downloads`, `quark_sessions`, `sessions`, `sftp_downloads`, `sftp_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
 
@@ -117,6 +117,67 @@ Future<PageImage> sftpCover({
   required int height,
   CropRect? crop,
 }) => RustLib.instance.api.crateApiSourceSftpCover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
+);
+
+/// 连接夸克网盘：`/config` + 根目录连通性测试，返回会话。
+Future<QuarkSessionInfo> quarkConnect({
+  required String cookie,
+  required String rootId,
+}) => RustLib.instance.api.crateApiSourceQuarkConnect(
+  cookie: cookie,
+  rootId: rootId,
+);
+
+/// 断开夸克会话。
+Future<void> quarkDisconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceQuarkDisconnect(id: id);
+
+/// 列出夸克目录（path 为文件夹 fid，根目录 `0`）。
+Future<List<DirEntry>> quarkList({
+  required BigInt session,
+  required String path,
+}) =>
+    RustLib.instance.api.crateApiSourceQuarkList(session: session, path: path);
+
+/// 打开夸克网盘上的书籍（path 为文件 fid，三态策略；格式探测走真实文件名）。
+Future<BookInfo> openQuarkBook({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenQuarkBook(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 夸克下载进度（0.0~1.0，非下载中返回 1.0）。
+Future<double> quarkDownloadProgress({required BigInt session}) =>
+    RustLib.instance.api.crateApiSourceQuarkDownloadProgress(session: session);
+
+/// 夸克书籍是否已有 raw/ 本地缓存。
+Future<bool> quarkHasRawCache({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceQuarkHasRawCache(
+  session: session,
+  path: path,
+);
+
+/// 夸克书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+Future<PageImage> quarkCover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceQuarkCover(
   session: session,
   path: path,
   page: page,
@@ -446,6 +507,39 @@ class Cloud115SessionInfo {
           root == other.root &&
           capabilityLabel == other.capabilityLabel &&
           refreshToken == other.refreshToken;
+}
+
+/// 夸克网盘会话信息。
+class QuarkSessionInfo {
+  final BigInt id;
+  final String root;
+
+  /// "quark"
+  final String capabilityLabel;
+
+  /// 会话内可能回写了 `__puus` 等续期 cookie；Dart 侧与 DB 不一致时回写。
+  final String cookie;
+
+  const QuarkSessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+    required this.cookie,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ root.hashCode ^ capabilityLabel.hashCode ^ cookie.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QuarkSessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel &&
+          cookie == other.cookie;
 }
 
 /// SFTP 会话信息。

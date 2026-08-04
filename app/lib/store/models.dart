@@ -3,10 +3,10 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 
-/// 书源:本地 / WebDAV / SMB / SFTP / 百度网盘 / 115 网盘。
+/// 书源:本地 / WebDAV / SMB / SFTP / 百度网盘 / 115 网盘 / 夸克网盘。
 class BookSource {
   final String id;
-  final String type; // 'local' | 'webdav' | 'smb' | 'sftp' | 'baidu' | '115'
+  final String type; // 'local' | 'webdav' | 'smb' | 'sftp' | 'baidu' | '115' | 'quark'
   String name;
   String path; // local: 目录路径;webdav: 初始浏览路径
   String? url;
@@ -17,6 +17,7 @@ class BookSource {
   String? clientId; // 百度 AppKey / 115 APP ID（留空用内置）
   String? clientSecret; // 百度 SecretKey（115 无）
   String? rootId; // 115 根文件夹 ID
+  String? cookie; // 夸克网盘 Cookie（pan.quark.cn 登录后粘贴）
   String note; // 用户备注
   String capabilityLabel; // "local" | "webdav_range" | "webdav_norange"
 
@@ -33,6 +34,7 @@ class BookSource {
     this.clientId,
     this.clientSecret,
     this.rootId,
+    this.cookie,
     this.note = '',
     this.capabilityLabel = '',
   });
@@ -42,11 +44,16 @@ class BookSource {
   bool get isSmb => type == 'smb';
   bool get isBaidu => type == 'baidu';
   bool get is115 => type == '115';
+  bool get isQuark => type == 'quark';
   /// 走本地文件系统链路的来源（本地目录 + SMB UNC）。
   bool get isLocalFs => type == 'local' || type == 'smb';
-  /// 需要会话连接的远程来源（WebDAV / SFTP / 百度网盘 / 115）。
+  /// 需要会话连接的远程来源（WebDAV / SFTP / 百度网盘 / 115 / 夸克网盘）。
   bool get needsSession =>
-      type == 'webdav' || type == 'sftp' || type == 'baidu' || type == '115';
+      type == 'webdav' ||
+      type == 'sftp' ||
+      type == 'baidu' ||
+      type == '115' ||
+      type == 'quark';
 
   /// 能力标记的显示颜色。
   /// 🟢 本地/NAS  🟡 WebDAV(Range)  🔴 WebDAV(无Range)
@@ -57,6 +64,7 @@ class BookSource {
     if (type == 'sftp') return (emoji: '\u{1F7E1}', label: 'SFTP');
     if (type == 'baidu') return (emoji: '\u{1F7E2}', label: '百度网盘');
     if (type == '115') return (emoji: '\u{1F7E1}', label: '115 网盘');
+    if (type == 'quark') return (emoji: '\u{1F7E1}', label: '夸克网盘');
     if (capabilityLabel == 'local') return (emoji: '\u{1F7E2}', label: 'WebDAV 高速');
     if (capabilityLabel == 'webdav_range') return (emoji: '\u{1F7E1}', label: 'WebDAV 远程');
     return (emoji: '\u{1F534}', label: 'WebDAV 无Range');
@@ -75,6 +83,7 @@ class BookSource {
         if (clientId != null) 'clientId': clientId,
         if (clientSecret != null) 'clientSecret': clientSecret,
         if (rootId != null) 'rootId': rootId,
+        if (cookie != null) 'cookie': cookie,
         'note': note,
         if (capabilityLabel.isNotEmpty) 'capabilityLabel': capabilityLabel,
       };
@@ -92,6 +101,7 @@ class BookSource {
         clientId: j['clientId'] as String?,
         clientSecret: j['clientSecret'] as String?,
         rootId: j['rootId'] as String?,
+        cookie: j['cookie'] as String?,
         note: (j['note'] as String?) ?? '',
         capabilityLabel: (j['capabilityLabel'] as String?) ?? '',
       );

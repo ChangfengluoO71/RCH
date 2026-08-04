@@ -148,6 +148,14 @@ class _ReaderPageState extends State<ReaderPage> {
       _downloadProgress = null;
       if (!mounted) return;
       setState(() { _book = b; });
+    } else if (src?.isQuark == true && widget.webdavSession != null) {
+      _startPollingProgress(
+          progressFn: () => quarkDownloadProgress(session: widget.webdavSession!));
+      final b = await openQuarkBook(
+          session: widget.webdavSession!, path: widget.path, strategy: strategy);
+      _downloadProgress = null;
+      if (!mounted) return;
+      setState(() { _book = b; });
     } else {
       final b = await openLocalBook(path: widget.path);
       if (!mounted) return;

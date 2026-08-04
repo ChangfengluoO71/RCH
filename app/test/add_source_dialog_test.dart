@@ -8,7 +8,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('添加书源对话框：六种类型可切换且字段随类型变化', (tester) async {
+  testWidgets('添加书源对话框：七种类型可切换且字段随类型变化', (tester) async {
     await pumpDialog(tester);
 
     Future<void> selectType(String label) async {
@@ -50,5 +50,10 @@ void main() {
     await selectType('115 网盘');
     expect(find.text('根文件夹 ID(默认 0)'), findsOneWidget);
     expect(find.text('扫码授权'), findsOneWidget);
+
+    // 切到夸克网盘：根文件夹 ID + Cookie 字段
+    await selectType('夸克网盘');
+    expect(find.text('根文件夹 ID(默认 0)'), findsOneWidget);
+    expect(find.text('Cookie(pan.quark.cn 登录后 F12 复制)'), findsOneWidget);
   });
 }

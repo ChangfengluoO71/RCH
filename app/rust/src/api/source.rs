@@ -4,6 +4,7 @@ use super::book::{register_book, BookInfo, CropRect, DirEntry, PageImage};
 use crate::document;
 use crate::source::baidu::{self as baidu_source, BaiduClient};
 use crate::source::cloud115::{self as cloud115_source, Cloud115Client};
+use crate::source::quark::{self as quark_source, QuarkClient};
 use crate::source::sftp::{self as sftp_source, SftpClient};
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
 use crate::cache;
@@ -15,6 +16,7 @@ static SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<WebDavClient>>>> = OnceLock::ne
 static SFTP_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<SftpClient>>>> = OnceLock::new();
 static BAIDU_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<BaiduClient>>>> = OnceLock::new();
 static CLOUD115_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<Cloud115Client>>>> = OnceLock::new();
+static QUARK_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<QuarkClient>>>> = OnceLock::new();
 static NEXT: OnceLock<Mutex<u64>> = OnceLock::new();
 
 /// 正在进行的下载进度追踪表(session_id -> DownloadProgress)。
@@ -22,6 +24,7 @@ static DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLoc
 static SFTP_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static BAIDU_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static CLOUD115_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
+static QUARK_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 
 fn downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
     DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -53,6 +56,14 @@ fn cloud115_sessions() -> &'static Mutex<HashMap<u64, Arc<Cloud115Client>>> {
 
 fn cloud115_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
     CLOUD115_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn quark_sessions() -> &'static Mutex<HashMap<u64, Arc<QuarkClient>>> {
+    QUARK_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn quark_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
+    QUARK_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn next_id() -> u64 {
@@ -96,6 +107,15 @@ fn get_cloud115_session(id: u64) -> Result<Arc<Cloud115Client>> {
         .get(&id)
         .map(Arc::clone)
         .ok_or_else(|| anyhow::anyhow!("无效的 115 网盘会话: {id}"))
+}
+
+fn get_quark_session(id: u64) -> Result<Arc<QuarkClient>> {
+    quark_sessions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(Arc::clone)
+        .ok_or_else(|| anyhow::anyhow!("无效的夸克网盘会话: {id}"))
 }
 
 /// 打开策略（全局设置传入）：auto=先下载失败转流式，download=强制整本，stream=直接流式。
@@ -463,6 +483,221 @@ pub async fn sftp_cover(
     .await??;
     let cache_write_path = client
         .raw_cache_path(&path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref wp) = cache_write_path {
+        let _ = cache::cover_cache_write(
+            &wp.to_string_lossy(),
+            page,
+            width,
+            height,
+            crop_tuple,
+            &img.rgba,
+        );
+    }
+    Ok(PageImage {
+        rgba: img.rgba,
+        width: img.width,
+        height: img.height,
+    })
+}
+
+// ============================================================
+// 夸克网盘书源（非官方 Web API，Cookie 认证）
+// ============================================================
+
+/// 夸克网盘会话信息。
+pub struct QuarkSessionInfo {
+    pub id: u64,
+    pub root: String,
+    /// "quark"
+    pub capability_label: String,
+    /// 会话内可能回写了 `__puus` 等续期 cookie；Dart 侧与 DB 不一致时回写。
+    pub cookie: String,
+}
+
+/// 连接夸克网盘：`/config` + 根目录连通性测试，返回会话。
+pub async fn quark_connect(cookie: String, root_id: String) -> Result<QuarkSessionInfo> {
+    let (client, root) =
+        tokio::task::spawn_blocking(move || -> Result<(QuarkClient, String)> {
+            let client = QuarkClient::new(&cookie, &root_id)?;
+            client.check()?; // /config + 首屏 list
+            let root = client.root().to_string();
+            Ok((client, root))
+        })
+        .await??;
+    let id = next_id();
+    let session_cookie = client.cookie();
+    quark_sessions().lock().unwrap().insert(id, Arc::new(client));
+    Ok(QuarkSessionInfo {
+        id,
+        root,
+        capability_label: "quark".to_string(),
+        cookie: session_cookie,
+    })
+}
+
+/// 断开夸克会话。
+pub async fn quark_disconnect(id: u64) {
+    let client = quark_sessions().lock().unwrap().remove(&id);
+    if let Some(client) = client {
+        let _ = tokio::task::spawn_blocking(move || drop(client)).await;
+    }
+}
+
+/// 列出夸克目录（path 为文件夹 fid，根目录 `0`）。
+pub async fn quark_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
+    let client = get_quark_session(session)?;
+    let entries = tokio::task::spawn_blocking(move || client.list(&path)).await??;
+    Ok(entries
+        .into_iter()
+        .map(|e| DirEntry {
+            name: e.name,
+            path: e.path,
+            is_dir: e.is_dir,
+            size: e.size,
+            mtime: e.mtime,
+        })
+        .collect())
+}
+
+/// 打开夸克网盘上的书籍（path 为文件 fid，三态策略；格式探测走真实文件名）。
+pub async fn open_quark_book(
+    session: u64,
+    path: String,
+    strategy: String,
+) -> Result<BookInfo> {
+    let client = get_quark_session(session)?;
+    let origin = client.origin();
+    let cache_ns = format!("quark|{}|{}", origin, path);
+    let strat = parse_strategy(&strategy);
+
+    let progress = if strat != OpenStrategy::Stream {
+        let p = Arc::new(DownloadProgress::new(0)); // 直链不带大小，下载响应后更新
+        quark_downloads().lock().unwrap().insert(session, Arc::clone(&p));
+        Some(p)
+    } else {
+        None
+    };
+
+    let book = {
+        let client = Arc::clone(&client);
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+            let name = client.resolve_name(&path)?;
+            let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                let src = crate::source::local::LocalFile::open(&local_path)?;
+                document::open_document(src, &name)
+            };
+            let open_stream = |client: Arc<QuarkClient>| -> Result<Box<dyn document::Document>> {
+                let info = client.downlink(&path)?;
+                let (supports, size) = client.probe(&info.url);
+                if !supports {
+                    anyhow::bail!("夸克直链不支持 Range，请改用整本下载策略");
+                }
+                let src = quark_source::QuarkFile::new(client, path.clone(), size, info.url);
+                document::open_document(src, &name)
+            };
+            match strat {
+                OpenStrategy::Download => {
+                    let local_path = client.download_to_raw_cache(&path, progress)?;
+                    tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
+                    open_local(local_path)
+                }
+                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Auto => {
+                    match client.download_to_raw_cache(&path, progress) {
+                        Ok(local_path) => {
+                            tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
+                            open_local(local_path)
+                        }
+                        Err(e) => {
+                            tracing::warn!("夸克网盘整本下载失败，回退流式: {e}");
+                            open_stream(Arc::clone(&client))
+                        }
+                    }
+                }
+            }
+        })
+        .await??
+    };
+
+    if strat != OpenStrategy::Stream {
+        quark_downloads().lock().unwrap().remove(&session);
+    }
+    Ok(register_book(book, &cache_ns))
+}
+
+/// 夸克下载进度（0.0~1.0，非下载中返回 1.0）。
+pub fn quark_download_progress(session: u64) -> f64 {
+    quark_downloads()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .map(|p| p.fraction())
+        .unwrap_or(1.0)
+}
+
+/// 夸克书籍是否已有 raw/ 本地缓存。
+pub fn quark_has_raw_cache(session: u64, path: String) -> bool {
+    let client = match get_quark_session(session) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    quark_source::raw_cache_path(&client.origin(), &path).is_some()
+}
+
+/// 夸克书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+pub async fn quark_cover(
+    session: u64,
+    path: String,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<CropRect>,
+) -> Result<PageImage> {
+    let client = get_quark_session(session)?;
+    let origin = client.origin();
+    let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
+    let cache_lookup_path = quark_source::raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref lookup) = cache_lookup_path {
+        let lookup_str = lookup.to_string_lossy();
+        if let Some((rgba, w, h)) =
+            cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
+        {
+            return Ok(PageImage { rgba, width: w, height: h });
+        }
+    }
+    let origin_clone = origin.clone();
+    let path_clone = path.clone();
+    let client_clone = Arc::clone(&client);
+    let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let name = client_clone.resolve_name(&path_clone)?;
+        if let Some(local_path) = quark_source::raw_cache_path(&origin_clone, &path_clone) {
+            let src = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(src, &name)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let info = client_clone.downlink(&path_clone)?;
+        let (supports, size) = client_clone.probe(&info.url);
+        if !supports {
+            let local_path = client_clone.download_to_raw_cache(&path_clone, None)?;
+            let src = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(src, &name)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let src = quark_source::QuarkFile::new(client_clone, path_clone.clone(), size, info.url);
+        let book = document::open_document(src, &name)?;
+        let bytes = book.page_bytes(page)?;
+        let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+        crate::decode::decode_cover(&bytes, width, height, crop)
+    })
+    .await??;
+    let cache_write_path = quark_source::raw_cache_path(&origin, &path)
         .or_else(|| Some(std::path::PathBuf::from(&path)));
     if let Some(ref wp) = cache_write_path {
         let _ = cache::cover_cache_write(

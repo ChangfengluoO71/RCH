@@ -33,6 +33,7 @@ class BookRepository {
     String? clientId,
     String? clientSecret,
     String? rootId,
+    String? cookie,
     String? note,
   }) {
     for (final s in sources) {
@@ -47,6 +48,7 @@ class BookRepository {
         if (clientId != null) s.clientId = clientId;
         if (clientSecret != null) s.clientSecret = clientSecret;
         if (rootId != null) s.rootId = rootId;
+        if (cookie != null) s.cookie = cookie;
         if (note != null) s.note = note;
       }
     }
@@ -110,6 +112,7 @@ class BookRepository {
         clientId: dto.clientId,
         clientSecret: dto.clientSecret,
         rootId: dto.rootId,
+        cookie: dto.cookie,
         note: dto.note,
         capabilityLabel: dto.capabilityLabel,
       ));
@@ -152,6 +155,7 @@ class BookRepository {
         clientId: s.clientId,
         clientSecret: s.clientSecret,
         rootId: s.rootId,
+        cookie: s.cookie,
         note: s.note,
         capabilityLabel: s.capabilityLabel,
       ));

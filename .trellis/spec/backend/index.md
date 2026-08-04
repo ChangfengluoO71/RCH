@@ -21,6 +21,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [SFTP 书源规范](./sftp-source.md) | russh 选型、会话模式、API 契约 | Filled |
 | [网盘书源规范](./netdisk-source.md) | 百度/115 官方 API 鉴权、直链、缓存、已知坑 | Filled |
+| [夸克网盘书源规范](./quark-source.md) | 非官方 Web API、Cookie 认证、fid 路径约定、已知坑 | Filled |
 
 ---
 

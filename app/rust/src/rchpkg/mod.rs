@@ -18,9 +18,10 @@
 
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -56,9 +57,9 @@ pub struct ExportInfo {
     pub tombstones: usize,
 }
 
-/// 导入结果统计。
+/// 合并/导入结果统计。
 #[derive(Debug, Clone, Default)]
-pub struct ImportStats {
+pub struct MergeStats {
     pub schema_version: i64,
     pub tags: usize,
     pub book_tags: usize,
@@ -66,6 +67,9 @@ pub struct ImportStats {
     pub records: usize,
     pub sources: usize,
     pub settings: usize,
+    pub tombstones: usize,
+    pub ghosts: usize,
+    pub skipped: usize,
 }
 
 /// 同步目录约定：`<root>/RCH/sync`。
@@ -84,14 +88,6 @@ struct Manifest {
     incremental: bool,
     since: i64,
     chunks: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TombstoneRow {
-    entity: String,
-    key: String,
-    updated_at: i64,
 }
 
 /// 导出标准包到已打开的 zip writer（增量导出读 `cursor_export` 游标）。
@@ -117,7 +113,8 @@ pub fn export_package<W: Write + Seek>(
     let sources = db::load_sources_for_sync_on(conn, since);
     let settings = db::load_settings_for_sync_on(conn, since);
 
-    let tombstones = build_tombstones(&tags, &book_tags, &metas, &records, &sources, &settings);
+    let mut tombstones = build_tombstones(&tags, &book_tags, &metas, &records, &sources, &settings);
+    tombstones.extend(db::load_tombstones_for_sync_on(conn, since));
 
     let manifest = Manifest {
         format: FORMAT.to_string(),
@@ -171,8 +168,14 @@ pub fn export_package_to_file(path: &str, incremental: bool) -> Result<ExportInf
     export_package(&conn, &mut zip, incremental)
 }
 
-/// 从打开的 zip archive 导入标准包（按行 upsert，保留目标端书源凭据）。
-pub fn import_package<R: Read + Seek>(conn: &Connection, reader: R) -> Result<ImportStats> {
+/// 合并/导入标准包。
+///
+/// - `force=false`：拉取合并（LWW：updated_at 新者胜；墓碑硬删除）。
+/// - `force=true`：恢复（包覆盖本地，书源凭据仍保留本地值）。
+///
+/// 跨设备匹配：书源按 fingerprint 与本地匹配，命中则 key 前缀重写；
+/// 未命中的 local/smb 书源创建幽灵条目（remote_only + origin_device_id）。
+pub fn merge_package<R: Read + Seek>(conn: &Connection, reader: R, force: bool) -> Result<MergeStats> {
     let mut archive = ZipArchive::new(reader).context("无法打开 .rchpkg 包")?;
     let manifest: Manifest = read_json_entry(&mut archive, MANIFEST_PATH)?;
     if manifest.format != FORMAT {
@@ -185,6 +188,7 @@ pub fn import_package<R: Read + Seek>(conn: &Connection, reader: R) -> Result<Im
             SCHEMA_VERSION
         );
     }
+    db::register_device_on(conn, &manifest.device_id, &manifest.device_name)?;
 
     let tags: Vec<db::TagSyncRow> = read_json_entry(&mut archive, "chunks/tags.json")?;
     let book_tags: Vec<db::BookTagSyncRow> = read_json_entry(&mut archive, "chunks/book_tags.json")?;
@@ -192,27 +196,91 @@ pub fn import_package<R: Read + Seek>(conn: &Connection, reader: R) -> Result<Im
     let records: Vec<db::RecordSyncRow> = read_json_entry(&mut archive, "chunks/records.json")?;
     let sources: Vec<db::SourceSyncRow> = read_json_entry(&mut archive, "chunks/sources.json")?;
     let settings: Vec<db::SettingSyncRow> = read_json_entry(&mut archive, "chunks/settings.json")?;
+    let tombstones: Vec<db::TombstoneSyncRow> =
+        read_json_entry(&mut archive, "chunks/tombstones.json")?;
 
+    // 1) fingerprint 匹配：包内 source id → 本地 source id
+    let mut remap: HashMap<String, String> = HashMap::new();
+    for src in &sources {
+        if src.deleted {
+            continue;
+        }
+        if let Some(fp) = &src.fingerprint {
+            if let Some(local_id) = db::find_source_id_by_fingerprint_on(conn, fp) {
+                if local_id != src.id {
+                    remap.insert(src.id.clone(), local_id);
+                }
+            }
+        }
+    }
+
+    // 2) 合并书源（含幽灵创建）
+    let mut skipped = 0usize;
+    let mut ghosts = 0usize;
+    for src in &sources {
+        let mut row = src.clone();
+        if let Some(local_id) = remap.get(&src.id) {
+            row.id = local_id.clone();
+        } else if !db::source_exists_on(conn, &src.id) && !src.deleted {
+            if src.r#type == "local" || src.r#type == "smb" {
+                row.remote_only = true;
+                row.origin_device_id = Some(manifest.device_id.clone());
+                ghosts += 1;
+            }
+        }
+        if !db::merge_source_sync_on(conn, &row, force)? {
+            skipped += 1;
+        }
+    }
+
+    // 3) key 前缀重写 + 合并其余实体
+    let rewrite = |key: &str| -> String {
+        for (pkg, local) in &remap {
+            let marker = format!("|{pkg}|");
+            if key.contains(&marker) {
+                return key.replacen(&marker, &format!("|{local}|"), 1);
+            }
+        }
+        key.to_string()
+    };
     for row in &tags {
-        db::apply_tag_sync_on(conn, row)?;
+        if !db::merge_tag_sync_on(conn, row, force)? {
+            skipped += 1;
+        }
     }
     for row in &book_tags {
-        db::apply_book_tag_sync_on(conn, row)?;
+        let mut r = row.clone();
+        r.book_key = rewrite(&r.book_key);
+        if !db::merge_book_tag_sync_on(conn, &r, force)? {
+            skipped += 1;
+        }
     }
     for row in &metas {
-        db::apply_meta_sync_on(conn, row)?;
+        let mut r = row.clone();
+        r.key = rewrite(&r.key);
+        if !db::merge_meta_sync_on(conn, &r, force)? {
+            skipped += 1;
+        }
     }
     for row in &records {
-        db::apply_record_sync_on(conn, row)?;
-    }
-    for row in &sources {
-        db::apply_source_sync_on(conn, row)?;
+        let mut r = row.clone();
+        r.key = rewrite(&r.key);
+        if !db::merge_record_sync_on(conn, &r, force)? {
+            skipped += 1;
+        }
     }
     for row in &settings {
-        db::apply_setting_sync_on(conn, row)?;
+        if !db::merge_setting_sync_on(conn, row, force)? {
+            skipped += 1;
+        }
     }
 
-    Ok(ImportStats {
+    // 4) 墓碑
+    for t in &tombstones {
+        apply_tombstone_on(conn, &t.entity, &t.key)?;
+    }
+
+    Ok(MergeStats {
         schema_version: manifest.schema_version,
         tags: tags.len(),
         book_tags: book_tags.len(),
@@ -220,14 +288,59 @@ pub fn import_package<R: Read + Seek>(conn: &Connection, reader: R) -> Result<Im
         records: records.len(),
         sources: sources.len(),
         settings: settings.len(),
+        tombstones: tombstones.len(),
+        ghosts,
+        skipped,
     })
 }
 
-/// 从文件导入标准包（供 FRB/P2 传输层调用）。
-pub fn import_package_from_file(path: &str) -> Result<ImportStats> {
+/// 恢复/全量导入（force=true 的 merge_package）。
+pub fn import_package<R: Read + Seek>(conn: &Connection, reader: R) -> Result<MergeStats> {
+    merge_package(conn, reader, true)
+}
+
+/// 从文件合并标准包（force=false 拉取 / true 恢复）。
+pub fn merge_package_from_file(path: &str, force: bool) -> Result<MergeStats> {
     let conn = db::get().lock().unwrap();
     let file = std::fs::File::open(path).with_context(|| format!("无法打开 {path}"))?;
-    import_package(&conn, file)
+    merge_package(&conn, file, force)
+}
+
+/// 从文件导入标准包（恢复语义，供 FRB/P2 传输层调用）。
+pub fn import_package_from_file(path: &str) -> Result<MergeStats> {
+    merge_package_from_file(path, true)
+}
+
+fn apply_tombstone_on(conn: &Connection, entity: &str, key: &str) -> Result<()> {
+    match entity {
+        "sources" => {
+            conn.execute("DELETE FROM source_alias WHERE source_id = ?1", params![key])?;
+            conn.execute("DELETE FROM book_sources WHERE id = ?1", params![key])?;
+        }
+        "records" => {
+            conn.execute("DELETE FROM read_records WHERE key = ?1", params![key])?;
+        }
+        "metas" => {
+            conn.execute("DELETE FROM book_metas WHERE key = ?1", params![key])?;
+        }
+        "tags" => {
+            conn.execute("DELETE FROM book_tags WHERE tag_id = ?1", params![key])?;
+            conn.execute("DELETE FROM tags WHERE id = ?1", params![key])?;
+        }
+        "book_tags" => {
+            if let Some((bk, tid)) = key.rsplit_once('|') {
+                conn.execute(
+                    "DELETE FROM book_tags WHERE book_key = ?1 AND tag_id = ?2",
+                    params![bk, tid],
+                )?;
+            }
+        }
+        "settings" => {
+            conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn build_tombstones(
@@ -237,25 +350,25 @@ fn build_tombstones(
     records: &[db::RecordSyncRow],
     sources: &[db::SourceSyncRow],
     settings: &[db::SettingSyncRow],
-) -> Vec<TombstoneRow> {
+) -> Vec<db::TombstoneSyncRow> {
     let mut out = Vec::new();
     for r in tags.iter().filter(|r| r.deleted) {
-        out.push(TombstoneRow { entity: "tags".into(), key: r.id.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow { entity: "tags".into(), key: r.id.clone(), updated_at: r.updated_at });
     }
     for r in book_tags.iter().filter(|r| r.deleted) {
-        out.push(TombstoneRow { entity: "book_tags".into(), key: format!("{}|{}", r.book_key, r.tag_id), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow { entity: "book_tags".into(), key: format!("{}|{}", r.book_key, r.tag_id), updated_at: r.updated_at });
     }
     for r in metas.iter().filter(|r| r.deleted) {
-        out.push(TombstoneRow { entity: "metas".into(), key: r.key.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow { entity: "metas".into(), key: r.key.clone(), updated_at: r.updated_at });
     }
     for r in records.iter().filter(|r| r.deleted) {
-        out.push(TombstoneRow { entity: "records".into(), key: r.key.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow { entity: "records".into(), key: r.key.clone(), updated_at: r.updated_at });
     }
     for r in sources.iter().filter(|r| r.deleted) {
-        out.push(TombstoneRow { entity: "sources".into(), key: r.id.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow { entity: "sources".into(), key: r.id.clone(), updated_at: r.updated_at });
     }
     for r in settings.iter().filter(|r| r.deleted) {
-        out.push(TombstoneRow { entity: "settings".into(), key: r.key.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow { entity: "settings".into(), key: r.key.clone(), updated_at: r.updated_at });
     }
     out
 }
@@ -457,5 +570,158 @@ mod tests {
         let conn = schema_conn();
         let err = import_package(&conn, Cursor::new(bytes)).unwrap_err();
         assert!(err.to_string().contains("高于当前支持版本"));
+    }
+
+    #[test]
+    fn merge_lww_keeps_newer_local_and_force_overwrites() {
+        let a = schema_conn();
+        seed(&a);
+        let bytes = export_bytes(&a, false);
+
+        let insert_b = |b: &Connection| {
+            b.execute(
+                "INSERT INTO book_metas (key, stable_id, title, summary, rotations, updated_at, deleted)
+                 VALUES ('webdav|s1|/books/a.cbz', 'sid-b', 'B版', 'B的感想', '{}', 999999, 0)",
+                [],
+            )
+            .unwrap();
+        };
+
+        // LWW：本地 updated_at 更大 → 保留本地
+        let b = schema_conn();
+        insert_b(&b);
+        let stats = merge_package(&b, Cursor::new(bytes.clone()), false).unwrap();
+        assert!(stats.skipped > 0);
+        let summary: String = b
+            .query_row(
+                "SELECT summary FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(summary, "B的感想");
+
+        // force=true：包覆盖
+        let b2 = schema_conn();
+        insert_b(&b2);
+        merge_package(&b2, Cursor::new(bytes), true).unwrap();
+        let summary2: String = b2
+            .query_row(
+                "SELECT summary FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(summary2, "简介");
+    }
+
+    #[test]
+    fn tombstones_delete_local_rows() {
+        let a = schema_conn();
+        seed(&a);
+        // 模拟 A 本地删除 tag（墓碑传播）
+        db::upsert_tombstone_on(&a, "tags", "日漫").unwrap();
+        let bytes = export_bytes(&a, false);
+
+        let b = schema_conn();
+        seed(&b);
+        merge_package(&b, Cursor::new(bytes), false).unwrap();
+        let cnt: i64 = b
+            .query_row("SELECT COUNT(*) FROM tags WHERE id='日漫'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cnt, 0);
+    }
+
+    #[test]
+    fn ghost_source_created_for_foreign_local_source() {
+        let a = schema_conn();
+        a.execute(
+            "INSERT INTO book_sources (id, type, name, path, username, password, note, capability_label, fingerprint, updated_at, deleted)
+             VALUES ('local_111', 'local', '我的漫画', 'D:/Comics', NULL, NULL, '', 'local', 'fp-local', 1000, 0)",
+            [],
+        )
+        .unwrap();
+        a.execute(
+            "INSERT INTO book_metas (key, stable_id, title, summary, rotations, updated_at, deleted)
+             VALUES ('local|local_111|D:/Comics/a.cbz', 'sid-a', 'A', '简介', '{}', 1000, 0)",
+            [],
+        )
+        .unwrap();
+        let bytes = export_bytes(&a, false);
+
+        let b = schema_conn();
+        let stats = merge_package(&b, Cursor::new(bytes), false).unwrap();
+        assert_eq!(stats.ghosts, 1);
+        let (remote_only, origin): (i64, Option<String>) = b
+            .query_row(
+                "SELECT remote_only, origin_device_id FROM book_sources WHERE id='local_111'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(remote_only, 1);
+        assert!(origin.is_some());
+        let meta_cnt: i64 = b
+            .query_row(
+                "SELECT COUNT(*) FROM book_metas WHERE key='local|local_111|D:/Comics/a.cbz'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(meta_cnt, 1);
+    }
+
+    #[test]
+    fn remote_source_key_rewrite_merges_by_fingerprint() {
+        let a = schema_conn();
+        a.execute(
+            "INSERT INTO book_sources (id, type, name, path, url, username, password, note, capability_label, fingerprint, updated_at, deleted)
+             VALUES ('srcA', 'webdav', 'NAS', '/books', 'https://dav', 'u', 'p', '', 'webdav_range', 'fp1', 1000, 0)",
+            [],
+        )
+        .unwrap();
+        a.execute(
+            "INSERT INTO book_metas (key, stable_id, title, summary, rotations, updated_at, deleted)
+             VALUES ('webdav|srcA|/books/a.cbz', 'sid-a', 'A', '简介', '{}', 1000, 0)",
+            [],
+        )
+        .unwrap();
+        let bytes = export_bytes(&a, false);
+
+        let b = schema_conn();
+        // B 有同 fingerprint 的本地书源（不同 id）与旧 meta
+        b.execute(
+            "INSERT INTO book_sources (id, type, name, path, url, username, password, note, capability_label, fingerprint, updated_at, deleted)
+             VALUES ('srcB', 'webdav', 'NAS', '/books', 'https://dav', 'u', 'pw-b', '', 'webdav_range', 'fp1', 500, 0)",
+            [],
+        )
+        .unwrap();
+        b.execute(
+            "INSERT INTO book_metas (key, stable_id, title, summary, rotations, updated_at, deleted)
+             VALUES ('webdav|srcB|/books/a.cbz', 'sid-b', 'B', 'B感想', '{}', 500, 0)",
+            [],
+        )
+        .unwrap();
+        merge_package(&b, Cursor::new(bytes), false).unwrap();
+
+        // 不产生 srcA 重复源
+        let src_cnt: i64 = b
+            .query_row("SELECT COUNT(*) FROM book_sources", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(src_cnt, 1);
+        // meta 合入 srcB key（重写），值更新
+        let (title, summary): (String, String) = b
+            .query_row(
+                "SELECT title, summary FROM book_metas WHERE key='webdav|srcB|/books/a.cbz'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "A");
+        assert_eq!(summary, "简介");
+        let dup: i64 = b
+            .query_row("SELECT COUNT(*) FROM book_metas", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(dup, 1);
     }
 }

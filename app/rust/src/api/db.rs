@@ -47,6 +47,8 @@ pub struct BookSourceDto {
     pub cookie: Option<String>,
     pub note: String,
     pub capability_label: String,
+    pub remote_only: bool,
+    pub origin_device_id: Option<String>,
 }
 
 pub fn db_load_all_sources() -> Vec<BookSourceDto> {
@@ -68,6 +70,8 @@ pub fn db_load_all_sources() -> Vec<BookSourceDto> {
             cookie: r.cookie,
             note: r.note,
             capability_label: r.capability_label,
+            remote_only: r.remote_only,
+            origin_device_id: r.origin_device_id,
         })
         .collect()
 }
@@ -89,12 +93,27 @@ pub fn db_upsert_source(source: BookSourceDto) -> Result<(), String> {
         cookie: source.cookie,
         note: source.note,
         capability_label: source.capability_label,
+        remote_only: source.remote_only,
+        origin_device_id: source.origin_device_id,
     })
     .map_err(|e| format!("{e}"))
 }
 
 pub fn db_delete_source(id: String) -> Result<(), String> {
     db::delete_source(&id).map_err(|e| format!("{e}"))
+}
+
+/// 设备注册表条目（幽灵书源来源展示）。
+pub struct DeviceDto {
+    pub id: String,
+    pub name: String,
+}
+
+pub fn db_list_devices() -> Vec<DeviceDto> {
+    db::list_devices()
+        .into_iter()
+        .map(|d| DeviceDto { id: d.id, name: d.name })
+        .collect()
 }
 
 // ============================================================

@@ -20,6 +20,8 @@ class BookSource {
   String? cookie; // 夸克网盘 Cookie（pan.quark.cn 登录后粘贴）
   String note; // 用户备注
   String capabilityLabel; // "local" | "webdav_range" | "webdav_norange"
+  bool remoteOnly; // 其他设备的本地书源：仅元数据，不可阅读
+  String? originDeviceId; // 幽灵书源的来源设备
 
   BookSource({
     required this.id,
@@ -37,6 +39,8 @@ class BookSource {
     this.cookie,
     this.note = '',
     this.capabilityLabel = '',
+    this.remoteOnly = false,
+    this.originDeviceId,
   });
 
   bool get isWebDav => type == 'webdav';
@@ -45,6 +49,8 @@ class BookSource {
   bool get isBaidu => type == 'baidu';
   bool get is115 => type == '115';
   bool get isQuark => type == 'quark';
+  /// 幽灵书源：来自其他设备的本地书源，仅元数据、不可打开阅读。
+  bool get isGhost => remoteOnly;
   /// 走本地文件系统链路的来源（本地目录 + SMB UNC）。
   bool get isLocalFs => type == 'local' || type == 'smb';
   /// 需要会话连接的远程来源（WebDAV / SFTP / 百度网盘 / 115 / 夸克网盘）。
@@ -86,6 +92,8 @@ class BookSource {
         if (cookie != null) 'cookie': cookie,
         'note': note,
         if (capabilityLabel.isNotEmpty) 'capabilityLabel': capabilityLabel,
+        if (remoteOnly) 'remoteOnly': true,
+        if (originDeviceId != null) 'originDeviceId': originDeviceId,
       };
 
   factory BookSource.fromJson(Map<String, dynamic> j) => BookSource(
@@ -104,6 +112,8 @@ class BookSource {
         cookie: j['cookie'] as String?,
         note: (j['note'] as String?) ?? '',
         capabilityLabel: (j['capabilityLabel'] as String?) ?? '',
+        remoteOnly: j['remoteOnly'] as bool? ?? false,
+        originDeviceId: j['originDeviceId'] as String?,
       );
 }
 

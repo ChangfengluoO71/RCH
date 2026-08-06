@@ -15,9 +15,12 @@ Future<SyncExportInfo> rchpkgExport({
   incremental: incremental,
 );
 
-/// 从文件导入标准包（保留目标端书源凭据；schema 不兼容时拒绝）。
-Future<SyncImportStats> rchpkgImport({required String path}) =>
-    RustLib.instance.api.crateApiPackageRchpkgImport(path: path);
+/// 合并/导入标准包。`force=true` 恢复（包覆盖，凭据保留）；`false` 拉取合并（LWW + 墓碑）。
+Future<SyncImportStats> rchpkgImport({
+  required String path,
+  required bool force,
+}) =>
+    RustLib.instance.api.crateApiPackageRchpkgImport(path: path, force: force);
 
 /// 默认同步目录约定：`<root>/RCH/sync`。
 Future<String> rchpkgDefaultSyncDir({required String root}) =>
@@ -88,6 +91,9 @@ class SyncImportStats {
   final PlatformInt64 records;
   final PlatformInt64 sources;
   final PlatformInt64 settings;
+  final PlatformInt64 tombstones;
+  final PlatformInt64 ghosts;
+  final PlatformInt64 skipped;
 
   const SyncImportStats({
     required this.schemaVersion,
@@ -97,6 +103,9 @@ class SyncImportStats {
     required this.records,
     required this.sources,
     required this.settings,
+    required this.tombstones,
+    required this.ghosts,
+    required this.skipped,
   });
 
   @override
@@ -107,7 +116,10 @@ class SyncImportStats {
       metas.hashCode ^
       records.hashCode ^
       sources.hashCode ^
-      settings.hashCode;
+      settings.hashCode ^
+      tombstones.hashCode ^
+      ghosts.hashCode ^
+      skipped.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -120,5 +132,8 @@ class SyncImportStats {
           metas == other.metas &&
           records == other.records &&
           sources == other.sources &&
-          settings == other.settings;
+          settings == other.settings &&
+          tombstones == other.tombstones &&
+          ghosts == other.ghosts &&
+          skipped == other.skipped;
 }

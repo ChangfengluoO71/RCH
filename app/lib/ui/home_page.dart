@@ -4,6 +4,7 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/netdisk_credentials.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -191,7 +192,7 @@ class _HomePageState extends State<HomePage> {
             child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add, size: 18, color: Colors.white70))),
         ])),
         const SizedBox(height: 4),
-        Expanded(child: ListView(children: store.sources.map(_sourceTile).toList())),
+        Expanded(child: ListView(children: store.sources.where((s) => !s.remoteOnly).map(_sourceTile).toList())),
         const Divider(height: 8),
         _nav(Icons.settings, '设置', 'settings'),
       ])),
@@ -277,7 +278,11 @@ class _HomePageState extends State<HomePage> {
 
   // ---- 全局搜索结果 ----
   Widget _buildGlobalResults() {
-    final results = LibraryStore.instance.globalSearch(text: _textSearch, tags: _tags);
+    final results = LibraryStore.instance.globalSearch(
+      text: _textSearch,
+      tags: _tags,
+      includeRemoteOnly: SyncManager.instance.crossDeviceSearch,
+    );
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _buildFilterBar(results.length),
       Expanded(
@@ -286,7 +291,20 @@ class _HomePageState extends State<HomePage> {
             : GridView.builder(padding: const EdgeInsets.all(16), gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 180, childAspectRatio: 0.66, crossAxisSpacing: 12, mainAxisSpacing: 12),
                 itemCount: results.length, itemBuilder: (c, i) {
                   final r = results[i];
-                  return ComicCard(source: r.source, path: r.path, title: r.title, subtitle: r.source.name, onTap: () => openBook(context, r.source, r.path, r.title));
+                  final ghost = r.source.remoteOnly;
+                  return ComicCard(
+                    source: r.source,
+                    path: r.path,
+                    title: r.title,
+                    subtitle: ghost
+                        ? '仅元数据 · 来自${SyncManager.instance.deviceNameOf(r.source.originDeviceId)}'
+                        : r.source.name,
+                    onTap: ghost
+                        ? () => Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => BookDetailPage(
+                                source: r.source, path: r.path, title: r.title)))
+                        : () => openBook(context, r.source, r.path, r.title),
+                  );
                 }),
       ),
     ]);

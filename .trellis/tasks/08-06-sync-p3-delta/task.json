@@ -3,7 +3,7 @@
   "name": "sync-p3-delta",
   "title": "P3 增量同步（LWW + 墓碑合并）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

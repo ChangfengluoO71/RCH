@@ -588,10 +588,12 @@ class LibraryStore extends ChangeNotifier {
   List<({String bookKey, BookSource source, String path, String title})> globalSearch({
     String text = '',
     Set<String> tags = const {},
+    bool includeRemoteOnly = true,
   }) {
     final results = <({String bookKey, BookSource source, String path, String title})>[];
     final seen = <String>{};
     for (final s in sources) {
+      if (!includeRemoteOnly && s.remoteOnly) continue;
       for (final entry in metas.entries) {
         final bookKey = entry.key;
         if (!bookKey.startsWith('${s.type}|${s.id}|')) continue;

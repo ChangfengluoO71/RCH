@@ -127,6 +127,18 @@ class _SyncPanelState extends State<SyncPanel> {
         ],
         if (mgr.mode != SyncMode.off) ...[
           Row(children: [
+            const Expanded(child: Text('跨设备搜索', style: TextStyle(fontSize: 14))),
+            Switch(
+              value: mgr.crossDeviceSearch,
+              onChanged: (v) => mgr.setCrossDeviceSearch(v),
+            ),
+          ]),
+          const Text(
+            '开启后，全局搜索包含其他设备的本地书源（仅元数据，可编辑不可阅读）。',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 4),
+          Row(children: [
             const Text('定时同步: '),
             DropdownButton<int>(
               value: const [0, 30, 60, 180].contains(mgr.intervalMinutes)

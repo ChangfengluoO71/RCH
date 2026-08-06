@@ -48,7 +48,8 @@ ON CONFLICT(<pk>) DO UPDATE SET 原列=excluded.原列, ..., updated_at=excluded
 
 ## 5. 合并引擎（P3 细化）
 
-- 拉取远端包 → 按实体 LWW 合并 → 墓碑应用（deleted=1 项删除本地行或写墓碑）→ stable_id 重映射 book_tags/book_metas/read_records → fingerprint 匹配书源（新 fingerprint 创建幽灵条目或 source_alias）。
+- 拉取远端包 → 按实体 LWW 合并（`merge_package(force=false)`）→ 墓碑应用（`sync_tombstones` 表，本地删除写墓碑、合并删除硬删）→ 书源 fingerprint 匹配：命中则 key 前缀重写，未命中的 local/smb 创建幽灵条目（`remote_only` + `origin_device_id`）→ stable_id 双轨（同值视为同一本，内容 hash 计算后续补齐）。
+- 恢复/导入 = `force=true`：包覆盖本地（书源凭据仍保留本地值）。
 - 合并时书源凭据列永不从包写入；目标端已有凭据不被覆盖。
 
 ## 6. 传输模式（P2 细化）

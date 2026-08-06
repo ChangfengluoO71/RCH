@@ -27,6 +27,9 @@ Future<void> dbUpsertSource({required BookSourceDto source}) =>
 Future<void> dbDeleteSource({required String id}) =>
     RustLib.instance.api.crateApiDbDbDeleteSource(id: id);
 
+Future<List<DeviceDto>> dbListDevices() =>
+    RustLib.instance.api.crateApiDbDbListDevices();
+
 Future<List<ReadRecordDto>> dbLoadAllRecords() =>
     RustLib.instance.api.crateApiDbDbLoadAllRecords();
 
@@ -281,6 +284,8 @@ class BookSourceDto {
   final String? cookie;
   final String note;
   final String capabilityLabel;
+  final bool remoteOnly;
+  final String? originDeviceId;
 
   const BookSourceDto({
     required this.id,
@@ -298,6 +303,8 @@ class BookSourceDto {
     this.cookie,
     required this.note,
     required this.capabilityLabel,
+    required this.remoteOnly,
+    this.originDeviceId,
   });
 
   @override
@@ -316,7 +323,9 @@ class BookSourceDto {
       rootId.hashCode ^
       cookie.hashCode ^
       note.hashCode ^
-      capabilityLabel.hashCode;
+      capabilityLabel.hashCode ^
+      remoteOnly.hashCode ^
+      originDeviceId.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -337,7 +346,9 @@ class BookSourceDto {
           rootId == other.rootId &&
           cookie == other.cookie &&
           note == other.note &&
-          capabilityLabel == other.capabilityLabel;
+          capabilityLabel == other.capabilityLabel &&
+          remoteOnly == other.remoteOnly &&
+          originDeviceId == other.originDeviceId;
 }
 
 /// 漫画-标签关联 DTO。
@@ -357,6 +368,25 @@ class BookTagDto {
           runtimeType == other.runtimeType &&
           bookKey == other.bookKey &&
           tagId == other.tagId;
+}
+
+/// 设备注册表条目（幽灵书源来源展示）。
+class DeviceDto {
+  final String id;
+  final String name;
+
+  const DeviceDto({required this.id, required this.name});
+
+  @override
+  int get hashCode => id.hashCode ^ name.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DeviceDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name;
 }
 
 /// 阅读记录 DTO。

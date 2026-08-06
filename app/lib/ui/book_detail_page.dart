@@ -4,6 +4,7 @@ import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/sftp_session.dart';
+import 'package:app/store/sync_manager.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/book.dart';
@@ -189,11 +190,37 @@ class _BookDetailPageState extends State<BookDetailPage> {
       appBar: AppBar(title: const Text('漫画详情')),
       body: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(padding: const EdgeInsets.all(20), child: Column(children: [
-          SizedBox(width: 220, height: 310, child: ComicCover(source: widget.source, path: widget.path, force: true)),
-          const SizedBox(height: 16),
-          SizedBox(width: 220, child: FilledButton.icon(onPressed: () => openBook(context, widget.source, widget.path, widget.title), icon: const Icon(Icons.menu_book), label: const Text('开始阅读'))),
-          const SizedBox(height: 8),
-          SizedBox(width: 220, child: OutlinedButton.icon(onPressed: () async { await Navigator.of(context).push(MaterialPageRoute(builder: (_) => CoverEditorPage(source: widget.source, path: widget.path, title: widget.title))); setState(() {}); }, icon: const Icon(Icons.crop), label: const Text('自定义封面'))),
+          if (widget.source.remoteOnly) ...[
+            Container(
+              width: 220, height: 310,
+              decoration: BoxDecoration(
+                color: Colors.white10,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Center(
+                child: Text(
+                  '仅元数据\n来自${SyncManager.instance.deviceNameOf(widget.source.originDeviceId)}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: 220,
+              child: FilledButton.icon(
+                onPressed: null,
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('其他设备书源，不可阅读'),
+              ),
+            ),
+          ] else ...[
+            SizedBox(width: 220, height: 310, child: ComicCover(source: widget.source, path: widget.path, force: true)),
+            const SizedBox(height: 16),
+            SizedBox(width: 220, child: FilledButton.icon(onPressed: () => openBook(context, widget.source, widget.path, widget.title), icon: const Icon(Icons.menu_book), label: const Text('开始阅读'))),
+            const SizedBox(height: 8),
+            SizedBox(width: 220, child: OutlinedButton.icon(onPressed: () async { await Navigator.of(context).push(MaterialPageRoute(builder: (_) => CoverEditorPage(source: widget.source, path: widget.path, title: widget.title))); setState(() {}); }, icon: const Icon(Icons.crop), label: const Text('自定义封面'))),
+          ],
           const SizedBox(height: 8),
           // 已读/未读切换按钮
           SizedBox(
@@ -215,37 +242,39 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   style: TextStyle(color: hasReadTag ? Colors.redAccent : null)),
             ),
           ),
-          // 整本 AI 超分
-          SizedBox(width: 220, child: _bookAiActive
-            ? OutlinedButton.icon(
-                onPressed: null,
-                icon: const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                label: Text(_aiActiveLabel),
-              )
-            : hasAiTag
+          // 整本 AI 超分（幽灵书源无源文件，隐藏）
+          if (!widget.source.remoteOnly) ...[
+            SizedBox(width: 220, child: _bookAiActive
               ? OutlinedButton.icon(
-                  onPressed: _showAiConfirm,
-                  icon: const Icon(Icons.auto_fix_high, size: 18, color: Colors.purple),
-                  label: const Text('重新 AI 超分', style: TextStyle(color: Colors.purple)),
+                  onPressed: null,
+                  icon: const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  label: Text(_aiActiveLabel),
                 )
-              : OutlinedButton.icon(
-                  onPressed: _showAiConfirm,
-                  icon: const Icon(Icons.auto_fix_high, size: 18),
-                  label: const Text('整本 AI 超分'),
-                ),
-          ),
-          // 取消 AI 超分并删除缓存
-          if (hasAiTag) ...[
-            SizedBox(width: 220, child: OutlinedButton.icon(
-              onPressed: _cancelAiSuperResolve,
-              icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-              label: const Text('取消 AI 超分', style: TextStyle(color: Colors.redAccent)),
-            )),
-            SizedBox(width: 220, child: OutlinedButton.icon(
-              onPressed: () => openBookNoAi(context, widget.source, widget.path, widget.title),
-              icon: const Icon(Icons.hide_image, size: 18),
-              label: const Text('阅读未超分版本'),
-            )),
+              : hasAiTag
+                ? OutlinedButton.icon(
+                    onPressed: _showAiConfirm,
+                    icon: const Icon(Icons.auto_fix_high, size: 18, color: Colors.purple),
+                    label: const Text('重新 AI 超分', style: TextStyle(color: Colors.purple)),
+                  )
+                : OutlinedButton.icon(
+                    onPressed: _showAiConfirm,
+                    icon: const Icon(Icons.auto_fix_high, size: 18),
+                    label: const Text('整本 AI 超分'),
+                  ),
+            ),
+            // 取消 AI 超分并删除缓存
+            if (hasAiTag) ...[
+              SizedBox(width: 220, child: OutlinedButton.icon(
+                onPressed: _cancelAiSuperResolve,
+                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                label: const Text('取消 AI 超分', style: TextStyle(color: Colors.redAccent)),
+              )),
+              SizedBox(width: 220, child: OutlinedButton.icon(
+                onPressed: () => openBookNoAi(context, widget.source, widget.path, widget.title),
+                icon: const Icon(Icons.hide_image, size: 18),
+                label: const Text('阅读未超分版本'),
+              )),
+            ],
           ],
         ])),
         const VerticalDivider(width: 1),

@@ -189,6 +189,14 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             FOREIGN KEY (source_id) REFERENCES book_sources(id) ON DELETE CASCADE
         );
 
+        -- 同步：墓碑（本地删除传播用，P3）
+        CREATE TABLE IF NOT EXISTS sync_tombstones (
+            entity TEXT NOT NULL,
+            key TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (entity, key)
+        );
+
         -- AI 超分后台任务队列（可跨重启续跑）
         CREATE TABLE IF NOT EXISTS ai_tasks (
             id TEXT PRIMARY KEY,
@@ -588,12 +596,14 @@ pub struct BookSourceRow {
     pub cookie: Option<String>,
     pub note: String,
     pub capability_label: String,
+    pub remote_only: bool,
+    pub origin_device_id: Option<String>,
 }
 
 pub fn load_all_sources() -> Vec<BookSourceRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
-        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label FROM book_sources")
+        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label, remote_only, origin_device_id FROM book_sources")
         .unwrap();
     stmt.query_map([], |row| {
         Ok(BookSourceRow {
@@ -612,6 +622,8 @@ pub fn load_all_sources() -> Vec<BookSourceRow> {
             cookie: row.get(12)?,
             note: row.get(13)?,
             capability_label: row.get(14)?,
+            remote_only: row.get::<_, i64>(15)? != 0,
+            origin_device_id: row.get(16)?,
         })
     })
     .unwrap()
@@ -661,6 +673,7 @@ pub fn delete_source(id: &str) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute("DELETE FROM source_alias WHERE source_id = ?1", params![id])?;
     conn.execute("DELETE FROM book_sources WHERE id = ?1", params![id])?;
+    upsert_tombstone_on(&conn, "sources", id)?;
     Ok(())
 }
 
@@ -738,15 +751,27 @@ pub fn upsert_record(r: &ReadRecordRow) -> Result<()> {
 pub fn delete_record(key: &str) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute("DELETE FROM read_records WHERE key = ?1", params![key])?;
+    upsert_tombstone_on(&conn, "records", key)?;
     Ok(())
 }
 
 pub fn delete_records_by_source_prefix(prefix: &str) -> Result<u32> {
     let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT key FROM read_records WHERE key LIKE ?1")
+        .unwrap();
+    let keys: Vec<String> = stmt
+        .query_map([format!("{prefix}%")], |r| r.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
     let n = conn.execute(
         "DELETE FROM read_records WHERE key LIKE ?1",
         params![format!("{prefix}%")],
     )?;
+    for k in &keys {
+        upsert_tombstone_on(&conn, "records", k)?;
+    }
     Ok(n as u32)
 }
 
@@ -846,15 +871,27 @@ pub fn upsert_meta(m: &BookMetaRow) -> Result<()> {
 pub fn delete_meta(key: &str) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute("DELETE FROM book_metas WHERE key = ?1", params![key])?;
+    upsert_tombstone_on(&conn, "metas", key)?;
     Ok(())
 }
 
 pub fn delete_metas_by_source_prefix(prefix: &str) -> Result<u32> {
     let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT key FROM book_metas WHERE key LIKE ?1")
+        .unwrap();
+    let keys: Vec<String> = stmt
+        .query_map([format!("{prefix}%")], |r| r.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
     let n = conn.execute(
         "DELETE FROM book_metas WHERE key LIKE ?1",
         params![format!("{prefix}%")],
     )?;
+    for k in &keys {
+        upsert_tombstone_on(&conn, "metas", k)?;
+    }
     Ok(n as u32)
 }
 
@@ -1016,6 +1053,18 @@ pub fn rename_tag(old_name: &str, new_name: &str) -> Result<()> {
             "INSERT OR IGNORE INTO tags (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
             params![new_id, new_name, now, now],
         )?;
+        // 墓碑：旧标签与其关联（先于迁移捕获，传播删除）
+        let mut stmt = conn
+            .prepare("SELECT book_key FROM book_tags WHERE tag_id = ?1")
+            .unwrap();
+        let old_links: Vec<String> = stmt
+            .query_map([&old_id], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        for bk in &old_links {
+            upsert_tombstone_on(&conn, "book_tags", &format!("{bk}|{old_id}"))?;
+        }
         // 迁移所有 book_tags 关联到新 id
         conn.execute(
             "UPDATE OR IGNORE book_tags SET tag_id = ?1 WHERE tag_id = ?2",
@@ -1028,6 +1077,7 @@ pub fn rename_tag(old_name: &str, new_name: &str) -> Result<()> {
         )?;
         // 删除旧标签
         conn.execute("DELETE FROM tags WHERE id = ?1", params![old_id])?;
+        upsert_tombstone_on(&conn, "tags", &old_id)?;
         Ok(())
     })();
 
@@ -1047,8 +1097,20 @@ pub fn rename_tag(old_name: &str, new_name: &str) -> Result<()> {
 pub fn delete_tag(name: &str) -> Result<()> {
     let conn = get().lock().unwrap();
     let id = tag_id(name);
+    let mut stmt = conn
+        .prepare("SELECT book_key FROM book_tags WHERE tag_id = ?1")
+        .unwrap();
+    let links: Vec<String> = stmt
+        .query_map([&id], |r| r.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
     conn.execute("DELETE FROM book_tags WHERE tag_id = ?1", params![id])?;
     conn.execute("DELETE FROM tags WHERE id = ?1", params![id])?;
+    for bk in &links {
+        upsert_tombstone_on(&conn, "book_tags", &format!("{bk}|{id}"))?;
+    }
+    upsert_tombstone_on(&conn, "tags", &id)?;
     Ok(())
 }
 
@@ -1079,6 +1141,7 @@ pub fn unlink_tag(book_key: &str, tag_name: &str) -> Result<()> {
         "DELETE FROM book_tags WHERE book_key = ?1 AND tag_id = ?2",
         params![book_key, id],
     )?;
+    upsert_tombstone_on(&conn, "book_tags", &format!("{book_key}|{id}"))?;
     Ok(())
 }
 
@@ -1086,10 +1149,23 @@ pub fn unlink_tag(book_key: &str, tag_name: &str) -> Result<()> {
 fn set_book_tags_on(conn: &Connection, book_key: &str, tag_names: &[String]) -> Result<()> {
     conn.execute("BEGIN", [])?;
     let result = (|| -> Result<()> {
+        // 记录将被移除的关联（墓碑传播）
+        let mut stmt = conn
+            .prepare("SELECT tag_id FROM book_tags WHERE book_key = ?1")
+            .unwrap();
+        let removed: Vec<String> = stmt
+            .query_map([book_key], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .filter(|tid| !tag_names.iter().any(|n| tag_id(n) == *tid))
+            .collect();
         conn.execute(
             "DELETE FROM book_tags WHERE book_key = ?1",
             params![book_key],
         )?;
+        for tid in &removed {
+            upsert_tombstone_on(conn, "book_tags", &format!("{book_key}|{tid}"))?;
+        }
         for name in tag_names {
             if name.is_empty() {
                 continue;
@@ -1170,6 +1246,7 @@ pub fn save_setting(key: &str, value: &str) -> Result<()> {
 pub fn delete_setting(key: &str) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+    upsert_tombstone_on(&conn, "settings", key)?;
     Ok(())
 }
 
@@ -1211,6 +1288,10 @@ pub fn get_or_create_device_id() -> Result<String> {
 /// 注册/刷新一台设备（含本机）。
 pub fn register_device(id: &str, name: &str) -> Result<()> {
     let conn = get().lock().unwrap();
+    register_device_on(&conn, id, name)
+}
+
+pub(crate) fn register_device_on(conn: &Connection, id: &str, name: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO devices (id, name, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?3)
          ON CONFLICT(id) DO UPDATE SET name=excluded.name, last_seen_at=excluded.last_seen_at",
@@ -1351,6 +1432,78 @@ pub fn set_record_stable_id(key: &str, stable_id: &str) -> Result<()> {
         params![stable_id, now_ms(), key],
     )?;
     Ok(())
+}
+
+// ============================================================
+// P3：墓碑 / fingerprint 匹配
+// ============================================================
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TombstoneSyncRow {
+    pub entity: String,
+    pub key: String,
+    pub updated_at: i64,
+}
+
+pub(crate) fn upsert_tombstone_on(conn: &Connection, entity: &str, key: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO sync_tombstones (entity, key, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(entity, key) DO UPDATE SET updated_at=excluded.updated_at",
+        params![entity, key, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn upsert_tombstone(entity: &str, key: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    upsert_tombstone_on(&conn, entity, key)
+}
+
+pub(crate) fn load_tombstones_for_sync_on(conn: &Connection, since: i64) -> Vec<TombstoneSyncRow> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT entity, key, updated_at FROM sync_tombstones
+             WHERE updated_at > ?1 ORDER BY updated_at",
+        )
+        .unwrap();
+    stmt.query_map([since], |row| {
+        Ok(TombstoneSyncRow {
+            entity: row.get(0)?,
+            key: row.get(1)?,
+            updated_at: row.get(2)?,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_tombstones_for_sync(since: i64) -> Vec<TombstoneSyncRow> {
+    let conn = get().lock().unwrap();
+    load_tombstones_for_sync_on(&conn, since)
+}
+
+pub(crate) fn find_source_id_by_fingerprint_on(
+    conn: &Connection,
+    fingerprint: &str,
+) -> Option<String> {
+    conn.query_row(
+        "SELECT id FROM book_sources WHERE fingerprint = ?1 AND deleted = 0 ORDER BY updated_at LIMIT 1",
+        params![fingerprint],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+pub(crate) fn source_exists_on(conn: &Connection, id: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM book_sources WHERE id = ?1",
+        params![id],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
 }
 
 // ============================================================
@@ -1801,6 +1954,201 @@ pub fn apply_setting_sync(r: &SettingSyncRow) -> Result<()> {
 }
 
 // ============================================================
+// P3：LWW 合并（拉取=merge，恢复=force）
+// ============================================================
+
+fn existing_updated_at(conn: &Connection, table: &str, key_col: &str, key: &str) -> Option<i64> {
+    conn.query_row(
+        &format!("SELECT updated_at FROM {table} WHERE {key_col} = ?1"),
+        params![key],
+        |r| r.get::<_, i64>(0),
+    )
+    .ok()
+}
+
+fn merge_row_on(
+    conn: &Connection,
+    table: &str,
+    key_col: &str,
+    entity: &str,
+    key: &str,
+    incoming_updated_at: i64,
+    deleted: bool,
+    force: bool,
+    apply: impl FnOnce(&Connection) -> Result<()>,
+) -> Result<bool> {
+    if deleted {
+        let should = force
+            || existing_updated_at(conn, table, key_col, key)
+                .map_or(false, |t| incoming_updated_at > t);
+        if should {
+            conn.execute(
+                &format!("DELETE FROM {table} WHERE {key_col} = ?1"),
+                params![key],
+            )?;
+            upsert_tombstone_on(conn, entity, key)?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    let should = force
+        || existing_updated_at(conn, table, key_col, key).map_or(true, |t| incoming_updated_at > t);
+    if should {
+        apply(conn)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn existing_book_tag_updated_at(conn: &Connection, book_key: &str, tag_id: &str) -> Option<i64> {
+    conn.query_row(
+        "SELECT updated_at FROM book_tags WHERE book_key = ?1 AND tag_id = ?2",
+        params![book_key, tag_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .ok()
+}
+
+pub(crate) fn merge_source_sync_on(conn: &Connection, r: &SourceSyncRow, force: bool) -> Result<bool> {
+    if r.deleted {
+        let should = force
+            || existing_updated_at(conn, "book_sources", "id", &r.id)
+                .map_or(false, |t| r.updated_at > t);
+        if should {
+            conn.execute("DELETE FROM source_alias WHERE source_id = ?1", params![r.id])?;
+            conn.execute("DELETE FROM book_sources WHERE id = ?1", params![r.id])?;
+            upsert_tombstone_on(conn, "sources", &r.id)?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    let should = force
+        || existing_updated_at(conn, "book_sources", "id", &r.id)
+            .map_or(true, |t| r.updated_at > t);
+    if should {
+        apply_source_sync_on(conn, r)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub fn merge_source_sync(r: &SourceSyncRow, force: bool) -> Result<bool> {
+    let conn = get().lock().unwrap();
+    merge_source_sync_on(&conn, r, force)
+}
+
+pub(crate) fn merge_record_sync_on(conn: &Connection, r: &RecordSyncRow, force: bool) -> Result<bool> {
+    merge_row_on(conn, "read_records", "key", "records", &r.key, r.updated_at, r.deleted, force, |c| {
+        apply_record_sync_on(c, r)
+    })
+}
+
+pub fn merge_record_sync(r: &RecordSyncRow, force: bool) -> Result<bool> {
+    let conn = get().lock().unwrap();
+    merge_record_sync_on(&conn, r, force)
+}
+
+pub(crate) fn merge_meta_sync_on(conn: &Connection, r: &MetaSyncRow, force: bool) -> Result<bool> {
+    merge_row_on(conn, "book_metas", "key", "metas", &r.key, r.updated_at, r.deleted, force, |c| {
+        apply_meta_sync_on(c, r)
+    })
+}
+
+pub fn merge_meta_sync(r: &MetaSyncRow, force: bool) -> Result<bool> {
+    let conn = get().lock().unwrap();
+    merge_meta_sync_on(&conn, r, force)
+}
+
+pub(crate) fn merge_tag_sync_on(conn: &Connection, r: &TagSyncRow, force: bool) -> Result<bool> {
+    if r.deleted {
+        let should = force
+            || existing_updated_at(conn, "tags", "id", &r.id)
+                .map_or(false, |t| r.updated_at > t);
+        if should {
+            conn.execute("DELETE FROM book_tags WHERE tag_id = ?1", params![r.id])?;
+            conn.execute("DELETE FROM tags WHERE id = ?1", params![r.id])?;
+            upsert_tombstone_on(conn, "tags", &r.id)?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    let should = force
+        || existing_updated_at(conn, "tags", "id", &r.id).map_or(true, |t| r.updated_at > t);
+    if should {
+        apply_tag_sync_on(conn, r)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub fn merge_tag_sync(r: &TagSyncRow, force: bool) -> Result<bool> {
+    let conn = get().lock().unwrap();
+    merge_tag_sync_on(&conn, r, force)
+}
+
+pub(crate) fn merge_book_tag_sync_on(
+    conn: &Connection,
+    r: &BookTagSyncRow,
+    force: bool,
+) -> Result<bool> {
+    let key = format!("{}|{}", r.book_key, r.tag_id);
+    if r.deleted {
+        let should = force
+            || existing_book_tag_updated_at(conn, &r.book_key, &r.tag_id)
+                .map_or(false, |t| r.updated_at > t);
+        if should {
+            conn.execute(
+                "DELETE FROM book_tags WHERE book_key = ?1 AND tag_id = ?2",
+                params![r.book_key, r.tag_id],
+            )?;
+            upsert_tombstone_on(conn, "book_tags", &key)?;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+    let should = force
+        || existing_book_tag_updated_at(conn, &r.book_key, &r.tag_id)
+            .map_or(true, |t| r.updated_at > t);
+    if should {
+        apply_book_tag_sync_on(conn, r)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub fn merge_book_tag_sync(r: &BookTagSyncRow, force: bool) -> Result<bool> {
+    let conn = get().lock().unwrap();
+    merge_book_tag_sync_on(&conn, r, force)
+}
+
+pub(crate) fn merge_setting_sync_on(
+    conn: &Connection,
+    r: &SettingSyncRow,
+    force: bool,
+) -> Result<bool> {
+    merge_row_on(
+        conn,
+        "app_settings",
+        "key",
+        "settings",
+        &r.key,
+        r.updated_at,
+        r.deleted,
+        force,
+        |c| apply_setting_sync_on(c, r),
+    )
+}
+
+pub fn merge_setting_sync(r: &SettingSyncRow, force: bool) -> Result<bool> {
+    let conn = get().lock().unwrap();
+    merge_setting_sync_on(&conn, r, force)
+}
+
+// ============================================================
 // cache_index（已有 API，保留）
 // ============================================================
 
@@ -2234,6 +2582,8 @@ mod tests {
             cookie: None,
             note: String::new(),
             capability_label: "local".into(),
+            remote_only: false,
+            origin_device_id: None,
         };
         upsert_source_on(&conn, &src).unwrap();
         conn.execute("UPDATE book_sources SET fingerprint='fp1' WHERE id='s1'", [])
@@ -2315,6 +2665,8 @@ mod tests {
             cookie: None,
             note: String::new(),
             capability_label: "local".into(),
+            remote_only: false,
+            origin_device_id: None,
         };
         upsert_source_on(&conn, &src).unwrap();
         set_source_alias_on(&conn, "s1", "fp1", "dev1").unwrap();

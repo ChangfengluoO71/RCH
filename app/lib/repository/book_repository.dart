@@ -115,6 +115,8 @@ class BookRepository {
         cookie: dto.cookie,
         note: dto.note,
         capabilityLabel: dto.capabilityLabel,
+        remoteOnly: dto.remoteOnly,
+        originDeviceId: dto.originDeviceId,
       ));
     }
 
@@ -158,6 +160,8 @@ class BookRepository {
         cookie: s.cookie,
         note: s.note,
         capabilityLabel: s.capabilityLabel,
+        remoteOnly: s.remoteOnly,
+        originDeviceId: s.originDeviceId,
       ));
     }
     for (final m in metas.values) {

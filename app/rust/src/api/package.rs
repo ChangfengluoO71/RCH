@@ -25,6 +25,9 @@ pub struct SyncImportStats {
     pub records: i64,
     pub sources: i64,
     pub settings: i64,
+    pub tombstones: i64,
+    pub ghosts: i64,
+    pub skipped: i64,
 }
 
 /// 导出标准包到文件。`incremental=true` 时只导出自上次游标以来的变更。
@@ -44,9 +47,9 @@ pub fn rchpkg_export(path: String, incremental: bool) -> Result<SyncExportInfo, 
     })
 }
 
-/// 从文件导入标准包（保留目标端书源凭据；schema 不兼容时拒绝）。
-pub fn rchpkg_import(path: String) -> Result<SyncImportStats, String> {
-    let stats = rchpkg::import_package_from_file(&path).map_err(|e| e.to_string())?;
+/// 合并/导入标准包。`force=true` 恢复（包覆盖，凭据保留）；`false` 拉取合并（LWW + 墓碑）。
+pub fn rchpkg_import(path: String, force: bool) -> Result<SyncImportStats, String> {
+    let stats = rchpkg::merge_package_from_file(&path, force).map_err(|e| e.to_string())?;
     Ok(SyncImportStats {
         schema_version: stats.schema_version,
         tags: stats.tags as i64,
@@ -55,6 +58,9 @@ pub fn rchpkg_import(path: String) -> Result<SyncImportStats, String> {
         records: stats.records as i64,
         sources: stats.sources as i64,
         settings: stats.settings as i64,
+        tombstones: stats.tombstones as i64,
+        ghosts: stats.ghosts as i64,
+        skipped: stats.skipped as i64,
     })
 }
 

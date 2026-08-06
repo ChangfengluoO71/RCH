@@ -27,6 +27,7 @@ const _kWebdavSourceId = 'sync_webdav_source_id';
 const _kInterval = 'sync_interval_minutes';
 const _kLastAt = 'sync_last_at';
 const _kLastStatus = 'sync_last_status';
+const _kCrossDeviceSearch = 'sync_cross_device_search';
 
 /// 同步管理器（单例）：配置存 app_settings，同步包走 `.rchpkg` 标准格式。
 ///
@@ -43,6 +44,10 @@ class SyncManager extends ChangeNotifier {
   String lastStatus = '尚未同步';
   int ignoredCopies = 0;
   bool busy = false;
+  bool crossDeviceSearch = true;
+
+  /// 设备 id → 名称（幽灵书源来源展示）。
+  final Map<String, String> deviceNames = {};
 
   Timer? _timer;
 
@@ -68,6 +73,11 @@ class SyncManager extends ChangeNotifier {
       intervalMinutes = int.tryParse(map[_kInterval] ?? '') ?? 0;
       lastAt = int.tryParse(map[_kLastAt] ?? '') ?? 0;
       lastStatus = map[_kLastStatus] ?? '尚未同步';
+      crossDeviceSearch = map[_kCrossDeviceSearch] != 'false';
+      deviceNames.clear();
+      for (final d in await dbListDevices()) {
+        deviceNames[d.id] = d.name;
+      }
     } catch (e) {
       debugPrint('[SyncManager] load failed: $e');
     }
@@ -81,6 +91,7 @@ class SyncManager extends ChangeNotifier {
     await dbSaveSetting(key: _kInterval, value: '$intervalMinutes');
     await dbSaveSetting(key: _kLastAt, value: '$lastAt');
     await dbSaveSetting(key: _kLastStatus, value: lastStatus);
+    await dbSaveSetting(key: _kCrossDeviceSearch, value: '$crossDeviceSearch');
     notifyListeners();
   }
 
@@ -104,6 +115,17 @@ class SyncManager extends ChangeNotifier {
     intervalMinutes = minutes;
     _restartTimer();
     await save();
+  }
+
+  Future<void> setCrossDeviceSearch(bool v) async {
+    crossDeviceSearch = v;
+    await save();
+  }
+
+  /// 幽灵书源来源设备显示名。
+  String deviceNameOf(String? deviceId) {
+    if (deviceId == null || deviceId.isEmpty) return '其他设备';
+    return deviceNames[deviceId] ?? '其他设备';
   }
 
   /// 定时任务：先拉远端，再推本地。
@@ -164,9 +186,10 @@ class SyncManager extends ChangeNotifier {
     busy = true;
     notifyListeners();
     try {
-      final stats = await rchpkgImport(path: path);
+      final stats = await rchpkgImport(path: path, force: true);
       final msg =
-          '恢复成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）';
+          '恢复成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）'
+          '${stats.ghosts.toInt() > 0 ? '，其中 ${stats.ghosts.toInt()} 个为其他设备书源' : ''}';
       await _finish(msg);
       return msg;
     } catch (e) {
@@ -224,8 +247,9 @@ class SyncManager extends ChangeNotifier {
     final latest = syncLatestPath(dir);
     if (!await File(latest).exists()) return '目录中没有可拉取的包';
     _scanIgnored(dir);
-    final stats = await rchpkgImport(path: latest);
-    return '拉取成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）';
+    final stats = await rchpkgImport(path: latest, force: false);
+    return '拉取成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）'
+        '${stats.ghosts.toInt() > 0 ? '，含 ${stats.ghosts.toInt()} 个其他设备书源' : ''}';
   }
 
   Future<String> _pullWebdav() async {
@@ -242,8 +266,9 @@ class SyncManager extends ChangeNotifier {
     );
     try {
       await tmp.writeAsBytes(bytes);
-      final stats = await rchpkgImport(path: tmp.path);
-      return '拉取成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）';
+      final stats = await rchpkgImport(path: tmp.path, force: false);
+      return '拉取成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）'
+          '${stats.ghosts.toInt() > 0 ? '，含 ${stats.ghosts.toInt()} 个其他设备书源' : ''}';
     } finally {
       if (await tmp.exists()) await tmp.delete();
     }

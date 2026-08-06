@@ -95,6 +95,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CropRect dco_decode_crop_rect(dynamic raw);
 
   @protected
+  DeviceDto dco_decode_device_dto(dynamic raw);
+
+  @protected
   DirEntry dco_decode_dir_entry(dynamic raw);
 
   @protected
@@ -120,6 +123,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BookTagDto> dco_decode_list_book_tag_dto(dynamic raw);
+
+  @protected
+  List<DeviceDto> dco_decode_list_device_dto(dynamic raw);
 
   @protected
   List<DirEntry> dco_decode_list_dir_entry(dynamic raw);
@@ -294,6 +300,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CropRect sse_decode_crop_rect(SseDeserializer deserializer);
 
   @protected
+  DeviceDto sse_decode_device_dto(SseDeserializer deserializer);
+
+  @protected
   DirEntry sse_decode_dir_entry(SseDeserializer deserializer);
 
   @protected
@@ -321,6 +330,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BookTagDto> sse_decode_list_book_tag_dto(SseDeserializer deserializer);
+
+  @protected
+  List<DeviceDto> sse_decode_list_device_dto(SseDeserializer deserializer);
 
   @protected
   List<DirEntry> sse_decode_list_dir_entry(SseDeserializer deserializer);
@@ -528,6 +540,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_crop_rect(CropRect self, SseSerializer serializer);
 
   @protected
+  void sse_encode_device_dto(DeviceDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_dir_entry(DirEntry self, SseSerializer serializer);
 
   @protected
@@ -563,6 +578,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_book_tag_dto(
     List<BookTagDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_device_dto(
+    List<DeviceDto> self,
     SseSerializer serializer,
   );
 

@@ -49,8 +49,6 @@ pub enum CacheDir {
     Raw,
     /// 封面缩略图缓存（按质量/裁剪分）。
     Cover,
-    /// 缩略图缓存。
-    Thumb,
     /// AI 超分结果缓存。
     Ai,
     /// 临时文件（CB7/CBR 解压中间产物）。
@@ -63,7 +61,6 @@ impl CacheDir {
             CacheDir::Page => "page",
             CacheDir::Raw => "raw",
             CacheDir::Cover => "cover",
-            CacheDir::Thumb => "thumb",
             CacheDir::Ai => "ai",
             CacheDir::Temp => "temp",
         }
@@ -189,12 +186,6 @@ pub fn clear_cover_cache() -> Result<u64> {
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
-/// 清空缩略图缓存（thumb/）。
-pub fn clear_thumb_cache() -> Result<u64> {
-    let dir = CacheDir::Thumb.path();
-    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
-}
-
 /// 清空 AI 结果缓存（ai/）。
 pub fn clear_ai_cache() -> Result<u64> {
     let dir = CacheDir::Ai.path();
@@ -207,21 +198,46 @@ pub fn clear_temp_cache() -> Result<u64> {
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
-/// 清空下载缓存（旧路径兼容）。
-pub fn clear_download_cache() -> Result<u64> {
-    let dir = cache_root().join("download");
-    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+/// 清空旧版遗留缓存：
+/// - cache/ 根目录下的 16 位哈希目录（v0.2 之前的页面缓存布局）；
+/// - 根级 download/ 目录（旧版 WebDAV 整本下载回退，自本版本起不再创建）。
+/// v0.2 之前页面缓存写为 cache/<hash>/N.bin，升级后改为 cache/page/<hash>/N.bin；
+/// 历史遗留目录不归任何当前缓存层管理，清空全部缓存时一并移除。
+fn clear_legacy_artifacts() -> Result<u64> {
+    let mut freed = 0u64;
+    // 旧版 download/ 目录
+    let legacy_download = cache_root().join("download");
+    if legacy_download.exists() {
+        freed += dir_size(&legacy_download);
+        std::fs::remove_dir_all(&legacy_download)?;
+    }
+    // 旧版页面缓存（cache/<16位hash>/）
+    let dir = cache_root().join("cache");
+    if dir.exists() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            if !meta.is_dir() { continue; }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_legacy_hash = name.len() == 16 && name.chars().all(|c| c.is_ascii_hexdigit());
+            if is_legacy_hash {
+                let p = entry.path();
+                freed += dir_size(&p);
+                std::fs::remove_dir_all(&p)?;
+            }
+        }
+    }
+    Ok(freed)
 }
 
-/// 清空所有缓存（六级 + 旧 download 目录）。
+/// 清空所有缓存（page/raw/cover/ai/temp + 旧版遗留目录）。
 pub fn clear_all_caches() -> Result<u64> {
     Ok(clear_page_cache()?
         + clear_raw_cache()?
         + clear_cover_cache()?
-        + clear_thumb_cache()?
         + clear_ai_cache()?
         + clear_temp_cache()?
-        + clear_download_cache()?)
+        + clear_legacy_artifacts()?)
 }
 
 // ====== 应用根目录迁移（O1-A：复制 + 校验 + 成功后删源） ======
@@ -298,7 +314,7 @@ pub fn available_space(path: &str) -> u64 {
     }
 }
 
-/// 迁移应用根目录：database.db + cache/ + download/ + 根级普通文件。
+/// 迁移应用根目录：database.db + cache/ + 根级普通文件。
 ///
 /// - 排除嵌套的应用支持目录（library.json 所在）与迁移标记本身；
 /// - 开始写 `migration.partial` 标记（含 from/to，支持启动恢复），
@@ -317,7 +333,7 @@ pub fn migrate_cache_root(from: &str, to: &str, support_dir: &str) -> Result<u64
         bail!("缓存目录不能是磁盘根目录");
     }
 
-    // 收集待迁移项目：database.db、cache/、download/、根级普通文件。
+    // 收集待迁移项目：database.db、cache/、根级普通文件。
     struct Item {
         name: String,
         is_dir: bool,
@@ -338,7 +354,7 @@ pub fn migrate_cache_root(from: &str, to: &str, support_dir: &str) -> Result<u64
                 Err(_) => continue,
             };
             if meta.is_dir() {
-                if name == "cache" || name == "download" {
+                if name == "cache" {
                     items.push(Item { name, is_dir: true });
                 }
                 // 其他未知目录不迁移
@@ -432,14 +448,14 @@ pub fn clear_migration_marker(root: &str) {
     let _ = std::fs::remove_file(PathBuf::from(root).join(MIGRATION_MARKER));
 }
 
-/// 删除根目录下已迁移的项目（database.db、cache/、download/），返回释放字节。
+/// 删除根目录下已迁移的项目（database.db、cache/），返回释放字节。
 pub fn delete_migrated_items(root: &str) -> Result<u64> {
     let root_p = PathBuf::from(root);
     if root_p.parent() == Some(&root_p) {
         bail!("缓存目录不能是磁盘根目录");
     }
     let mut freed = 0u64;
-    for name in ["database.db", "cache", "download"] {
+    for name in ["database.db", "cache"] {
         let p = root_p.join(name);
         if !p.starts_with(&root_p) || !p.exists() {
             continue;
@@ -460,7 +476,6 @@ pub fn ensure_all_cache_dirs() -> Result<()> {
     CacheDir::Page.ensure()?;
     CacheDir::Raw.ensure()?;
     CacheDir::Cover.ensure()?;
-    CacheDir::Thumb.ensure()?;
     CacheDir::Ai.ensure()?;
     CacheDir::Temp.ensure()?;
     Ok(())
@@ -506,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_copies_db_cache_download_skips_support() {
+    fn migrate_copies_db_cache_skips_support() {
         let base = std::env::temp_dir().join("rch_test_migrate_v2");
         let from = base.join("from");
         let to = base.join("to");
@@ -514,11 +529,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
 
         std::fs::create_dir_all(from.join("cache/page")).unwrap();
-        std::fs::create_dir_all(from.join("download")).unwrap();
         std::fs::create_dir_all(&support).unwrap();
         std::fs::write(from.join("database.db"), vec![1u8; 500]).unwrap();
         std::fs::write(from.join("cache/page/a.bin"), vec![2u8; 100]).unwrap();
-        std::fs::write(from.join("download/b.zip"), vec![3u8; 200]).unwrap();
         std::fs::write(from.join("note.txt"), b"root file").unwrap();
         std::fs::write(support.join("library.json"), b"{}").unwrap();
 
@@ -528,20 +541,18 @@ mod tests {
             support.to_str().unwrap(),
         )
         .unwrap();
-        assert_eq!(n, 500 + 100 + 200 + 9);
+        assert_eq!(n, 500 + 100 + 9);
         assert!(to.join("database.db").exists());
         assert!(to.join("cache/page/a.bin").exists());
-        assert!(to.join("download/b.zip").exists());
         assert!(to.join("note.txt").exists());
         // 支持目录不迁移；成功迁移后标记被清除
         assert!(!to.join("RCH").exists());
         assert!(!from.join(MIGRATION_MARKER).exists());
 
         let freed = delete_migrated_items(from.to_str().unwrap()).unwrap();
-        assert!(freed >= 800);
+        assert!(freed >= 600);
         assert!(!from.join("database.db").exists());
         assert!(!from.join("cache").exists());
-        assert!(!from.join("download").exists());
         assert!(from.join("RCH").exists()); // 支持目录保留
         let _ = std::fs::remove_dir_all(&base);
     }

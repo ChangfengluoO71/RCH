@@ -302,7 +302,7 @@ impl WebDavClient {
         Ok(resp.status() == StatusCode::PARTIAL_CONTENT)
     }
 
-    /// 下载完整文件到本地磁盘缓存(用于不支持 Range 的服务器回退)。
+    /// 下载完整文件到 raw/ 本地磁盘缓存(用于不支持 Range 的服务器回退)。
     /// 若本地已有缓存(非空),直接复用;否则 GET 整包落盘后返回本地 ByteSource 包装。
     pub fn download_full(
         &self,
@@ -312,8 +312,7 @@ impl WebDavClient {
     > {
         use std::hash::{Hash, Hasher};
 
-        let cache_dir = crate::cache::cache_root().join("download");
-        std::fs::create_dir_all(&cache_dir).ok();
+        let cache_dir = crate::cache::CacheDir::Raw.ensure().context("创建 raw/ 缓存目录失败")?;
         let name = path.rsplit('/').next().unwrap_or("file.cbz");
         let hash = {
             let mut h = std::collections::hash_map::DefaultHasher::new();

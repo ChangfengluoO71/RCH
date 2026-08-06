@@ -188,9 +188,8 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     var total = sizes.page +
         sizes.raw +
         sizes.cover +
-        sizes.thumb +
         sizes.ai +
-        sizes.download;
+        sizes.temp;
     try {
       final db = File('$root${Platform.pathSeparator}database.db');
       if (await db.exists()) {
@@ -284,12 +283,6 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
           _cacheRow(Icons.image, '封面缩略图（cover/）', _sizes!.cover,
               '海报墙封面图片缓存',
               () => _clear('清空封面缓存', clearCoverCache, clearCoverMemory: true)),
-          _cacheRow(Icons.photo_library, '缩略图（thumb/）', _sizes!.thumb,
-              '列表缩略图缓存',
-              () => _clear('清空缩略图缓存', clearThumbCache)),
-          _cacheRow(Icons.folder_copy, '旧下载目录（download/）', _sizes!.download,
-              '旧版下载回退目录',
-              () => _clear('清空旧下载缓存', clearDownloadCache)),
           _cacheRow(Icons.auto_awesome, 'AI 超分结果（ai/）', _sizes!.ai,
               'AI 超分输出缓存',
               () => _clear('清空 AI 缓存', clearAiCache)),

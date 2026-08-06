@@ -14,11 +14,7 @@ Future<CacheSize> cacheSizes() =>
 Future<BigInt> pageCacheSize() =>
     RustLib.instance.api.crateApiCachePageCacheSize();
 
-/// 获取下载缓存大小（字节）。
-Future<BigInt> downloadCacheSize() =>
-    RustLib.instance.api.crateApiCacheDownloadCacheSize();
-
-/// 获取所有缓存磁盘总占用（字节）。
+/// 获取所有缓存分类总占用（字节，不含数据库/日志等非缓存数据）。
 Future<BigInt> totalCacheSize() =>
     RustLib.instance.api.crateApiCacheTotalCacheSize();
 
@@ -34,10 +30,6 @@ Future<BigInt> clearRawCache() =>
 Future<BigInt> clearCoverCache() =>
     RustLib.instance.api.crateApiCacheClearCoverCache();
 
-/// 清空缩略图缓存（thumb/），返回释放的字节数。
-Future<BigInt> clearThumbCache() =>
-    RustLib.instance.api.crateApiCacheClearThumbCache();
-
 /// 清空 AI 结果缓存（ai/），返回释放的字节数。
 Future<BigInt> clearAiCache() =>
     RustLib.instance.api.crateApiCacheClearAiCache();
@@ -45,10 +37,6 @@ Future<BigInt> clearAiCache() =>
 /// 清空临时文件（temp/），返回释放的字节数。
 Future<BigInt> clearTempCache() =>
     RustLib.instance.api.crateApiCacheClearTempCache();
-
-/// 清空下载缓存，返回释放的字节数。
-Future<BigInt> clearDownloadCache() =>
-    RustLib.instance.api.crateApiCacheClearDownloadCache();
 
 /// 清空全部缓存，返回释放的字节数。
 Future<BigInt> clearAllCaches() =>
@@ -67,7 +55,7 @@ Future<void> setCacheRootPath({required String path}) =>
 Future<String> defaultCacheRootPath() =>
     RustLib.instance.api.crateApiCacheDefaultCacheRootPath();
 
-/// 迁移应用根目录（database.db + cache/ + download/ + 根级文件），排除支持目录。
+/// 迁移应用根目录（database.db + cache/ + 根级文件），排除支持目录。
 /// 成功返回复制的字节数；调用方随后 set_cache_root_path + delete_migrated_items。
 Future<BigInt> migrateCacheRoot({
   required String from,
@@ -87,7 +75,7 @@ Future<(BigInt, BigInt)> migrationProgress() =>
 Future<BigInt> availableSpace({required String path}) =>
     RustLib.instance.api.crateApiCacheAvailableSpace(path: path);
 
-/// 删除根目录下已迁移的项目（database.db、cache/、download/），返回释放字节。
+/// 删除根目录下已迁移的项目（database.db、cache/），返回释放字节。
 Future<BigInt> deleteMigratedItems({required String root}) =>
     RustLib.instance.api.crateApiCacheDeleteMigratedItems(root: root);
 
@@ -110,14 +98,8 @@ class CacheSize {
   /// 封面缓存(字节)，封面缩略图磁盘缓存（cover/）。
   final BigInt cover;
 
-  /// 缩略图缓存(字节)（thumb/）。
-  final BigInt thumb;
-
   /// AI 结果缓存(字节)（ai/）。
   final BigInt ai;
-
-  /// 旧下载目录(字节)。
-  final BigInt download;
 
   /// 临时文件(字节)（temp/）。
   final BigInt temp;
@@ -129,9 +111,7 @@ class CacheSize {
     required this.page,
     required this.raw,
     required this.cover,
-    required this.thumb,
     required this.ai,
-    required this.download,
     required this.temp,
     required this.total,
   });
@@ -141,9 +121,7 @@ class CacheSize {
       page.hashCode ^
       raw.hashCode ^
       cover.hashCode ^
-      thumb.hashCode ^
       ai.hashCode ^
-      download.hashCode ^
       temp.hashCode ^
       total.hashCode;
 
@@ -155,9 +133,7 @@ class CacheSize {
           page == other.page &&
           raw == other.raw &&
           cover == other.cover &&
-          thumb == other.thumb &&
           ai == other.ai &&
-          download == other.download &&
           temp == other.temp &&
           total == other.total;
 }

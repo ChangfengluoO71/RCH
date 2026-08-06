@@ -35,7 +35,7 @@
 │         │                                          │
 │  ┌──────┴──────────────────────────────┐          │
 │  │  cache/ + downloader/                │          │
-│  │  五级缓存 (raw/cover/thumb/ai/temp)   │          │
+│  │  五级缓存 (page/raw/cover/ai/temp)    │          │
 │  │  + 统一下载调度器                      │          │
 │  └──────────────────────────────────────┘          │
 │                                                  │
@@ -109,11 +109,12 @@ match extension {
 ├── cache/
 │   ├── raw/       # 整本漫画原始文件 (WebDAV 下载后)
 │   ├── cover/     # 封面缓存 (按质量/裁剪区域分)
-│   ├── thumb/     # 缩略图缓存
 │   ├── ai/        # AI 超分结果 (按模型/倍率分)
-│   └── temp/      # 临时文件 (CB7/CBR 解压中间产物)
+│   └── page/      # L2 页面缓存 (读过的页写盘)
 ├── library.json   # 书源/阅读记录/元数据/设置
 └── database.db    # SQLite: 漫画索引/缓存 Hash/ETag
+
+注：temp/ 位于系统临时目录（%TEMP%/RCH/temp），不占用上述数据目录。
 ```
 
 ## 阅读器数据流

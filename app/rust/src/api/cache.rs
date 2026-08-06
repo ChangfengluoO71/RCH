@@ -10,12 +10,8 @@ pub struct CacheSize {
     pub raw: u64,
     /// 封面缓存(字节)，封面缩略图磁盘缓存（cover/）。
     pub cover: u64,
-    /// 缩略图缓存(字节)（thumb/）。
-    pub thumb: u64,
     /// AI 结果缓存(字节)（ai/）。
     pub ai: u64,
-    /// 旧下载目录(字节)。
-    pub download: u64,
     /// 临时文件(字节)（temp/）。
     pub temp: u64,
     /// 所有缓存总和(字节)。
@@ -24,15 +20,19 @@ pub struct CacheSize {
 
 /// 获取所有缓存分类大小。
 pub fn cache_sizes() -> CacheSize {
+    let page = cache::dir_size(&cache::CacheDir::Page.path());
+    let raw = cache::dir_size(&cache::CacheDir::Raw.path());
+    let cover = cache::dir_size(&cache::CacheDir::Cover.path());
+    let ai = cache::dir_size(&cache::CacheDir::Ai.path());
+    let temp = cache::dir_size(&cache::CacheDir::Temp.path());
     CacheSize {
-        page: cache::dir_size(&cache::CacheDir::Page.path()),
-        raw: cache::dir_size(&cache::CacheDir::Raw.path()),
-        cover: cache::dir_size(&cache::CacheDir::Cover.path()),
-        thumb: cache::dir_size(&cache::CacheDir::Thumb.path()),
-        ai: cache::dir_size(&cache::CacheDir::Ai.path()),
-        download: cache::dir_size(&cache::cache_root().join("download")),
-        temp: cache::dir_size(&cache::CacheDir::Temp.path()),
-        total: cache::dir_size(&cache::cache_root()),
+        page,
+        raw,
+        cover,
+        ai,
+        temp,
+        // 磁盘总占用 = 各缓存分类之和（不含数据库、日志、支持目录等非缓存数据）。
+        total: page + raw + cover + ai + temp,
     }
 }
 
@@ -41,14 +41,13 @@ pub fn page_cache_size() -> u64 {
     cache::dir_size(&cache::CacheDir::Page.path())
 }
 
-/// 获取下载缓存大小（字节）。
-pub fn download_cache_size() -> u64 {
-    cache::dir_size(&cache::cache_root().join("download"))
-}
-
-/// 获取所有缓存磁盘总占用（字节）。
+/// 获取所有缓存分类总占用（字节，不含数据库/日志等非缓存数据）。
 pub fn total_cache_size() -> u64 {
-    cache::dir_size(&cache::cache_root())
+    cache::dir_size(&cache::CacheDir::Page.path())
+        + cache::dir_size(&cache::CacheDir::Raw.path())
+        + cache::dir_size(&cache::CacheDir::Cover.path())
+        + cache::dir_size(&cache::CacheDir::Ai.path())
+        + cache::dir_size(&cache::CacheDir::Temp.path())
 }
 
 /// 清空 L2 页面缓存，返回释放的字节数。
@@ -66,11 +65,6 @@ pub fn clear_cover_cache() -> Result<u64, String> {
     cache::clear_cover_cache().map_err(|e| format!("{e}"))
 }
 
-/// 清空缩略图缓存（thumb/），返回释放的字节数。
-pub fn clear_thumb_cache() -> Result<u64, String> {
-    cache::clear_thumb_cache().map_err(|e| format!("{e}"))
-}
-
 /// 清空 AI 结果缓存（ai/），返回释放的字节数。
 pub fn clear_ai_cache() -> Result<u64, String> {
     cache::clear_ai_cache().map_err(|e| format!("{e}"))
@@ -79,11 +73,6 @@ pub fn clear_ai_cache() -> Result<u64, String> {
 /// 清空临时文件（temp/），返回释放的字节数。
 pub fn clear_temp_cache() -> Result<u64, String> {
     cache::clear_temp_cache().map_err(|e| format!("{e}"))
-}
-
-/// 清空下载缓存，返回释放的字节数。
-pub fn clear_download_cache() -> Result<u64, String> {
-    cache::clear_download_cache().map_err(|e| format!("{e}"))
 }
 
 /// 清空全部缓存，返回释放的字节数。
@@ -111,7 +100,7 @@ pub fn default_cache_root_path() -> String {
     }
 }
 
-/// 迁移应用根目录（database.db + cache/ + download/ + 根级文件），排除支持目录。
+/// 迁移应用根目录（database.db + cache/ + 根级文件），排除支持目录。
 /// 成功返回复制的字节数；调用方随后 set_cache_root_path + delete_migrated_items。
 pub fn migrate_cache_root(from: String, to: String, support_dir: String) -> Result<u64, String> {
     cache::migrate_cache_root(&from, &to, &support_dir).map_err(|e| format!("{e}"))
@@ -127,7 +116,7 @@ pub fn available_space(path: String) -> u64 {
     cache::available_space(&path)
 }
 
-/// 删除根目录下已迁移的项目（database.db、cache/、download/），返回释放字节。
+/// 删除根目录下已迁移的项目（database.db、cache/），返回释放字节。
 pub fn delete_migrated_items(root: String) -> Result<u64, String> {
     cache::delete_migrated_items(&root).map_err(|e| format!("{e}"))
 }

@@ -8,6 +8,12 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **缓存管理面板**：移除缩略图（thumb/）与旧下载目录（download/）两个缓存层——thumb/ 无任何写入代码属占位层，download/ 的 WebDAV 整本下载回退已并入 raw/ 缓存；"磁盘总占用"改为各缓存分类之和；"清空全部缓存"同时清理旧版页面缓存与 download/ 遗留目录
+
 ## [0.3.3] — 2026-08-04
 
 ### Added

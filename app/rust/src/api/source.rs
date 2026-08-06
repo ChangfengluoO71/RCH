@@ -232,7 +232,7 @@ pub async fn open_webdav_book(session: u64, path: String, strategy: String) -> R
                         let src = WebDavFile::new(client, path.clone(), len);
                         document::open_document(src, &path)
                     } else {
-                        // 无 Range 服务器无法流式, 只能整本下载(download/ 回退)
+                        // 无 Range 服务器无法流式, 只能整本下载(raw/ 回退)
                         let src = client.download_full(&path)?;
                         document::open_document(src, &path)
                     }

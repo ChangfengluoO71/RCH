@@ -125,3 +125,26 @@ M5 收尾提交；M6 实现百度/115 官方 API 书源（OAuth/设备码授权�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 缓存管理收尾：codegen 脚本 + 缓存文案修正 + 详情页提示去具体化
+
+**Date**: 2026-08-06
+**Task**: 缓存管理收尾：codegen 脚本 + 缓存文案修正 + 详情页提示去具体化
+**Branch**: `master`
+
+### Summary
+
+新增 codegen.ps1（绑定生成+release DLL 重建）防止 FRB content hash 不同步；修正缓存管理相关文案（raw/ 为远程书源整本下载、temp/ 为 AI 超分临时文件）；漫画详情页元数据编辑去掉具体提示文案；排查并清理构建僵尸进程导致的构建卡死
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `875a8c3` | (see git log) |
+| `0162ee7` | (see git log) |
+| `7b4c7c7` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-08-06
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~127 | Active |
+| `journal-1.md` | ~150 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-08-06 | 缓存管理收尾：codegen 脚本 + 缓存文案修正 + 详情页提示去具体化 | `875a8c3`, `0162ee7`, `7b4c7c7` | `master` |
 | 4 | 2026-08-06 | 缓存管理清理：移除缩略图/旧下载缓存层 | `c660661`, `860c457` | `master` |
 | 3 | 2026-08-06 | 百度网盘 31045 修复：dlink 拼接 access_token + 403 强制刷新 + 书源删除 SQLite 持久化 | `a637ffc`, `0128e1f` | `master` |
 | 2 | 2026-08-03 | M6 网盘直连书源 + v0.3.2 发布 | `de8de58` | `master` |

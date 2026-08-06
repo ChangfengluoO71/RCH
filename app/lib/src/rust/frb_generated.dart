@@ -73,7 +73,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -1472725222;
+  int get rustContentHash => -597108082;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -450,6 +450,11 @@ abstract class RustLibApi extends BaseApi {
 
   Future<void> crateApiSourceWebdavDisconnect({required BigInt id});
 
+  Future<Uint8List> crateApiSourceWebdavDownloadFile({
+    required BigInt session,
+    required String path,
+  });
+
   Future<double> crateApiSourceWebdavDownloadProgress({
     required BigInt session,
   });
@@ -462,6 +467,17 @@ abstract class RustLibApi extends BaseApi {
   Future<List<DirEntry>> crateApiSourceWebdavList({
     required BigInt session,
     required String path,
+  });
+
+  Future<void> crateApiSourceWebdavMakeDir({
+    required BigInt session,
+    required String path,
+  });
+
+  Future<void> crateApiSourceWebdavUploadFile({
+    required BigInt session,
+    required String path,
+    required List<int> data,
   });
 }
 
@@ -3653,6 +3669,41 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "webdav_disconnect", argNames: ["id"]);
 
   @override
+  Future<Uint8List> crateApiSourceWebdavDownloadFile({
+    required BigInt session,
+    required String path,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 102,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_prim_u_8_strict,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSourceWebdavDownloadFileConstMeta,
+        argValues: [session, path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceWebdavDownloadFileConstMeta =>
+      const TaskConstMeta(
+        debugName: "webdav_download_file",
+        argNames: ["session", "path"],
+      );
+
+  @override
   Future<double> crateApiSourceWebdavDownloadProgress({
     required BigInt session,
   }) {
@@ -3664,7 +3715,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 102,
+            funcId: 103,
             port: port_,
           );
         },
@@ -3699,7 +3750,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 103,
+            funcId: 104,
             port: port_,
           );
         },
@@ -3734,7 +3785,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 104,
+            funcId: 105,
             port: port_,
           );
         },
@@ -3753,6 +3804,78 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     debugName: "webdav_list",
     argNames: ["session", "path"],
   );
+
+  @override
+  Future<void> crateApiSourceWebdavMakeDir({
+    required BigInt session,
+    required String path,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          sse_encode_String(path, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 106,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSourceWebdavMakeDirConstMeta,
+        argValues: [session, path],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceWebdavMakeDirConstMeta =>
+      const TaskConstMeta(
+        debugName: "webdav_make_dir",
+        argNames: ["session", "path"],
+      );
+
+  @override
+  Future<void> crateApiSourceWebdavUploadFile({
+    required BigInt session,
+    required String path,
+    required List<int> data,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_64(session, serializer);
+          sse_encode_String(path, serializer);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 107,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiSourceWebdavUploadFileConstMeta,
+        argValues: [session, path, data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiSourceWebdavUploadFileConstMeta =>
+      const TaskConstMeta(
+        debugName: "webdav_upload_file",
+        argNames: ["session", "path", "data"],
+      );
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {

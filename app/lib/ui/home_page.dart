@@ -9,6 +9,7 @@ import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/opener.dart';
 import 'package:app/ui/source_browser.dart';
+import 'package:app/ui/sync_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -515,7 +516,7 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSettings() {
     final s = LibraryStore.instance.settings;
     return ListenableBuilder(listenable: LibraryStore.instance, builder: (c, _) => ListView(padding: const EdgeInsets.all(24), children: [
-      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const CacheManagerPanel(), const SizedBox(height: 28),
+      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const CacheManagerPanel(), const SizedBox(height: 28), const SyncPanel(), const SizedBox(height: 28),
       _readingDefaults(s), const SizedBox(height: 16), _remoteSources(s), const SizedBox(height: 16), _localComics(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
     ]));
   }

@@ -7,6 +7,7 @@ import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
+import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +38,9 @@ Future<void> main() async {
 
   // 加载数据（优先 SQLite，fallback JSON）
   await LibraryStore.instance.load();
+
+  // 备份/同步：加载配置并按需启动定时同步。
+  await SyncManager.instance.init();
 
   // 后台 AI 超分：加载持久化队列并续跑。
   await AiUpscaleManager.instance.init();

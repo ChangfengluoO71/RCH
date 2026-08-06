@@ -62,6 +62,33 @@ Future<bool> webdavHasRawCache({
   path: path,
 );
 
+/// 上传文件到 WebDAV 路径（P2 同步包推送）。
+Future<void> webdavUploadFile({
+  required BigInt session,
+  required String path,
+  required List<int> data,
+}) => RustLib.instance.api.crateApiSourceWebdavUploadFile(
+  session: session,
+  path: path,
+  data: data,
+);
+
+/// 下载 WebDAV 文件到内存（P2 同步包拉取）。
+Future<Uint8List> webdavDownloadFile({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceWebdavDownloadFile(
+  session: session,
+  path: path,
+);
+
+/// 在 WebDAV 服务器幂等创建目录（P2 同步目录准备）。
+Future<void> webdavMakeDir({required BigInt session, required String path}) =>
+    RustLib.instance.api.crateApiSourceWebdavMakeDir(
+      session: session,
+      path: path,
+    );
+
 /// 连接 SFTP 服务器（密码认证），返回会话句柄；root 固定为 `/`。
 Future<SftpSessionInfo> sftpConnect({
   required String host,

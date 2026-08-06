@@ -290,6 +290,72 @@ impl WebDavClient {
             .ok_or_else(|| anyhow!("无法获取文件大小:{}", path))
     }
 
+    /// 上传文件（PUT，P2 同步包推送；需服务器支持 WebDAV 写）。
+    pub fn upload_file(&self, path: &str, data: &[u8]) -> Result<()> {
+        let resp = self
+            .client
+            .put(self.url(path))
+            .basic_auth(&self.user, Some(&self.pass))
+            .body(data.to_vec())
+            .send()
+            .context("PUT 上传请求失败")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            let hint = match status.as_u16() {
+                401 => "用户名或密码错误",
+                403 => "没有写入权限",
+                404 => "目标路径不存在（需先创建 RCH/sync 目录）",
+                409 => "服务器不支持在此路径创建",
+                507 => "服务器存储空间不足",
+                _ => "",
+            };
+            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            bail!("上传失败:HTTP {} {}{}", status.as_u16(), hint, snippet);
+        }
+        Ok(())
+    }
+
+    /// 下载完整文件到内存（GET，P2 同步包拉取；不依赖 Range）。
+    pub fn download_file(&self, path: &str) -> Result<Vec<u8>> {
+        let resp = self
+            .client
+            .get(self.url(path))
+            .basic_auth(&self.user, Some(&self.pass))
+            .send()
+            .context("GET 下载请求失败")?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            let hint = match status.as_u16() {
+                401 => "用户名或密码错误",
+                403 => "没有访问权限",
+                404 => "文件不存在（可能尚未推送）",
+                _ => "",
+            };
+            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            bail!("下载失败:HTTP {} {}{}", status.as_u16(), hint, snippet);
+        }
+        Ok(resp.bytes().context("读取下载响应失败")?.to_vec())
+    }
+
+    /// 幂等创建目录（MKCOL：201=新建，405=已存在）。
+    pub fn make_dir(&self, path: &str) -> Result<()> {
+        let resp = self
+            .client
+            .request(Method::from_bytes(b"MKCOL").unwrap(), self.url(path))
+            .basic_auth(&self.user, Some(&self.pass))
+            .send()
+            .context("MKCOL 创建目录请求失败")?;
+        let status = resp.status();
+        if !matches!(status.as_u16(), 201 | 405) {
+            let body = resp.text().unwrap_or_default();
+            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            bail!("创建目录失败:HTTP {} {}", status.as_u16(), snippet);
+        }
+        Ok(())
+    }
+
     /// 探测服务器是否支持 Range(对 bytes=0-0 应返回 206)。
     pub fn range_supported(&self, path: &str) -> Result<bool> {
         let resp = self

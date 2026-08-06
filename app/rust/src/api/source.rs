@@ -290,6 +290,33 @@ pub fn webdav_has_raw_cache(session: u64, path: String) -> bool {
     webdav::raw_cache_path(client.origin(), &path).is_some()
 }
 
+/// 上传文件到 WebDAV 路径（P2 同步包推送）。
+pub async fn webdav_upload_file(session: u64, path: String, data: Vec<u8>) -> Result<(), String> {
+    let client = get_session(session).map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || client.upload_file(&path, &data))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 下载 WebDAV 文件到内存（P2 同步包拉取）。
+pub async fn webdav_download_file(session: u64, path: String) -> Result<Vec<u8>, String> {
+    let client = get_session(session).map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || client.download_file(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 在 WebDAV 服务器幂等创建目录（P2 同步目录准备）。
+pub async fn webdav_make_dir(session: u64, path: String) -> Result<(), String> {
+    let client = get_session(session).map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || client.make_dir(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 /// SFTP 会话信息。
 pub struct SftpSessionInfo {
     pub id: u64,

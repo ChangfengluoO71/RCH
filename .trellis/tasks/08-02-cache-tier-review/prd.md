@@ -17,11 +17,17 @@
 
 ## Acceptance Criteria
 
-- [ ] thumb 层从代码与 UI 中移除，`cache_sizes` 不再包含 thumb
-- [ ] download 策略确定并落地（保留/清理），WebDAV 回退下载不失效
-- [ ] `cargo test`、`flutter analyze` 通过
+- [x] thumb 层从代码与 UI 中移除，`cache_sizes` 不再包含 thumb
+- [x] download 策略确定并落地（删除目录、回退并入 raw/），WebDAV 回退下载不失效
+- [x] `cargo test`、`flutter analyze` 通过
 
 ## Open Questions（开工前确认）
 
 - **O1** thumb 直接删除，还是保留目录待未来缩略图功能使用？推荐删除（无写入代码，保留只会误导）。
 - **O2** download 旧文件：保留（回退仍可读）还是清理（raw 已是主路径）？推荐保留但清理面板文案改为"整本下载回退"，并提供一键清理。
+
+## 决策记录（2026-08-06 实施）
+
+- **O1 → 删除 thumb**：无任何写入代码的占位层，从枚举、大小统计、清理 API、目录创建与 UI 中整体移除。
+- **O2 → 删除 download/**：WebDAV 无 Range 服务器回退（`download_full`）改为写入 raw/ 缓存，与主路径共用同一 hash 缓存；"清空全部缓存"会一并清理旧版遗留的 download/ 与旧页面缓存哈希目录。
+- "磁盘总占用"改为各缓存分类之和（不含数据库/日志/支持目录）。

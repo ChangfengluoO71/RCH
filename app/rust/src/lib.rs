@@ -5,6 +5,7 @@ pub mod db;
 pub mod decode;
 pub mod document;
 pub mod downloader;
+pub mod rchpkg;
 pub mod reader;
 pub mod source;
 pub mod util;

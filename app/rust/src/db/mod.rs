@@ -57,7 +57,7 @@ pub fn reopen_data_db() -> Result<()> {
 }
 
 /// 初始化所有表（幂等 CREATE TABLE IF NOT EXISTS）。
-fn init_tables(conn: &Connection) -> Result<()> {
+pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
         -- 缓存索引（已有，保留）
@@ -1193,15 +1193,19 @@ pub struct SourceAliasRow {
     pub updated_at: i64,
 }
 
-/// 获取（或生成并持久化）本机设备 ID，幂等。
-pub fn get_or_create_device_id() -> Result<String> {
-    let conn = get().lock().unwrap();
-    if let Some(id) = get_sync_state_on(&conn, "device_id") {
+pub(crate) fn get_or_create_device_id_on(conn: &Connection) -> Result<String> {
+    if let Some(id) = get_sync_state_on(conn, "device_id") {
         return Ok(id);
     }
     let id = format!("dev_{}_{}", now_ms(), std::process::id());
-    set_sync_state_on(&conn, "device_id", &id)?;
+    set_sync_state_on(conn, "device_id", &id)?;
     Ok(id)
+}
+
+/// 获取（或生成并持久化）本机设备 ID，幂等。
+pub fn get_or_create_device_id() -> Result<String> {
+    let conn = get().lock().unwrap();
+    get_or_create_device_id_on(&conn)
 }
 
 /// 注册/刷新一台设备（含本机）。
@@ -1233,7 +1237,7 @@ pub fn list_devices() -> Vec<DeviceRow> {
     .collect()
 }
 
-fn get_sync_state_on(conn: &Connection, key: &str) -> Option<String> {
+pub(crate) fn get_sync_state_on(conn: &Connection, key: &str) -> Option<String> {
     conn.query_row(
         "SELECT value FROM sync_state WHERE key = ?1",
         params![key],
@@ -1242,7 +1246,7 @@ fn get_sync_state_on(conn: &Connection, key: &str) -> Option<String> {
     .ok()
 }
 
-fn set_sync_state_on(conn: &Connection, key: &str, value: &str) -> Result<()> {
+pub(crate) fn set_sync_state_on(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO sync_state (key, value, updated_at) VALUES (?1, ?2, ?3)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
@@ -1350,6 +1354,453 @@ pub fn set_record_stable_id(key: &str, stable_id: &str) -> Result<()> {
 }
 
 // ============================================================
+// 同步导出/导入（P1：标准包格式数据存取层）
+// ============================================================
+
+/// 书源同步行（不含 password / refresh_token / client_secret / cookie 敏感字段）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSyncRow {
+    pub id: String,
+    pub r#type: String,
+    pub name: String,
+    pub path: String,
+    pub url: Option<String>,
+    pub username: Option<String>,
+    pub port: Option<i64>,
+    pub note: String,
+    pub capability_label: String,
+    pub fingerprint: Option<String>,
+    pub remote_only: bool,
+    pub origin_device_id: Option<String>,
+    pub root_id: Option<String>,
+    pub client_id: Option<String>,
+    pub updated_at: i64,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordSyncRow {
+    pub key: String,
+    pub stable_id: Option<String>,
+    pub source_id: String,
+    pub source_type: String,
+    pub path: String,
+    pub title: String,
+    pub last_page: i32,
+    pub read_count: i32,
+    pub last_read_at: i64,
+    pub updated_at: i64,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaSyncRow {
+    pub key: String,
+    pub stable_id: Option<String>,
+    pub cover_page: i32,
+    pub crop_x: Option<f64>,
+    pub crop_y: Option<f64>,
+    pub crop_w: Option<f64>,
+    pub crop_h: Option<f64>,
+    pub author: String,
+    pub genre: String,
+    pub series: String,
+    pub title: String,
+    pub chinese_title: String,
+    pub summary: String,
+    pub comment: String,
+    pub rotations: String,
+    pub updated_at: i64,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagSyncRow {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookTagSyncRow {
+    pub book_key: String,
+    pub tag_id: String,
+    pub updated_at: i64,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingSyncRow {
+    pub key: String,
+    pub value: String,
+    pub updated_at: i64,
+    pub deleted: bool,
+}
+
+pub(crate) fn load_sources_for_sync_on(conn: &Connection, since: i64) -> Vec<SourceSyncRow> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, type, name, path, url, username, port, note, capability_label,
+                    fingerprint, remote_only, origin_device_id, root_id, client_id,
+                    updated_at, deleted
+             FROM book_sources WHERE updated_at > ?1 ORDER BY updated_at",
+        )
+        .unwrap();
+    stmt.query_map([since], |row| {
+        Ok(SourceSyncRow {
+            id: row.get(0)?,
+            r#type: row.get(1)?,
+            name: row.get(2)?,
+            path: row.get(3)?,
+            url: row.get(4)?,
+            username: row.get(5)?,
+            port: row.get(6)?,
+            note: row.get(7)?,
+            capability_label: row.get(8)?,
+            fingerprint: row.get(9)?,
+            remote_only: row.get::<_, i64>(10)? != 0,
+            origin_device_id: row.get(11)?,
+            root_id: row.get(12)?,
+            client_id: row.get(13)?,
+            updated_at: row.get(14)?,
+            deleted: row.get::<_, i64>(15)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_sources_for_sync(since: i64) -> Vec<SourceSyncRow> {
+    let conn = get().lock().unwrap();
+    load_sources_for_sync_on(&conn, since)
+}
+
+pub(crate) fn load_records_for_sync_on(conn: &Connection, since: i64) -> Vec<RecordSyncRow> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT key, stable_id, source_id, source_type, path, title,
+                    last_page, read_count, last_read_at, updated_at, deleted
+             FROM read_records WHERE updated_at > ?1 ORDER BY updated_at",
+        )
+        .unwrap();
+    stmt.query_map([since], |row| {
+        Ok(RecordSyncRow {
+            key: row.get(0)?,
+            stable_id: row.get(1)?,
+            source_id: row.get(2)?,
+            source_type: row.get(3)?,
+            path: row.get(4)?,
+            title: row.get(5)?,
+            last_page: row.get(6)?,
+            read_count: row.get(7)?,
+            last_read_at: row.get(8)?,
+            updated_at: row.get(9)?,
+            deleted: row.get::<_, i64>(10)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_records_for_sync(since: i64) -> Vec<RecordSyncRow> {
+    let conn = get().lock().unwrap();
+    load_records_for_sync_on(&conn, since)
+}
+
+pub(crate) fn load_metas_for_sync_on(conn: &Connection, since: i64) -> Vec<MetaSyncRow> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT key, stable_id, cover_page, crop_x, crop_y, crop_w, crop_h,
+                    author, genre, series, title, chinese_title, summary, comment,
+                    rotations, updated_at, deleted
+             FROM book_metas WHERE updated_at > ?1 ORDER BY updated_at",
+        )
+        .unwrap();
+    stmt.query_map([since], |row| {
+        Ok(MetaSyncRow {
+            key: row.get(0)?,
+            stable_id: row.get(1)?,
+            cover_page: row.get(2)?,
+            crop_x: row.get(3)?,
+            crop_y: row.get(4)?,
+            crop_w: row.get(5)?,
+            crop_h: row.get(6)?,
+            author: row.get(7)?,
+            genre: row.get(8)?,
+            series: row.get(9)?,
+            title: row.get(10)?,
+            chinese_title: row.get(11)?,
+            summary: row.get(12)?,
+            comment: row.get(13)?,
+            rotations: row.get(14)?,
+            updated_at: row.get(15)?,
+            deleted: row.get::<_, i64>(16)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_metas_for_sync(since: i64) -> Vec<MetaSyncRow> {
+    let conn = get().lock().unwrap();
+    load_metas_for_sync_on(&conn, since)
+}
+
+pub(crate) fn load_tags_for_sync_on(conn: &Connection, since: i64) -> Vec<TagSyncRow> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, created_at, updated_at, deleted
+             FROM tags WHERE updated_at > ?1 ORDER BY updated_at",
+        )
+        .unwrap();
+    stmt.query_map([since], |row| {
+        Ok(TagSyncRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            created_at: row.get(2)?,
+            updated_at: row.get(3)?,
+            deleted: row.get::<_, i64>(4)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_tags_for_sync(since: i64) -> Vec<TagSyncRow> {
+    let conn = get().lock().unwrap();
+    load_tags_for_sync_on(&conn, since)
+}
+
+pub(crate) fn load_book_tags_for_sync_on(conn: &Connection, since: i64) -> Vec<BookTagSyncRow> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT book_key, tag_id, updated_at, deleted
+             FROM book_tags WHERE updated_at > ?1 ORDER BY updated_at",
+        )
+        .unwrap();
+    stmt.query_map([since], |row| {
+        Ok(BookTagSyncRow {
+            book_key: row.get(0)?,
+            tag_id: row.get(1)?,
+            updated_at: row.get(2)?,
+            deleted: row.get::<_, i64>(3)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_book_tags_for_sync(since: i64) -> Vec<BookTagSyncRow> {
+    let conn = get().lock().unwrap();
+    load_book_tags_for_sync_on(&conn, since)
+}
+
+pub(crate) fn load_settings_for_sync_on(conn: &Connection, since: i64) -> Vec<SettingSyncRow> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT key, value, updated_at, deleted
+             FROM app_settings WHERE updated_at > ?1 ORDER BY updated_at",
+        )
+        .unwrap();
+    stmt.query_map([since], |row| {
+        Ok(SettingSyncRow {
+            key: row.get(0)?,
+            value: row.get(1)?,
+            updated_at: row.get(2)?,
+            deleted: row.get::<_, i64>(3)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_settings_for_sync(since: i64) -> Vec<SettingSyncRow> {
+    let conn = get().lock().unwrap();
+    load_settings_for_sync_on(&conn, since)
+}
+
+/// 应用同步行（保留行内 updated_at/deleted；凭据字段 COALESCE 保留本地值）。
+pub(crate) fn apply_source_sync_on(conn: &Connection, r: &SourceSyncRow) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_sources
+         (id, type, name, path, url, username, port, note, capability_label,
+          fingerprint, remote_only, origin_device_id, root_id, client_id, updated_at, deleted)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+         ON CONFLICT(id) DO UPDATE SET
+            type=excluded.type, name=excluded.name, path=excluded.path, url=excluded.url,
+            username=excluded.username, port=excluded.port, note=excluded.note,
+            capability_label=excluded.capability_label, fingerprint=excluded.fingerprint,
+            remote_only=excluded.remote_only, origin_device_id=excluded.origin_device_id,
+            root_id=excluded.root_id, client_id=excluded.client_id,
+            password=COALESCE(book_sources.password, excluded.password),
+            refresh_token=COALESCE(book_sources.refresh_token, excluded.refresh_token),
+            client_secret=COALESCE(book_sources.client_secret, excluded.client_secret),
+            cookie=COALESCE(book_sources.cookie, excluded.cookie),
+            updated_at=excluded.updated_at, deleted=excluded.deleted",
+        params![
+            r.id,
+            r.r#type,
+            r.name,
+            r.path,
+            r.url,
+            r.username,
+            r.port,
+            r.note,
+            r.capability_label,
+            r.fingerprint,
+            r.remote_only,
+            r.origin_device_id,
+            r.root_id,
+            r.client_id,
+            r.updated_at,
+            r.deleted,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn apply_source_sync(r: &SourceSyncRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    apply_source_sync_on(&conn, r)
+}
+
+pub(crate) fn apply_record_sync_on(conn: &Connection, r: &RecordSyncRow) -> Result<()> {
+    conn.execute(
+        "INSERT INTO read_records
+         (key, stable_id, source_id, source_type, path, title, last_page, read_count, last_read_at, updated_at, deleted)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT(key) DO UPDATE SET
+            stable_id=excluded.stable_id, source_id=excluded.source_id,
+            source_type=excluded.source_type, path=excluded.path, title=excluded.title,
+            last_page=excluded.last_page, read_count=excluded.read_count,
+            last_read_at=excluded.last_read_at,
+            updated_at=excluded.updated_at, deleted=excluded.deleted",
+        params![
+            r.key,
+            r.stable_id,
+            r.source_id,
+            r.source_type,
+            r.path,
+            r.title,
+            r.last_page,
+            r.read_count,
+            r.last_read_at,
+            r.updated_at,
+            r.deleted,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn apply_record_sync(r: &RecordSyncRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    apply_record_sync_on(&conn, r)
+}
+
+pub(crate) fn apply_meta_sync_on(conn: &Connection, r: &MetaSyncRow) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_metas
+         (key, stable_id, cover_page, crop_x, crop_y, crop_w, crop_h,
+          author, genre, series, title, chinese_title, summary, comment,
+          rotations, updated_at, deleted)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+         ON CONFLICT(key) DO UPDATE SET
+            stable_id=excluded.stable_id, cover_page=excluded.cover_page,
+            crop_x=excluded.crop_x, crop_y=excluded.crop_y,
+            crop_w=excluded.crop_w, crop_h=excluded.crop_h,
+            author=excluded.author, genre=excluded.genre, series=excluded.series,
+            title=excluded.title, chinese_title=excluded.chinese_title,
+            summary=excluded.summary, comment=excluded.comment, rotations=excluded.rotations,
+            updated_at=excluded.updated_at, deleted=excluded.deleted",
+        params![
+            r.key,
+            r.stable_id,
+            r.cover_page,
+            r.crop_x,
+            r.crop_y,
+            r.crop_w,
+            r.crop_h,
+            r.author,
+            r.genre,
+            r.series,
+            r.title,
+            r.chinese_title,
+            r.summary,
+            r.comment,
+            r.rotations,
+            r.updated_at,
+            r.deleted,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn apply_meta_sync(r: &MetaSyncRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    apply_meta_sync_on(&conn, r)
+}
+
+pub(crate) fn apply_tag_sync_on(conn: &Connection, r: &TagSyncRow) -> Result<()> {
+    conn.execute(
+        "INSERT INTO tags (id, name, created_at, updated_at, deleted) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name, created_at=excluded.created_at,
+            updated_at=excluded.updated_at, deleted=excluded.deleted",
+        params![r.id, r.name, r.created_at, r.updated_at, r.deleted],
+    )?;
+    Ok(())
+}
+
+pub fn apply_tag_sync(r: &TagSyncRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    apply_tag_sync_on(&conn, r)
+}
+
+pub(crate) fn apply_book_tag_sync_on(conn: &Connection, r: &BookTagSyncRow) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_tags (book_key, tag_id, updated_at, deleted) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(book_key, tag_id) DO UPDATE SET
+            updated_at=excluded.updated_at, deleted=excluded.deleted",
+        params![r.book_key, r.tag_id, r.updated_at, r.deleted],
+    )?;
+    Ok(())
+}
+
+pub fn apply_book_tag_sync(r: &BookTagSyncRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    apply_book_tag_sync_on(&conn, r)
+}
+
+pub(crate) fn apply_setting_sync_on(conn: &Connection, r: &SettingSyncRow) -> Result<()> {
+    conn.execute(
+        "INSERT INTO app_settings (key, value, updated_at, deleted) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(key) DO UPDATE SET
+            value=excluded.value, updated_at=excluded.updated_at, deleted=excluded.deleted",
+        params![r.key, r.value, r.updated_at, r.deleted],
+    )?;
+    Ok(())
+}
+
+pub fn apply_setting_sync(r: &SettingSyncRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    apply_setting_sync_on(&conn, r)
+}
+
+// ============================================================
 // cache_index（已有 API，保留）
 // ============================================================
 
@@ -1432,7 +1883,7 @@ fn tag_id(name: &str) -> String {
 }
 
 /// 当前毫秒时间戳（同步 LWW 与墓碑统一使用）。
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

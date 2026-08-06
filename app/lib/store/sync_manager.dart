@@ -6,10 +6,7 @@ import 'dart:io';
 import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/api/package.dart';
 import 'package:app/src/rust/api/source.dart';
-import 'package:app/store/library_store.dart';
-import 'package:app/store/models.dart';
 import 'package:app/store/sync_paths.dart';
-import 'package:app/store/webdav_session.dart';
 import 'package:flutter/foundation.dart';
 
 enum SyncMode {
@@ -23,7 +20,10 @@ enum SyncMode {
 
 const _kMode = 'sync_mode';
 const _kDir = 'sync_dir';
-const _kWebdavSourceId = 'sync_webdav_source_id';
+const _kWebdavUrl = 'sync_webdav_url';
+const _kWebdavUsername = 'sync_webdav_username';
+const _kWebdavPassword = 'sync_webdav_password';
+const _kWebdavDir = 'sync_webdav_dir';
 const _kInterval = 'sync_interval_minutes';
 const _kLastAt = 'sync_last_at';
 const _kLastStatus = 'sync_last_status';
@@ -38,13 +38,17 @@ class SyncManager extends ChangeNotifier {
 
   SyncMode mode = SyncMode.off;
   String dir = '';
-  String webdavSourceId = '';
+  String webdavUrl = '';
+  String webdavUsername = '';
+  String webdavPassword = '';
+  String webdavDir = 'RCH/sync';
   int intervalMinutes = 0;
   int lastAt = 0;
   String lastStatus = '尚未同步';
   int ignoredCopies = 0;
   bool busy = false;
   bool crossDeviceSearch = true;
+  BigInt? _webdavSession;
 
   /// 设备 id → 名称（幽灵书源来源展示）。
   final Map<String, String> deviceNames = {};
@@ -69,7 +73,11 @@ class SyncManager extends ChangeNotifier {
         orElse: () => SyncMode.off,
       );
       dir = map[_kDir] ?? '';
-      webdavSourceId = map[_kWebdavSourceId] ?? '';
+      webdavUrl = map[_kWebdavUrl] ?? '';
+      webdavUsername = map[_kWebdavUsername] ?? '';
+      webdavPassword = map[_kWebdavPassword] ?? '';
+      webdavDir = map[_kWebdavDir] ?? 'RCH/sync';
+      _webdavSession = null;
       intervalMinutes = int.tryParse(map[_kInterval] ?? '') ?? 0;
       lastAt = int.tryParse(map[_kLastAt] ?? '') ?? 0;
       lastStatus = map[_kLastStatus] ?? '尚未同步';
@@ -87,7 +95,10 @@ class SyncManager extends ChangeNotifier {
   Future<void> save() async {
     await dbSaveSetting(key: _kMode, value: mode.name);
     await dbSaveSetting(key: _kDir, value: dir);
-    await dbSaveSetting(key: _kWebdavSourceId, value: webdavSourceId);
+    await dbSaveSetting(key: _kWebdavUrl, value: webdavUrl);
+    await dbSaveSetting(key: _kWebdavUsername, value: webdavUsername);
+    await dbSaveSetting(key: _kWebdavPassword, value: webdavPassword);
+    await dbSaveSetting(key: _kWebdavDir, value: webdavDir);
     await dbSaveSetting(key: _kInterval, value: '$intervalMinutes');
     await dbSaveSetting(key: _kLastAt, value: '$lastAt');
     await dbSaveSetting(key: _kLastStatus, value: lastStatus);
@@ -106,8 +117,17 @@ class SyncManager extends ChangeNotifier {
     await save();
   }
 
-  Future<void> setWebdavSourceId(String id) async {
-    webdavSourceId = id;
+  Future<void> setWebdavConfig({
+    required String url,
+    required String username,
+    required String password,
+    required String dir,
+  }) async {
+    webdavUrl = url;
+    webdavUsername = username;
+    webdavPassword = password;
+    webdavDir = dir;
+    _webdavSession = null;
     await save();
   }
 
@@ -220,11 +240,11 @@ class SyncManager extends ChangeNotifier {
   }
 
   Future<String> _pushWebdav() async {
-    final source = await _webdavSource();
-    if (source == null) throw '未选择 WebDAV 书源';
-    final session = await webdavSessionFor(source);
-    await webdavMakeDir(session: session, path: remoteRchDir(source.path));
-    await webdavMakeDir(session: session, path: remoteSyncDir(source.path));
+    final session = await _webdavSessionFor();
+    final dir = normalizeRemoteDir(webdavDir.isEmpty ? 'RCH/sync' : webdavDir);
+    for (final level in remoteDirLevels(dir)) {
+      await webdavMakeDir(session: session, path: level);
+    }
     final tmp = File(
       '${Directory.systemTemp.path}${Platform.pathSeparator}rch_push_${DateTime.now().millisecondsSinceEpoch}.rchpkg',
     );
@@ -233,7 +253,7 @@ class SyncManager extends ChangeNotifier {
       final bytes = await tmp.readAsBytes();
       await webdavUploadFile(
         session: session,
-        path: remoteLatestPath(source.path),
+        path: remoteJoin(dir, kSyncLatestName),
         data: bytes,
       );
       return '推送成功（${info.sources.toInt()} 书源 / ${info.metas.toInt()} 详情 / ${info.tags.toInt()} 标签）';
@@ -253,12 +273,11 @@ class SyncManager extends ChangeNotifier {
   }
 
   Future<String> _pullWebdav() async {
-    final source = await _webdavSource();
-    if (source == null) throw '未选择 WebDAV 书源';
-    final session = await webdavSessionFor(source);
+    final session = await _webdavSessionFor();
+    final dir = normalizeRemoteDir(webdavDir.isEmpty ? 'RCH/sync' : webdavDir);
     final bytes = await webdavDownloadFile(
       session: session,
-      path: remoteLatestPath(source.path),
+      path: remoteJoin(dir, kSyncLatestName),
     );
     if (bytes.isEmpty) return '远程没有可拉取的包';
     final tmp = File(
@@ -274,17 +293,27 @@ class SyncManager extends ChangeNotifier {
     }
   }
 
-  Future<BookSource?> _webdavSource() async {
-    final sources = LibraryStore.instance.sources;
-    if (webdavSourceId.isNotEmpty) {
-      for (final s in sources) {
-        if (s.id == webdavSourceId && s.isWebDav) return s;
-      }
+  Future<BigInt> _webdavSessionFor() async {
+    if (_webdavSession != null) return _webdavSession!;
+    final url = webdavUrl.trim();
+    if (url.isEmpty) throw '未填写 WebDAV 地址';
+    final s = await webdavConnect(
+      url: url,
+      username: webdavUsername.trim(),
+      password: webdavPassword,
+    );
+    _webdavSession = s.id;
+    return s.id;
+  }
+
+  /// 测试 WebDAV 连接（使用当前配置建立会话）。
+  Future<String> testWebdavConnection() async {
+    try {
+      await _webdavSessionFor();
+      return '连接成功';
+    } catch (e) {
+      return '连接失败: $e';
     }
-    for (final s in sources) {
-      if (s.isWebDav) return s;
-    }
-    return null;
   }
 
   void _scanIgnored(String dirPath) {

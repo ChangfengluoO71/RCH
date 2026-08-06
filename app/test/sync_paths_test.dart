@@ -45,6 +45,17 @@ void main() {
     expect(remoteSyncDir(''), '/RCH/sync');
   });
 
+  test('自定义远程目录归一化与逐级 MKCOL 路径', () {
+    expect(normalizeRemoteDir(''), '');
+    expect(normalizeRemoteDir('RCH/sync'), '/RCH/sync');
+    expect(normalizeRemoteDir('/dav/RCH/sync/'), '/dav/RCH/sync');
+    expect(remoteDirLevels('RCH/sync'), ['/RCH', '/RCH/sync']);
+    expect(remoteDirLevels('/dav/a/b'), ['/dav', '/dav/a', '/dav/a/b']);
+    expect(remoteDirLevels(''), <String>[]);
+    expect(remoteJoin('RCH/sync', 'latest.rchpkg'), '/RCH/sync/latest.rchpkg');
+    expect(remoteJoin('', 'latest.rchpkg'), '/latest.rchpkg');
+  });
+
   test('时间戳归档名', () {
     expect(formatSyncTimestamp(DateTime(2026, 8, 6, 9, 5, 3)), '20260806_090503');
   });

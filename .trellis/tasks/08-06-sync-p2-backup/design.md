@@ -6,7 +6,8 @@
 |---|---|---|
 | `sync_mode` | off / folder / webdav | 传输模式 |
 | `sync_dir` | 路径 | 模式 B 同步盘目录 |
-| `sync_webdav_source_id` | 书源 id | 模式 A 的 WebDAV 书源 |
+| `sync_webdav_url` / `sync_webdav_username` / `sync_webdav_password` | 文本 | 模式 A 的 WebDAV 地址/账号/密码（独立书源配置，仅存本机、不入同步包） |
+| `sync_webdav_dir` | 远程目录 | 模式 A 自定义远程目录（默认 `RCH/sync`，推送前逐级 MKCOL） |
 | `sync_interval_minutes` | 整数 | 0=仅手动，>0 定时 |
 | `sync_last_at` | 毫秒 | 最近一次同步时间 |
 | `sync_last_status` | 文案 | 最近一次结果/错误 |
@@ -14,7 +15,7 @@
 ## 2. 包路径约定
 
 - 模式 B：`<sync_dir>/latest.rchpkg` + `<sync_dir>/archive/{yyyyMMdd_HHmmss}.rchpkg`
-- 模式 A：`<webdav source.path>/RCH/sync/latest.rchpkg` + 同目录 `archive/`
+- 模式 A：`<sync_webdav_dir>/latest.rchpkg`（默认 `RCH/sync`，相对服务器根） + 同目录 `archive/`
 - 冲突副本（模式 B）：`latest (冲突副本)*.rchpkg` / `latest(1)*.rchpkg` / `latest-*.rchpkg` → 自动拉取时忽略，仅在状态里提示数量
 
 ## 3. 原子写

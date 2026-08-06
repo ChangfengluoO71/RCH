@@ -46,6 +46,38 @@ String remoteLatestPath(String base) =>
 String remoteArchiveDir(String base) =>
     '${remoteSyncDir(base)}/archive';
 
+/// 归一化 WebDAV 远程目录：保证以 `/` 开头、去尾部斜杠；空值返回 ''。
+String normalizeRemoteDir(String dir) {
+  var d = dir.trim();
+  if (d.isEmpty || d == '/') return '';
+  if (!d.startsWith('/')) d = '/$d';
+  while (d.endsWith('/')) {
+    d = d.substring(0, d.length - 1);
+  }
+  return d;
+}
+
+/// 远程目录逐级路径（用于幂等 MKCOL）：`/RCH/sync` → ['/RCH', '/RCH/sync']。
+List<String> remoteDirLevels(String dir) {
+  final d = normalizeRemoteDir(dir);
+  if (d.isEmpty) return const [];
+  final segs = d.split('/').where((s) => s.isNotEmpty).toList();
+  final out = <String>[];
+  var cur = '';
+  for (final s in segs) {
+    cur = '$cur/$s';
+    out.add(cur);
+  }
+  return out;
+}
+
+/// 远程目录 + 文件名拼接（统一 `/`）。
+String remoteJoin(String dir, String name) {
+  final d = normalizeRemoteDir(dir);
+  if (d.isEmpty) return '/$name';
+  return '$d/$name';
+}
+
 /// 时间戳归档名：`yyyyMMdd_HHmmss`。
 String formatSyncTimestamp(DateTime t) {
   String two(int v) => v.toString().padLeft(2, '0');

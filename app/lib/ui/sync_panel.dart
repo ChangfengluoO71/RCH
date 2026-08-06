@@ -1,6 +1,5 @@
 // 设置页"备份 / 同步"面板（P2）：模式选择、目录/书源配置、手动同步与恢复。
 
-import 'package:app/store/library_store.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -13,15 +12,29 @@ class SyncPanel extends StatefulWidget {
 }
 
 class _SyncPanelState extends State<SyncPanel> {
+  final _urlCtrl = TextEditingController();
+  final _userCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  final _dirCtrl = TextEditingController();
+
   @override
   void initState() {
     super.initState();
+    final mgr = SyncManager.instance;
+    _urlCtrl.text = mgr.webdavUrl;
+    _userCtrl.text = mgr.webdavUsername;
+    _passCtrl.text = mgr.webdavPassword;
+    _dirCtrl.text = mgr.webdavDir;
     SyncManager.instance.addListener(_onChanged);
   }
 
   @override
   void dispose() {
     SyncManager.instance.removeListener(_onChanged);
+    _urlCtrl.dispose();
+    _userCtrl.dispose();
+    _passCtrl.dispose();
+    _dirCtrl.dispose();
     super.dispose();
   }
 
@@ -46,6 +59,44 @@ class _SyncPanelState extends State<SyncPanel> {
     if (mounted) _snack(result);
   }
 
+  Future<void> _saveWebdav() async {
+    await SyncManager.instance.setWebdavConfig(
+      url: _urlCtrl.text,
+      username: _userCtrl.text,
+      password: _passCtrl.text,
+      dir: _dirCtrl.text,
+    );
+  }
+
+  Future<void> _testWebdav() async {
+    await _saveWebdav();
+    final r = await SyncManager.instance.testWebdavConnection();
+    if (mounted) _snack(r);
+  }
+
+  Widget _configField(String label, TextEditingController ctrl,
+      {bool obscure = false, String hint = '', required void Function(String) onChanged}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(children: [
+        SizedBox(width: 88, child: Text(label, style: const TextStyle(fontSize: 13))),
+        Expanded(
+          child: TextField(
+            controller: ctrl,
+            obscureText: obscure,
+            onChanged: onChanged,
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: hint,
+              border: const OutlineInputBorder(),
+            ),
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+      ]),
+    );
+  }
+
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
@@ -55,8 +106,6 @@ class _SyncPanelState extends State<SyncPanel> {
   @override
   Widget build(BuildContext context) {
     final mgr = SyncManager.instance;
-    final webdavSources =
-        LibraryStore.instance.sources.where((s) => s.isWebDav).toList();
     final last = mgr.lastAt == 0
         ? '从未'
         : DateTime.fromMillisecondsSinceEpoch(mgr.lastAt)
@@ -102,26 +151,23 @@ class _SyncPanelState extends State<SyncPanel> {
           ),
         ],
         if (mgr.mode == SyncMode.webdav) ...[
+          _configField('WebDAV 地址', _urlCtrl, hint: 'https://dav.example.com/dav',
+              onChanged: (_) => _saveWebdav()),
+          _configField('用户名', _userCtrl,
+              onChanged: (_) => _saveWebdav()),
+          _configField('密码', _passCtrl, obscure: true,
+              onChanged: (_) => _saveWebdav()),
+          _configField('远程目录', _dirCtrl, hint: 'RCH/sync（留空用默认）',
+              onChanged: (_) => _saveWebdav()),
           Row(children: [
-            const Text('WebDAV 书源: '),
-            DropdownButton<String>(
-              value: webdavSources.any((s) => s.id == mgr.webdavSourceId)
-                  ? mgr.webdavSourceId
-                  : null,
-              hint: const Text('选择书源'),
-              items: webdavSources
-                  .map((s) => DropdownMenuItem(
-                        value: s.id,
-                        child: Text(s.name.isEmpty ? s.url ?? s.id : s.name),
-                      ))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) mgr.setWebdavSourceId(v);
-              },
+            TextButton.icon(
+              onPressed: mgr.busy ? null : _testWebdav,
+              icon: const Icon(Icons.wifi_tethering, size: 18),
+              label: const Text('测试连接'),
             ),
           ]),
           const Text(
-            '提示：同步包将写入所选书源的 RCH/sync/ 目录。',
+            '提示：同步包写入自定义远程目录（默认 RCH/sync），凭据仅保存在本机、不进入同步包。',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ],

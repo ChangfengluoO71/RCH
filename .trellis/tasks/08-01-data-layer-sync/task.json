@@ -18,7 +18,12 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-06-sync-p0-schema",
+    "08-06-sync-p1-package",
+    "08-06-sync-p2-backup",
+    "08-06-sync-p3-delta"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

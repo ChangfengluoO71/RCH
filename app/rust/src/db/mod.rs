@@ -1,6 +1,6 @@
 //! SQLite 数据库：应用全量数据持久化（ADR-013/018）。
 //!
-//! ## 表结构（7张）
+//! ## 表结构（10张）
 //!
 //! | 表 | 用途 |
 //! |---|---|
@@ -11,6 +11,9 @@
 //! | `book_tags` | 漫画-标签关联（多对多） |
 //! | `app_settings` | 应用设置（key-value） |
 //! | `schema_version` | 迁移版本标记 |
+//! | `devices` | 同步：设备注册表（含本机） |
+//! | `sync_state` | 同步：device_id / 游标 / 传输配置 |
+//! | `source_alias` | 同步：书源 fingerprint ↔ 本地 source_id 映射 |
 //!
 //! ## 迁移策略
 //!
@@ -91,7 +94,12 @@ fn init_tables(conn: &Connection) -> Result<()> {
             password TEXT,
             port INTEGER,
             note TEXT NOT NULL DEFAULT '',
-            capability_label TEXT NOT NULL DEFAULT ''
+            capability_label TEXT NOT NULL DEFAULT '',
+            fingerprint TEXT,
+            remote_only INTEGER NOT NULL DEFAULT 0,
+            origin_device_id TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            deleted INTEGER NOT NULL DEFAULT 0
         );
 
         -- 阅读记录
@@ -103,7 +111,10 @@ fn init_tables(conn: &Connection) -> Result<()> {
             title TEXT NOT NULL,
             last_page INTEGER NOT NULL DEFAULT 0,
             read_count INTEGER NOT NULL DEFAULT 0,
-            last_read_at INTEGER NOT NULL DEFAULT 0
+            last_read_at INTEGER NOT NULL DEFAULT 0,
+            stable_id TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            deleted INTEGER NOT NULL DEFAULT 0
         );
 
         -- 漫画元数据
@@ -121,20 +132,27 @@ fn init_tables(conn: &Connection) -> Result<()> {
             chinese_title TEXT NOT NULL DEFAULT '',
             summary TEXT NOT NULL DEFAULT '',
             comment TEXT NOT NULL DEFAULT '',
-            rotations TEXT NOT NULL DEFAULT '{}'
+            rotations TEXT NOT NULL DEFAULT '{}',
+            stable_id TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            deleted INTEGER NOT NULL DEFAULT 0
         );
 
         -- 标签实体
         CREATE TABLE IF NOT EXISTS tags (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
-            created_at INTEGER NOT NULL DEFAULT 0
+            created_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            deleted INTEGER NOT NULL DEFAULT 0
         );
 
         -- 漫画-标签关联
         CREATE TABLE IF NOT EXISTS book_tags (
             book_key TEXT NOT NULL,
             tag_id TEXT NOT NULL,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            deleted INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (book_key, tag_id),
             FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
         );
@@ -142,7 +160,33 @@ fn init_tables(conn: &Connection) -> Result<()> {
         -- 应用设置
         CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            deleted INTEGER NOT NULL DEFAULT 0
+        );
+
+        -- 同步：设备注册表
+        CREATE TABLE IF NOT EXISTS devices (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            last_seen_at INTEGER NOT NULL
+        );
+
+        -- 同步：设备本地状态（device_id / 游标 / 传输配置）
+        CREATE TABLE IF NOT EXISTS sync_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        -- 同步：书源 fingerprint ↔ 本地 source_id 映射
+        CREATE TABLE IF NOT EXISTS source_alias (
+            source_id TEXT PRIMARY KEY,
+            fingerprint TEXT NOT NULL,
+            device_id TEXT NOT NULL DEFAULT '',
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (source_id) REFERENCES book_sources(id) ON DELETE CASCADE
         );
 
         -- AI 超分后台任务队列（可跨重启续跑）
@@ -219,8 +263,75 @@ fn init_tables(conn: &Connection) -> Result<()> {
             conn.execute(ddl, [])?;
         }
     }
+    // 同步就绪：同步实体表补同步元数据列（幂等，老库自动升级）。
+    ensure_columns(
+        conn,
+        "book_sources",
+        &[
+            ("fingerprint", "fingerprint TEXT"),
+            ("remote_only", "remote_only INTEGER NOT NULL DEFAULT 0"),
+            ("origin_device_id", "origin_device_id TEXT"),
+            ("updated_at", "updated_at INTEGER NOT NULL DEFAULT 0"),
+            ("deleted", "deleted INTEGER NOT NULL DEFAULT 0"),
+        ],
+    )?;
+    ensure_columns(
+        conn,
+        "read_records",
+        &[
+            ("stable_id", "stable_id TEXT"),
+            ("updated_at", "updated_at INTEGER NOT NULL DEFAULT 0"),
+            ("deleted", "deleted INTEGER NOT NULL DEFAULT 0"),
+        ],
+    )?;
+    ensure_columns(
+        conn,
+        "book_metas",
+        &[
+            ("stable_id", "stable_id TEXT"),
+            ("updated_at", "updated_at INTEGER NOT NULL DEFAULT 0"),
+            ("deleted", "deleted INTEGER NOT NULL DEFAULT 0"),
+        ],
+    )?;
+    for t in ["tags", "book_tags", "app_settings"] {
+        ensure_columns(
+            conn,
+            t,
+            &[
+                ("updated_at", "updated_at INTEGER NOT NULL DEFAULT 0"),
+                ("deleted", "deleted INTEGER NOT NULL DEFAULT 0"),
+            ],
+        )?;
+    }
+    // 同步索引依赖新列，必须在补列之后创建（老库先补列再建索引）。
+    conn.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON book_sources(fingerprint);
+        CREATE INDEX IF NOT EXISTS idx_metas_stable_id ON book_metas(stable_id);
+        CREATE INDEX IF NOT EXISTS idx_records_stable_id ON read_records(stable_id);
+        CREATE INDEX IF NOT EXISTS idx_source_alias_fp ON source_alias(fingerprint);
+        ",
+    )?;
     // 自愈：旧版 hash ID 标签 → 名字 ID（幂等，每次打开都执行）。
     normalize_legacy_tag_ids(conn)?;
+    Ok(())
+}
+
+/// 幂等补列：查询现有列名，缺失列执行 `ALTER TABLE ADD COLUMN`。
+///
+/// 表名与 DDL 均为硬编码常量，无注入面。沿用既有 rotations/port 升级模式，
+/// 使老库在打开时自动补齐同步元数据列。
+fn ensure_columns(conn: &Connection, table: &str, cols: &[(&str, &str)]) -> Result<()> {
+    let existing: Vec<String> = conn
+        .prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|c| c.ok())
+        .collect();
+    for (col, ddl) in cols {
+        if !existing.iter().any(|c| c == *col) {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {ddl}"), [])?;
+        }
+    }
     Ok(())
 }
 
@@ -508,12 +619,17 @@ pub fn load_all_sources() -> Vec<BookSourceRow> {
     .collect()
 }
 
-pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
-    let conn = get().lock().unwrap();
+fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO book_sources
-         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        "INSERT INTO book_sources
+         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+         ON CONFLICT(id) DO UPDATE SET
+            type=excluded.type, name=excluded.name, path=excluded.path, url=excluded.url,
+            username=excluded.username, password=excluded.password, port=excluded.port,
+            refresh_token=excluded.refresh_token, client_id=excluded.client_id,
+            client_secret=excluded.client_secret, root_id=excluded.root_id, cookie=excluded.cookie,
+            note=excluded.note, capability_label=excluded.capability_label, updated_at=excluded.updated_at",
         params![
             s.id,
             s.r#type,
@@ -530,13 +646,20 @@ pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
             s.cookie,
             s.note,
             s.capability_label,
+            now_ms(),
         ],
     )?;
     Ok(())
 }
 
+pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    upsert_source_on(&conn, s)
+}
+
 pub fn delete_source(id: &str) -> Result<()> {
     let conn = get().lock().unwrap();
+    conn.execute("DELETE FROM source_alias WHERE source_id = ?1", params![id])?;
     conn.execute("DELETE FROM book_sources WHERE id = ?1", params![id])?;
     Ok(())
 }
@@ -582,12 +705,16 @@ pub fn load_all_records() -> Vec<ReadRecordRow> {
     .collect()
 }
 
-pub fn upsert_record(r: &ReadRecordRow) -> Result<()> {
-    let conn = get().lock().unwrap();
+fn upsert_record_on(conn: &Connection, r: &ReadRecordRow) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO read_records
-         (key, source_id, source_type, path, title, last_page, read_count, last_read_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO read_records
+         (key, source_id, source_type, path, title, last_page, read_count, last_read_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(key) DO UPDATE SET
+            source_id=excluded.source_id, source_type=excluded.source_type,
+            path=excluded.path, title=excluded.title, last_page=excluded.last_page,
+            read_count=excluded.read_count, last_read_at=excluded.last_read_at,
+            updated_at=excluded.updated_at",
         params![
             r.key,
             r.source_id,
@@ -597,9 +724,15 @@ pub fn upsert_record(r: &ReadRecordRow) -> Result<()> {
             r.last_page,
             r.read_count,
             r.last_read_at,
+            now_ms(),
         ],
     )?;
     Ok(())
+}
+
+pub fn upsert_record(r: &ReadRecordRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    upsert_record_on(&conn, r)
 }
 
 pub fn delete_record(key: &str) -> Result<()> {
@@ -672,13 +805,18 @@ pub fn load_all_metas() -> Vec<BookMetaRow> {
     .collect()
 }
 
-pub fn upsert_meta(m: &BookMetaRow) -> Result<()> {
-    let conn = get().lock().unwrap();
+fn upsert_meta_on(conn: &Connection, m: &BookMetaRow) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO book_metas
+        "INSERT INTO book_metas
          (key, cover_page, crop_x, crop_y, crop_w, crop_h,
-          author, genre, series, title, chinese_title, summary, comment, rotations)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+          author, genre, series, title, chinese_title, summary, comment, rotations, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         ON CONFLICT(key) DO UPDATE SET
+            cover_page=excluded.cover_page, crop_x=excluded.crop_x, crop_y=excluded.crop_y,
+            crop_w=excluded.crop_w, crop_h=excluded.crop_h, author=excluded.author,
+            genre=excluded.genre, series=excluded.series, title=excluded.title,
+            chinese_title=excluded.chinese_title, summary=excluded.summary,
+            comment=excluded.comment, rotations=excluded.rotations, updated_at=excluded.updated_at",
         params![
             m.key,
             m.cover_page,
@@ -694,9 +832,15 @@ pub fn upsert_meta(m: &BookMetaRow) -> Result<()> {
             m.summary,
             m.comment,
             m.rotations,
+            now_ms(),
         ],
     )?;
     Ok(())
+}
+
+pub fn upsert_meta(m: &BookMetaRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    upsert_meta_on(&conn, m)
 }
 
 pub fn delete_meta(key: &str) -> Result<()> {
@@ -748,10 +892,9 @@ pub fn load_all_tags() -> Vec<TagRow> {
     .collect()
 }
 
-pub fn load_all_book_tags() -> Vec<BookTagRow> {
-    let conn = get().lock().unwrap();
+fn load_all_book_tags_on(conn: &Connection) -> Vec<BookTagRow> {
     let mut stmt = conn
-        .prepare("SELECT book_key, tag_id FROM book_tags")
+        .prepare("SELECT book_key, tag_id FROM book_tags WHERE deleted = 0")
         .unwrap();
     stmt.query_map([], |row| {
         Ok(BookTagRow {
@@ -827,8 +970,8 @@ pub fn ensure_tag(name: &str) -> Result<TagRow> {
         .unwrap_or_default()
         .as_millis() as i64;
     conn.execute(
-        "INSERT INTO tags (id, name, created_at) VALUES (?1, ?2, ?3)",
-        params![id, name, now],
+        "INSERT INTO tags (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+        params![id, name, now, now],
     )?;
     Ok(TagRow {
         id,
@@ -870,8 +1013,8 @@ pub fn rename_tag(old_name: &str, new_name: &str) -> Result<()> {
             .as_millis() as i64;
         // 创建新标签（或忽略已存在）
         conn.execute(
-            "INSERT OR IGNORE INTO tags (id, name, created_at) VALUES (?1, ?2, ?3)",
-            params![new_id, new_name, now],
+            "INSERT OR IGNORE INTO tags (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![new_id, new_name, now, now],
         )?;
         // 迁移所有 book_tags 关联到新 id
         conn.execute(
@@ -910,17 +1053,22 @@ pub fn delete_tag(name: &str) -> Result<()> {
 }
 
 /// 将标签关联到一本书（幂等）。
+fn link_tag_on(conn: &Connection, book_key: &str, tag_id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO book_tags (book_key, tag_id, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(book_key, tag_id) DO UPDATE SET deleted=0, updated_at=excluded.updated_at",
+        params![book_key, tag_id, now_ms()],
+    )?;
+    Ok(())
+}
+
 pub fn link_tag(book_key: &str, tag_name: &str) -> Result<()> {
     if tag_name.is_empty() {
         return Ok(());
     }
     let tag_id = ensure_tag(tag_name)?.id;
     let conn = get().lock().unwrap();
-    conn.execute(
-        "INSERT OR IGNORE INTO book_tags (book_key, tag_id) VALUES (?1, ?2)",
-        params![book_key, tag_id],
-    )?;
-    Ok(())
+    link_tag_on(&conn, book_key, &tag_id)
 }
 
 /// 将标签从一本书移除。
@@ -935,8 +1083,7 @@ pub fn unlink_tag(book_key: &str, tag_name: &str) -> Result<()> {
 }
 
 /// 设置一本书的标签集（全量替换：先删后插）。
-pub fn set_book_tags(book_key: &str, tag_names: &[String]) -> Result<()> {
-    let conn = get().lock().unwrap();
+fn set_book_tags_on(conn: &Connection, book_key: &str, tag_names: &[String]) -> Result<()> {
     conn.execute("BEGIN", [])?;
     let result = (|| -> Result<()> {
         conn.execute(
@@ -954,13 +1101,10 @@ pub fn set_book_tags(book_key: &str, tag_names: &[String]) -> Result<()> {
                 .unwrap_or_default()
                 .as_millis() as i64;
             conn.execute(
-                "INSERT OR IGNORE INTO tags (id, name, created_at) VALUES (?1, ?2, ?3)",
-                params![id, name, now],
+                "INSERT OR IGNORE INTO tags (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id, name, now, now],
             )?;
-            conn.execute(
-                "INSERT OR IGNORE INTO book_tags (book_key, tag_id) VALUES (?1, ?2)",
-                params![book_key, id],
-            )?;
+            link_tag_on(conn, book_key, &id)?;
         }
         Ok(())
     })();
@@ -975,6 +1119,11 @@ pub fn set_book_tags(book_key: &str, tag_names: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub fn set_book_tags(book_key: &str, tag_names: &[String]) -> Result<()> {
+    let conn = get().lock().unwrap();
+    set_book_tags_on(&conn, book_key, tag_names)
 }
 
 // ============================================================
@@ -1004,18 +1153,199 @@ pub fn load_all_settings() -> Vec<SettingEntry> {
     .collect()
 }
 
-pub fn save_setting(key: &str, value: &str) -> Result<()> {
-    let conn = get().lock().unwrap();
+fn save_setting_on(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
-        params![key, value],
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        params![key, value, now_ms()],
     )?;
     Ok(())
+}
+
+pub fn save_setting(key: &str, value: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    save_setting_on(&conn, key, value)
 }
 
 pub fn delete_setting(key: &str) -> Result<()> {
     let conn = get().lock().unwrap();
     conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+    Ok(())
+}
+
+// ============================================================
+// 同步支撑（P0：devices / sync_state / source_alias / stable_id）
+// ============================================================
+
+#[derive(Debug, Clone)]
+pub struct DeviceRow {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub last_seen_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceAliasRow {
+    pub source_id: String,
+    pub fingerprint: String,
+    pub device_id: String,
+    pub updated_at: i64,
+}
+
+/// 获取（或生成并持久化）本机设备 ID，幂等。
+pub fn get_or_create_device_id() -> Result<String> {
+    let conn = get().lock().unwrap();
+    if let Some(id) = get_sync_state_on(&conn, "device_id") {
+        return Ok(id);
+    }
+    let id = format!("dev_{}_{}", now_ms(), std::process::id());
+    set_sync_state_on(&conn, "device_id", &id)?;
+    Ok(id)
+}
+
+/// 注册/刷新一台设备（含本机）。
+pub fn register_device(id: &str, name: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    conn.execute(
+        "INSERT INTO devices (id, name, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?3)
+         ON CONFLICT(id) DO UPDATE SET name=excluded.name, last_seen_at=excluded.last_seen_at",
+        params![id, name, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn list_devices() -> Vec<DeviceRow> {
+    let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT id, name, created_at, last_seen_at FROM devices ORDER BY created_at")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(DeviceRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            created_at: row.get(2)?,
+            last_seen_at: row.get(3)?,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+fn get_sync_state_on(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM sync_state WHERE key = ?1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+fn set_sync_state_on(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO sync_state (key, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        params![key, value, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn get_sync_state(key: &str) -> Option<String> {
+    let conn = get().lock().unwrap();
+    get_sync_state_on(&conn, key)
+}
+
+pub fn set_sync_state(key: &str, value: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    set_sync_state_on(&conn, key, value)
+}
+
+fn set_source_alias_on(
+    conn: &Connection,
+    source_id: &str,
+    fingerprint: &str,
+    device_id: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO source_alias (source_id, fingerprint, device_id, updated_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(source_id) DO UPDATE SET fingerprint=excluded.fingerprint, device_id=excluded.device_id, updated_at=excluded.updated_at",
+        params![source_id, fingerprint, device_id, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn set_source_alias(source_id: &str, fingerprint: &str, device_id: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    set_source_alias_on(&conn, source_id, fingerprint, device_id)
+}
+
+fn get_source_alias_on(conn: &Connection, source_id: &str) -> Option<SourceAliasRow> {
+    conn.query_row(
+        "SELECT source_id, fingerprint, device_id, updated_at FROM source_alias WHERE source_id = ?1",
+        params![source_id],
+        |row| {
+            Ok(SourceAliasRow {
+                source_id: row.get(0)?,
+                fingerprint: row.get(1)?,
+                device_id: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        },
+    )
+    .ok()
+}
+
+pub fn get_source_alias(source_id: &str) -> Option<SourceAliasRow> {
+    let conn = get().lock().unwrap();
+    get_source_alias_on(&conn, source_id)
+}
+
+pub fn load_source_aliases() -> Vec<SourceAliasRow> {
+    let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT source_id, fingerprint, device_id, updated_at FROM source_alias")
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(SourceAliasRow {
+            source_id: row.get(0)?,
+            fingerprint: row.get(1)?,
+            device_id: row.get(2)?,
+            updated_at: row.get(3)?,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+/// 写书源 fingerprint（跨端稳定标识，由 P1 计算后调用）。
+pub fn set_source_fingerprint(id: &str, fingerprint: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    conn.execute(
+        "UPDATE book_sources SET fingerprint = ?1, updated_at = ?2 WHERE id = ?3",
+        params![fingerprint, now_ms(), id],
+    )?;
+    Ok(())
+}
+
+/// 写漫画元数据的稳定书 ID。
+pub fn set_meta_stable_id(key: &str, stable_id: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    conn.execute(
+        "UPDATE book_metas SET stable_id = ?1, updated_at = ?2 WHERE key = ?3",
+        params![stable_id, now_ms(), key],
+    )?;
+    Ok(())
+}
+
+/// 写阅读记录的稳定书 ID。
+pub fn set_record_stable_id(key: &str, stable_id: &str) -> Result<()> {
+    let conn = get().lock().unwrap();
+    conn.execute(
+        "UPDATE read_records SET stable_id = ?1, updated_at = ?2 WHERE key = ?3",
+        params![stable_id, now_ms(), key],
+    )?;
     Ok(())
 }
 
@@ -1101,6 +1431,14 @@ fn tag_id(name: &str) -> String {
     name.trim().to_lowercase()
 }
 
+/// 当前毫秒时间戳（同步 LWW 与墓碑统一使用）。
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
 #[derive(Debug, Clone)]
 pub struct AiTaskRow {
     pub id: String,
@@ -1159,6 +1497,11 @@ pub fn load_all_ai_tasks() -> Vec<AiTaskRow> {
     .unwrap()
     .filter_map(|r| r.ok())
     .collect()
+}
+
+pub fn load_all_book_tags() -> Vec<BookTagRow> {
+    let conn = get().lock().unwrap();
+    load_all_book_tags_on(&conn)
 }
 
 /// 按给定顺序重排排队任务的 sort_order（1..N）。调用方应只传排队中任务的 id，
@@ -1344,6 +1687,203 @@ mod tests {
         // running 固定在顶部；排队任务按 sort_order 升序；旧数据（sort_order=0）按创建时间兜底排前
         assert_eq!(order, vec!["d", "a", "c", "b"]);
         Ok(())
+    }
+
+    fn schema_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        conn
+    }
+
+    fn table_cols(conn: &Connection, table: &str) -> Vec<String> {
+        conn.prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .filter_map(|c| c.ok())
+            .collect()
+    }
+
+    #[test]
+    fn fresh_schema_has_sync_columns_and_tables() {
+        let conn = schema_conn();
+        for t in [
+            "book_sources",
+            "read_records",
+            "book_metas",
+            "tags",
+            "book_tags",
+            "app_settings",
+        ] {
+            let c = table_cols(&conn, t);
+            assert!(c.contains(&"updated_at".to_string()), "{t} 缺 updated_at");
+            assert!(c.contains(&"deleted".to_string()), "{t} 缺 deleted");
+        }
+        let src = table_cols(&conn, "book_sources");
+        for col in ["fingerprint", "remote_only", "origin_device_id"] {
+            assert!(src.contains(&col.to_string()), "book_sources 缺 {col}");
+        }
+        for t in ["read_records", "book_metas"] {
+            assert!(
+                table_cols(&conn, t).contains(&"stable_id".to_string()),
+                "{t} 缺 stable_id"
+            );
+        }
+        for t in ["devices", "sync_state", "source_alias"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    params![t],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "缺表 {t}");
+        }
+    }
+
+    #[test]
+    fn legacy_schema_migrates_sync_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE book_sources (
+                id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
+                path TEXT NOT NULL DEFAULT '', url TEXT, username TEXT, password TEXT,
+                port INTEGER, note TEXT NOT NULL DEFAULT '', capability_label TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO book_sources (id, type, name, path) VALUES ('s1', 'local', '书库', 'D:/Comics');",
+        )
+        .unwrap();
+        init_tables(&conn).unwrap();
+        let c = table_cols(&conn, "book_sources");
+        for col in ["fingerprint", "remote_only", "origin_device_id", "updated_at", "deleted"] {
+            assert!(c.contains(&col.to_string()), "缺列 {col}");
+        }
+        let name: String = conn
+            .query_row("SELECT name FROM book_sources WHERE id='s1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(name, "书库");
+    }
+
+    #[test]
+    fn upsert_preserves_sync_columns_and_keeps_single_row() {
+        let conn = schema_conn();
+        let src = BookSourceRow {
+            id: "s1".into(),
+            r#type: "local".into(),
+            name: "书库".into(),
+            path: "D:/Comics".into(),
+            url: None,
+            username: None,
+            password: None,
+            port: None,
+            refresh_token: None,
+            client_id: None,
+            client_secret: None,
+            root_id: None,
+            cookie: None,
+            note: String::new(),
+            capability_label: "local".into(),
+        };
+        upsert_source_on(&conn, &src).unwrap();
+        conn.execute("UPDATE book_sources SET fingerprint='fp1' WHERE id='s1'", [])
+            .unwrap();
+        upsert_source_on(&conn, &src).unwrap();
+        let fp: Option<String> = conn
+            .query_row(
+                "SELECT fingerprint FROM book_sources WHERE id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fp.as_deref(), Some("fp1"));
+        let cnt: i64 = conn
+            .query_row("SELECT COUNT(*) FROM book_sources WHERE id='s1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cnt, 1);
+
+        let meta = BookMetaRow {
+            key: "local|s1|b.cbz".into(),
+            cover_page: 0,
+            crop_x: None,
+            crop_y: None,
+            crop_w: None,
+            crop_h: None,
+            author: String::new(),
+            genre: String::new(),
+            series: String::new(),
+            title: "B".into(),
+            chinese_title: String::new(),
+            summary: String::new(),
+            comment: String::new(),
+            rotations: "{}".into(),
+        };
+        upsert_meta_on(&conn, &meta).unwrap();
+        conn.execute(
+            "UPDATE book_metas SET stable_id='sid1' WHERE key=?1",
+            params![meta.key],
+        )
+        .unwrap();
+        upsert_meta_on(&conn, &meta).unwrap();
+        let sid: Option<String> = conn
+            .query_row(
+                "SELECT stable_id FROM book_metas WHERE key=?1",
+                params![meta.key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sid.as_deref(), Some("sid1"));
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM book_metas WHERE key=?1",
+                params![meta.key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn sync_state_and_source_alias_crud() {
+        let conn = schema_conn();
+        set_sync_state_on(&conn, "cursor_x", "42").unwrap();
+        assert_eq!(get_sync_state_on(&conn, "cursor_x").as_deref(), Some("42"));
+        // source_alias 外键指向 book_sources，先建书源再建别名。
+        let src = BookSourceRow {
+            id: "s1".into(),
+            r#type: "local".into(),
+            name: "书库".into(),
+            path: "D:/Comics".into(),
+            url: None,
+            username: None,
+            password: None,
+            port: None,
+            refresh_token: None,
+            client_id: None,
+            client_secret: None,
+            root_id: None,
+            cookie: None,
+            note: String::new(),
+            capability_label: "local".into(),
+        };
+        upsert_source_on(&conn, &src).unwrap();
+        set_source_alias_on(&conn, "s1", "fp1", "dev1").unwrap();
+        let row = get_source_alias_on(&conn, "s1").unwrap();
+        assert_eq!(row.fingerprint, "fp1");
+        assert_eq!(row.device_id, "dev1");
+    }
+
+    #[test]
+    fn book_tags_load_filters_deleted() {
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t1', 'tag', 1, 1)",
+            [],
+        )
+        .unwrap();
+        link_tag_on(&conn, "k1", "t1").unwrap();
+        conn.execute("UPDATE book_tags SET deleted=1 WHERE book_key='k1' AND tag_id='t1'", [])
+            .unwrap();
+        assert!(load_all_book_tags_on(&conn).is_empty());
     }
 
 }

@@ -201,6 +201,11 @@ class _SyncPanelState extends State<SyncPanel> {
               },
             ),
           ]),
+          const Text(
+            '开启后：应用启动先拉取一次，之后每 N 分钟自动“拉取→推送”。',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 4),
           Row(children: [
             TextButton.icon(
               onPressed: mgr.busy

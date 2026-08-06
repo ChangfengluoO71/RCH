@@ -44,3 +44,12 @@
 - `store/sync_manager.dart`：SyncManager（ChangeNotifier 单例）——配置读写（`dbSaveSetting`）、push/pull/restore、最近状态、定时 Timer（`sync_interval_minutes` > 0 时启动）
 - `ui/sync_panel.dart`：设置页"备份/同步"面板——模式选择、目录选择（file_selector）、WebDAV 书源下拉、立即推送/拉取/恢复按钮、最近状态与冲突副本提示
 - 纯逻辑（冲突副本识别、包路径构建、远程路径构建）拆成可单测的顶层函数
+
+## 7. 定时同步逻辑（备注）
+
+1. 前提：模式非 `off` 且 `sync_interval_minutes > 0`（可选 30/60/180 分钟），否则仅手动。
+2. 应用启动：加载配置后先 `pullNow()` 一次（不等待首个周期），随后 `Timer.periodic` 每 N 分钟触发 `autoSync()`。
+3. 每次 `autoSync()` = **先拉取（LWW 合并）→ 再推送（自 `cursor_export` 增量导出 + 时间戳归档）**。
+4. 防重入：`busy` 期间新触发的周期直接跳过，不叠加、不排队。
+5. 失败只更新 `sync_last_status`，不影响后续周期；切换模式/间隔会重建定时器，间隔 0 取消定时。
+6. 拉取是逐行 LWW（P3），不会整体覆盖本机更新的数据；推送增量，先拉后推不产生重复。

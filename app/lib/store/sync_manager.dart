@@ -55,7 +55,15 @@ class SyncManager extends ChangeNotifier {
 
   Timer? _timer;
 
-  /// 应用启动时调用：加载配置；定时开启时启动即拉取一次。
+  /// 应用启动时调用：加载配置；定时开启（间隔 > 0）时启动即拉取一次。
+  ///
+  /// 定时同步逻辑（备注）：
+  /// 1. 前提：模式非 off 且 `intervalMinutes > 0`，否则只保留手动按钮。
+  /// 2. 启动时先 `pullNow()` 一次（不等待首个周期），随后 `_restartTimer()`
+  ///    用 `Timer.periodic` 每 N 分钟触发 `autoSync()`。
+  /// 3. 每次 `autoSync()` = 先拉取（LWW 合并远端包）→ 再推送（自游标增量导出）。
+  /// 4. 防重入：同步中（busy）新触发的周期直接跳过，不叠加、不排队。
+  /// 5. 失败只写入 `lastStatus`，不影响后续周期；改模式/间隔会重建定时器。
   Future<void> init() async {
     await load();
     _restartTimer();
@@ -148,7 +156,10 @@ class SyncManager extends ChangeNotifier {
     return deviceNames[deviceId] ?? '其他设备';
   }
 
-  /// 定时任务：先拉远端，再推本地。
+  /// 定时任务：先拉远端（LWW 合并），再推本地（增量 + 归档）。
+  ///
+  /// 顺序原因：先把其他设备的变更吸收进本地，再以本地为准推增量；
+  /// 拉取引入的行会因 `updated_at` 较新而自然进入下次增量，属于无害回显。
   Future<void> autoSync() async {
     await pullNow();
     await pushNow();
@@ -350,6 +361,9 @@ class SyncManager extends ChangeNotifier {
       _timer = Timer.periodic(
         Duration(minutes: intervalMinutes),
         (_) => autoSync(),
+      );
+      debugPrint(
+        '[SyncManager] 定时同步已开启：每 $intervalMinutes 分钟（拉取→推送）',
       );
     }
   }

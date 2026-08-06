@@ -90,15 +90,16 @@ GET https://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas
     &access_token={token}
 ```
 
-响应：`list[0].dlink` 为下载直链（已含 access_token 参数，有效期约 8 小时）；`list[0].size`、`fs_id` 等。
+响应：`list[0].dlink` 为下载直链（有效期约 8 小时）；`list[0].size`、`fs_id` 等。
+**下载时必须自行拼接当前 `access_token`**：官方要求 dlink 必须带 `&access_token=xxx`，不能依赖 dlink 内嵌 token（内嵌的也可能因刷新轮换而失效 → 31045）。
 
 > 实现注意：`open_book(path)` 只拿到路径，需要先列父目录分页找到该路径对应的 `fs_id`，再调 filemetas 取 dlink。超大目录（>1000 条）需分页查找，记录为已知边界。
 
 ### 3.3 下载
 
 ```
-GET {dlink}
-Header: User-Agent: pan.baidu.com     // >20MB 文件必须，否则下载失败/限速
+GET {dlink}&access_token={当前token}
+Header: User-Agent: pan.baidu.com     // 官方要求必带，>50MB 文件必须，否则下载失败/限速
 ```
 
 - 支持 HTTP Range（`bytes=start-end`），流式读页可用；Range 能力可在打开时对目标文件探一次（bytes=0-0 → 206）。

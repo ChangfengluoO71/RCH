@@ -48,6 +48,9 @@
 ## 5. 已知坑
 
 - 百度 >20MB 下载不带 `pan.baidu.com` UA 会失败；普通用户限速（SVIP 相关，文案提示）。
+- 百度 dlink 下载必须拼接当前 `access_token`（官方要求）；filemetas 返回的 dlink 不一定带 token，内嵌 token 也可能因刷新轮换而失效（31045），下载时统一替换为当前 token。
+- 百度同一 AppKey 只保留一个书源：每个书源 connect 都会 refresh 并轮换 token，同 AppKey 多书源会互相顶掉对方 token，导致下载报 31045（user not exists）；遇到 31045 时下载路径需强制刷新 token 再重试。
+- 删除书源/清理失效记录必须同步调 `dbDeleteSource` / `dbDeleteRecordsBySourcePrefix` / `dbDeleteMetasBySourcePrefix` / `dbDeleteRecord` 删 SQLite 行：`saveToSqlite` 只 upsert 不删行，漏删会重启复活（历史 bug：dbDelete* 全部定义了但无人调用）。
 - 115 同账号同应用仅 2 个有效 refresh_token（第三次获取顶掉第一个）。
 - 115 开放平台禁止图床/软件床/外链分发/共享开发者账号；token 泄漏去 115 设备登录管理解除授权。
 - token 明文存 SQLite（与现有 password 同等保护级别，风险已知）。

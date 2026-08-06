@@ -54,8 +54,9 @@ class RecordRepository {
     records.removeWhere((k, _) => k.startsWith(prefix));
   }
 
-  int purgeStale(List<BookSource> sources) {
-    int removed = 0;
+  /// 清理失效记录（源已删除 / 本地文件丢失），返回被移除的 key 列表，
+  /// 调用方需据此同步删除 SQLite 中的行（saveToSqlite 只 upsert 不删行）。
+  List<String> purgeStale(List<BookSource> sources) {
     final staleKeys = <String>[];
     for (final r in records.values) {
       final src = sources.cast<BookSource?>().firstWhere(
@@ -70,9 +71,8 @@ class RecordRepository {
     }
     for (final k in staleKeys) {
       records.remove(k);
-      removed++;
     }
-    return removed;
+    return staleKeys;
   }
 
   // ---- Queries ----

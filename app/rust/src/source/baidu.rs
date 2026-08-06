@@ -3,14 +3,14 @@
 //! - 鉴权：授权码模式（`redirect_uri=oob`），refresh_token 长期有效，access_token 自动刷新。
 //! - 列目录：`GET /rest/2.0/xpan/file?method=list`（`web=1` 返回缩略图字段）。
 //! - 下载直链：`GET /rest/2.0/xpan/multimedia?method=filemetas&dlink=1`（dlink 约 8h 有效）。
-//! - 下载：dlink + `User-Agent: pan.baidu.com`（>20MB 文件必须，否则失败/限速）。
+//! - 下载：dlink 必须拼接当前 `access_token` + `User-Agent: pan.baidu.com`（官方要求，否则 31045；>50MB 必须 UA）。
 //!
 //! 契约细节见 `.trellis/tasks/08-03-m6-netdisk-official-api/research/baidu-openapi-contract.md`。
 use super::{ByteSource, Entry, RateGate};
 use crate::source::webdav::DownloadProgress;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::blocking::Client;
-use reqwest::header::{RANGE, USER_AGENT};
+use reqwest::header::{CONTENT_TYPE, RANGE, USER_AGENT};
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
 use std::io::{self, Read, Write};
@@ -65,6 +65,22 @@ fn http_client() -> Result<Client> {
         .connect_timeout(Duration::from_secs(10))
         .build()
         .context("创建 HTTP 客户端失败")
+}
+
+/// 官方要求：使用 dlink 必须拼接 `&access_token=xxx`。此函数把 dlink 上已有的
+/// access_token 替换为传入的当前 token，避免残留已失效的旧 token（31045 根因）。
+fn dlink_with_access_token(dlink: &str, token: &str) -> Result<String> {
+    let mut u = Url::parse(dlink).context("解析百度 dlink 失败")?;
+    let pairs: Vec<(String, String)> = u
+        .query_pairs()
+        .filter(|(k, _)| k != "access_token")
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    u.query_pairs_mut()
+        .clear()
+        .extend_pairs(pairs)
+        .append_pair("access_token", token);
+    Ok(u.to_string())
 }
 
 /// 授权码换 token（纯函数，不建会话）。
@@ -216,7 +232,23 @@ impl BaiduClient {
         Ok(pair.access_token)
     }
 
-    /// 统一 GET 封装：带 UA + access_token；遇 -6/110 自动刷新重试一次。
+    /// 给 dlink 附加当前有效 access_token（官方要求；token 过期会自动刷新）。
+    fn dlink_with_token(&self, dlink: &str) -> Result<String> {
+        let token = self.ensure_token()?;
+        dlink_with_access_token(dlink, &token)
+    }
+
+    /// 带当前 access_token + UA 的 dlink GET（range 可选），下载/探测统一入口。
+    fn dlink_get(&self, dlink: &str, range: Option<&str>) -> Result<reqwest::blocking::Response> {
+        let url = self.dlink_with_token(dlink)?;
+        let mut req = self.client.get(url).header(USER_AGENT, BAIDU_UA);
+        if let Some(range) = range {
+            req = req.header(RANGE, range);
+        }
+        req.send().context("请求百度 dlink 失败")
+    }
+
+    /// 统一 GET 封装：带 UA + access_token；遇 -6/110/31045 自动刷新重试一次。
     fn get(&self, url: &str, params: &[(&str, String)]) -> Result<(i64, String)> {
         let mut attempts = 0;
         loop {
@@ -243,7 +275,7 @@ impl BaiduClient {
             let parsed: serde_json::Value =
                 serde_json::from_str(&body).context("解析百度 API 响应失败")?;
             let errno = parsed.get("errno").and_then(|v| v.as_i64()).unwrap_or(0);
-            if (errno == -6 || errno == 110) && attempts == 0 {
+            if (errno == -6 || errno == 110 || errno == 31045) && attempts == 0 {
                 attempts += 1;
                 self.access.lock().unwrap().take();
                 continue; // 刷新后重试一次
@@ -364,11 +396,7 @@ impl BaiduClient {
 
     /// 探测 dlink 是否支持 Range（bytes=0-0 → 206）。
     pub fn probe_range(&self, dlink: &str) -> bool {
-        self.client
-            .get(dlink)
-            .header(RANGE, "bytes=0-0")
-            .header(USER_AGENT, BAIDU_UA)
-            .send()
+        self.dlink_get(dlink, Some("bytes=0-0"))
             .map(|r| r.status() == StatusCode::PARTIAL_CONTENT)
             .unwrap_or(false)
     }
@@ -385,31 +413,31 @@ impl BaiduClient {
             return Ok(0);
         }
         let end = offset + buf.len() as u64 - 1;
+        let range = format!("bytes={}-{}", offset, end);
         let mut resp = self
-            .client
-            .get(dlink)
-            .header(RANGE, format!("bytes={}-{}", offset, end))
-            .header(USER_AGENT, BAIDU_UA)
-            .send()
+            .dlink_get(dlink, Some(&range))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Range 请求失败:{e}")))?;
         let status = resp.status();
         if status == StatusCode::FORBIDDEN {
-            // dlink 过期，重取一次
+            // dlink 失效（过期）或 access_token 被轮换（31045）：强制刷新 token 后重取 dlink 再试一次
+            self.access.lock().unwrap().take();
             let (new_link, _) = self
                 .dlink(path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("重取 dlink 失败:{e}")))?;
             resp = self
-                .client
-                .get(&new_link)
-                .header(RANGE, format!("bytes={}-{}", offset, end))
-                .header(USER_AGENT, BAIDU_UA)
-                .send()
+                .dlink_get(&new_link, Some(&range))
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Range 请求失败:{e}")))?;
         }
         if resp.status() != StatusCode::PARTIAL_CONTENT {
+            let final_status = resp.status();
+            let body = resp.text().unwrap_or_default();
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                format!("百度 dlink 未支持 Range(HTTP {})", resp.status().as_u16()),
+                format!(
+                    "百度 dlink 未支持 Range(HTTP {})：{}",
+                    final_status.as_u16(),
+                    body.chars().take(160).collect::<String>()
+                ),
             ));
         }
         let mut filled = 0;
@@ -459,25 +487,37 @@ impl BaiduClient {
             }
         }
         let mut resp = self
-            .client
-            .get(&link)
-            .header(USER_AGENT, BAIDU_UA)
-            .send()
+            .dlink_get(&link, None)
             .map_err(|e| anyhow!("下载失败:{e}"))?;
         let status = resp.status();
         if status == StatusCode::FORBIDDEN {
+            // 同上：dlink 失效或 access_token 被轮换（31045），先强制刷新 token 再重试
+            self.access.lock().unwrap().take();
             let (link2, _) = self.dlink(path)?;
             resp = self
-                .client
-                .get(&link2)
-                .header(USER_AGENT, BAIDU_UA)
-                .send()
+                .dlink_get(&link2, None)
                 .map_err(|e| anyhow!("下载失败:{e}"))?;
         }
         if !resp.status().is_success() {
             bail!(
                 "下载失败:HTTP {} {}",
                 resp.status().as_u16(),
+                resp.text()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            );
+        }
+        // 200 + JSON 错误体（如 31045）也要拦截，避免把错误内容当文件写入缓存。
+        let content_type = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if content_type.to_ascii_lowercase().contains("json") {
+            bail!(
+                "下载失败:{}",
                 resp.text()
                     .unwrap_or_default()
                     .chars()
@@ -588,6 +628,7 @@ fn check_errno(errno: i64) -> Result<()> {
         31066 => bail!("请求过于频繁，请稍后再试"),
         31119 | 31329 => bail!("百度账号状态异常（风控），请检查账号"),
         -6 | 110 => bail!("登录状态失效，请重新授权"),
+        31045 => bail!("百度 access_token 验证未通过：token 可能已过期，或授权时未勾选网盘权限，请重新授权"),
         _ => bail!("百度 API 错误码:{errno}"),
     }
 }
@@ -629,6 +670,43 @@ mod tests {
         assert_eq!(p.list[0].fs_id, 7);
         assert_eq!(p.list[0].size, Some(2048));
         assert!(p.list[0].dlink.as_deref().unwrap().starts_with("https://"));
+    }
+
+    #[test]
+    fn dlink_token_appended_when_missing() {
+        let out = dlink_with_access_token(
+            "https://d.pcs.baidu.com/file/abc?fid=1&sign=a%2Bb%3D&expires=8h",
+            "12.token",
+        )
+        .unwrap();
+        let u = Url::parse(&out).unwrap();
+        let pairs: Vec<(String, String)> = u
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert!(pairs.contains(&("access_token".to_string(), "12.token".to_string())));
+        // 原有参数保留，且百分号编码往返稳定
+        assert!(pairs.contains(&("sign".to_string(), "a+b=".to_string())));
+        assert!(pairs.contains(&("expires".to_string(), "8h".to_string())));
+    }
+
+    #[test]
+    fn dlink_token_replaced_when_present() {
+        let out = dlink_with_access_token(
+            "https://d.pcs.baidu.com/file/abc?fid=1&access_token=old&sign=x",
+            "new",
+        )
+        .unwrap();
+        let u = Url::parse(&out).unwrap();
+        let pairs: Vec<(String, String)> = u
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert_eq!(
+            pairs.iter().filter(|(k, _)| k == "access_token").count(),
+            1
+        );
+        assert!(pairs.contains(&("access_token".to_string(), "new".to_string())));
     }
 
     #[test]

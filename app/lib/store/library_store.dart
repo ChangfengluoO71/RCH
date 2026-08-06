@@ -413,6 +413,10 @@ class LibraryStore extends ChangeNotifier {
       final prefix = '${src.type}|${src.id}|';
       _records.removeByPrefix(prefix);
       _books.metas.removeWhere((k, _) => k.startsWith(prefix));
+      // SQLite 同步删除：saveToSqlite 只 upsert 不删行，漏删会让书源/记录重启后复活。
+      dbDeleteSource(id: id);
+      dbDeleteRecordsBySourcePrefix(prefix: prefix);
+      dbDeleteMetasBySourcePrefix(prefix: prefix);
     }
     notifyListeners(); saveToDisk();
   }
@@ -449,10 +453,13 @@ class LibraryStore extends ChangeNotifier {
 
   int purgeStaleRecords() {
     final removed = _records.purgeStale(sources);
-    if (removed > 0) {
+    if (removed.isNotEmpty) {
+      for (final k in removed) {
+        dbDeleteRecord(key: k);
+      }
       notifyListeners(); saveToDisk();
     }
-    return removed;
+    return removed.length;
   }
 
   // ---- Meta（委托给 BookRepository） ----

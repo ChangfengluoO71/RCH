@@ -34,7 +34,7 @@ Future<BigInt> clearCoverCache() =>
 Future<BigInt> clearAiCache() =>
     RustLib.instance.api.crateApiCacheClearAiCache();
 
-/// 清空临时文件（temp/），返回释放的字节数。
+/// 清空 AI 超分临时文件（temp/），返回释放的字节数。
 Future<BigInt> clearTempCache() =>
     RustLib.instance.api.crateApiCacheClearTempCache();
 
@@ -92,7 +92,7 @@ class CacheSize {
   /// 页面缓存(字节)，L2 磁盘页面缓存（page/）。
   final BigInt page;
 
-  /// 整本下载缓存(字节)，WebDAV raw/ 整本下载。
+  /// 整本下载缓存(字节)，远程书源整本下载（raw/）。
   final BigInt raw;
 
   /// 封面缓存(字节)，封面缩略图磁盘缓存（cover/）。
@@ -101,7 +101,7 @@ class CacheSize {
   /// AI 结果缓存(字节)（ai/）。
   final BigInt ai;
 
-  /// 临时文件(字节)（temp/）。
+  /// 临时文件(字节)，AI 超分中间产物（temp/）。
   final BigInt temp;
 
   /// 所有缓存总和(字节)。

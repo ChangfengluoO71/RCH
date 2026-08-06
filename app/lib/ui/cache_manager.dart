@@ -11,7 +11,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// 缓存管理面板：展示7类缓存各占空间、独立清理按钮、自定义缓存目录。
+/// 缓存管理面板：展示5类缓存各占空间、独立清理按钮、自定义缓存目录。
 class CacheManagerPanel extends StatefulWidget {
   const CacheManagerPanel({super.key});
   @override
@@ -264,7 +264,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('缓存管理', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
       const SizedBox(height: 4),
-      Text('各缓存分类独立管理，不影响已阅读漫画的封面缓存',
+      Text('各缓存分类独立清理，清理后可自动重新生成',
           style: Theme.of(context).textTheme.bodySmall),
       const SizedBox(height: 12),
       if (_loading)
@@ -278,7 +278,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
               'L2 磁盘缓存，复用后秒开',
               () => _clear('清空页面缓存', clearPageCache)),
           _cacheRow(Icons.cloud_download, '整本下载（raw/）', _sizes!.raw,
-              'WebDAV 下载的完整漫画文件',
+              '远程书源整本下载的原始文件',
               () => _clear('清空整本下载缓存', clearRawCache)),
           _cacheRow(Icons.image, '封面缩略图（cover/）', _sizes!.cover,
               '海报墙封面图片缓存',
@@ -287,7 +287,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
               'AI 超分输出缓存',
               () => _clear('清空 AI 缓存', clearAiCache)),
           _cacheRow(Icons.storage, '临时文件（temp/）', _sizes!.temp,
-              'CB7/CBR 解压中间产物',
+              'AI 超分输入/输出中间文件',
               () => _clear('清空临时文件', clearTempCache)),
         ],
         const SizedBox(height: 12),

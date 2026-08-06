@@ -45,13 +45,13 @@ pub fn set_custom_cache_root(path: &str) {
 pub enum CacheDir {
     /// L2 磁盘页面缓存（读过的页写盘，避免重复下载）。
     Page,
-    /// 整本漫画原始文件（WebDAV 下载后存储）。
+    /// 整本漫画原始文件（远程书源整本下载后存储）。
     Raw,
     /// 封面缩略图缓存（按质量/裁剪分）。
     Cover,
     /// AI 超分结果缓存。
     Ai,
-    /// 临时文件（CB7/CBR 解压中间产物）。
+    /// AI 超分临时文件（输入/输出中间产物）。
     Temp,
 }
 
@@ -192,7 +192,7 @@ pub fn clear_ai_cache() -> Result<u64> {
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
-/// 清空临时文件（temp/）。
+/// 清空 AI 超分临时文件（temp/）。
 pub fn clear_temp_cache() -> Result<u64> {
     let dir = CacheDir::Temp.path();
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }

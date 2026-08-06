@@ -6,13 +6,13 @@ use crate::cache;
 pub struct CacheSize {
     /// 页面缓存(字节)，L2 磁盘页面缓存（page/）。
     pub page: u64,
-    /// 整本下载缓存(字节)，WebDAV raw/ 整本下载。
+    /// 整本下载缓存(字节)，远程书源整本下载（raw/）。
     pub raw: u64,
     /// 封面缓存(字节)，封面缩略图磁盘缓存（cover/）。
     pub cover: u64,
     /// AI 结果缓存(字节)（ai/）。
     pub ai: u64,
-    /// 临时文件(字节)（temp/）。
+    /// 临时文件(字节)，AI 超分中间产物（temp/）。
     pub temp: u64,
     /// 所有缓存总和(字节)。
     pub total: u64,
@@ -70,7 +70,7 @@ pub fn clear_ai_cache() -> Result<u64, String> {
     cache::clear_ai_cache().map_err(|e| format!("{e}"))
 }
 
-/// 清空临时文件（temp/），返回释放的字节数。
+/// 清空 AI 超分临时文件（temp/），返回释放的字节数。
 pub fn clear_temp_cache() -> Result<u64, String> {
     cache::clear_temp_cache().map_err(|e| format!("{e}"))
 }

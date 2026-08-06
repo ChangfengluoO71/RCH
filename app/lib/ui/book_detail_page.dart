@@ -171,12 +171,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
   void _addTag(String t) { t = t.trim(); if (t.isEmpty || _meta.tags.contains(t)) return; setState(() => _meta.tags.add(t)); LibraryStore.instance.updateMeta(_meta); setState(() => _tagInputKey++); }
   void _removeTag(String t) { setState(() => _meta.tags.remove(t)); LibraryStore.instance.updateMeta(_meta); }
 
-  Widget _metaField(String label, TextEditingController ctrl, {String? hint}) => Padding(
+  Widget _metaField(String label, TextEditingController ctrl) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [Icon(Icons.label, size: 16, color: Colors.redAccent.shade200), const SizedBox(width: 4), Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))]),
       const SizedBox(height: 4),
-      TextField(controller: ctrl, decoration: InputDecoration(hintText: hint, border: const OutlineInputBorder(), isDense: true), onChanged: (_) => _saveMeta()),
+      TextField(controller: ctrl, decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true), onChanged: (_) => _saveMeta()),
     ]),
   );
 
@@ -258,11 +258,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
           const SizedBox(height: 4),
           Text('作者/类别/系列用于管理和检索', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 8),
-          _metaField('标题', _titleCtrl, hint: '漫画标题'),
-          _metaField('中文标题', _cnTitleCtrl, hint: '中文译名'),
-          _metaField('作者', _authorCtrl, hint: '漫画作者'),
-          _metaField('类别', _genreCtrl, hint: '如:同人/原创/全彩'),
-          _metaField('系列', _seriesCtrl, hint: '系列名或卷号'),
+          _metaField('标题', _titleCtrl),
+          _metaField('中文标题', _cnTitleCtrl),
+          _metaField('作者', _authorCtrl),
+          _metaField('类别', _genreCtrl),
+          _metaField('系列', _seriesCtrl),
           const SizedBox(height: 8),
           const Text('标签', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
           const SizedBox(height: 6),
@@ -285,11 +285,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
           const SizedBox(height: 20),
           const Text('简介', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          TextField(controller: _summaryCtrl, maxLines: 4, decoration: const InputDecoration(hintText: '这本书讲了什么…', border: OutlineInputBorder()), onChanged: (_) => _saveMeta()),
+          TextField(controller: _summaryCtrl, maxLines: 4, decoration: const InputDecoration(border: OutlineInputBorder()), onChanged: (_) => _saveMeta()),
           const SizedBox(height: 20),
           const Text('感想', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          TextField(controller: _commentCtrl, maxLines: 4, decoration: const InputDecoration(hintText: '你的读后感…', border: OutlineInputBorder()), onChanged: (_) => _saveMeta()),
+          TextField(controller: _commentCtrl, maxLines: 4, decoration: const InputDecoration(border: OutlineInputBorder()), onChanged: (_) => _saveMeta()),
         ])),
       ]),
     );

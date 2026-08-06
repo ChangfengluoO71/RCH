@@ -8,11 +8,18 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
-## [Unreleased]
+## [0.3.4] — 2026-08-06
+
+### Fixed
+
+- 百度网盘 31045：dlink 拼接 access_token、下载 403 强制刷新重试、删除书源同步 SQLite
 
 ### Changed
 
 - **缓存管理面板**：移除缩略图（thumb/）与旧下载目录（download/）两个缓存层——thumb/ 无任何写入代码属占位层，download/ 的 WebDAV 整本下载回退已并入 raw/ 缓存；"磁盘总占用"改为各缓存分类之和；"清空全部缓存"同时清理旧版页面缓存与 download/ 遗留目录
+- 缓存管理文案修正（raw/ 为远程书源整本下载、temp/ 为 AI 超分临时文件）；漫画详情页元数据编辑去掉具体提示文案，留白自由填写
+- 新增 codegen.ps1：绑定重新生成后自动重建 release DLL，防止 FRB content hash 不同步
+- README 补充远程书源添加教程与夸克网盘书源说明
 
 ## [0.3.3] — 2026-08-04
 

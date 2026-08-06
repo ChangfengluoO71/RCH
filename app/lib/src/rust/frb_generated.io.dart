@@ -8,6 +8,7 @@ import 'api/book.dart';
 import 'api/cache.dart';
 import 'api/db.dart';
 import 'api/export.dart';
+import 'api/package.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
 import 'dart:async';
@@ -181,6 +182,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SftpSessionInfo dco_decode_sftp_session_info(dynamic raw);
+
+  @protected
+  SyncExportInfo dco_decode_sync_export_info(dynamic raw);
+
+  @protected
+  SyncImportStats dco_decode_sync_import_stats(dynamic raw);
 
   @protected
   TagDto dco_decode_tag_dto(dynamic raw);
@@ -384,6 +391,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SftpSessionInfo sse_decode_sftp_session_info(SseDeserializer deserializer);
+
+  @protected
+  SyncExportInfo sse_decode_sync_export_info(SseDeserializer deserializer);
+
+  @protected
+  SyncImportStats sse_decode_sync_import_stats(SseDeserializer deserializer);
 
   @protected
   TagDto sse_decode_tag_dto(SseDeserializer deserializer);
@@ -649,6 +662,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_sftp_session_info(
     SftpSessionInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_export_info(
+    SyncExportInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_import_stats(
+    SyncImportStats self,
     SseSerializer serializer,
   );
 

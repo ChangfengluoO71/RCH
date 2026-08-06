@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1042075980;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1472725222;
 
 // Section: executor
 
@@ -3035,6 +3035,108 @@ fn wire__crate__api__source__quark_list_impl(
         },
     )
 }
+fn wire__crate__api__package__rchpkg_default_sync_dir_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rchpkg_default_sync_dir",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_root = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(
+                        crate::api::package::rchpkg_default_sync_dir(api_root),
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__package__rchpkg_export_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rchpkg_export",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_incremental = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::package::rchpkg_export(api_path, api_incremental)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__package__rchpkg_import_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rchpkg_import",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::package::rchpkg_import(api_path)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__db__reopen_data_db_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4290,6 +4392,56 @@ impl SseDecode for crate::api::source::SftpSessionInfo {
     }
 }
 
+impl SseDecode for crate::api::package::SyncExportInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_deviceId = <String>::sse_decode(deserializer);
+        let mut var_createdAt = <i64>::sse_decode(deserializer);
+        let mut var_since = <i64>::sse_decode(deserializer);
+        let mut var_tags = <i64>::sse_decode(deserializer);
+        let mut var_bookTags = <i64>::sse_decode(deserializer);
+        let mut var_metas = <i64>::sse_decode(deserializer);
+        let mut var_records = <i64>::sse_decode(deserializer);
+        let mut var_sources = <i64>::sse_decode(deserializer);
+        let mut var_settings = <i64>::sse_decode(deserializer);
+        let mut var_tombstones = <i64>::sse_decode(deserializer);
+        return crate::api::package::SyncExportInfo {
+            device_id: var_deviceId,
+            created_at: var_createdAt,
+            since: var_since,
+            tags: var_tags,
+            book_tags: var_bookTags,
+            metas: var_metas,
+            records: var_records,
+            sources: var_sources,
+            settings: var_settings,
+            tombstones: var_tombstones,
+        };
+    }
+}
+
+impl SseDecode for crate::api::package::SyncImportStats {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_schemaVersion = <i64>::sse_decode(deserializer);
+        let mut var_tags = <i64>::sse_decode(deserializer);
+        let mut var_bookTags = <i64>::sse_decode(deserializer);
+        let mut var_metas = <i64>::sse_decode(deserializer);
+        let mut var_records = <i64>::sse_decode(deserializer);
+        let mut var_sources = <i64>::sse_decode(deserializer);
+        let mut var_settings = <i64>::sse_decode(deserializer);
+        return crate::api::package::SyncImportStats {
+            schema_version: var_schemaVersion,
+            tags: var_tags,
+            book_tags: var_bookTags,
+            metas: var_metas,
+            records: var_records,
+            sources: var_sources,
+            settings: var_settings,
+        };
+    }
+}
+
 impl SseDecode for crate::api::db::TagDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4480,32 +4632,40 @@ fn pde_ffi_dispatcher_primary_impl(
         ),
         83 => wire__crate__api__source__quark_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
         84 => wire__crate__api__source__quark_list_impl(port, ptr, rust_vec_len, data_len),
-        85 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
-        86 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        87 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
-        88 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        90 => {
-            wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
-        }
-        91 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        94 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        96 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        97 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        98 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        99 => wire__crate__api__source__webdav_download_progress_impl(
+        85 => wire__crate__api__package__rchpkg_default_sync_dir_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        100 => {
+        86 => wire__crate__api__package__rchpkg_export_impl(port, ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__package__rchpkg_import_impl(port, ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        89 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
+        91 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
+        92 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        93 => {
+            wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
+        }
+        94 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
+        95 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
+        96 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        97 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        98 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        102 => wire__crate__api__source__webdav_download_progress_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        103 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        101 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        104 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4923,6 +5083,61 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::source::SftpSessionInfo>
     for crate::api::source::SftpSessionInfo
 {
     fn into_into_dart(self) -> crate::api::source::SftpSessionInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::package::SyncExportInfo {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.device_id.into_into_dart().into_dart(),
+            self.created_at.into_into_dart().into_dart(),
+            self.since.into_into_dart().into_dart(),
+            self.tags.into_into_dart().into_dart(),
+            self.book_tags.into_into_dart().into_dart(),
+            self.metas.into_into_dart().into_dart(),
+            self.records.into_into_dart().into_dart(),
+            self.sources.into_into_dart().into_dart(),
+            self.settings.into_into_dart().into_dart(),
+            self.tombstones.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::package::SyncExportInfo
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::package::SyncExportInfo>
+    for crate::api::package::SyncExportInfo
+{
+    fn into_into_dart(self) -> crate::api::package::SyncExportInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::package::SyncImportStats {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.schema_version.into_into_dart().into_dart(),
+            self.tags.into_into_dart().into_dart(),
+            self.book_tags.into_into_dart().into_dart(),
+            self.metas.into_into_dart().into_dart(),
+            self.records.into_into_dart().into_dart(),
+            self.sources.into_into_dart().into_dart(),
+            self.settings.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::package::SyncImportStats
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::package::SyncImportStats>
+    for crate::api::package::SyncImportStats
+{
+    fn into_into_dart(self) -> crate::api::package::SyncImportStats {
         self
     }
 }
@@ -5398,6 +5613,35 @@ impl SseEncode for crate::api::source::SftpSessionInfo {
         <u64>::sse_encode(self.id, serializer);
         <String>::sse_encode(self.root, serializer);
         <String>::sse_encode(self.capability_label, serializer);
+    }
+}
+
+impl SseEncode for crate::api::package::SyncExportInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.device_id, serializer);
+        <i64>::sse_encode(self.created_at, serializer);
+        <i64>::sse_encode(self.since, serializer);
+        <i64>::sse_encode(self.tags, serializer);
+        <i64>::sse_encode(self.book_tags, serializer);
+        <i64>::sse_encode(self.metas, serializer);
+        <i64>::sse_encode(self.records, serializer);
+        <i64>::sse_encode(self.sources, serializer);
+        <i64>::sse_encode(self.settings, serializer);
+        <i64>::sse_encode(self.tombstones, serializer);
+    }
+}
+
+impl SseEncode for crate::api::package::SyncImportStats {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i64>::sse_encode(self.schema_version, serializer);
+        <i64>::sse_encode(self.tags, serializer);
+        <i64>::sse_encode(self.book_tags, serializer);
+        <i64>::sse_encode(self.metas, serializer);
+        <i64>::sse_encode(self.records, serializer);
+        <i64>::sse_encode(self.sources, serializer);
+        <i64>::sse_encode(self.settings, serializer);
     }
 }
 

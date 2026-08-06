@@ -81,6 +81,10 @@ cd app
 flutter_rust_bridge_codegen generate
 ```
 
+> **注意**：改完 Rust API 后请运行 `.\codegen.ps1`（而不是只执行上面的 codegen）。
+> FRB 在 `flutter run` 时优先加载 `rust/target/release/rust_lib_app.dll`，只重生成绑定
+> 而不重建该 DLL 会导致启动时报 content hash 不匹配。
+
 ## 运行
 
 ```bash

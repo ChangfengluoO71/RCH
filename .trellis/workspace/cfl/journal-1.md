@@ -103,3 +103,25 @@ M5 收尾提交；M6 实现百度/115 官方 API 书源（OAuth/设备码授权�
 ### Next Steps
 
 - 跑 flutter run/build windows --release 全量构建，让 Dart 层修复进入正式包
+
+
+## Session 4: 缓存管理清理：移除缩略图/旧下载缓存层
+
+**Date**: 2026-08-06
+**Task**: 缓存管理清理：移除缩略图/旧下载缓存层
+**Branch**: `master`
+
+### Summary
+
+按 08-02-cache-tier-review 实施：删除 thumb/ 占位缓存层；download/ 的 WebDAV 无 Range 回退并入 raw/；total 改为缓存分类之和；清空全部缓存覆盖旧版遗留目录；删除磁盘上 thumb/download/旧哈希缓存约 40MB 与 baidu_debug.log、database.db 备份；cargo test 59 项通过、flutter analyze 无问题
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c660661` | (see git log) |
+| `860c457` | (see git log) |
+
+### Status
+
+[OK] **Completed**

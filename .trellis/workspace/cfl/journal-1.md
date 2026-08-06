@@ -67,3 +67,39 @@ M5 收尾提交；M6 实现百度/115 官方 API 书源（OAuth/设备码授权�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 百度网盘 31045 修复：dlink 拼接 access_token + 403 强制刷新 + 书源删除 SQLite 持久化
+
+**Date**: 2026-08-06
+**Task**: 百度网盘 31045 修复：dlink 拼接 access_token + 403 强制刷新 + 书源删除 SQLite 持久化
+**Branch**: `master`
+
+### Summary
+
+修复百度网盘源远程下载 31045（access_token 验证未通过）：下载 dlink 统一拼接当前 access_token；下载 403 时强制刷新 token 重取 dlink 重试；API 遇 -6/110/31045 自动刷新；拦截 200+JSON 错误体；书源删除/清理失效记录同步删 SQLite 行。实测 dlink+token+UA → 302 → 200 PDF。已建并归档任务 08-06-baidu-31045-fix。
+
+### Main Changes
+
+- dlink 下载统一拼接当前 access_token（官方要求）
+- 下载 403/31045 强制刷新 token 后重试
+- removeSourceWithCleanup / purgeStaleRecords 同步删除 SQLite 行，修复删除重启复活
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a637ffc` | (see git log) |
+| `0128e1f` | (see git log) |
+
+### Testing
+
+- [OK] cargo check + 8 个百度单测 + flutter analyze 通过；真实账号端到端下载 200
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 跑 flutter run/build windows --release 全量构建，让 Dart 层修复进入正式包

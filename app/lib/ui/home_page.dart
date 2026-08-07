@@ -4,6 +4,7 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/netdisk_credentials.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/cache_manager.dart';
@@ -40,10 +41,28 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    }
     LibraryStore.instance.load();
+  }
+
+  bool _portraitLocked = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncOrientation();
+  }
+
+  /// 手机（紧凑布局）锁定竖屏；平板（桌面布局）允许旋转，随布局切换自动调整。
+  void _syncOrientation() {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    final compact = isCompact(context);
+    if (compact && !_portraitLocked) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      _portraitLocked = true;
+    } else if (!compact && _portraitLocked) {
+      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      _portraitLocked = false;
+    }
   }
 
   @override
@@ -622,10 +641,34 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSettings() {
     final s = LibraryStore.instance.settings;
     return ListenableBuilder(listenable: LibraryStore.instance, builder: (c, _) => ListView(padding: const EdgeInsets.all(24), children: [
-      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const CacheManagerPanel(), const SizedBox(height: 28), const SyncPanel(), const SizedBox(height: 28),
+      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const _StoragePermissionTile(), const SizedBox(height: 28), _tabletLayout(s), const SizedBox(height: 16), const CacheManagerPanel(), const SizedBox(height: 28), const SyncPanel(), const SizedBox(height: 28),
       _readingDefaults(s), const SizedBox(height: 16), _remoteSources(s), const SizedBox(height: 16), _localComics(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
     ]));
   }
+
+  Widget _tabletLayout(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    const Text('平板布局', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+    const SizedBox(height: 4),
+    Text('横屏建议"桌面风格"（与 PC 相同，侧栏导航）；竖屏建议"手机风格"（底部导航）。手机（宽度 <600dp）始终为手机风格。',
+        style: Theme.of(context).textTheme.bodySmall),
+    const SizedBox(height: 10),
+    SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'auto', label: Text('自动')),
+          ButtonSegment(value: 'desktop', label: Text('桌面风格')),
+          ButtonSegment(value: 'mobile', label: Text('手机风格')),
+        ],
+        selected: {s.tabletLayout},
+        onSelectionChanged: (vs) {
+          s.tabletLayout = vs.first;
+          LibraryStore.instance.updateSettings(s);
+          setState(() {});
+        },
+      ),
+    ),
+  ]);
 
   Widget _localComics(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Text('本地漫画', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
@@ -1013,4 +1056,64 @@ class _QrScanDialogState extends State<_QrScanDialog> {
           TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('关闭')),
         ],
       );
+}
+
+/// Android "所有文件访问"授权入口：显示授权状态，未授权时引导去系统授权页。
+class _StoragePermissionTile extends StatefulWidget {
+  const _StoragePermissionTile();
+  @override
+  State<_StoragePermissionTile> createState() => _StoragePermissionTileState();
+}
+
+class _StoragePermissionTileState extends State<_StoragePermissionTile>
+    with WidgetsBindingObserver {
+  bool? _granted;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _check();
+  }
+
+  Future<void> _check() async {
+    final g = await isAllFilesAccessGranted();
+    if (mounted) setState(() => _granted = g);
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    final granted = _granted;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('存储权限', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 4),
+      if (granted == null)
+        const Text('检查中…', style: TextStyle(fontSize: 12, color: Colors.white54))
+      else if (granted)
+        const Text('已授予"所有文件访问"，本地书源可直接读取 /sdcard 等外部目录',
+            style: TextStyle(fontSize: 12, color: Colors.white54))
+      else ...[
+        const Text('未授予"所有文件访问"。如需直接读取外部目录（如 /sdcard/Download），请点击下方按钮授权。',
+            style: TextStyle(fontSize: 12, color: Colors.white54)),
+        const SizedBox(height: 6),
+        FilledButton.tonal(
+          onPressed: () {
+            openAllFilesAccessSettings();
+          },
+          child: const Text('去授权'),
+        ),
+      ],
+    ]);
+  }
 }

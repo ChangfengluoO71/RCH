@@ -4,7 +4,9 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/ui/common.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:photo_view/photo_view.dart';
@@ -36,6 +38,18 @@ class _ReaderPageState extends State<ReaderPage> {
   final FocusNode _focus = FocusNode(); final ScrollController _webtoonCtrl = ScrollController();
   late ReadMode _mode; late bool _invert; late DualPageMode _dual; late int _gap; late bool _skipCover;
   late KeyBinds _keys;
+  /// 进入阅读器时是否为紧凑（手机）布局：退出时据此恢复竖屏锁定或保持可旋转。
+  bool _compactAtOpen = true;
+  bool _orientationCaptured = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_orientationCaptured) {
+      _orientationCaptured = true;
+      _compactAtOpen = isCompact(context);
+    }
+  }
 
   @override void initState() { super.initState();
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -268,7 +282,9 @@ class _ReaderPageState extends State<ReaderPage> {
     AiUpscaleManager.instance.removeListener(_onAiManager);
     AiUpscaleManager.instance.setReadingBook(null);
     if (defaultTargetPlatform == TargetPlatform.android) {
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      SystemChrome.setPreferredOrientations(
+        _compactAtOpen ? [DeviceOrientation.portraitUp] : DeviceOrientation.values,
+      );
     }
     final b=_book;if(b!=null)closeBook(handle:b.handle);_photoCtrl.dispose();_scaleStateCtrl.dispose();_dualZoomCtrl.dispose();_webtoonZoomCtrl.dispose();_focus.dispose();_webtoonCtrl.dispose();super.dispose();
   }
@@ -389,9 +405,9 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
       context: context,
       items: [
-        PopupMenuItem(value: 'ai_version', child: ListTile(leading: Icon(_useAiVersion ? Icons.image_not_supported : Icons.auto_fix_high), title: Text(_useAiVersion ? '使用原版' : '使用超分版本'), dense: true)),
+        if(!isAndroidPlatform)PopupMenuItem(value: 'ai_version', child: ListTile(leading: Icon(_useAiVersion ? Icons.image_not_supported : Icons.auto_fix_high), title: Text(_useAiVersion ? '使用原版' : '使用超分版本'), dense: true)),
         PopupMenuItem(value: 'settings', child: ListTile(leading: Icon(Icons.tune), title: Text('阅读设置'), dense: true)),
-        PopupMenuItem(value: 'ai', child: ListTile(leading: Icon(Icons.auto_fix_high), title: Text('AI 超分 (2x)'), dense: true)),
+        if(!isAndroidPlatform)PopupMenuItem(value: 'ai', child: ListTile(leading: Icon(Icons.auto_fix_high), title: Text('AI 超分 (2x)'), dense: true)),
         PopupMenuItem(value: 'rotate', child: ListTile(leading: Icon(_rotationMode ? Icons.rotate_left : Icons.rotate_right), title: Text(_rotationMode ? '退出旋转模式' : '界面旋转'), dense: true)),
       ],
     ).then((value) {
@@ -460,8 +476,7 @@ class _ReaderPageState extends State<ReaderPage> {
     const SizedBox(height:8),Row(children:[const Text('拼接间隙:'),SizedBox(width:120,child:Slider(value:_gap.toDouble(),min:0,max:20,divisions:20,label:'${_gap}px',onChanged:(v){ss((){});setState((){_gap=v.toInt();});})),Text('${_gap}px')]),
     const SizedBox(height:10),Row(children:[const Text('首页单独显示(不参与拼接)'),const Spacer(),Switch(value:_skipCover,onChanged:(v){ss((){});setState((){_skipCover=v;});})]),
     const SizedBox(height:16),SwitchListTile(title:const Text('日漫模式点击区反向'),subtitle:const Text('打开后右侧区域变为前进'),dense:true,contentPadding:EdgeInsets.zero,value:_invert,onChanged:(v){ss((){});setState((){_invert=v;});}),
-    const SizedBox(height:16),const Text('🤖 AI 超分',style:TextStyle(color:Colors.white38,fontSize:12)),const SizedBox(height:6),
-    const SizedBox(width:double.infinity,child:Card(child:Padding(padding:EdgeInsets.all(12),child:Text('右键当前页选择 \'AI 超分 (2x)\' 即可端侧推理放大图片，已启用。',style:TextStyle(fontSize:12,color:Colors.white54))))),
+    if(!isAndroidPlatform)...[const SizedBox(height:16),const Text('🤖 AI 超分',style:TextStyle(color:Colors.white38,fontSize:12)),const SizedBox(height:6),const SizedBox(width:double.infinity,child:Card(child:Padding(padding:EdgeInsets.all(12),child:Text('右键当前页选择 \'AI 超分 (2x)\' 即可端侧推理放大图片，已启用。',style:TextStyle(fontSize:12,color:Colors.white54)))))],
   ]))));}
 
   @override Widget build(BuildContext context) { final b=_book;
@@ -469,8 +484,8 @@ class _ReaderPageState extends State<ReaderPage> {
     final showL=isManga?Icons.chevron_left:Icons.chevron_right,showR=isManga?Icons.chevron_right:Icons.chevron_left;
     String pageLabel;if(b==null){pageLabel='';}else if(rightPg!=null){final l=leftPg+1,r=rightPg+1;pageLabel=isManga?'$r-$l / ${b.pageCount}':'$l-$r / ${b.pageCount}';}else{pageLabel='${_page+1} / ${b.pageCount}';}
     return Scaffold(
-      appBar:AppBar(title:GestureDetector(onTap:_showJumpDialog,child:Text(b==null?widget.title:'${b.title}  ($pageLabel)',maxLines:1,overflow:TextOverflow.ellipsis)),actions:[IconButton(icon:Icon(_useAiVersion ? Icons.auto_fix_high : Icons.image_not_supported),tooltip:_useAiVersion ? '当前为超分版本，点击切换原版' : '当前为原版，点击切换超分版本',onPressed:_toggleAiVersion),IconButton(icon:const Icon(Icons.tune),tooltip:'阅读设置',onPressed:_showSettings)]),
-      body:Focus(focusNode:_focus,autofocus:true,onKeyEvent:_onKey,child:GestureDetector(onSecondaryTapUp:_onRightClick,child:_buildBody())),
+      appBar:AppBar(title:GestureDetector(onTap:_showJumpDialog,child:Text(b==null?widget.title:'${b.title}  ($pageLabel)',maxLines:1,overflow:TextOverflow.ellipsis)),actions:[if(!isAndroidPlatform)IconButton(icon:Icon(_useAiVersion ? Icons.auto_fix_high : Icons.image_not_supported),tooltip:_useAiVersion ? '当前为超分版本，点击切换原版' : '当前为原版，点击切换超分版本',onPressed:_toggleAiVersion),IconButton(icon:const Icon(Icons.tune),tooltip:'阅读设置',onPressed:_showSettings)]),
+      body:Focus(focusNode:_focus,autofocus:true,onKeyEvent:_onKey,child:GestureDetector(onSecondaryTapUp:_onRightClick,onLongPressStart:(d)=>_onRightClick(TapUpDetails(kind:PointerDeviceKind.touch,globalPosition:d.globalPosition)),child:_buildBody())),
       bottomNavigationBar:_mode==ReadMode.webtoon||b==null?null:SafeArea(child:Padding(padding:EdgeInsets.symmetric(vertical:2),child:Row(mainAxisAlignment:MainAxisAlignment.center,children:[IconButton(icon:Icon(showL),onPressed:_back),GestureDetector(onTap:_showJumpDialog,child:Text(pageLabel,style:const TextStyle(decoration:TextDecoration.underline,decorationStyle:TextDecorationStyle.dotted))),IconButton(icon:Icon(showR),onPressed:_forward)]))),
     );
   }

@@ -11,6 +11,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/ui/common.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/cover_editor_page.dart';
 import 'package:app/ui/opener.dart';
@@ -244,7 +245,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
             ),
           ),
           // 整本 AI 超分（幽灵书源无源文件，隐藏）
-          if (!widget.source.remoteOnly) ...[
+          if (!widget.source.remoteOnly && !isAndroidPlatform) ...[
             SizedBox(width: 220, child: _bookAiActive
               ? OutlinedButton.icon(
                   onPressed: null,

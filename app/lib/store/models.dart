@@ -273,6 +273,7 @@ class AppSettings {
   String? cacheDir; // 自定义缓存目录（null = 默认）
   bool autoConvertCbz; // 刷新本地书源时自动将漫画文件夹/zip 转为 CBZ
   BookOpenStrategy bookOpenStrategy; // 远程书源打开策略（WebDAV/SFTP 共用）
+  String tabletLayout; // 'auto' | 'desktop' | 'mobile'：平板布局模式（auto=按宽度，desktop=桌面侧栏，mobile=手机底部导航）
 
   AppSettings({
     this.coverQuality = CoverQuality.medium,
@@ -286,6 +287,7 @@ class AppSettings {
     this.cacheDir,
     this.autoConvertCbz = true,
     this.bookOpenStrategy = BookOpenStrategy.auto,
+    this.tabletLayout = 'auto',
   }) : keys = keys ?? KeyBinds();
 
   Map<String, dynamic> toJson() => {
@@ -300,6 +302,7 @@ class AppSettings {
         if (cacheDir != null) 'cacheDir': cacheDir,
         'autoConvertCbz': autoConvertCbz,
         'bookOpenStrategy': bookOpenStrategy.name,
+        'tabletLayout': tabletLayout,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -326,6 +329,7 @@ class AppSettings {
           (s) => s.name == j['bookOpenStrategy'],
           orElse: () => BookOpenStrategy.auto,
         ),
+        tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
       );
 }
 

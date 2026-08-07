@@ -9,6 +9,7 @@
 - 阅读器触屏适配:点按区域翻页、双指缩放(photo_view 已有)、长按弹出操作菜单(替代右键)、系统返回键(PopScope)、横竖屏切换、SafeArea / insets。
 - 本地格式:ZIP/CBZ、EPUB、文件夹、CB7、CBT、MOBI(PDF/RAR 由 p3-native-formats 合入后验收)。
 - 数据目录:应用私有目录 + SAF 导入复制(file_selector 的 openFile/openFiles),缓存 / 进度 / 标签 / 书源索引落库。
+- 存储授权:Android 11+ 采用"所有文件访问"授权(MANAGE_EXTERNAL_STORAGE):设置面板提供授权入口与状态检查,授权后本地书源可直读外部目录(如 /sdcard/Download);未授权时引导授权;SAF 导入复制保留为备选(用户确认 2026-08-07)。
 - AI 超分入口在安卓端隐藏 / 禁用(桌面端不变)。
 - 现有键盘快捷键逻辑保留但非主交互。
 

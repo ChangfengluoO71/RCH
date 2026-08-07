@@ -36,6 +36,7 @@ Flutter UI(现有 lib/ui,触屏适配) → FRB(cargokit 编译 Rust cdylib) → 
 ## 4. 数据目录与文件访问
 
 - 默认根:`getApplicationSupportDirectory()`(Android 上为应用私有目录,零权限)。
+- Android 首版采用"全部文件访问"授权(MANAGE_EXTERNAL_STORAGE,用户确认 2026-08-07):设置面板提供授权入口与状态检查;授权后本地书源可直读外部目录(如 /sdcard/Download),未授权时引导授权;SAF 导入复制保留为备选。
 - 现有 `cache_root_marker` / `setCacheRootPath` / 迁移机制保留;首版 UI 不开放自定义根(不暴露目录迁移入口)。
 - 缓存层级(v0.3.4 重构):thumb/ 与旧下载缓存层已移除;WebDAV 回退并入 raw/;缓存管理 total = 各分类之和。Android 沿用同一结构。
 - 导入:file_selector 在 Android 的 `openFile` / `openFiles` 走 SAF,返回可复制源 → 复制进应用私有目录 → 建索引(复用 openLocalBook 逻辑)。

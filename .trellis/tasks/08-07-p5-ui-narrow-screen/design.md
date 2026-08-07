@@ -2,7 +2,7 @@
 
 ## 1. 响应式基线
 
-- 断点：`MediaQuery.sizeOf(context).width < 600` = compact（移动壳）；≥ 600 = wide（现有桌面布局）。
+- 断点：`MediaQuery.sizeOf(context).width < 600` = compact（移动壳）；≥ 600 = wide（现有桌面布局）。≥600dp 时 `AppSettings.tabletLayout` 可强制 mobile（手机壳）或 desktop/auto（桌面侧栏），方便平板用户按横/竖屏习惯选择；方向锁只在 compact 布局生效（home_page 随布局切换，reader 退出时按进入时布局恢复）。
 - 共享工具放 `lib/ui/common.dart`：
   - `bool isCompact(BuildContext)` — 断点判断。
   - `double dialogMaxWidth(BuildContext)` = `min(420, screenWidth - 48)`，供所有对话框内容 `ConstrainedBox` 使用。

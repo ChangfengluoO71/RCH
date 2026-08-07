@@ -146,6 +146,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SettingEntryDto> dco_decode_list_setting_entry_dto(dynamic raw);
 
   @protected
+  List<SourceBundleDto> dco_decode_list_source_bundle_dto(dynamic raw);
+
+  @protected
   List<TagDto> dco_decode_list_tag_dto(dynamic raw);
 
   @protected
@@ -188,6 +191,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SftpSessionInfo dco_decode_sftp_session_info(dynamic raw);
+
+  @protected
+  SourceBundleDto dco_decode_source_bundle_dto(dynamic raw);
 
   @protected
   SyncExportInfo dco_decode_sync_export_info(dynamic raw);
@@ -359,6 +365,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SourceBundleDto> sse_decode_list_source_bundle_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TagDto> sse_decode_list_tag_dto(SseDeserializer deserializer);
 
   @protected
@@ -403,6 +414,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SftpSessionInfo sse_decode_sftp_session_info(SseDeserializer deserializer);
+
+  @protected
+  SourceBundleDto sse_decode_source_bundle_dto(SseDeserializer deserializer);
 
   @protected
   SyncExportInfo sse_decode_sync_export_info(SseDeserializer deserializer);
@@ -618,6 +632,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_source_bundle_dto(
+    List<SourceBundleDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_tag_dto(List<TagDto> self, SseSerializer serializer);
 
   @protected
@@ -683,6 +703,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_sftp_session_info(
     SftpSessionInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_source_bundle_dto(
+    SourceBundleDto self,
     SseSerializer serializer,
   );
 

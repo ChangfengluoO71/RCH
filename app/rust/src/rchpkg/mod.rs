@@ -16,11 +16,16 @@
 //! 敏感凭据（password / refresh_token / client_secret / cookie）永不进入包内；
 //! sources 分块仅含非敏感字段，导入时目标端本地凭据不被覆盖。
 
-use std::io::{Read, Seek, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use std::path::Path;
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
+use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+use ring::pbkdf2;
+use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -32,6 +37,8 @@ pub const FORMAT: &str = "rchpkg";
 pub const SCHEMA_VERSION: i64 = 1;
 
 const MANIFEST_PATH: &str = "manifest.json";
+const CREDENTIALS_PATH: &str = "chunks/credentials.enc";
+const PBKDF2_ITERATIONS: u32 = 100_000;
 const CHUNKS: [&str; 7] = [
     "tags",
     "book_tags",
@@ -88,6 +95,93 @@ struct Manifest {
     incremental: bool,
     since: i64,
     chunks: Vec<String>,
+}
+
+/// 书源凭据条目（加密分块内的明文结构）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCredentialEntry {
+    pub id: Option<String>,
+    pub fingerprint: String,
+    pub r#type: String,
+    pub name: Option<String>,
+    pub path: Option<String>,
+    pub root_id: Option<String>,
+    pub password: Option<String>,
+    pub refresh_token: Option<String>,
+    pub client_secret: Option<String>,
+    pub cookie: Option<String>,
+}
+
+/// 加密凭据分块（AES-256-GCM + PBKDF2-SHA256 口令派生）。
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EncryptedCredentialBundle {
+    kdf: String,
+    iterations: u32,
+    salt: String,
+    nonce: String,
+    ciphertext: String,
+}
+
+fn derive_key(passphrase: &str, salt: &[u8]) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        NonZeroU32::new(PBKDF2_ITERATIONS).unwrap(),
+        salt,
+        passphrase.as_bytes(),
+        &mut key,
+    );
+    key
+}
+
+fn encrypt_credentials(passphrase: &str, entries: &[SourceCredentialEntry]) -> Result<EncryptedCredentialBundle> {
+    let rng = SystemRandom::new();
+    let mut salt = [0u8; 16];
+    rng.fill(&mut salt).map_err(|_| anyhow!("生成盐失败"))?;
+    let key = LessSafeKey::new(
+        UnboundKey::new(&AES_256_GCM, &derive_key(passphrase, &salt))
+            .map_err(|_| anyhow!("密钥初始化失败"))?,
+    );
+    let mut nonce_bytes = [0u8; 12];
+    rng.fill(&mut nonce_bytes).map_err(|_| anyhow!("生成 nonce 失败"))?;
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    let plain = serde_json::to_vec(entries).context("凭据序列化失败")?;
+    let mut in_out = plain.clone();
+    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
+        .map_err(|_| anyhow!("加密失败"))?;
+    Ok(EncryptedCredentialBundle {
+        kdf: "pbkdf2-sha256".into(),
+        iterations: PBKDF2_ITERATIONS,
+        salt: base64::engine::general_purpose::STANDARD.encode(salt),
+        nonce: base64::engine::general_purpose::STANDARD.encode(nonce_bytes),
+        ciphertext: base64::engine::general_purpose::STANDARD.encode(&in_out),
+    })
+}
+
+fn decrypt_credentials(passphrase: &str, bundle: &EncryptedCredentialBundle) -> Result<Vec<SourceCredentialEntry>> {
+    let salt = base64::engine::general_purpose::STANDARD
+        .decode(&bundle.salt)
+        .context("salt 解码失败")?;
+    let key = LessSafeKey::new(
+        UnboundKey::new(&AES_256_GCM, &derive_key(passphrase, &salt))
+            .map_err(|_| anyhow!("密钥初始化失败"))?,
+    );
+    let nonce_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&bundle.nonce)
+        .context("nonce 解码失败")?;
+    if nonce_bytes.len() != 12 {
+        anyhow::bail!("nonce 长度错误");
+    }
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes.as_slice().try_into().unwrap());
+    let mut ciphertext = base64::engine::general_purpose::STANDARD
+        .decode(&bundle.ciphertext)
+        .context("密文解码失败")?;
+    let plain = key
+        .open_in_place(nonce, Aad::empty(), &mut ciphertext)
+        .map_err(|_| anyhow!("口令错误或数据损坏"))?;
+    Ok(serde_json::from_slice(plain).context("凭据解析失败")?)
 }
 
 /// 导出标准包到已打开的 zip writer（增量导出读 `cursor_export` 游标）。
@@ -166,6 +260,72 @@ pub fn export_package_to_file(path: &str, incremental: bool) -> Result<ExportInf
     let file = std::fs::File::create(p)?;
     let mut zip = ZipWriter::new(file);
     export_package(&conn, &mut zip, incremental)
+}
+
+/// 导出标准包并附带加密凭据分块（凭据按 fingerprint 匹配，AES-256-GCM + 口令派生密钥）。
+pub fn export_package_with_credentials<W: Write + Seek>(
+    conn: &Connection,
+    zip: &mut ZipWriter<W>,
+    incremental: bool,
+    passphrase: &str,
+) -> Result<ExportInfo> {
+    let info = export_package(conn, zip, incremental)?;
+    let creds = db::load_source_credentials(conn)?;
+    let entries: Vec<SourceCredentialEntry> = creds
+        .into_iter()
+        .map(|c| SourceCredentialEntry {
+            id: Some(c.id),
+            fingerprint: c.fingerprint,
+            r#type: c.r#type,
+            name: Some(c.name),
+            path: None,
+            root_id: c.root_id,
+            password: c.password,
+            refresh_token: c.refresh_token,
+            client_secret: c.client_secret,
+            cookie: c.cookie,
+        })
+        .collect();
+    let bundle = encrypt_credentials(passphrase, &entries)?;
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    write_json_entry(zip, CREDENTIALS_PATH, &bundle, options)?;
+    Ok(info)
+}
+
+/// 导出标准包（含加密凭据）到文件（供 FRB/工具调用）。
+pub fn export_package_with_credentials_to_file(
+    path: &str,
+    incremental: bool,
+    passphrase: &str,
+) -> Result<ExportInfo> {
+    let conn = db::get().lock().unwrap();
+    let p = Path::new(path);
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let file = std::fs::File::create(p)?;
+    let mut zip = ZipWriter::new(file);
+    let info = export_package_with_credentials(&conn, &mut zip, incremental, passphrase)?;
+    zip.finish()?;
+    Ok(info)
+}
+
+/// 加密导出"书源凭据包"（纯文本 JSON 信封，含 source 基础字段与敏感凭据）。
+/// 用于跨设备导入书源（不依赖同步包/指纹），口令错误时解密失败。
+pub fn encrypt_source_bundle(
+    passphrase: &str,
+    entries: &[SourceCredentialEntry],
+) -> Result<String> {
+    let bundle = encrypt_credentials(passphrase, entries)?;
+    Ok(serde_json::to_string(&bundle).context("凭据包序列化失败")?)
+}
+
+/// 解密"书源凭据包"。
+pub fn decrypt_source_bundle(passphrase: &str, data: &str) -> Result<Vec<SourceCredentialEntry>> {
+    let bundle: EncryptedCredentialBundle = serde_json::from_str(data).context("凭据包格式错误")?;
+    decrypt_credentials(passphrase, &bundle)
 }
 
 /// 合并/导入标准包。
@@ -309,6 +469,43 @@ pub fn merge_package_from_file(path: &str, force: bool) -> Result<MergeStats> {
 /// 从文件导入标准包（恢复语义，供 FRB/P2 传输层调用）。
 pub fn import_package_from_file(path: &str) -> Result<MergeStats> {
     merge_package_from_file(path, true)
+}
+
+/// 导入标准包并应用加密凭据分块。
+/// 先解密（口令错误即中止，不修改任何数据），再导入，最后按 fingerprint 写回凭据。
+pub fn import_package_with_credentials<R: Read + Seek>(
+    conn: &Connection,
+    mut reader: R,
+    passphrase: &str,
+) -> Result<MergeStats> {
+    // 先整体读入内存：口令错误时在导入任何数据之前中止。
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+    let entries = {
+        let mut archive = ZipArchive::new(Cursor::new(&buf)).context("无法打开 .rchpkg 包")?;
+        let bundle: EncryptedCredentialBundle = read_json_entry(&mut archive, CREDENTIALS_PATH)?;
+        decrypt_credentials(passphrase, &bundle)?
+    };
+
+    let stats = import_package(conn, Cursor::new(buf))?;
+    for e in &entries {
+        db::update_source_credentials_by_fingerprint(
+            conn,
+            &e.fingerprint,
+            e.password.as_deref(),
+            e.refresh_token.as_deref(),
+            e.client_secret.as_deref(),
+            e.cookie.as_deref(),
+        )?;
+    }
+    Ok(stats)
+}
+
+/// 从文件导入标准包（含加密凭据）。
+pub fn import_package_with_credentials_from_file(path: &str, passphrase: &str) -> Result<MergeStats> {
+    let conn = db::get().lock().unwrap();
+    let file = std::fs::File::open(path).with_context(|| format!("无法打开 {path}"))?;
+    import_package_with_credentials(&conn, file, passphrase)
 }
 
 fn apply_tombstone_on(conn: &Connection, entity: &str, key: &str) -> Result<()> {
@@ -723,5 +920,78 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM book_metas", [], |r| r.get(0))
             .unwrap();
         assert_eq!(dup, 1);
+    }
+
+    #[test]
+    fn credentials_round_trip_applies_cookie_and_tokens() {
+        let a = schema_conn();
+        a.execute(
+            "INSERT INTO book_sources (id, type, name, path, url, username, password, note, capability_label, fingerprint, updated_at, deleted)
+             VALUES ('q1', 'quark', '夸克', '/', '', '', '', '', 'quark_cookie', 'fp-q', 1000, 0)",
+            [],
+        )
+        .unwrap();
+        a.execute(
+            "UPDATE book_sources SET cookie = 'quark-cookie-secret', refresh_token = 'rt-1' WHERE id = 'q1'",
+            [],
+        )
+        .unwrap();
+
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let info = export_package_with_credentials(&a, &mut zip, false, "pass-123").unwrap();
+        assert_eq!(info.sources, 1);
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let b = schema_conn();
+        let stats = import_package_with_credentials(&b, Cursor::new(bytes), "pass-123").unwrap();
+        assert_eq!(stats.sources, 1);
+        let (cookie, rt): (Option<String>, Option<String>) = b
+            .query_row(
+                "SELECT cookie, refresh_token FROM book_sources WHERE id = 'q1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(cookie.as_deref(), Some("quark-cookie-secret"));
+        assert_eq!(rt.as_deref(), Some("rt-1"));
+    }
+
+    #[test]
+    fn credentials_wrong_passphrase_aborts_before_import() {
+        let a = schema_conn();
+        a.execute(
+            "INSERT INTO book_sources (id, type, name, path, url, username, password, note, capability_label, fingerprint, updated_at, deleted)
+             VALUES ('q1', 'quark', '夸克', '/', '', '', '', '', 'quark_cookie', 'fp-q', 1000, 0)",
+            [],
+        )
+        .unwrap();
+        a.execute("UPDATE book_sources SET cookie = 'secret' WHERE id = 'q1'", [])
+            .unwrap();
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        export_package_with_credentials(&a, &mut zip, false, "right-pass").unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+
+        let b = schema_conn();
+        let err =
+            import_package_with_credentials(&b, Cursor::new(bytes), "wrong-pass").unwrap_err();
+        assert!(err.to_string().contains("口令错误") || err.to_string().contains("损坏"));
+        let cnt: i64 = b
+            .query_row("SELECT COUNT(*) FROM book_sources", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cnt, 0);
+    }
+
+    #[test]
+    fn standard_export_has_no_credentials_chunk() {
+        let a = schema_conn();
+        a.execute(
+            "INSERT INTO book_sources (id, type, name, path, url, username, password, note, capability_label, fingerprint, updated_at, deleted)
+             VALUES ('q1', 'quark', '夸克', '/', '', '', '', '', 'quark_cookie', 'fp-q', 1000, 0)",
+            [],
+        )
+        .unwrap();
+        let bytes = export_bytes(&a, false);
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert!(archive.by_name(CREDENTIALS_PATH).is_err());
     }
 }

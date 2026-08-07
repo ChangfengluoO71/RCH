@@ -6,6 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`
+
 /// 导出标准包到文件。`incremental=true` 时只导出自上次游标以来的变更。
 Future<SyncExportInfo> rchpkgExport({
   required String path,
@@ -22,9 +24,99 @@ Future<SyncImportStats> rchpkgImport({
 }) =>
     RustLib.instance.api.crateApiPackageRchpkgImport(path: path, force: force);
 
+/// 导出标准包并附带加密凭据分块（凭据 AES-256-GCM + 口令派生，按 fingerprint 匹配）。
+Future<SyncExportInfo> rchpkgExportWithCredentials({
+  required String path,
+  required bool incremental,
+  required String passphrase,
+}) => RustLib.instance.api.crateApiPackageRchpkgExportWithCredentials(
+  path: path,
+  incremental: incremental,
+  passphrase: passphrase,
+);
+
+/// 导入标准包并应用加密凭据分块（需口令，口令错误则整体中止）。
+Future<SyncImportStats> rchpkgImportWithCredentials({
+  required String path,
+  required String passphrase,
+}) => RustLib.instance.api.crateApiPackageRchpkgImportWithCredentials(
+  path: path,
+  passphrase: passphrase,
+);
+
 /// 默认同步目录约定：`<root>/RCH/sync`。
 Future<String> rchpkgDefaultSyncDir({required String root}) =>
     RustLib.instance.api.crateApiPackageRchpkgDefaultSyncDir(root: root);
+
+/// 加密导出"书源凭据包"：返回 JSON 文本（AES-256-GCM + 口令派生）。
+Future<String> sourceBundleEncrypt({
+  required String passphrase,
+  required List<SourceBundleDto> sources,
+}) => RustLib.instance.api.crateApiPackageSourceBundleEncrypt(
+  passphrase: passphrase,
+  sources: sources,
+);
+
+/// 解密"书源凭据包"：口令错误或数据损坏会报错。
+Future<List<SourceBundleDto>> sourceBundleDecrypt({
+  required String passphrase,
+  required String data,
+}) => RustLib.instance.api.crateApiPackageSourceBundleDecrypt(
+  passphrase: passphrase,
+  data: data,
+);
+
+/// 书源凭据包条目（加密导入用）。
+class SourceBundleDto {
+  final String id;
+  final String type;
+  final String name;
+  final String path;
+  final String? rootId;
+  final String? password;
+  final String? refreshToken;
+  final String? clientSecret;
+  final String? cookie;
+
+  const SourceBundleDto({
+    required this.id,
+    required this.type,
+    required this.name,
+    required this.path,
+    this.rootId,
+    this.password,
+    this.refreshToken,
+    this.clientSecret,
+    this.cookie,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      type.hashCode ^
+      name.hashCode ^
+      path.hashCode ^
+      rootId.hashCode ^
+      password.hashCode ^
+      refreshToken.hashCode ^
+      clientSecret.hashCode ^
+      cookie.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SourceBundleDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          type == other.type &&
+          name == other.name &&
+          path == other.path &&
+          rootId == other.rootId &&
+          password == other.password &&
+          refreshToken == other.refreshToken &&
+          clientSecret == other.clientSecret &&
+          cookie == other.cookie;
+}
 
 /// 导出结果统计。
 class SyncExportInfo {

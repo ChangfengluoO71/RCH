@@ -55,8 +55,41 @@ class _SyncPanelState extends State<SyncPanel> {
       ],
     );
     if (file == null || !mounted) return;
-    final result = await SyncManager.instance.restoreFrom(file.path);
+    final pass = await _askPassphrase();
+    if (pass == null || !mounted) return;
+    final result = pass.isEmpty
+        ? await SyncManager.instance.restoreFrom(file.path)
+        : await SyncManager.instance.restoreFromWithCredentials(file.path, pass);
     if (mounted) _snack(result);
+  }
+
+  /// 询问是否包含加密凭据的口令（留空 = 普通恢复）。
+  Future<String?> _askPassphrase() {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('恢复'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('若该同步包包含加密书源凭据，请输入导出时设置的口令；否则留空。',
+              style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: ctrl,
+            obscureText: true,
+            autofocus: true,
+            decoration: const InputDecoration(
+                labelText: '口令（可选）', border: OutlineInputBorder(), isDense: true),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(null), child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(c).pop(ctrl.text.trim()),
+              child: const Text('确定')),
+        ],
+      ),
+    );
   }
 
   Future<void> _saveWebdav() async {

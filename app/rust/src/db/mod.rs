@@ -56,6 +56,77 @@ pub fn reopen_data_db() -> Result<()> {
     Ok(())
 }
 
+/// 以指定路径打开数据库并替换全局连接（导出/导入工具用）。
+pub fn open_at(path: &str) -> Result<()> {
+    let new_conn = Connection::open(path).context("无法打开 SQLite 数据库")?;
+    init_tables(&new_conn)?;
+    let mut guard = get().lock().unwrap();
+    *guard = new_conn;
+    Ok(())
+}
+
+/// 书源凭据行（仅含敏感字段，用于加密导出/导入）。
+#[derive(Debug, Clone)]
+pub struct SourceCredentialRow {
+    pub id: String,
+    pub fingerprint: String,
+    pub r#type: String,
+    pub name: String,
+    pub root_id: Option<String>,
+    pub password: Option<String>,
+    pub refresh_token: Option<String>,
+    pub client_secret: Option<String>,
+    pub cookie: Option<String>,
+}
+
+/// 读取所有含 fingerprint 且未删除书源的凭据（加密导出用）。
+pub fn load_source_credentials(conn: &Connection) -> Result<Vec<SourceCredentialRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, fingerprint, type, name, root_id, password, refresh_token, client_secret, cookie
+         FROM book_sources
+         WHERE deleted = 0
+           AND (fingerprint IS NOT NULL AND fingerprint != ''
+                OR (password IS NOT NULL AND password != '')
+                OR (refresh_token IS NOT NULL AND refresh_token != '')
+                OR (client_secret IS NOT NULL AND client_secret != '')
+                OR (cookie IS NOT NULL AND cookie != ''))",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(SourceCredentialRow {
+            id: row.get(0)?,
+            fingerprint: row.get(1)?,
+            r#type: row.get(2)?,
+            name: row.get(3)?,
+            root_id: row.get(4)?,
+            password: row.get(5)?,
+            refresh_token: row.get(6)?,
+            client_secret: row.get(7)?,
+            cookie: row.get(8)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// 按 fingerprint 更新书源凭据（加密导入用），返回更新的行数。
+pub fn update_source_credentials_by_fingerprint(
+    conn: &Connection,
+    fingerprint: &str,
+    password: Option<&str>,
+    refresh_token: Option<&str>,
+    client_secret: Option<&str>,
+    cookie: Option<&str>,
+) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE book_sources SET password = ?1, refresh_token = ?2, client_secret = ?3, cookie = ?4
+         WHERE fingerprint = ?5",
+        params![password, refresh_token, client_secret, cookie, fingerprint],
+    )?)
+}
+
 /// 初始化所有表（幂等 CREATE TABLE IF NOT EXISTS）。
 pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(

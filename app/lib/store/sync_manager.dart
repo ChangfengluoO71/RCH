@@ -198,6 +198,27 @@ class SyncManager extends ChangeNotifier {
     }
   }
 
+  /// 从任意 `.rchpkg` 文件恢复，并应用包内的加密书源凭据（需导出时设置的口令）。
+  Future<String> restoreFromWithCredentials(String path, String passphrase) async {
+    if (busy) return '正在同步，请稍候';
+    busy = true;
+    notifyListeners();
+    try {
+      final stats = await rchpkgImportWithCredentials(path: path, passphrase: passphrase);
+      final msg =
+          '恢复成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）· 加密凭据已应用';
+      await _finish(msg);
+      return msg;
+    } catch (e) {
+      final msg = '恢复失败: $e';
+      await _finish(msg);
+      return msg;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   /// 清理归档副本（archive/ 下全部 .rchpkg，保留当前 latest.rchpkg）。
   Future<({int deleted, String message})> cleanArchives() async {
     if (busy) return (deleted: 0, message: '正在同步，请稍候');

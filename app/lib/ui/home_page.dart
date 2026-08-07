@@ -1,5 +1,6 @@
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
+import 'package:app/src/rust/api/package.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/netdisk_credentials.dart';
@@ -13,6 +14,7 @@ import 'package:app/ui/common.dart';
 import 'package:app/ui/opener.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:app/ui/sync_panel.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -286,12 +288,83 @@ class _HomePageState extends State<HomePage> {
     return Column(children: [
       Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Row(children: [
         const Text('书源', style: TextStyle(color: Colors.white54, fontSize: 12)), const Spacer(),
+        InkWell(onTap: () => _importSourceBundle(), borderRadius: BorderRadius.circular(4),
+          child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.file_open_outlined, size: 18, color: Colors.white70))),
         InkWell(onTap: () => showDialog(context: context, builder: (c) => const AddSourceDialog()), borderRadius: BorderRadius.circular(4),
           child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add, size: 18, color: Colors.white70))),
       ])),
       const SizedBox(height: 4),
       Expanded(child: ListView(children: store.sources.where((s) => !s.remoteOnly).map(_sourceTile).toList())),
     ]);
+  }
+
+  /// 从加密"书源凭据包"导入书源（含 cookie/token，口令解密）。
+  Future<void> _importSourceBundle() async {
+    final file = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(label: 'RCH 书源包', extensions: ['txt', 'rchbundle', 'json']),
+      ],
+    );
+    if (file == null || !mounted) return;
+    final pass = await _askBundlePassphrase();
+    if (pass == null || !mounted) return;
+    try {
+      final data = await file.readAsString();
+      final sources = await sourceBundleDecrypt(passphrase: pass, data: data);
+      var added = 0;
+      for (final s in sources) {
+        if (s.type.isEmpty) continue;
+        LibraryStore.instance.addSource(BookSource(
+          id: s.id.isEmpty ? '${s.type}_${DateTime.now().millisecondsSinceEpoch}' : s.id,
+          type: s.type,
+          name: s.name.isEmpty ? s.type : s.name,
+          path: s.path,
+          rootId: s.rootId,
+          cookie: s.cookie,
+          password: s.password,
+          refreshToken: s.refreshToken,
+          clientSecret: s.clientSecret,
+        ));
+        added++;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('已导入 $added 个书源（含加密凭据）')));
+      }
+    } catch (e) {
+      debugPrint('[import] 导入失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('导入失败: $e')));
+      }
+    }
+  }
+
+  Future<String?> _askBundlePassphrase() {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('导入加密书源包'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('输入导出时设置的口令以解密书源凭据。', style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: ctrl,
+            obscureText: true,
+            autofocus: true,
+            decoration: const InputDecoration(
+                labelText: '口令', border: OutlineInputBorder(), isDense: true),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(null), child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(c).pop(ctrl.text.trim()),
+              child: const Text('解密导入')),
+        ],
+      ),
+    );
   }
 
   Widget _nav(IconData icon, String label, String s) => Padding(

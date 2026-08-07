@@ -207,7 +207,7 @@ class _HomePageState extends State<HomePage> {
         _nav(Icons.whatshot, '最多阅读', 'most'),
         _nav(Icons.label, '标签管理', 'tags'),
         const Divider(height: 18),
-        _buildSourceList(),
+        Expanded(child: _buildSourceList()),
         const Divider(height: 8),
         _nav(Icons.settings, '设置', 'settings'),
       ])),

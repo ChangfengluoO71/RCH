@@ -24,6 +24,10 @@ All notable changes to RCH will be documented in this file.
 - 书源凭据永不写入同步包；导入保留目标端本地凭据、新书源为"待填凭据"状态
 - WebDAV 新增 PUT / GET / MKCOL / DELETE 原语
 
+### Fixed
+
+- 设置启动加载崩溃：`keys` 历史落库为 Dart `Map.toString()`（非法 JSON），`AppSettings.fromJson` 强转失败导致 SQLite 加载整体回退；现改为 `jsonEncode` 落库并兼容历史坏数据
+
 ## [0.3.4] — 2026-08-06
 
 ### Fixed

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/package.dart';
@@ -18,8 +20,16 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+/// 清洗导入文件名：去路径分隔符与 Windows 非法字符；空名回退占位。
+String safeImportedFileName(String raw) {
+  final name = raw.replaceAll(RegExp(r'[\\/:*?"<>|]+'), '_').trim();
+  if (name.isEmpty || name == '.' || name == '..') return 'imported_comic.cbz';
+  return name;
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -288,6 +298,8 @@ class _HomePageState extends State<HomePage> {
     return Column(children: [
       Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Row(children: [
         const Text('书源', style: TextStyle(color: Colors.white54, fontSize: 12)), const Spacer(),
+        InkWell(onTap: () => _importLocalComics(), borderRadius: BorderRadius.circular(4),
+          child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add_photo_alternate_outlined, size: 18, color: Colors.white70))),
         InkWell(onTap: () => _importSourceBundle(), borderRadius: BorderRadius.circular(4),
           child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.file_open_outlined, size: 18, color: Colors.white70))),
         InkWell(onTap: () => showDialog(context: context, builder: (c) => const AddSourceDialog()), borderRadius: BorderRadius.circular(4),
@@ -296,6 +308,73 @@ class _HomePageState extends State<HomePage> {
       const SizedBox(height: 4),
       Expanded(child: ListView(children: store.sources.where((s) => !s.remoteOnly).map(_sourceTile).toList())),
     ]);
+  }
+
+  /// 从系统文件选择器（Android=SAF）导入本地漫画：流式复制进应用私有 books/
+  /// 目录，并创建/复用指向该目录的本地书源，随后跳转到该书源。
+  Future<void> _importLocalComics() async {
+    final files = await openFiles(acceptedTypeGroups: const [
+      XTypeGroup(
+        label: '漫画文件',
+        extensions: ['cbz', 'zip', 'epub', 'cb7', '7z', 'cbt', 'tar', 'pdf', 'cbr', 'rar', 'mobi', 'azw', 'azw3'],
+      ),
+    ]);
+    if (files.isEmpty || !mounted) return;
+
+    final supportDir = await getApplicationSupportDirectory();
+    final booksDir = Directory('${supportDir.path}${Platform.pathSeparator}books');
+    await booksDir.create(recursive: true);
+
+    var copied = 0;
+    final failed = <String>[];
+    for (final f in files) {
+      final name = safeImportedFileName(f.name);
+      try {
+        var dest = File('${booksDir.path}${Platform.pathSeparator}$name');
+        if (await dest.exists()) {
+          final dot = name.lastIndexOf('.');
+          final stem = dot > 0 ? name.substring(0, dot) : name;
+          final ext = dot > 0 ? name.substring(dot) : '';
+          var n = 2;
+          while (await dest.exists()) {
+            dest = File('${booksDir.path}${Platform.pathSeparator}$stem ($n)$ext');
+            n++;
+          }
+        }
+        await f.saveTo(dest.path);
+        copied++;
+      } catch (e) {
+        failed.add('${f.name.isEmpty ? name : f.name}: $e');
+      }
+    }
+
+    final store = LibraryStore.instance;
+    final booksPath = booksDir.path;
+    BookSource? src;
+    for (final s in store.sources) {
+      if (s.type == 'local' && s.path == booksPath) {
+        src = s;
+        break;
+      }
+    }
+    if (src == null) {
+      src = BookSource(id: 'local_import', type: 'local', name: '导入的漫画', path: booksPath);
+      store.addSource(src);
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _section = 'source';
+      _source = src;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(failed.isEmpty
+          ? '已导入 $copied 本漫画'
+          : '已导入 $copied 本，${failed.length} 本失败'),
+    ));
+    if (failed.isNotEmpty) {
+      debugPrint('[import] 导入失败: ${failed.join('; ')}');
+    }
   }
 
   /// 从加密"书源凭据包"导入书源（含 cookie/token，口令解密）。
@@ -832,9 +911,30 @@ class AddSourceDialog extends StatefulWidget { const AddSourceDialog({super.key}
 class _AddDialogState extends State<AddSourceDialog> {
   String _type = 'webdav';
   bool _showAdv = false;
+  final _scrollCtrl = ScrollController();
   final _a = TextEditingController(), _b = TextEditingController(), _u = TextEditingController(), _p = TextEditingController(), _s = TextEditingController(), _port = TextEditingController(),
       _token = TextEditingController(), _appKey = TextEditingController(), _secret = TextEditingController(), _rootId = TextEditingController(), _cookie = TextEditingController();
   bool _t = false; String? _e;
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  /// 设置表单错误并自动滚动到可见处：连接失败等反馈必须立即可见，
+  /// 避免窄屏/横屏下错误被滚动区折叠（用户以为“点了没反应”）。
+  void _setError(String msg) {
+    setState(() => _e = msg);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      _scrollCtrl.animateTo(
+        _scrollCtrl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    });
+  }
 
   String get _baiduKey =>
       _appKey.text.trim().isNotEmpty ? _appKey.text.trim() : kBaiduDefaultAppKey;
@@ -845,26 +945,26 @@ class _AddDialogState extends State<AddSourceDialog> {
 
   Future<void> _submit() async {
     final n = _a.text.trim();
-    if (_type == 'webdav') { if (_u.text.trim().isEmpty) { setState(() => _e = '请填写服务器地址'); return; } setState(() { _t = true; _e = null; });
-      try { final s = await webdavConnect(url: _u.text.trim(), username: _p.text.trim(), password: _s.text); LibraryStore.instance.addSource(BookSource(id: 'webdav_${DateTime.now().millisecondsSinceEpoch}', type: 'webdav', name: n.isEmpty ? _u.text.trim() : n, path: _b.text.trim().isEmpty ? s.root : _b.text.trim(), url: _u.text.trim(), username: _p.text.trim(), password: _s.text)); if (mounted) Navigator.of(context).pop(); } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+    if (_type == 'webdav') { if (_u.text.trim().isEmpty) { _setError('请填写服务器地址'); return; } setState(() { _t = true; _e = null; });
+      try { final s = await webdavConnect(url: _u.text.trim(), username: _p.text.trim(), password: _s.text); LibraryStore.instance.addSource(BookSource(id: 'webdav_${DateTime.now().millisecondsSinceEpoch}', type: 'webdav', name: n.isEmpty ? _u.text.trim() : n, path: _b.text.trim().isEmpty ? s.root : _b.text.trim(), url: _u.text.trim(), username: _p.text.trim(), password: _s.text)); if (mounted) Navigator.of(context).pop(); } catch (e) { _setError('连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
     } else if (_type == 'sftp') {
-      if (_u.text.trim().isEmpty) { setState(() => _e = '请填写服务器地址'); return; }
+      if (_u.text.trim().isEmpty) { _setError('请填写服务器地址'); return; }
       setState(() { _t = true; _e = null; });
       try {
         final (host, port) = _sftpHostPort();
         final s = await sftpConnect(host: host, port: port, username: _p.text.trim(), password: _s.text);
         LibraryStore.instance.addSource(BookSource(id: 'sftp_${DateTime.now().millisecondsSinceEpoch}', type: 'sftp', name: n.isEmpty ? _u.text.trim() : n, path: _b.text.trim().isEmpty ? s.root : _b.text.trim(), url: _u.text.trim(), username: _p.text.trim(), password: _s.text, port: port));
         if (mounted) Navigator.of(context).pop();
-      } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+      } catch (e) { _setError('连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
     } else if (_type == 'smb') {
       final path = _b.text.trim();
-      if (path.isEmpty || !path.startsWith(r'\\')) { setState(() => _e = '请填写 UNC 共享路径（以 \\ 开头，如 \\\\192.168.1.10\\comic）'); return; }
+      if (path.isEmpty || !path.startsWith(r'\\')) { _setError('请填写 UNC 共享路径（以 \\ 开头，如 \\\\192.168.1.10\\comic）'); return; }
       setState(() { _t = true; _e = null; });
       try {
         await listLocalDir(path: path); // 连通性测试（无权限/路径不存在会抛错）
         LibraryStore.instance.addSource(BookSource(id: 'smb_${DateTime.now().millisecondsSinceEpoch}', type: 'smb', name: n.isEmpty ? path : n, path: path));
         if (mounted) Navigator.of(context).pop();
-      } catch (e) { setState(() => _e = '无法访问该共享目录:$e'); } finally { if (mounted) setState(() => _t = false); }
+      } catch (e) { _setError('无法访问该共享目录:$e'); } finally { if (mounted) setState(() => _t = false); }
     } else if (_type == 'baidu') {
       await _submitBaidu(n);
     } else if (_type == '115') {
@@ -872,14 +972,14 @@ class _AddDialogState extends State<AddSourceDialog> {
     } else if (_type == 'quark') {
       await _submitQuark(n);
     } else {
-      if (_b.text.trim().isEmpty) { setState(() => _e = '请填写目录路径'); return; }
+      if (_b.text.trim().isEmpty) { _setError('请填写目录路径'); return; }
       LibraryStore.instance.addSource(BookSource(id: 'local_${DateTime.now().millisecondsSinceEpoch}', type: 'local', name: n.isEmpty ? _b.text.trim() : n, path: _b.text.trim())); if (mounted) Navigator.of(context).pop();
     }
   }
 
   Future<void> _submitBaidu(String n) async {
     final rt = _token.text.trim();
-    if (rt.isEmpty) { setState(() => _e = '请先授权登录或粘贴 refresh_token'); return; }
+    if (rt.isEmpty) { _setError('请先授权登录或粘贴 refresh_token'); return; }
     setState(() { _t = true; _e = null; });
     try {
       final s = await baiduConnect(
@@ -896,12 +996,12 @@ class _AddDialogState extends State<AddSourceDialog> {
           clientId: _baiduKey,
           clientSecret: _baiduSecret));
       if (mounted) Navigator.of(context).pop();
-    } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+    } catch (e) { _setError('连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
   }
 
   Future<void> _submit115(String n) async {
     final rt = _token.text.trim();
-    if (rt.isEmpty) { setState(() => _e = '请先扫码授权或粘贴 refresh_token'); return; }
+    if (rt.isEmpty) { _setError('请先扫码授权或粘贴 refresh_token'); return; }
     setState(() { _t = true; _e = null; });
     try {
       final s = await cloud115Connect(
@@ -917,12 +1017,12 @@ class _AddDialogState extends State<AddSourceDialog> {
           clientId: _appId,
           rootId: s.root));
       if (mounted) Navigator.of(context).pop();
-    } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+    } catch (e) { _setError('连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
   }
 
   Future<void> _submitQuark(String n) async {
     final cookie = _cookie.text.trim();
-    if (cookie.isEmpty) { setState(() => _e = '请粘贴夸克网盘 Cookie（pan.quark.cn 登录后 F12 复制）'); return; }
+    if (cookie.isEmpty) { _setError('请粘贴夸克网盘 Cookie（pan.quark.cn 登录后 F12 复制）'); return; }
     setState(() { _t = true; _e = null; });
     try {
       final s = await quarkConnect(
@@ -936,13 +1036,13 @@ class _AddDialogState extends State<AddSourceDialog> {
           rootId: s.root,
           cookie: s.cookie));
       if (mounted) Navigator.of(context).pop();
-    } catch (e) { setState(() => _e = '连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
+    } catch (e) { _setError('连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
   }
 
   /// 百度 OAuth：浏览器授权 → 粘贴授权码 → 换 token。
   Future<void> _baiduAuthorize() async {
     if (_baiduKey.isEmpty || _baiduSecret.isEmpty) {
-      setState(() => _e = '未配置百度 AppKey/SecretKey（可在高级选项填写）');
+      _setError('未配置百度 AppKey/SecretKey（可在高级选项填写）');
       return;
     }
     try {
@@ -974,13 +1074,13 @@ class _AddDialogState extends State<AddSourceDialog> {
       final pair = await baiduExchangeCode(
           appKey: _baiduKey, clientSecret: _baiduSecret, code: codeCtrl.text.trim());
       if (mounted) setState(() { _token.text = pair.refreshToken; _e = null; });
-    } catch (e) { if (mounted) setState(() => _e = '授权失败:$e'); }
+    } catch (e) { if (mounted) _setError('授权失败:$e'); }
   }
 
   /// 115 设备码授权：弹二维码 → 手机扫码 → 自动填 refresh_token。
   Future<void> _cloud115Authorize() async {
     if (_appId.isEmpty) {
-      setState(() => _e = '未配置 115 APP ID（可在高级选项填写）');
+      _setError('未配置 115 APP ID（可在高级选项填写）');
       return;
     }
     try {
@@ -995,15 +1095,15 @@ class _AddDialogState extends State<AddSourceDialog> {
               if (status == 2 && rt != null) {
                 setState(() { _token.text = rt; _e = null; });
               } else if (status == -1) {
-                setState(() => _e = '二维码已过期，请重新获取');
+                _setError('二维码已过期，请重新获取');
               } else if (status == -2) {
-                setState(() => _e = '已取消扫码');
+                _setError('已取消扫码');
               }
             }
           },
         ),
       );
-    } catch (e) { if (mounted) setState(() => _e = '获取二维码失败:$e'); }
+    } catch (e) { if (mounted) _setError('获取二维码失败:$e'); }
   }
 
   /// 解析 SFTP 服务器地址：`host` / `host:port`，端口缺省取端口字段或 22。
@@ -1017,7 +1117,7 @@ class _AddDialogState extends State<AddSourceDialog> {
     return (addr, int.tryParse(_port.text.trim()) ?? 22);
   }
 
-  @override Widget build(BuildContext c) => AlertDialog(title: const Text('添加书源'), content: ConstrainedBox(constraints: BoxConstraints(maxWidth: dialogMaxWidth(c)), child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+  @override Widget build(BuildContext c) => AlertDialog(title: const Text('添加书源'), content: ConstrainedBox(constraints: BoxConstraints(maxWidth: dialogMaxWidth(c)), child: SingleChildScrollView(controller: _scrollCtrl, child: Column(mainAxisSize: MainAxisSize.min, children: [
     DropdownMenu<String>(
       initialSelection: _type,
       label: const Text('类型'),

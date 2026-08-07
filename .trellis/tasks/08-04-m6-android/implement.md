@@ -28,7 +28,7 @@ p0-android-buildchain → (p1-local-reader ∥ p3-native-formats) → p2-remote-
 
 ### Step 2:P1 本地阅读(与 P3 并行)
 - [ ] 阅读器触屏交互(点按翻页 / 双指缩放 / 长按菜单 / 返回键 / 横竖屏 / insets)
-- [ ] SAF 导入 → 复制到应用私有目录 → 建索引
+- [x] SAF 导入 → 复制到应用私有目录 → 建索引（2026-08-07 实现：书源页新增“导入本地漫画”，流式复制进应用私有 books/ 并自动建/复用本地书源；单测+analyze 通过，待真机验收）
 - [ ] 书架 / 详情 / 缓存 / 进度在安卓上验证
 - [ ] AI 超分入口在安卓隐藏
 - [ ] Windows 回归:`cargo test` + `flutter analyze`

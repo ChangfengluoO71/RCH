@@ -56,4 +56,22 @@ void main() {
     expect(find.text('根文件夹 ID(默认 0)'), findsOneWidget);
     expect(find.text('Cookie(pan.quark.cn 登录后 F12 复制)'), findsOneWidget);
   });
+
+  testWidgets('添加书源对话框：提交校验失败时错误信息自动滚动可见', (tester) async {
+    await pumpDialog(tester);
+
+    // 默认 WebDAV，服务器地址留空直接提交 → 触发校验错误
+    await tester.tap(find.widgetWithText(FilledButton, '添加'));
+    await tester.pumpAndSettle();
+
+    final errFinder = find.text('请填写服务器地址');
+    expect(errFinder, findsOneWidget);
+
+    // 错误信息必须落在对话框可视区域内（防止窄屏/横屏下被滚动区折叠，
+    // 导致用户以为“点了添加没反应”）
+    final errRect = tester.getRect(errFinder);
+    final dialogRect = tester.getRect(find.byType(AlertDialog));
+    expect(errRect.bottom <= dialogRect.bottom + 1, isTrue,
+        reason: '错误信息应自动滚动到可见位置');
+  });
 }

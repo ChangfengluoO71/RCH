@@ -74,6 +74,32 @@ class _SyncPanelState extends State<SyncPanel> {
     if (mounted) _snack(r);
   }
 
+  Future<void> _cleanArchives() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('清理归档副本'),
+        content: const Text(
+          '将删除同步目标 archive/ 目录里的全部历史包（保留当前 latest.rchpkg）。'
+          '这些是回滚历史，删除后无法再恢复旧版本数据。继续？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final r = await SyncManager.instance.cleanArchives();
+    if (mounted) _snack(r.message);
+  }
+
   Widget _configField(String label, TextEditingController ctrl,
       {bool obscure = false, String hint = '', required void Function(String) onChanged}) {
     return Padding(
@@ -207,6 +233,11 @@ class _SyncPanelState extends State<SyncPanel> {
               onPressed: mgr.busy ? null : _restore,
               icon: const Icon(Icons.restore),
               label: const Text('从文件恢复'),
+            ),
+            TextButton.icon(
+              onPressed: mgr.busy ? null : _cleanArchives,
+              icon: const Icon(Icons.cleaning_services, size: 18),
+              label: const Text('清理归档'),
             ),
           ]),
           Text('最近同步: $last', style: const TextStyle(fontSize: 12)),

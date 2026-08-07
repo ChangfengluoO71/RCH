@@ -317,6 +317,15 @@ pub async fn webdav_make_dir(session: u64, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 删除 WebDAV 文件（归档清理，404 视为已删除）。
+pub async fn webdav_delete_file(session: u64, path: String) -> Result<(), String> {
+    let client = get_session(session).map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || client.delete_file(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 /// SFTP 会话信息。
 pub struct SftpSessionInfo {
     pub id: u64,

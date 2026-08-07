@@ -16,6 +16,7 @@
 - 模式 B：`<sync_dir>/latest.rchpkg` + `<sync_dir>/archive/{yyyyMMdd_HHmmss}.rchpkg`
 - 模式 A：`<sync_webdav_dir>/latest.rchpkg`（默认 `RCH/sync`，相对服务器根） + 同目录 `archive/`
 - 冲突副本（模式 B）：`latest (冲突副本)*.rchpkg` / `latest(1)*.rchpkg` / `latest-*.rchpkg` → 自动拉取时忽略，仅在状态里提示数量
+- 归档副本：每次推送的历史快照，作为回滚/恢复依据（"从文件恢复"）；设置面板提供"清理归档"按钮（本地目录直接删除，WebDAV 用 DELETE 接口），保留 `latest.rchpkg` 不清。
 
 ## 3. 原子写
 

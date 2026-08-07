@@ -89,6 +89,15 @@ Future<void> webdavMakeDir({required BigInt session, required String path}) =>
       path: path,
     );
 
+/// 删除 WebDAV 文件（归档清理，404 视为已删除）。
+Future<void> webdavDeleteFile({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceWebdavDeleteFile(
+  session: session,
+  path: path,
+);
+
 /// 连接 SFTP 服务器（密码认证），返回会话句柄；root 固定为 `/`。
 Future<SftpSessionInfo> sftpConnect({
   required String host,

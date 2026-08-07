@@ -198,6 +198,53 @@ class SyncManager extends ChangeNotifier {
     }
   }
 
+  /// 清理归档副本（archive/ 下全部 .rchpkg，保留当前 latest.rchpkg）。
+  Future<({int deleted, String message})> cleanArchives() async {
+    if (busy) return (deleted: 0, message: '正在同步，请稍候');
+    busy = true;
+    notifyListeners();
+    try {
+      return switch (mode) {
+        SyncMode.folder => await _cleanFolderArchives(),
+        SyncMode.webdav => await _cleanWebdavArchives(),
+        SyncMode.off => (deleted: 0, message: '未启用同步'),
+      };
+    } catch (e) {
+      return (deleted: 0, message: '清理失败: $e');
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<({int deleted, String message})> _cleanFolderArchives() async {
+    final archiveDir = Directory(syncArchiveDir(dir));
+    if (!await archiveDir.exists()) return (deleted: 0, message: '没有归档副本');
+    var n = 0;
+    await for (final e in archiveDir.list()) {
+      if (e is File && e.path.toLowerCase().endsWith('.rchpkg')) {
+        await e.delete();
+        n++;
+      }
+    }
+    return (deleted: n, message: '已清理 $n 个归档副本');
+  }
+
+  Future<({int deleted, String message})> _cleanWebdavArchives() async {
+    final session = await _webdavSessionFor();
+    final dir = normalizeRemoteDir(webdavDir.isEmpty ? 'RCH/sync' : webdavDir);
+    final archiveDir = '$dir/archive';
+    final entries = await webdavList(session: session, path: archiveDir);
+    var n = 0;
+    for (final e in entries) {
+      if (!e.isDir && e.name.toLowerCase().endsWith('.rchpkg')) {
+        await webdavDeleteFile(session: session, path: e.path);
+        n++;
+      }
+    }
+    return (deleted: n, message: '已清理 $n 个远程归档副本');
+  }
+
   Future<String> _pushFolder() async {
     if (dir.isEmpty) throw '未设置同步目录';
     final d = Directory(dir);

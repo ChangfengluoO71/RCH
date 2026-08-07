@@ -356,6 +356,28 @@ impl WebDavClient {
         Ok(())
     }
 
+    /// 删除文件（DELETE；404 视为成功，用于归档清理）。
+    pub fn delete_file(&self, path: &str) -> Result<()> {
+        let resp = self
+            .client
+            .delete(self.url(path))
+            .basic_auth(&self.user, Some(&self.pass))
+            .send()
+            .context("DELETE 请求失败")?;
+        let status = resp.status();
+        if !status.is_success() && status != StatusCode::NOT_FOUND {
+            let body = resp.text().unwrap_or_default();
+            let hint = match status.as_u16() {
+                401 => "用户名或密码错误",
+                403 => "没有删除权限",
+                _ => "",
+            };
+            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            bail!("删除失败:HTTP {} {}{}", status.as_u16(), hint, snippet);
+        }
+        Ok(())
+    }
+
     /// 探测服务器是否支持 Range(对 bytes=0-0 应返回 206)。
     pub fn range_supported(&self, path: &str) -> Result<bool> {
         let resp = self

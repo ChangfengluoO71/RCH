@@ -8,6 +8,22 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.3.5] — 2026-08-07
+
+### Added
+
+- **多端同步（本地优先，无服务器）**：标签 / 书源 / 漫画详细信息 / 阅读进度 / 设置全量增量同步，标准包格式（`.rchpkg`）版本化导出导入
+- **两种传输通道**：网盘同步盘目录（原子写 + 冲突副本识别 + 时间戳归档）与 WebDAV（独立书源配置 + 自定义远程目录 + 测试连接）
+- **增量合并引擎**：逐行 LWW + 墓碑（删除跨设备传播，不复活已删项）
+- **幽灵书源**：其他设备本地书源以"仅元数据"显示，可编辑不可阅读；全局"跨设备搜索"开关
+- 设置页"备份 / 同步"面板：手动推送 / 拉取 / 恢复、归档清理（本地 + WebDAV DELETE）
+
+### Changed
+
+- SQLite 同步元数据落库（`updated_at` / `deleted` / `devices` / `sync_state` / `source_alias` / `sync_tombstones`），老库启动自动迁移
+- 书源凭据永不写入同步包；导入保留目标端本地凭据、新书源为"待填凭据"状态
+- WebDAV 新增 PUT / GET / MKCOL / DELETE 原语
+
 ## [0.3.4] — 2026-08-06
 
 ### Fixed

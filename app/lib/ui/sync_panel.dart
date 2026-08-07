@@ -185,28 +185,6 @@ class _SyncPanelState extends State<SyncPanel> {
           ),
           const SizedBox(height: 4),
           Row(children: [
-            const Text('定时同步: '),
-            DropdownButton<int>(
-              value: const [0, 30, 60, 180].contains(mgr.intervalMinutes)
-                  ? mgr.intervalMinutes
-                  : 0,
-              items: const [
-                DropdownMenuItem(value: 0, child: Text('关闭')),
-                DropdownMenuItem(value: 30, child: Text('每 30 分钟')),
-                DropdownMenuItem(value: 60, child: Text('每小时')),
-                DropdownMenuItem(value: 180, child: Text('每 3 小时')),
-              ],
-              onChanged: (v) {
-                if (v != null) mgr.setInterval(v);
-              },
-            ),
-          ]),
-          const Text(
-            '开启后：应用启动先拉取一次，之后每 N 分钟自动“拉取→推送”。',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-          const SizedBox(height: 4),
-          Row(children: [
             TextButton.icon(
               onPressed: mgr.busy
                   ? null

@@ -8,7 +8,6 @@
 | `sync_dir` | 路径 | 模式 B 同步盘目录 |
 | `sync_webdav_url` / `sync_webdav_username` / `sync_webdav_password` | 文本 | 模式 A 的 WebDAV 地址/账号/密码（独立书源配置，仅存本机、不入同步包） |
 | `sync_webdav_dir` | 远程目录 | 模式 A 自定义远程目录（默认 `RCH/sync`，推送前逐级 MKCOL） |
-| `sync_interval_minutes` | 整数 | 0=仅手动，>0 定时 |
 | `sync_last_at` | 毫秒 | 最近一次同步时间 |
 | `sync_last_status` | 文案 | 最近一次结果/错误 |
 
@@ -41,15 +40,11 @@
 
 ## 6. Dart 侧
 
-- `store/sync_manager.dart`：SyncManager（ChangeNotifier 单例）——配置读写（`dbSaveSetting`）、push/pull/restore、最近状态、定时 Timer（`sync_interval_minutes` > 0 时启动）
+- `store/sync_manager.dart`：SyncManager（ChangeNotifier 单例）——配置读写（`dbSaveSetting`）、push/pull/restore、最近状态
 - `ui/sync_panel.dart`：设置页"备份/同步"面板——模式选择、目录选择（file_selector）、WebDAV 书源下拉、立即推送/拉取/恢复按钮、最近状态与冲突副本提示
 - 纯逻辑（冲突副本识别、包路径构建、远程路径构建）拆成可单测的顶层函数
 
-## 7. 定时同步逻辑（备注）
+## 7. 定时同步（已移除）
 
-1. 前提：模式非 `off` 且 `sync_interval_minutes > 0`（可选 30/60/180 分钟），否则仅手动。
-2. 应用启动：加载配置后先 `pullNow()` 一次（不等待首个周期），随后 `Timer.periodic` 每 N 分钟触发 `autoSync()`。
-3. 每次 `autoSync()` = **先拉取（LWW 合并）→ 再推送（自 `cursor_export` 增量导出 + 时间戳归档）**。
-4. 防重入：`busy` 期间新触发的周期直接跳过，不叠加、不排队。
-5. 失败只更新 `sync_last_status`，不影响后续周期；切换模式/间隔会重建定时器，间隔 0 取消定时。
-6. 拉取是逐行 LWW（P3），不会整体覆盖本机更新的数据；推送增量，先拉后推不产生重复。
+- 2026-08-07 决策：删除定时同步（`Timer` / `autoSync` / `sync_interval_minutes`），逻辑待改善；当前仅手动推/拉/恢复。
+- 待改善点（未来重做时的参考）：启动自动拉取的时机、冲突合并前自动覆盖本地编辑的风险、周期防重入与失败重试策略。

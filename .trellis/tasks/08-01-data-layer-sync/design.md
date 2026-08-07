@@ -54,7 +54,7 @@ ON CONFLICT(<pk>) DO UPDATE SET 原列=excluded.原列, ..., updated_at=excluded
 
 ## 6. 传输模式（P2 细化）
 
-- 模式 A：主动 WebDAV（复用 webdav_session / 已有基建），手动/定时 push/pull。
+- 模式 A：主动 WebDAV（复用 webdav_session / 已有基建），手动 push/pull。
 - 模式 B：网盘同步盘目录，应用向本地同步文件夹原子写包（临时文件 + rename），启动/定时/文件变化扫描读取；识别网盘客户端冲突副本（`xxx (冲突副本)` / `xxx(1)`）。
 
 ## 7. 阶段拆分

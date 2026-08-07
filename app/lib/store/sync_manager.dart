@@ -1,6 +1,5 @@
-// 备份/同步管理（P2）：双通道 push/pull、恢复、定时同步与状态。
+// 备份/同步管理（P2）：双通道 push/pull、恢复与状态（手动触发）。
 
-import 'dart:async';
 import 'dart:io';
 
 import 'package:app/src/rust/api/db.dart';
@@ -24,7 +23,6 @@ const _kWebdavUrl = 'sync_webdav_url';
 const _kWebdavUsername = 'sync_webdav_username';
 const _kWebdavPassword = 'sync_webdav_password';
 const _kWebdavDir = 'sync_webdav_dir';
-const _kInterval = 'sync_interval_minutes';
 const _kLastAt = 'sync_last_at';
 const _kLastStatus = 'sync_last_status';
 const _kCrossDeviceSearch = 'sync_cross_device_search';
@@ -42,7 +40,6 @@ class SyncManager extends ChangeNotifier {
   String webdavUsername = '';
   String webdavPassword = '';
   String webdavDir = 'RCH/sync';
-  int intervalMinutes = 0;
   int lastAt = 0;
   String lastStatus = '尚未同步';
   int ignoredCopies = 0;
@@ -53,23 +50,9 @@ class SyncManager extends ChangeNotifier {
   /// 设备 id → 名称（幽灵书源来源展示）。
   final Map<String, String> deviceNames = {};
 
-  Timer? _timer;
-
-  /// 应用启动时调用：加载配置；定时开启（间隔 > 0）时启动即拉取一次。
-  ///
-  /// 定时同步逻辑（备注）：
-  /// 1. 前提：模式非 off 且 `intervalMinutes > 0`，否则只保留手动按钮。
-  /// 2. 启动时先 `pullNow()` 一次（不等待首个周期），随后 `_restartTimer()`
-  ///    用 `Timer.periodic` 每 N 分钟触发 `autoSync()`。
-  /// 3. 每次 `autoSync()` = 先拉取（LWW 合并远端包）→ 再推送（自游标增量导出）。
-  /// 4. 防重入：同步中（busy）新触发的周期直接跳过，不叠加、不排队。
-  /// 5. 失败只写入 `lastStatus`，不影响后续周期；改模式/间隔会重建定时器。
+  /// 应用启动时调用：加载同步配置（当前仅手动同步，定时逻辑已移除）。
   Future<void> init() async {
     await load();
-    _restartTimer();
-    if (mode != SyncMode.off && intervalMinutes > 0) {
-      unawaited(pullNow());
-    }
   }
 
   Future<void> load() async {
@@ -86,7 +69,6 @@ class SyncManager extends ChangeNotifier {
       webdavPassword = map[_kWebdavPassword] ?? '';
       webdavDir = map[_kWebdavDir] ?? 'RCH/sync';
       _webdavSession = null;
-      intervalMinutes = int.tryParse(map[_kInterval] ?? '') ?? 0;
       lastAt = int.tryParse(map[_kLastAt] ?? '') ?? 0;
       lastStatus = map[_kLastStatus] ?? '尚未同步';
       crossDeviceSearch = map[_kCrossDeviceSearch] != 'false';
@@ -107,7 +89,6 @@ class SyncManager extends ChangeNotifier {
     await dbSaveSetting(key: _kWebdavUsername, value: webdavUsername);
     await dbSaveSetting(key: _kWebdavPassword, value: webdavPassword);
     await dbSaveSetting(key: _kWebdavDir, value: webdavDir);
-    await dbSaveSetting(key: _kInterval, value: '$intervalMinutes');
     await dbSaveSetting(key: _kLastAt, value: '$lastAt');
     await dbSaveSetting(key: _kLastStatus, value: lastStatus);
     await dbSaveSetting(key: _kCrossDeviceSearch, value: '$crossDeviceSearch');
@@ -116,7 +97,6 @@ class SyncManager extends ChangeNotifier {
 
   Future<void> setMode(SyncMode m) async {
     mode = m;
-    _restartTimer();
     await save();
   }
 
@@ -139,12 +119,6 @@ class SyncManager extends ChangeNotifier {
     await save();
   }
 
-  Future<void> setInterval(int minutes) async {
-    intervalMinutes = minutes;
-    _restartTimer();
-    await save();
-  }
-
   Future<void> setCrossDeviceSearch(bool v) async {
     crossDeviceSearch = v;
     await save();
@@ -154,15 +128,6 @@ class SyncManager extends ChangeNotifier {
   String deviceNameOf(String? deviceId) {
     if (deviceId == null || deviceId.isEmpty) return '其他设备';
     return deviceNames[deviceId] ?? '其他设备';
-  }
-
-  /// 定时任务：先拉远端（LWW 合并），再推本地（增量 + 归档）。
-  ///
-  /// 顺序原因：先把其他设备的变更吸收进本地，再以本地为准推增量；
-  /// 拉取引入的行会因 `updated_at` 较新而自然进入下次增量，属于无害回显。
-  Future<void> autoSync() async {
-    await pullNow();
-    await pushNow();
   }
 
   /// 推送本地数据到同步目标（增量）。
@@ -354,17 +319,4 @@ class SyncManager extends ChangeNotifier {
     }
   }
 
-  void _restartTimer() {
-    _timer?.cancel();
-    _timer = null;
-    if (mode != SyncMode.off && intervalMinutes > 0) {
-      _timer = Timer.periodic(
-        Duration(minutes: intervalMinutes),
-        (_) => autoSync(),
-      );
-      debugPrint(
-        '[SyncManager] 定时同步已开启：每 $intervalMinutes 分钟（拉取→推送）',
-      );
-    }
-  }
 }

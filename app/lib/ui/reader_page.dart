@@ -483,10 +483,13 @@ class _ReaderPageState extends State<ReaderPage> {
     final isManga=_mode==ReadMode.manga;final (leftPg,rightPg)=pairOf(_page);
     final showL=isManga?Icons.chevron_left:Icons.chevron_right,showR=isManga?Icons.chevron_right:Icons.chevron_left;
     String pageLabel;if(b==null){pageLabel='';}else if(rightPg!=null){final l=leftPg+1,r=rightPg+1;pageLabel=isManga?'$r-$l / ${b.pageCount}':'$l-$r / ${b.pageCount}';}else{pageLabel='${_page+1} / ${b.pageCount}';}
-    return Scaffold(
+    return PopScope(
+      canPop: true,
+      child: Scaffold(
       appBar:AppBar(title:GestureDetector(onTap:_showJumpDialog,child:Text(b==null?widget.title:'${b.title}  ($pageLabel)',maxLines:1,overflow:TextOverflow.ellipsis)),actions:[if(!isAndroidPlatform)IconButton(icon:Icon(_useAiVersion ? Icons.auto_fix_high : Icons.image_not_supported),tooltip:_useAiVersion ? '当前为超分版本，点击切换原版' : '当前为原版，点击切换超分版本',onPressed:_toggleAiVersion),IconButton(icon:const Icon(Icons.tune),tooltip:'阅读设置',onPressed:_showSettings)]),
       body:Focus(focusNode:_focus,autofocus:true,onKeyEvent:_onKey,child:GestureDetector(onSecondaryTapUp:_onRightClick,onLongPressStart:(d)=>_onRightClick(TapUpDetails(kind:PointerDeviceKind.touch,globalPosition:d.globalPosition)),child:_buildBody())),
       bottomNavigationBar:_mode==ReadMode.webtoon||b==null?null:SafeArea(child:Padding(padding:EdgeInsets.symmetric(vertical:2),child:Row(mainAxisAlignment:MainAxisAlignment.center,children:[IconButton(icon:Icon(showL),onPressed:_back),GestureDetector(onTap:_showJumpDialog,child:Text(pageLabel,style:const TextStyle(decoration:TextDecoration.underline,decorationStyle:TextDecorationStyle.dotted))),IconButton(icon:Icon(showR),onPressed:_forward)]))),
+      ),
     );
   }
 }

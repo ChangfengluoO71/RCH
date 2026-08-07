@@ -4,6 +4,7 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:photo_view/photo_view.dart';
@@ -37,6 +38,9 @@ class _ReaderPageState extends State<ReaderPage> {
   late KeyBinds _keys;
 
   @override void initState() { super.initState();
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    }
     final g=LibraryStore.instance.settings;
     _mode=g.readMode; _invert=g.invertTap; _dual=g.dualPageMode; _gap=g.dualPageGap; _skipCover=g.skipFrontCover; _keys=g.keys;
     final s0 = widget.source;
@@ -263,6 +267,9 @@ class _ReaderPageState extends State<ReaderPage> {
   @override void dispose(){
     AiUpscaleManager.instance.removeListener(_onAiManager);
     AiUpscaleManager.instance.setReadingBook(null);
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    }
     final b=_book;if(b!=null)closeBook(handle:b.handle);_photoCtrl.dispose();_scaleStateCtrl.dispose();_dualZoomCtrl.dispose();_webtoonZoomCtrl.dispose();_focus.dispose();_webtoonCtrl.dispose();super.dispose();
   }
 

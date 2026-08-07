@@ -22,7 +22,6 @@ tracing = "0.1"
 sevenz-rust = "0.6.1"
 tar = "0.4.46"
 pdfium-render = "0.9.3"
-unrar = "0.5.8"
 mobi = "0.8.0"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 sha2 = "0.10"
@@ -33,3 +32,9 @@ base64 = "0.22"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+[patch.crates-io]
+unrar_sys = { path = "vendor/unrar_sys" }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+unrar = "0.5.8"

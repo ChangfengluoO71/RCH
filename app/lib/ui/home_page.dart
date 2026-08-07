@@ -8,9 +8,11 @@ import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/comic_cover.dart';
+import 'package:app/ui/common.dart';
 import 'package:app/ui/opener.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:app/ui/sync_panel.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -38,6 +40,9 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    }
     LibraryStore.instance.load();
   }
 
@@ -100,103 +105,174 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
       animation: LibraryStore.instance,
-      builder: (c, _) => Scaffold(body: Row(children: [
-        _buildSidebar(),
-        const VerticalDivider(width: 1),
+      builder: (c, _) {
+        if (isCompact(c)) return _buildCompactShell();
+        return Scaffold(body: Row(children: [
+          _buildSidebar(),
+          const VerticalDivider(width: 1),
+          Expanded(child: _buildContent()),
+        ]));
+      });
+
+  Widget _buildCompactShell() {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_compactTitle()),
+        leading: _section == 'source' && _source != null
+            ? BackButton(onPressed: () => _select('source'))
+            : null,
+      ),
+      body: Column(children: [
+        _buildSearchHeader(),
+        const Divider(height: 1),
         Expanded(child: _buildContent()),
-      ])));
+      ]),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _compactNavIndex,
+        onDestinationSelected: _onCompactNav,
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.history), label: '最近'),
+          NavigationDestination(icon: Icon(Icons.whatshot), label: '最多'),
+          NavigationDestination(icon: Icon(Icons.label_outline), selectedIcon: Icon(Icons.label), label: '标签'),
+          NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: '书源'),
+          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: '设置'),
+        ],
+      ),
+    );
+  }
+
+  int get _compactNavIndex => switch (_section) {
+        'recent' => 0,
+        'most' => 1,
+        'tags' => 2,
+        'source' => 3,
+        'settings' => 4,
+        _ => 0,
+      };
+
+  void _onCompactNav(int i) {
+    switch (i) {
+      case 0:
+        _select('recent');
+      case 1:
+        _select('most');
+      case 2:
+        _select('tags');
+      case 3:
+        _select('source');
+      case 4:
+        _select('settings');
+    }
+  }
+
+  String _compactTitle() => switch (_section) {
+        'recent' => '最近阅读',
+        'most' => '最多阅读',
+        'tags' => '标签管理',
+        'source' => '书源',
+        'settings' => '设置',
+        _ => 'RCH',
+      };
 
   // ============================================================
   // 侧栏
   // ============================================================
   Widget _buildSidebar() {
-    final store = LibraryStore.instance;
-    // 补全候选项
-    final completions = _tagDraft.isEmpty ? <String>[] :
-        store.allTags().where((t) => t.toLowerCase().contains(_tagDraft.toLowerCase())).take(8).toList();
-
     return Material(
       color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: SizedBox(width: 230, child: Column(children: [
-        // ---- 搜索栏（统一，不分模式） ----
-        Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchCtrl,
-                  decoration: InputDecoration(
-                    hintText: _globalMode ? '文字 / #标签 跨源搜索' : '文字 / #标签 筛选',
-                    prefixIcon: Icon(_globalMode ? Icons.search : Icons.filter_list, size: 20),
-                    suffixIcon: _searchCtrl.text.isNotEmpty
-                        ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () { _searchCtrl.clear(); _onSearch(''); })
-                        : null,
-                    isDense: true, filled: true, fillColor: Colors.white10,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                  ),
-                  onChanged: _onSearch,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: _globalMode ? '切换为视图筛选' : '切换为跨书源搜索',
-                child: Material(
-                  color: _globalMode ? Colors.amber.shade800 : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: () { _searchCtrl.clear(); _textSearch = ''; _tags.clear(); _tagDraft = ''; setState(() => _globalMode = !_globalMode); },
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Icon(_globalMode ? Icons.public : Icons.public_off, size: 18, color: _globalMode ? Colors.white : Colors.white54),
-                    ),
-                  ),
-                ),
-              ),
-            ]),
-            // 标签补全
-            if (completions.isNotEmpty)
-              Container(
-                margin: const EdgeInsets.only(top: 4),
-                decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
-                constraints: const BoxConstraints(maxHeight: 150),
-                child: ListView(padding: EdgeInsets.zero, shrinkWrap: true, children: completions.map((t) => ListTile(
-                  dense: true, visualDensity: VisualDensity.compact,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10),
-                  title: Text('#$t', style: const TextStyle(fontSize: 12, color: Colors.amber, fontWeight: FontWeight.w600)),
-                  onTap: () => _onTapCompletion(t),
-                )).toList()),
-              ),
-            // 已选标签 Chip
-            if (_tags.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Wrap(spacing: 4, runSpacing: 2, children: _tags.map((t) => Chip(
-                  label: Text('#$t', style: const TextStyle(fontSize: 11)),
-                  deleteIcon: const Icon(Icons.close, size: 14),
-                  onDeleted: () => _onRemoveTag(t),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact, padding: EdgeInsets.zero,
-                )).toList()),
-              ),
-          ]),
-        ),
+        _buildSearchHeader(),
         _nav(Icons.history, '最近阅读', 'recent'),
         _nav(Icons.whatshot, '最多阅读', 'most'),
         _nav(Icons.label, '标签管理', 'tags'),
         const Divider(height: 18),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Row(children: [
-          const Text('书源', style: TextStyle(color: Colors.white54, fontSize: 12)), const Spacer(),
-          InkWell(onTap: () => showDialog(context: context, builder: (c) => const AddSourceDialog()), borderRadius: BorderRadius.circular(4),
-            child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add, size: 18, color: Colors.white70))),
-        ])),
-        const SizedBox(height: 4),
-        Expanded(child: ListView(children: store.sources.where((s) => !s.remoteOnly).map(_sourceTile).toList())),
+        _buildSourceList(),
         const Divider(height: 8),
         _nav(Icons.settings, '设置', 'settings'),
       ])),
     );
+  }
+
+  Widget _buildSearchHeader() {
+    final store = LibraryStore.instance;
+    final completions = _tagDraft.isEmpty ? <String>[] :
+        store.allTags().where((t) => t.toLowerCase().contains(_tagDraft.toLowerCase())).take(8).toList();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: _searchCtrl,
+              decoration: InputDecoration(
+                hintText: _globalMode ? '文字 / #标签 跨源搜索' : '文字 / #标签 筛选',
+                prefixIcon: Icon(_globalMode ? Icons.search : Icons.filter_list, size: 20),
+                suffixIcon: _searchCtrl.text.isNotEmpty
+                    ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () { _searchCtrl.clear(); _onSearch(''); })
+                    : null,
+                isDense: true, filled: true, fillColor: Colors.white10,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+              ),
+              onChanged: _onSearch,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: _globalMode ? '切换为视图筛选' : '切换为跨书源搜索',
+            child: Material(
+              color: _globalMode ? Colors.amber.shade800 : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () { _searchCtrl.clear(); _textSearch = ''; _tags.clear(); _tagDraft = ''; setState(() => _globalMode = !_globalMode); },
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Icon(_globalMode ? Icons.public : Icons.public_off, size: 18, color: _globalMode ? Colors.white : Colors.white54),
+                ),
+              ),
+            ),
+          ),
+        ]),
+        // 标签补全
+        if (completions.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 4),
+            decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
+            constraints: const BoxConstraints(maxHeight: 150),
+            child: ListView(padding: EdgeInsets.zero, shrinkWrap: true, children: completions.map((t) => ListTile(
+              dense: true, visualDensity: VisualDensity.compact,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+              title: Text('#$t', style: const TextStyle(fontSize: 12, color: Colors.amber, fontWeight: FontWeight.w600)),
+              onTap: () => _onTapCompletion(t),
+            )).toList()),
+          ),
+        // 已选标签 Chip
+        if (_tags.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Wrap(spacing: 4, runSpacing: 2, children: _tags.map((t) => Chip(
+              label: Text('#$t', style: const TextStyle(fontSize: 11)),
+              deleteIcon: const Icon(Icons.close, size: 14),
+              onDeleted: () => _onRemoveTag(t),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact, padding: EdgeInsets.zero,
+            )).toList()),
+          ),
+      ]),
+    );
+  }
+
+  Widget _buildSourceList() {
+    final store = LibraryStore.instance;
+    return Column(children: [
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Row(children: [
+        const Text('书源', style: TextStyle(color: Colors.white54, fontSize: 12)), const Spacer(),
+        InkWell(onTap: () => showDialog(context: context, builder: (c) => const AddSourceDialog()), borderRadius: BorderRadius.circular(4),
+          child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add, size: 18, color: Colors.white70))),
+      ])),
+      const SizedBox(height: 4),
+      Expanded(child: ListView(children: store.sources.where((s) => !s.remoteOnly).map(_sourceTile).toList())),
+    ]);
   }
 
   Widget _nav(IconData icon, String label, String s) => Padding(
@@ -268,7 +344,9 @@ class _HomePageState extends State<HomePage> {
       'recent'   => _buildLocalResults(LibraryStore.instance.recent, '最近阅读'),
       'most'     => _buildLocalResults(LibraryStore.instance.mostRead, '最多阅读'),
       'source'   => _source == null
-          ? const Center(child: Text('请从左侧选择一个书源'))
+          ? (isCompact(context)
+              ? _buildSourceList()
+              : const Center(child: Text('请从左侧选择一个书源')))
           : SourceBrowser(key: ValueKey(_source!.id), source: _source!, search: _textSearch, selectedTags: _tags),
       'tags'     => _buildTagManager(),
       'settings' => _buildSettings(),
@@ -475,6 +553,16 @@ class _HomePageState extends State<HomePage> {
           else if (act == 'delete') { final ok = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: Text('删除标签"${t.$1}"?'), content: const Text('将从所有漫画中移除此标签'), actions: [TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('删除'))])); if (ok == true) LibraryStore.instance.deleteTag(t.$1); }
         }));
 
+    if (isCompact(c) && _detailTag != null) {
+      return Column(children: [
+        Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+          onPressed: () => setState(() => _detailTag = null),
+          icon: const Icon(Icons.arrow_back, size: 18),
+          label: const Text('返回标签列表'),
+        )),
+        Expanded(child: _buildTagDetail(_detailTag!)),
+      ]);
+    }
     return Row(children: [
       Expanded(flex: 3, child: filtered.isEmpty
         ? const Center(child: Text('暂无标签', style: TextStyle(color: Colors.white38)))
@@ -558,16 +646,19 @@ class _HomePageState extends State<HomePage> {
   Widget _remoteSources(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Text('远程书源', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
     Text('WebDAV / SFTP 打开漫画时的策略', style: Theme.of(context).textTheme.bodySmall), const SizedBox(height: 10),
-    SegmentedButton<BookOpenStrategy>(
-      segments: BookOpenStrategy.values
-          .map((st) => ButtonSegment(value: st, label: Text(st.label)))
-          .toList(),
-      selected: {s.bookOpenStrategy},
-      onSelectionChanged: (vs) {
-        s.bookOpenStrategy = vs.first;
-        LibraryStore.instance.updateSettings(s);
-        setState(() {});
-      },
+    SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SegmentedButton<BookOpenStrategy>(
+        segments: BookOpenStrategy.values
+            .map((st) => ButtonSegment(value: st, label: Text(st.label)))
+            .toList(),
+        selected: {s.bookOpenStrategy},
+        onSelectionChanged: (vs) {
+          s.bookOpenStrategy = vs.first;
+          LibraryStore.instance.updateSettings(s);
+          setState(() {});
+        },
+      ),
     ),
     const SizedBox(height: 8),
     Text('自动：先下载整本到缓存（有进度条），失败转流式；下载整本：适合网速快或想离线读；直接流式：即点即读、不占缓存',
@@ -577,11 +668,11 @@ class _HomePageState extends State<HomePage> {
   Widget _readingDefaults(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Text('阅读默认', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
     Text('新打开的漫画默认使用以下设置', style: Theme.of(context).textTheme.bodySmall), const SizedBox(height: 10),
-    Row(children: [const Text('默认模式: '), DropdownButton<ReadMode>(value: s.readMode, items: ReadMode.values.map((r) => DropdownMenuItem(value: r, child: Text(r.label))).toList(), onChanged: (v) { if (v != null) { s.readMode = v; LibraryStore.instance.updateSettings(s); setState(() {}); } })]),
+    Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [const Text('默认模式: '), DropdownButton<ReadMode>(value: s.readMode, items: ReadMode.values.map((r) => DropdownMenuItem(value: r, child: Text(r.label))).toList(), onChanged: (v) { if (v != null) { s.readMode = v; LibraryStore.instance.updateSettings(s); setState(() {}); } })]),
     const SizedBox(height: 8), const Text('双页拼接默认为:'), const SizedBox(height: 6),
-    SegmentedButton<DualPageMode>(segments: DualPageMode.values.map((d) => ButtonSegment(value: d, label: Text(d.label))).toList(), selected: {s.dualPageMode}, onSelectionChanged: (vs) { s.dualPageMode = vs.first; LibraryStore.instance.updateSettings(s); setState(() {}); }),
+    SingleChildScrollView(scrollDirection: Axis.horizontal, child: SegmentedButton<DualPageMode>(segments: DualPageMode.values.map((d) => ButtonSegment(value: d, label: Text(d.label))).toList(), selected: {s.dualPageMode}, onSelectionChanged: (vs) { s.dualPageMode = vs.first; LibraryStore.instance.updateSettings(s); setState(() {}); })),
     const SizedBox(height: 8),
-    Row(children: [const Text('拼接间隙: '), SizedBox(width: 120, child: Slider(value: s.dualPageGap.toDouble(), min: 0, max: 20, divisions: 20, label: '${s.dualPageGap}px', onChanged: (v) { s.dualPageGap = v.toInt(); LibraryStore.instance.updateSettings(s); setState(() {}); })), Text('${s.dualPageGap}px')]),
+    Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [const Text('拼接间隙: '), SizedBox(width: 120, child: Slider(value: s.dualPageGap.toDouble(), min: 0, max: 20, divisions: 20, label: '${s.dualPageGap}px', onChanged: (v) { s.dualPageGap = v.toInt(); LibraryStore.instance.updateSettings(s); setState(() {}); })), Text('${s.dualPageGap}px')]),
     const SizedBox(height: 8),
     Row(children: [const Text('首页单独显示'), const Spacer(), Switch(value: s.skipFrontCover, onChanged: (v) { s.skipFrontCover = v; LibraryStore.instance.updateSettings(s); setState(() {}); })]),
   ]);
@@ -605,12 +696,12 @@ class _HomePageState extends State<HomePage> {
   Widget _coverQuality(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Text('封面质量', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 4),
     Text('影响书架封面的扫描速度与清晰度', style: Theme.of(context).textTheme.bodySmall), const SizedBox(height: 10),
-    SegmentedButton<CoverQuality>(segments: CoverQuality.values.map((q) => ButtonSegment(value: q, label: Text(q.label))).toList(), selected: {s.coverQuality}, onSelectionChanged: (qs) { s.coverQuality = qs.first; LibraryStore.instance.updateSettings(s); ComicCover.clear(); }),
+    SingleChildScrollView(scrollDirection: Axis.horizontal, child: SegmentedButton<CoverQuality>(segments: CoverQuality.values.map((q) => ButtonSegment(value: q, label: Text(q.label))).toList(), selected: {s.coverQuality}, onSelectionChanged: (qs) { s.coverQuality = qs.first; LibraryStore.instance.updateSettings(s); ComicCover.clear(); })),
   ]);
 
   Widget _theme(AppSettings s) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Text('主题', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const SizedBox(height: 10),
-    SegmentedButton<String>(segments: const [ButtonSegment(value: 'dark', label: Text('夜间'), icon: Icon(Icons.dark_mode)), ButtonSegment(value: 'light', label: Text('白天'), icon: Icon(Icons.light_mode))], selected: {s.themeMode}, onSelectionChanged: (ms) { s.themeMode = ms.first; LibraryStore.instance.updateSettings(s); }),
+    SingleChildScrollView(scrollDirection: Axis.horizontal, child: SegmentedButton<String>(segments: const [ButtonSegment(value: 'dark', label: Text('夜间'), icon: Icon(Icons.dark_mode)), ButtonSegment(value: 'light', label: Text('白天'), icon: Icon(Icons.light_mode))], selected: {s.themeMode}, onSelectionChanged: (ms) { s.themeMode = ms.first; LibraryStore.instance.updateSettings(s); })),
   ]);
 }
 
@@ -810,7 +901,7 @@ class _AddDialogState extends State<AddSourceDialog> {
     return (addr, int.tryParse(_port.text.trim()) ?? 22);
   }
 
-  @override Widget build(BuildContext c) => AlertDialog(title: const Text('添加书源'), content: SizedBox(width: 420, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+  @override Widget build(BuildContext c) => AlertDialog(title: const Text('添加书源'), content: ConstrainedBox(constraints: BoxConstraints(maxWidth: dialogMaxWidth(c)), child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
     DropdownMenu<String>(
       initialSelection: _type,
       label: const Text('类型'),

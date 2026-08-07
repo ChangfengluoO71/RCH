@@ -1,0 +1,33 @@
+{
+  "id": "m6-android",
+  "name": "m6-android",
+  "title": "M6 Android 适配 — 安卓端开发",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-04-p0-android-buildchain",
+    "08-04-p1-local-reader",
+    "08-04-p3-native-formats",
+    "08-04-p2-remote-sources",
+    "08-04-p4-release",
+    "08-07-p5-ui-narrow-screen"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -1,5 +1,8 @@
 allprojects {
     repositories {
+        maven { url = uri("file:///D:/Temp/local-maven") }
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
         google()
         mavenCentral()
     }

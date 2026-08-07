@@ -188,8 +188,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
     final hasAiTag = TagRepository.instance.bookKeysForTag('AI超分').contains(bookKey);
     return Scaffold(
       appBar: AppBar(title: const Text('漫画详情')),
-      body: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Padding(padding: const EdgeInsets.all(20), child: Column(children: [
+      body: LayoutBuilder(builder: (context, box) {
+        final compact = box.maxWidth < 600;
+        final headerWidgets = <Widget>[
           if (widget.source.remoteOnly) ...[
             Container(
               width: 220, height: 310,
@@ -276,9 +277,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
               )),
             ],
           ],
-        ])),
-        const VerticalDivider(width: 1),
-        Expanded(child: ListView(padding: const EdgeInsets.all(20), children: [
+        ];
+        final infoWidgets = <Widget>[
           Text(widget.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           if (record != null) Text('阅读进度:第 ${record.lastPage + 1} 页 · 看过 ${record.readCount} 次', style: Theme.of(context).textTheme.bodySmall),
@@ -319,8 +319,28 @@ class _BookDetailPageState extends State<BookDetailPage> {
           const Text('感想', style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           TextField(controller: _commentCtrl, maxLines: 4, decoration: const InputDecoration(border: OutlineInputBorder()), onChanged: (_) => _saveMeta()),
-        ])),
-      ]),
+        ];
+        final header = Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(children: headerWidgets),
+        );
+        final info = ListView(padding: const EdgeInsets.all(20), children: infoWidgets);
+        if (!compact) {
+          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            header,
+            const VerticalDivider(width: 1),
+            Expanded(child: info),
+          ]);
+        }
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            header,
+            const Divider(height: 24),
+            ...infoWidgets,
+          ],
+        );
+      }),
     );
   }
 }

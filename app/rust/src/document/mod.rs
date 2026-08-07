@@ -7,6 +7,7 @@ pub mod epub;
 pub mod folder;
 pub mod mobi;
 pub mod pdf;
+#[cfg(not(target_os = "android"))]
 pub mod rar;
 pub mod sevenz;
 pub mod tar;
@@ -54,7 +55,14 @@ pub fn open_document<S: ByteSource + 'static>(src: S, path: &str) -> Result<Box<
     } else if lower.ends_with(".pdf") {
         Ok(Box::new(pdf::PdfBook::open(src, path)?))
     } else if lower.ends_with(".cbr") || lower.ends_with(".rar") {
-        Ok(Box::new(rar::RarBook::open(src, path)?))
+        #[cfg(not(target_os = "android"))]
+        {
+            Ok(Box::new(rar::RarBook::open(src, path)?))
+        }
+        #[cfg(target_os = "android")]
+        {
+            anyhow::bail!("RAR/CBR 格式暂不支持安卓端，后续版本提供")
+        }
     } else if lower.ends_with(".mobi") || lower.ends_with(".azw") || lower.ends_with(".azw3") {
         Ok(Box::new(mobi::MobiBook::open(src, path)?))
     } else {

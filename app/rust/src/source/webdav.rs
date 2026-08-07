@@ -615,8 +615,24 @@ impl ByteSource for WebDavFile {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         if let Some(local) = &self.local_cache {
-            use std::os::windows::fs::FileExt;
-            local.lock().unwrap().seek_read(buf, offset)
+            let f = local.lock().unwrap();
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::FileExt;
+                f.seek_read(buf, offset)
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                f.read_at(buf, offset)
+            }
+            #[cfg(not(any(windows, unix)))]
+            {
+                use std::io::{Read, Seek, SeekFrom};
+                f.seek(SeekFrom::Start(offset))?;
+                f.read_exact(buf)?;
+                Ok(buf.len())
+            }
         } else {
             self.client.read_range(&self.path, offset, buf)
         }

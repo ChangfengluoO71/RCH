@@ -11,6 +11,29 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
+        maven {
+            url = uri("https://maven.aliyun.com/repository/google")
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/gradle-plugin")
+            content {
+                includeGroupByRegex("org\\.jetbrains\\.kotlin.*")
+                includeGroupByRegex("org\\.gradle.*")
+                includeGroupByRegex("dev\\.flutter.*")
+            }
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/central")
+            content {
+                includeGroupByRegex("org\\.jetbrains.*")
+                includeGroupByRegex("org\\.kotlin.*")
+            }
+        }
         google()
         mavenCentral()
         gradlePluginPortal()

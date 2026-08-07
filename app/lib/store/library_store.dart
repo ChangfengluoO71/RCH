@@ -341,7 +341,13 @@ class LibraryStore extends ChangeNotifier {
     await TagRepository.instance.saveToSqlite();
     final settingsJson = settings.toJson();
     for (final entry in settingsJson.entries) {
-      await dbSaveSetting(key: entry.key, value: entry.value.toString());
+      final v = entry.value;
+      // Map/List 必须存合法 JSON，否则加载时 _tryParseJson 解析失败
+      // 会把整段字符串塞进 settingsMap，导致 AppSettings.fromJson 强转崩溃。
+      await dbSaveSetting(
+        key: entry.key,
+        value: v is Map || v is List ? jsonEncode(v) : v.toString(),
+      );
     }
   }
 

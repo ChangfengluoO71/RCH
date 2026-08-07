@@ -319,7 +319,7 @@ class AppSettings {
         ),
         dualPageGap: (j['dualPageGap'] as int?) ?? 0,
         skipFrontCover: (j['skipFrontCover'] as bool?) ?? true,
-        keys: KeyBinds.fromJson(j['keys'] as Map<String, dynamic>?),
+        keys: KeyBinds.fromJson(_asStringMap(j['keys'])),
         cacheDir: j['cacheDir'] as String?,
         autoConvertCbz: (j['autoConvertCbz'] as bool?) ?? true,
         bookOpenStrategy: BookOpenStrategy.values.firstWhere(
@@ -327,6 +327,21 @@ class AppSettings {
           orElse: () => BookOpenStrategy.auto,
         ),
       );
+}
+
+/// 兼容 `keys` 设置的两种存储形态：Map 或 JSON 字符串。
+///
+/// 历史版本误用 `Map.toString()` 落库（键无引号），jsonDecode 失败时返回 null，
+/// 让 KeyBinds 回落默认值，避免 SQLite 加载整体失败。
+Map<String, dynamic>? _asStringMap(dynamic raw) {
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  if (raw is String) {
+    try {
+      final v = jsonDecode(raw);
+      if (v is Map) return Map<String, dynamic>.from(v);
+    } catch (_) {}
+  }
+  return null;
 }
 
 /// 一本书的元数据(自定义封面 / 标签 / 简介 / 感想)。

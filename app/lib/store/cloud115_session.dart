@@ -1,12 +1,58 @@
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/ui/cloud115_qr_scan.dart';
 
 /// 115 网盘会话缓存（按书源 id），避免每次打开都重新连接。
 /// 分两种模式：官方 APP ID（refresh_token）与网页扫码（Cookie）。
 final Map<String, BigInt> _cloud115OpenSessions = {};
 final Map<String, BigInt> _cloud115CookieSessions = {};
+
+/// 正在自动续期（弹扫码框）的 115 书源，避免并发请求重复弹窗。
+final Set<String> _refreshing115Cookie = {};
+
+bool _is115ExpiredError(Object e) {
+  final s = e.toString();
+  return s.contains('登录状态已失效') ||
+      s.contains('Cookie 过期') ||
+      s.contains('重新扫码');
+}
+
+/// Cookie 模式操作自动续期：失败若是「登录失效」类错误，
+/// 自动弹扫码框 → 替换 Cookie → 清理会话缓存 → 重试一次。
+/// 用户取消扫码则抛出原始错误；已在本源刷新中则直接抛出不重复弹窗。
+Future<T> _cookieRetry<T>(BookSource source, Future<T> Function() op) async {
+  if ((source.cookie ?? '').trim().isEmpty) return op();
+  try {
+    return await op();
+  } catch (e) {
+    if (!_is115ExpiredError(e) || _refreshing115Cookie.contains(source.id)) {
+      rethrow;
+    }
+    _refreshing115Cookie.add(source.id);
+    try {
+      final refreshed = await _prompt115Rescan(source);
+      if (!refreshed) rethrow;
+      return await op();
+    } finally {
+      _refreshing115Cookie.remove(source.id);
+    }
+  }
+}
+
+/// 弹扫码框续期：成功则回写 Cookie 到书源与数据库并清会话。
+Future<bool> _prompt115Rescan(BookSource source) async {
+  final ctx = AiUpscaleManager.navigatorKey.currentContext;
+  if (ctx == null) return false;
+  final cookie = await scanCloud115Cookie(ctx);
+  if (cookie == null || cookie.trim().isEmpty) return false;
+  source.cookie = cookie;
+  LibraryStore.instance.updateSource(source.id, cookie: cookie);
+  clearCloud115Session(source.id);
+  return true;
+}
 
 /// 获取/重连 115 书源会话：Cookie 模式（`source.cookie` 非空）走网页接口，
 /// 否则走官方 APP ID 模式。调用方无需感知模式差异。
@@ -67,7 +113,10 @@ Future<List<DirEntry>> cloud115ListFor(
   required String path,
 }) {
   if ((source.cookie ?? '').isNotEmpty) {
-    return cloud115CookieList(session: session, path: path);
+    return _cookieRetry(source, () async {
+      final s = await cloud115CookieSessionFor(source);
+      return cloud115CookieList(session: s, path: path);
+    });
   }
   return cloud115List(session: session, path: path);
 }
@@ -80,8 +129,11 @@ Future<BookInfo> openCloud115BookFor(
   required String strategy,
 }) {
   if ((source.cookie ?? '').isNotEmpty) {
-    return openCloud115CookieBook(
-        session: session, path: path, strategy: strategy);
+    return _cookieRetry(source, () async {
+      final s = await cloud115CookieSessionFor(source);
+      return openCloud115CookieBook(
+          session: s, path: path, strategy: strategy);
+    });
   }
   return openCloud115Book(session: session, path: path, strategy: strategy);
 }
@@ -109,13 +161,16 @@ Future<PageImage> cloud115CoverFor(
   CropRect? crop,
 }) {
   if ((source.cookie ?? '').isNotEmpty) {
-    return cloud115CookieCover(
-        session: session,
-        path: path,
-        page: page,
-        width: width,
-        height: height,
-        crop: crop);
+    return _cookieRetry(source, () async {
+      final s = await cloud115CookieSessionFor(source);
+      return cloud115CookieCover(
+          session: s,
+          path: path,
+          page: page,
+          width: width,
+          height: height,
+          crop: crop);
+    });
   }
   return cloud115Cover(
       session: session,

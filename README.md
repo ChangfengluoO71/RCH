@@ -1,4 +1,4 @@
-# RCH — 本地优先的 Windows + Android 漫画阅读器
+# RCH — Windows + Android 漫画阅读管理器
 
 打开大压缩包**不用解压、边下边读**；自带 **AI 2x 超分**、**标签管理** 与 **多源远程书架**（WebDAV / SMB / SFTP / 百度网盘 / 115 / 夸克网盘），数据全部留在本机。同一套代码在 **Windows 与 Android** 双端运行。
 

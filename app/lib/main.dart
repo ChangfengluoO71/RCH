@@ -131,11 +131,11 @@ class RchApp extends StatelessWidget {
           title: 'RCH',
           navigatorKey: AiUpscaleManager.navigatorKey,
           builder: (context, child) => MediaQuery(
-            // 安卓触屏：降低手势判定阈值（touchSlop 18→12,panSlop 36→24），
+            // 安卓触屏：降低手势判定阈值（touchSlop 18→13.5,panSlop 36→27），
             // 双指缩放/滑动更容易触发（指甲长、小幅捏合也能识别）。
             data: MediaQuery.of(context).copyWith(
               gestureSettings: defaultTargetPlatform == TargetPlatform.android
-                  ? const DeviceGestureSettings(touchSlop: 12)
+                  ? const DeviceGestureSettings(touchSlop: 13.5)
                   : null,
             ),
             child: Stack(

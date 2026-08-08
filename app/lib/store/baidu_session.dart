@@ -1,7 +1,6 @@
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
-import 'package:app/store/netdisk_credentials.dart';
 
 /// 百度网盘会话缓存（按书源 id），避免每次打开都重新连接。
 final Map<String, BigInt> _baiduSessions = {};
@@ -12,10 +11,8 @@ Future<BigInt> baiduSessionFor(BookSource source) async {
   if (cached != null) return cached;
   final s = await baiduConnect(
     refreshToken: source.refreshToken ?? '',
-    appKey: (source.clientId?.isNotEmpty ?? false) ? source.clientId! : kBaiduDefaultAppKey,
-    clientSecret: (source.clientSecret?.isNotEmpty ?? false)
-        ? source.clientSecret!
-        : kBaiduDefaultSecret,
+    appKey: source.clientId ?? '',
+    clientSecret: source.clientSecret ?? '',
     root: source.path,
   );
   _baiduSessions[source.id] = s.id;

@@ -1,7 +1,6 @@
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
-import 'package:app/store/netdisk_credentials.dart';
 
 /// 115 网盘会话缓存（按书源 id），避免每次打开都重新连接。
 final Map<String, BigInt> _cloud115Sessions = {};
@@ -12,7 +11,7 @@ Future<BigInt> cloud115SessionFor(BookSource source) async {
   if (cached != null) return cached;
   final s = await cloud115Connect(
     refreshToken: source.refreshToken ?? '',
-    appId: (source.clientId?.isNotEmpty ?? false) ? source.clientId! : kCloud115DefaultAppId,
+    appId: source.clientId ?? '',
     rootId: source.rootId ?? '0',
   );
   _cloud115Sessions[source.id] = s.id;

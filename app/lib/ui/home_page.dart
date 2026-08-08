@@ -6,7 +6,6 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/package.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
-import 'package:app/store/netdisk_credentials.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
@@ -659,8 +658,8 @@ class _HomePageState extends State<HomePage> {
         _fd('名称', nameCtrl),
         if (src.isWebDav) ...[_fd('服务器地址', urlCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径', pathCtrl)]
         else if (src.isSftp) ...[_fd('服务器地址', urlCtrl), _fd('端口(默认22)', portCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径(默认/)', pathCtrl)]
-        else if (src.isBaidu) ...[_fd('根目录(默认/)', pathCtrl), _fdPw('refresh_token', tokenCtrl), _fd('AppKey(留空用内置)', appKeyCtrl), _fdPw('SecretKey(留空用内置)', secretCtrl)]
-        else if (src.is115) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('refresh_token', tokenCtrl), _fd('APP ID(留空用内置)', appKeyCtrl)]
+        else if (src.isBaidu) ...[_fd('根目录(默认/)', pathCtrl), _fdPw('refresh_token', tokenCtrl), _fd('AppKey(必填)', appKeyCtrl), _fdPw('SecretKey(必填)', secretCtrl)]
+        else if (src.is115) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('refresh_token', tokenCtrl), _fd('APP ID(必填)', appKeyCtrl)]
         else if (src.isQuark) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('Cookie', cookieCtrl)]
         else if (src.isSmb) _fd('共享目录路径(UNC)', pathCtrl)
         else _fd('目录路径', pathCtrl),
@@ -964,12 +963,9 @@ class _AddDialogState extends State<AddSourceDialog> {
     });
   }
 
-  String get _baiduKey =>
-      _appKey.text.trim().isNotEmpty ? _appKey.text.trim() : kBaiduDefaultAppKey;
-  String get _baiduSecret =>
-      _secret.text.trim().isNotEmpty ? _secret.text.trim() : kBaiduDefaultSecret;
-  String get _appId =>
-      _appKey.text.trim().isNotEmpty ? _appKey.text.trim() : kCloud115DefaultAppId;
+  String get _baiduKey => _appKey.text.trim();
+  String get _baiduSecret => _secret.text.trim();
+  String get _appId => _appKey.text.trim();
 
   Future<void> _submit() async {
     final n = _a.text.trim();
@@ -1070,7 +1066,7 @@ class _AddDialogState extends State<AddSourceDialog> {
   /// 百度 OAuth：浏览器授权 → 粘贴授权码 → 换 token。
   Future<void> _baiduAuthorize() async {
     if (_baiduKey.isEmpty || _baiduSecret.isEmpty) {
-      _setError('未配置百度 AppKey/SecretKey（可在高级选项填写）');
+      _setError('未配置百度 AppKey/SecretKey（必填：展开高级选项填写）');
       return;
     }
     try {
@@ -1108,7 +1104,7 @@ class _AddDialogState extends State<AddSourceDialog> {
   /// 115 设备码授权：弹二维码 → 手机扫码 → 自动填 refresh_token。
   Future<void> _cloud115Authorize() async {
     if (_appId.isEmpty) {
-      _setError('未配置 115 APP ID（可在高级选项填写）');
+      _setError('未配置 115 APP ID（必填：展开高级选项填写）');
       return;
     }
     try {
@@ -1181,10 +1177,10 @@ class _AddDialogState extends State<AddSourceDialog> {
       const SizedBox(height: 10),
       TextField(controller: _token, obscureText: true, decoration: const InputDecoration(labelText: 'refresh_token(授权后自动填入，也可直接粘贴)', border: OutlineInputBorder(), isDense: true)),
       const SizedBox(height: 6),
-      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（自填 AppKey/SecretKey）')),
+      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（必填 AppKey/SecretKey）')),
       if (_showAdv) ...[
-        TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'AppKey(留空用内置)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 8),
-        TextField(controller: _secret, obscureText: true, decoration: const InputDecoration(labelText: 'SecretKey(留空用内置)', border: OutlineInputBorder(), isDense: true)),
+        TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'AppKey(必填)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 8),
+        TextField(controller: _secret, obscureText: true, decoration: const InputDecoration(labelText: 'SecretKey(必填)', border: OutlineInputBorder(), isDense: true)),
       ],
     ] else if (_type == 'quark') ...[
       TextField(controller: _rootId, decoration: const InputDecoration(labelText: '根文件夹 ID(默认 0)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
@@ -1195,8 +1191,8 @@ class _AddDialogState extends State<AddSourceDialog> {
       const SizedBox(height: 10),
       TextField(controller: _token, obscureText: true, decoration: const InputDecoration(labelText: 'refresh_token(扫码后自动填入，也可直接粘贴)', border: OutlineInputBorder(), isDense: true)),
       const SizedBox(height: 6),
-      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（自填 APP ID）')),
-      if (_showAdv) TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'APP ID(留空用内置)', border: OutlineInputBorder(), isDense: true)),
+      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（必填 APP ID）')),
+      if (_showAdv) TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'APP ID(必填)', border: OutlineInputBorder(), isDense: true)),
     ],
     if (_e != null) Padding(padding: const EdgeInsets.only(top: 10), child: Text(_e!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
   ]))), actions: [TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')), FilledButton(onPressed: _t ? null : _submit, child: Text(_t ? '测试中…' : '添加'))]);

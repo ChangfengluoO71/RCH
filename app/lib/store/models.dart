@@ -14,7 +14,7 @@ class BookSource {
   String? password;
   int? port; // SFTP 端口（默认 22）
   String? refreshToken; // 百度/115：刷新令牌
-  String? clientId; // 百度 AppKey / 115 APP ID（留空用内置）
+  String? clientId; // 百度 AppKey / 115 APP ID（必填，无内置）
   String? clientSecret; // 百度 SecretKey（115 无）
   String? rootId; // 115 根文件夹 ID
   String? cookie; // 夸克网盘 Cookie（pan.quark.cn 登录后粘贴）

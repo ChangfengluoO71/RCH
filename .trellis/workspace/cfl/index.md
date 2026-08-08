@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-08-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~300 | Active |
+| `journal-1.md` | ~321 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-08-08 | 115 Cookie 自动续期 + GitHub 下载镜像 | `9e1a77e` | `master` |
 | 6 | 2026-08-08 | 115 扫码 Cookie 书源 + v0.4.2 发布 | `e9a4ebb` | `master` |
 | 5 | 2026-08-06 | 缓存管理收尾：codegen 脚本 + 缓存文案修正 + 详情页提示去具体化 | `875a8c3`, `0162ee7`, `7b4c7c7` | `master` |
 | 4 | 2026-08-06 | 缓存管理清理：移除缩略图/旧下载缓存层 | `c660661`, `860c457` | `master` |

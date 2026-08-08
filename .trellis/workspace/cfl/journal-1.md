@@ -298,3 +298,24 @@ P3 全部验收达成。过程要点：
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 115 Cookie 自动续期 + GitHub 下载镜像
+
+**Date**: 2026-08-08
+**Task**: 115 Cookie 自动续期 + GitHub 下载镜像
+**Branch**: `master`
+
+### Summary
+
+115 Cookie 模式失效自动弹扫码续期（复用共享扫码组件，扫码后自动替换 Cookie 并重连，编辑书源可一键重扫）；更新系统新增下载通道镜像：内置预设 + 自定义前缀 + 从 jsDelivr CDN 自动拉取 mirrors.json（24h TTL）合并列表 + 下载失败自动切换下一个通道。analyze 干净，50 个 Dart 测试全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e1a77e` | (see git log) |
+
+### Status
+
+[OK] **Completed**

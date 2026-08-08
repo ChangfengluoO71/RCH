@@ -8,6 +8,14 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.4.4] — 2026-08-08
+
+### Fixed
+
+- **WebDAV 同步失败（HTTP 410 Gone）**：修复 WebDAV 地址带基础路径（如 `https://dav.jianguoyun.com/dav/`）时同步请求丢失该前缀、MKCOL 被服务器拒绝的问题；推送 / 拉取 / 归档清理恢复正常。
+
+---
+
 ## [0.4.3] — 2026-08-08
 
 ### Added

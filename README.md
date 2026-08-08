@@ -9,18 +9,44 @@
 
 ---
 
+## 📑 目录
+
+- [✨ 核心亮点](#-核心亮点)
+- [🚀 快速开始](#-快速开始)
+- [⬇️ 下载（v0.4.2）](#️-下载v042)
+- [📖 功能介绍](#-功能介绍)
+  - [打开即读，格式通吃](#打开即读格式通吃)
+  - [流畅的阅读体验](#流畅的阅读体验)
+  - [AI 2x 超分](#ai-2x-超分)
+  - [标签与整理](#标签与整理)
+  - [远程书架（WebDAV / SMB / SFTP / 网盘）](#远程书架webdav--smb--sftp--网盘)
+  - [数据与隐私](#数据与隐私)
+- [🛠️ 添加远程书源教程](#️-添加远程书源教程)
+  - [1. 入口](#1-入口)
+  - [2. 百度网盘](#2-百度网盘)
+  - [3. 115 网盘](#3-115-网盘)
+  - [4. 夸克网盘](#4-夸克网盘)
+  - [5. WebDAV / SFTP / SMB](#5-webdav--sftp--smb)
+  - [6. 添加后的使用](#6-添加后的使用)
+  - [7. 常见问题（FAQ）](#7-常见问题faq)
+- [🌐 开源声明](#-开源声明)
+- [📄 许可证](#-许可证)
+
+---
+
 ## ✨ 核心亮点
 
-- ⚡ **超大压缩包秒开** — 流式读取，只解压当前页，不等待整包
-- 📚 **8+ 种格式通吃** — ZIP/CBZ、EPUB、CB7、CBT、PDF、CBR/RAR、MOBI/AZW/AZW3、文件夹
-- 🚀 **翻页流畅不等待** — 三级缓存（内存 / 磁盘 / 预取），读过的页面秒开
-- 🤖 **AI 2x 超分** — 右键单页放大，或整本加入后台队列，完成后一键切换超分版
-- 🏷️ **标签管理系统** — 元数据标签分层折叠、已读标记、批量打标
-- 🎨 **阅读器** — 日漫 / 美漫 / 条漫三种模式，双页拼接、缩放、每页独立旋转
-- 📦 **漫画整理** — 本地漫画自动转 CBZ，zip/cbz/文件夹视为同一本，进度标签不丢
-- ☁️ **多源远程书架** — WebDAV / SMB / SFTP / 百度网盘 / 115 / 夸克网盘，流式阅读，首次下载后秒开
-- 🔒 **本地优先** — 阅读记录、标签、设置全部存本机（SQLite + JSON 备份），无账号、无云依赖
-- 📱 **Android 支持** — 触屏翻页/缩放、系统返回、SAF 导入本地漫画；PDF / CBR / RAR 原生可读（PDF 按需渲染）
+- 📚 **大多数漫画格式通吃** — ZIP/CBZ、EPUB、CB7、CBT、PDF、CBR/RAR、MOBI/AZW/AZW3、文件夹
+- 🖼️ **本地漫画快速扫描生成海报墙** — 秒级扫描本地目录；云端书源仅对「点开阅读过」的漫画显示封面
+- ✂️ **封面裁剪 + 漫画旋转缩放** — 自定义封面裁剪区域；阅读中每页独立旋转、缩放
+- 📖 **日漫 / 美漫 / 条漫三种阅读模式 + 双页拼接** — 电脑与平板大屏阅读更舒适
+- 🤖 **漫画超分辨率（AI 2x）** — 端侧推理放大画面；受性能限制，目前仅 Windows 电脑可用
+- 🏷️ **标签系统 + 详细阅读记录** — 所看所得所想皆可记：分层标签、已读标记、阅读时间 / 次数
+- 🔄 **漫画信息 / 书源 / 标签同步** — 跨端同步，自定义封面连同裁剪参数一并同步
+- ☁️ **百度 / 夸克 / 115 网盘直连** — 流式阅读或整本下载阅读
+- 🌐 **WebDAV 书源** — 未直接支持的网盘可用 OpenList 等挂载成 WebDAV 先凑合用
+- 🧹 **清晰明了的缓存管理** — 分类展示占用、一键清理，减少空间占用
+- 🔍 **文字 + 标签筛选** — 关键词与标签组合过滤，精准定位漫画
 
 ## 🚀 快速开始
 
@@ -44,10 +70,10 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 | 平台 | 文件 | 大小 | 下载 |
 |---|---|---|---|
-| Windows 10/11 x64 | RCH-0.4.2-windows-x64.exe | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/RCH-0.4.2-windows-x64.exe) |
-| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-arm64-v8a-release.apk) |
-| Android armeabi-v7a | app-armeabi-v7a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-armeabi-v7a-release.apk) |
-| Android x86_64 | app-x86_64-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-x86_64-release.apk) |
+| Windows 10/11 x64 | RCH-0.4.2-windows-x64.exe | 19.7 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/RCH-0.4.2-windows-x64.exe) |
+| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | 39.6 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-arm64-v8a-release.apk) |
+| Android armeabi-v7a | app-armeabi-v7a-release.apk | 26.2 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-armeabi-v7a-release.apk) |
+| Android x86_64 | app-x86_64-release.apk | 42.2 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-x86_64-release.apk) |
 
 **安装说明**
 

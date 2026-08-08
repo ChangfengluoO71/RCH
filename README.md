@@ -24,7 +24,7 @@
 
 ## 🚀 快速开始
 
-**普通用户**：前往 [GitHub Releases](https://github.com/ChangfengluoO71/RCH/releases) 下载最新版安装包（Windows 安装包 / Android APK）。
+**普通用户**：前往下方「下载」区，或 [GitHub Releases](https://github.com/ChangfengluoO71/RCH/releases/latest) 获取最新版安装包（Windows 安装包 / Android APK）。
 
 **开发者**：
 
@@ -37,6 +37,23 @@ flutter build apk --debug         # 构建安卓 debug APK
 ```
 
 构建环境（Rust / Flutter / VS 2022 BuildTools / flutter_rust_bridge_codegen）见 [SETUP.md](SETUP.md)。
+
+## ⬇️ 下载（v0.4.1）
+
+> 安装后可在应用内 **设置 → 关于与更新** 自动检查并安装新版本；以下直链为当前版本，最新版本请访问 [Releases 页](https://github.com/ChangfengluoO71/RCH/releases/latest)。
+
+| 平台 | 文件 | 大小 | 下载 |
+|---|---|---|---|
+| Windows 10/11 x64 | RCH-0.4.1-windows-x64.exe | 19.6 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/RCH-0.4.1-windows-x64.exe) |
+| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | 39.2 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/app-arm64-v8a-release.apk) |
+| Android armeabi-v7a | app-armeabi-v7a-release.apk | 26.0 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/app-armeabi-v7a-release.apk) |
+| Android x86_64 | app-x86_64-release.apk | 41.9 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/app-x86_64-release.apk) |
+
+**安装说明**
+
+- **Windows**：运行安装包即可（64 位系统）。如遇 SmartScreen 提示，点「更多信息 → 仍要运行」；安装后请在应用内「关于与更新」检查版本。
+- **Android**：安装 APK 前需在系统设置允许「安装未知应用」（安装时会引导）。arm64-v8a 适用绝大多数近五年机型；老 32 位设备选 armeabi-v7a；模拟器按架构选择。
+- 从 v0.4.0 升级的用户：旧版为调试签名，请先卸载再安装 v0.4.1；之后版本可无缝覆盖升级。
 
 ## 📖 功能介绍
 
@@ -199,6 +216,16 @@ flutter build apk --debug         # 构建安卓 debug APK
 | 夸克书架打不开 / 提示 Cookie 失效 | 重新去 pan.quark.cn 复制 Cookie 并更新书源 |
 | 115 旧书源突然失效 | 同账号重复授权顶掉了旧 refresh_token，删除旧书源重新扫码添加 |
 | 远程下载慢 | 百度普通用户限速与会员等级相关（官方限制，非软件问题）；可改用「优先下载整本」离线读 |
+
+## 🌐 开源声明
+
+RCH 是一款**完全开源**的 Windows + Android 漫画阅读器：
+
+- **开源协议**：基于 [MIT](LICENSE) 许可证发布，任何人均可自由使用、修改与再分发（需保留版权声明）。
+- **源码与构建**：源码托管在 [GitHub](https://github.com/ChangfengluoO71/RCH)，构建环境与步骤见 [SETUP.md](SETUP.md)；欢迎通过 [Issues](https://github.com/ChangfengluoO71/RCH/issues) 反馈问题、[Pull Requests](https://github.com/ChangfengluoO71/RCH/pulls) 贡献代码，参与规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- **不含内容**：本项目不提供、不托管、不索引任何漫画内容。所有漫画均来自用户自己导入的本地文件，或用户自己拥有/授权的远程存储（本地目录 / WebDAV / NAS / 网盘账号）。请确保你拥有访问与阅读相关内容的权利。
+- **第三方接口**：百度网盘 / 115 / 夸克网盘等书源直连各平台官方或公开接口，接口规则可能随时调整（夸克为非官方 Web 接口，失效需重新粘贴 Cookie）；本项目与上述平台无任何关联，也不对接口可用性负责。
+- **隐私**：应用无账号体系，阅读记录、标签与设置仅保存在本机，不向任何服务器上传用户数据（详见上文「数据与隐私」）。
 
 ## 📄 许可证
 

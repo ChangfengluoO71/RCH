@@ -1,7 +1,13 @@
-; RCH v0.3.5 — Inno Setup 安装脚本
+; RCH — Inno Setup 安装脚本
+; 版本由发布工作流通过 /DMyAppVersion= 注入（去掉 tag 的 v 前缀），缺省回退。
 
 #define MyAppName "RCH"
-#define MyAppVersion "0.3.5"
+#ifndef MyAppVersion
+#define MyAppVersion "0.4.0"
+#endif
+#ifndef OutputBaseFilename
+#define OutputBaseFilename "RCH-" + MyAppVersion + "-windows-x64"
+#endif
 #define MyAppPublisher "RCH"
 #define MyAppURL "https://github.com/ChangfengluoO71/RCH"
 #define MyAppExeName "RCH.exe"
@@ -19,7 +25,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\..\..\dist
-OutputBaseFilename=RCH-v0.3.5-windows-x64
+OutputBaseFilename={#OutputBaseFilename}
 Compression=lzma2/max
 SolidCompression=yes
 PrivilegesRequired=admin

@@ -51,7 +51,9 @@ jobs:
 
       - name: Package installer
         shell: powershell
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer\setup.iss'
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer\setup.iss "/DMyAppVersion=`"$ver`""
 
       - name: Prepare release body
         shell: bash
@@ -65,7 +67,7 @@ jobs:
       - name: Upload installer to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/RCH-v*.exe
+          files: dist/RCH-*.exe
           body_path: ${{ runner.temp }}/release_body.md
 
   build-android:

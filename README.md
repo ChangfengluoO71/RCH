@@ -72,10 +72,10 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 | 平台 | 文件 | 大小 | 下载 |
 |---|---|---|---|
-| Windows 10/11 x64 | RCH-0.4.3-windows-x64.exe | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/RCH-0.4.3-windows-x64.exe) |
-| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/app-arm64-v8a-release.apk) |
-| Android armeabi-v7a | app-armeabi-v7a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/app-armeabi-v7a-release.apk) |
-| Android x86_64 | app-x86_64-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/app-x86_64-release.apk) |
+| Windows 10/11 x64 | RCH-0.4.3-windows-x64.exe | 19.7 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/RCH-0.4.3-windows-x64.exe) |
+| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | 39.6 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/app-arm64-v8a-release.apk) |
+| Android armeabi-v7a | app-armeabi-v7a-release.apk | 26.2 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/app-armeabi-v7a-release.apk) |
+| Android x86_64 | app-x86_64-release.apk | 42.2 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.3/app-x86_64-release.apk) |
 
 **安装说明**
 

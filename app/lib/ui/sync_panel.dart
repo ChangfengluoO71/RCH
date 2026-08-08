@@ -1,6 +1,10 @@
 // 设置页"备份 / 同步"面板（P2）：模式选择、目录/书源配置、手动同步与恢复。
 
+import 'dart:io';
+
 import 'package:app/store/sync_manager.dart';
+import 'package:app/store/storage_access.dart';
+import 'package:app/ui/common.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
@@ -63,16 +67,48 @@ class _SyncPanelState extends State<SyncPanel> {
     if (mounted) _snack(result);
   }
 
-  /// 询问是否包含加密凭据的口令（留空 = 普通恢复）。
-  Future<String?> _askPassphrase() {
+  /// 导出标准同步包到用户选择的位置（可选加密凭据）。
+  Future<void> _exportToFile() async {
+    final pass = await _askPassphrase(
+      title: '导出到文件',
+      message: '如需将书源凭据一并加密写入包，请设置口令；留空则导出不含凭据的同步包。',
+    );
+    if (pass == null || !mounted) return;
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = 'rch_sync_$stamp.rchpkg';
+    final String destPath;
+    if (isAndroidPlatform) {
+      // Android 的 file_selector 未实现"保存文件"对话框，降级为"选择目录后写入"。
+      if (!await ensureAllFilesAccess(context)) return;
+      final dir = await getDirectoryPath(confirmButtonText: '选择此目录');
+      if (dir == null || !mounted) return;
+      destPath = '$dir${Platform.pathSeparator}$fileName';
+    } else {
+      final loc = await getSaveLocation(
+        suggestedName: fileName,
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'RCH 同步包', extensions: ['rchpkg']),
+        ],
+      );
+      if (loc == null || !mounted) return;
+      destPath = loc.path;
+    }
+    final result = await SyncManager.instance.exportToFile(destPath, passphrase: pass);
+    if (mounted) _snack(result);
+  }
+
+  /// 询问是否包含加密凭据的口令（留空 = 不含凭据的普通包）。
+  Future<String?> _askPassphrase({
+    String title = '恢复',
+    String message = '若该同步包包含加密书源凭据，请输入导出时设置的口令；否则留空。',
+  }) {
     final ctrl = TextEditingController();
     return showDialog<String>(
       context: context,
       builder: (c) => AlertDialog(
-        title: const Text('恢复'),
+        title: Text(title),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('若该同步包包含加密书源凭据，请输入导出时设置的口令；否则留空。',
-              style: TextStyle(fontSize: 12)),
+          Text(message, style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 8),
           TextField(
             controller: ctrl,
@@ -242,8 +278,10 @@ class _SyncPanelState extends State<SyncPanel> {
             '开启后，全局搜索包含其他设备的本地书源（仅元数据，可编辑不可阅读）。',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
-          const SizedBox(height: 4),
-          Row(children: [
+        ],
+        const SizedBox(height: 4),
+        Wrap(spacing: 4, runSpacing: 2, children: [
+          if (mgr.mode != SyncMode.off) ...[
             TextButton.icon(
               onPressed: mgr.busy
                   ? null
@@ -262,28 +300,34 @@ class _SyncPanelState extends State<SyncPanel> {
               icon: const Icon(Icons.download),
               label: const Text('立即拉取'),
             ),
-            TextButton.icon(
-              onPressed: mgr.busy ? null : _restore,
-              icon: const Icon(Icons.restore),
-              label: const Text('从文件恢复'),
-            ),
+          ],
+          TextButton.icon(
+            onPressed: mgr.busy ? null : _exportToFile,
+            icon: const Icon(Icons.save_alt, size: 18),
+            label: const Text('导出到文件'),
+          ),
+          TextButton.icon(
+            onPressed: mgr.busy ? null : _restore,
+            icon: const Icon(Icons.restore),
+            label: const Text('从文件恢复'),
+          ),
+          if (mgr.mode != SyncMode.off)
             TextButton.icon(
               onPressed: mgr.busy ? null : _cleanArchives,
               icon: const Icon(Icons.cleaning_services, size: 18),
               label: const Text('清理归档'),
             ),
-          ]),
-          Text('最近同步: $last', style: const TextStyle(fontSize: 12)),
+        ]),
+        Text('最近同步: $last', style: const TextStyle(fontSize: 12)),
+        Text(
+          mgr.lastStatus,
+          style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+        ),
+        if (mgr.ignoredCopies > 0)
           Text(
-            mgr.lastStatus,
-            style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+            '检测到 ${mgr.ignoredCopies} 个冲突/临时副本，自动同步已忽略',
+            style: const TextStyle(fontSize: 12, color: Colors.orange),
           ),
-          if (mgr.ignoredCopies > 0)
-            Text(
-              '检测到 ${mgr.ignoredCopies} 个冲突/临时副本，自动同步已忽略',
-              style: const TextStyle(fontSize: 12, color: Colors.orange),
-            ),
-        ],
       ],
     );
   }

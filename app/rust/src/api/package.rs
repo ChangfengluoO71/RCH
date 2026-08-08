@@ -86,6 +86,36 @@ pub fn rchpkg_export_with_credentials(
     })
 }
 
+/// 导出全量快照包到文件（手动"导出到文件"），**不推进**增量游标，
+/// 避免污染后续 push 的基线；`passphrase` 为空导出不含凭据的包，
+/// 非空附带 AES-256-GCM 加密凭据分块。
+pub fn rchpkg_export_snapshot(
+    path: String,
+    passphrase: String,
+) -> Result<SyncExportInfo, String> {
+    let info = rchpkg::export_snapshot_to_file(
+        &path,
+        if passphrase.is_empty() {
+            None
+        } else {
+            Some(&passphrase)
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(SyncExportInfo {
+        device_id: info.device_id,
+        created_at: info.created_at,
+        since: info.since,
+        tags: info.tags as i64,
+        book_tags: info.book_tags as i64,
+        metas: info.metas as i64,
+        records: info.records as i64,
+        sources: info.sources as i64,
+        settings: info.settings as i64,
+        tombstones: info.tombstones as i64,
+    })
+}
+
 /// 导入标准包并应用加密凭据分块（需口令，口令错误则整体中止）。
 pub fn rchpkg_import_with_credentials(
     path: String,
@@ -120,11 +150,16 @@ pub struct SourceBundleDto {
     pub r#type: String,
     pub name: String,
     pub path: String,
+    pub url: Option<String>,
+    pub username: Option<String>,
+    pub port: Option<i64>,
+    pub client_id: Option<String>,
     pub root_id: Option<String>,
     pub password: Option<String>,
     pub refresh_token: Option<String>,
     pub client_secret: Option<String>,
     pub cookie: Option<String>,
+    pub note: String,
 }
 
 impl From<rchpkg::SourceCredentialEntry> for SourceBundleDto {
@@ -134,11 +169,16 @@ impl From<rchpkg::SourceCredentialEntry> for SourceBundleDto {
             r#type: e.r#type,
             name: e.name.unwrap_or_default(),
             path: e.path.unwrap_or_default(),
+            url: e.url,
+            username: e.username,
+            port: e.port,
+            client_id: e.client_id,
             root_id: e.root_id,
             password: e.password,
             refresh_token: e.refresh_token,
             client_secret: e.client_secret,
             cookie: e.cookie,
+            note: e.note,
         }
     }
 }
@@ -151,11 +191,16 @@ impl From<SourceBundleDto> for rchpkg::SourceCredentialEntry {
             r#type: d.r#type,
             name: Some(d.name),
             path: Some(d.path),
+            url: d.url,
+            username: d.username,
+            port: d.port,
+            client_id: d.client_id,
             root_id: d.root_id,
             password: d.password,
             refresh_token: d.refresh_token,
             client_secret: d.client_secret,
             cookie: d.cookie,
+            note: d.note,
         }
     }
 }

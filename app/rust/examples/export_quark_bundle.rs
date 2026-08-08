@@ -31,11 +31,16 @@ fn main() {
                 r#type: typ.to_string(),
                 name: str_field("name"),
                 path: str_field("path"),
+                url: str_field("url"),
+                username: str_field("username"),
+                port: s.get("port").and_then(|v| v.as_i64()),
+                client_id: str_field("clientId"),
                 root_id: str_field("rootId"),
                 password: str_field("password"),
                 refresh_token: str_field("refreshToken"),
                 client_secret: str_field("clientSecret"),
                 cookie: str_field("cookie"),
+                note: str_field("note").unwrap_or_default(),
             });
         }
     }

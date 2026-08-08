@@ -106,11 +106,16 @@ pub struct SourceCredentialEntry {
     pub r#type: String,
     pub name: Option<String>,
     pub path: Option<String>,
+    pub url: Option<String>,
+    pub username: Option<String>,
+    pub port: Option<i64>,
+    pub client_id: Option<String>,
     pub root_id: Option<String>,
     pub password: Option<String>,
     pub refresh_token: Option<String>,
     pub client_secret: Option<String>,
     pub cookie: Option<String>,
+    pub note: String,
 }
 
 /// 加密凭据分块（AES-256-GCM + PBKDF2-SHA256 口令派生）。
@@ -279,11 +284,16 @@ pub fn export_package_with_credentials<W: Write + Seek>(
             r#type: c.r#type,
             name: Some(c.name),
             path: None,
+            url: None,
+            username: None,
+            port: None,
+            client_id: None,
             root_id: c.root_id,
             password: c.password,
             refresh_token: c.refresh_token,
             client_secret: c.client_secret,
             cookie: c.cookie,
+            note: String::new(),
         })
         .collect();
     let bundle = encrypt_credentials(passphrase, &entries)?;
@@ -308,6 +318,47 @@ pub fn export_package_with_credentials_to_file(
     let file = std::fs::File::create(p)?;
     let mut zip = ZipWriter::new(file);
     let info = export_package_with_credentials(&conn, &mut zip, incremental, passphrase)?;
+    zip.finish()?;
+    Ok(info)
+}
+
+/// 导出全量快照包（手动"导出到文件"用），**不推进** `cursor_export`
+/// 游标：手动包不会进入同步目标，推进游标会污染后续增量 push 的基线。
+/// `passphrase` 为空导出不含凭据的包，非空附带加密凭据分块。
+pub fn export_snapshot<W: Write + Seek>(
+    conn: &Connection,
+    zip: &mut ZipWriter<W>,
+    passphrase: Option<&str>,
+) -> Result<ExportInfo> {
+    let prev = db::get_sync_state_on(conn, "cursor_export");
+    let result = match passphrase {
+        Some(p) => export_package_with_credentials(conn, zip, false, p),
+        None => export_package(conn, zip, false),
+    };
+    // 还原游标（含"原本不存在"的情形）。
+    match prev {
+        Some(v) => {
+            let _ = db::set_sync_state_on(conn, "cursor_export", &v);
+        }
+        None => {
+            let _ = conn.execute("DELETE FROM sync_state WHERE key = 'cursor_export'", []);
+        }
+    }
+    result
+}
+
+/// 导出全量快照包到文件（供 FRB/手动备份调用）。
+pub fn export_snapshot_to_file(path: &str, passphrase: Option<&str>) -> Result<ExportInfo> {
+    let conn = db::get().lock().unwrap();
+    let p = Path::new(path);
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let file = std::fs::File::create(p)?;
+    let mut zip = ZipWriter::new(file);
+    let info = export_snapshot(&conn, &mut zip, passphrase)?;
     zip.finish()?;
     Ok(info)
 }
@@ -740,6 +791,40 @@ mod tests {
         let tags2: Vec<db::TagSyncRow> = read_json_entry(&mut archive, "chunks/tags.json").unwrap();
         assert_eq!(tags2.len(), 1);
         assert_eq!(tags2[0].name, "新标签");
+    }
+
+    #[test]
+    fn snapshot_export_preserves_existing_cursor() {
+        let a = schema_conn();
+        seed(&a);
+        db::set_sync_state_on(&a, "cursor_export", "12345").unwrap();
+
+        let mut cursor = Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(&mut cursor);
+        export_snapshot(&a, &mut zip, None).unwrap();
+        zip.finish().unwrap();
+
+        assert_eq!(
+            db::get_sync_state_on(&a, "cursor_export").as_deref(),
+            Some("12345"),
+            "手动快照导出不得推进增量游标"
+        );
+    }
+
+    #[test]
+    fn snapshot_export_does_not_create_cursor_when_absent() {
+        let a = schema_conn();
+        seed(&a);
+
+        let mut cursor = Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(&mut cursor);
+        export_snapshot(&a, &mut zip, None).unwrap();
+        zip.finish().unwrap();
+
+        assert!(
+            db::get_sync_state_on(&a, "cursor_export").is_none(),
+            "从未同步过的设备，手动导出不应凭空创建游标"
+        );
     }
 
     #[test]

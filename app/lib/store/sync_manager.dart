@@ -219,6 +219,30 @@ class SyncManager extends ChangeNotifier {
     }
   }
 
+  /// 导出标准 `.rchpkg` 包到任意文件（全量快照，便于离线备份 / 手动传机）。
+  ///
+  /// `passphrase` 为空时导出不含敏感凭据的包；非空时附带 AES-256-GCM
+  /// 加密的书源凭据分块（导入时需同一口令）。
+  Future<String> exportToFile(String path, {String passphrase = ''}) async {
+    if (busy) return '正在同步，请稍候';
+    busy = true;
+    notifyListeners();
+    try {
+      final info = await rchpkgExportSnapshot(path: path, passphrase: passphrase);
+      final msg = '导出成功：${info.sources.toInt()} 书源 / ${info.metas.toInt()} 详情 / '
+          '${info.tags.toInt()} 标签${passphrase.isNotEmpty ? '（含加密凭据）' : ''}';
+      await _finish(msg);
+      return msg;
+    } catch (e) {
+      final msg = '导出失败: $e';
+      await _finish(msg);
+      return msg;
+    } finally {
+      busy = false;
+      notifyListeners();
+    }
+  }
+
   /// 清理归档副本（archive/ 下全部 .rchpkg，保留当前 latest.rchpkg）。
   Future<({int deleted, String message})> cleanArchives() async {
     if (busy) return (deleted: 0, message: '正在同步，请稍候');

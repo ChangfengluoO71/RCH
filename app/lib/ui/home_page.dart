@@ -329,6 +329,8 @@ class _HomePageState extends State<HomePage> {
         const Text('书源', style: TextStyle(color: Colors.white54, fontSize: 12)), const Spacer(),
         InkWell(onTap: () => _importLocalComics(), borderRadius: BorderRadius.circular(4),
           child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add_photo_alternate_outlined, size: 18, color: Colors.white70))),
+        InkWell(onTap: () => _exportSourceBundle(), borderRadius: BorderRadius.circular(4),
+          child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.upload_file_outlined, size: 18, color: Colors.white70))),
         InkWell(onTap: () => _importSourceBundle(), borderRadius: BorderRadius.circular(4),
           child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.file_open_outlined, size: 18, color: Colors.white70))),
         InkWell(onTap: () => showDialog(context: context, builder: (c) => const AddSourceDialog()), borderRadius: BorderRadius.circular(4),
@@ -410,7 +412,13 @@ class _HomePageState extends State<HomePage> {
   Future<void> _importSourceBundle() async {
     final file = await openFile(
       acceptedTypeGroups: const [
-        XTypeGroup(label: 'RCH 书源包', extensions: ['txt', 'rchbundle', 'json']),
+        XTypeGroup(
+          label: 'RCH 书源包',
+          extensions: ['txt', 'rchbundle', 'json'],
+          // Android 文件管理器按 MIME 过滤，`rchbundle` 是未知扩展名，
+          // 必须放行 octet-stream 才能选中本机保存的书源包。
+          mimeTypes: ['text/plain', 'application/json', 'application/octet-stream'],
+        ),
       ],
     );
     if (file == null || !mounted) return;
@@ -427,11 +435,16 @@ class _HomePageState extends State<HomePage> {
           type: s.type,
           name: s.name.isEmpty ? s.type : s.name,
           path: s.path,
+          url: s.url,
+          username: s.username,
+          port: s.port?.toInt(),
+          clientId: s.clientId,
           rootId: s.rootId,
           cookie: s.cookie,
           password: s.password,
           refreshToken: s.refreshToken,
           clientSecret: s.clientSecret,
+          note: s.note,
         ));
         added++;
       }
@@ -446,6 +459,114 @@ class _HomePageState extends State<HomePage> {
             .showSnackBar(SnackBar(content: Text('导入失败: $e')));
       }
     }
+  }
+
+  /// 导出加密"书源凭据包"：仅含带凭据的远程书源（本地/SMB 与幽灵源不导出）。
+  /// 与"导入书源凭据包"互为镜像，用于跨设备显式共享书源（含 cookie/token）。
+  Future<void> _exportSourceBundle() async {
+    final candidates = LibraryStore.instance.sources
+        .where((s) => !s.remoteOnly && !s.isLocalFs)
+        .where((s) =>
+            (s.password?.isNotEmpty ?? false) ||
+            (s.refreshToken?.isNotEmpty ?? false) ||
+            (s.clientSecret?.isNotEmpty ?? false) ||
+            (s.cookie?.isNotEmpty ?? false))
+        .toList();
+    if (candidates.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('没有可导出的带凭据远程书源')),
+        );
+      }
+      return;
+    }
+    final pass = await _askBundleExportPassphrase();
+    if (pass == null || !mounted) return;
+    if (pass.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('口令不能为空')),
+      );
+      return;
+    }
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName = 'rch_sources_$stamp.rchbundle';
+    final String destPath;
+    if (isAndroidPlatform) {
+      // Android 的 file_selector 未实现"保存文件"对话框，降级为"选择目录后写入"。
+      if (!await ensureAllFilesAccess(context)) return;
+      final dir = await getDirectoryPath(confirmButtonText: '选择此目录');
+      if (dir == null || !mounted) return;
+      destPath = '$dir${Platform.pathSeparator}$fileName';
+    } else {
+      final loc = await getSaveLocation(
+        suggestedName: fileName,
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'RCH 书源包', extensions: ['rchbundle', 'txt', 'json']),
+        ],
+      );
+      if (loc == null || !mounted) return;
+      destPath = loc.path;
+    }
+    try {
+      final sources = candidates
+          .map((s) => SourceBundleDto(
+                id: s.id,
+                type: s.type,
+                name: s.name,
+                path: s.path,
+                url: s.url,
+                username: s.username,
+                port: s.port,
+                clientId: s.clientId,
+                rootId: s.rootId,
+                password: s.password,
+                refreshToken: s.refreshToken,
+                clientSecret: s.clientSecret,
+                cookie: s.cookie,
+                note: s.note,
+              ))
+          .toList();
+      final data = await sourceBundleEncrypt(passphrase: pass, sources: sources);
+      await File(destPath).writeAsString(data);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已加密导出 ${sources.length} 个书源（含凭据）')),
+        );
+      }
+    } catch (e) {
+      debugPrint('[export] 书源凭据包导出失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('导出失败: $e')));
+      }
+    }
+  }
+
+  Future<String?> _askBundleExportPassphrase() {
+    final ctrl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('导出加密书源包'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('设置口令以加密书源凭据；目标设备导入时需输入同一口令。', style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: ctrl,
+            obscureText: true,
+            autofocus: true,
+            decoration: const InputDecoration(
+                labelText: '口令', border: OutlineInputBorder(), isDense: true),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(null), child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(c).pop(ctrl.text.trim()),
+              child: const Text('加密导出')),
+        ],
+      ),
+    );
   }
 
   Future<String?> _askBundlePassphrase() {

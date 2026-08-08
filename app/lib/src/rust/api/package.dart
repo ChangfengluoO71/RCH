@@ -35,6 +35,17 @@ Future<SyncExportInfo> rchpkgExportWithCredentials({
   passphrase: passphrase,
 );
 
+/// 导出全量快照包到文件（手动"导出到文件"），**不推进**增量游标，
+/// 避免污染后续 push 的基线；`passphrase` 为空导出不含凭据的包，
+/// 非空附带 AES-256-GCM 加密凭据分块。
+Future<SyncExportInfo> rchpkgExportSnapshot({
+  required String path,
+  required String passphrase,
+}) => RustLib.instance.api.crateApiPackageRchpkgExportSnapshot(
+  path: path,
+  passphrase: passphrase,
+);
+
 /// 导入标准包并应用加密凭据分块（需口令，口令错误则整体中止）。
 Future<SyncImportStats> rchpkgImportWithCredentials({
   required String path,
@@ -72,22 +83,32 @@ class SourceBundleDto {
   final String type;
   final String name;
   final String path;
+  final String? url;
+  final String? username;
+  final PlatformInt64? port;
+  final String? clientId;
   final String? rootId;
   final String? password;
   final String? refreshToken;
   final String? clientSecret;
   final String? cookie;
+  final String note;
 
   const SourceBundleDto({
     required this.id,
     required this.type,
     required this.name,
     required this.path,
+    this.url,
+    this.username,
+    this.port,
+    this.clientId,
     this.rootId,
     this.password,
     this.refreshToken,
     this.clientSecret,
     this.cookie,
+    required this.note,
   });
 
   @override
@@ -96,11 +117,16 @@ class SourceBundleDto {
       type.hashCode ^
       name.hashCode ^
       path.hashCode ^
+      url.hashCode ^
+      username.hashCode ^
+      port.hashCode ^
+      clientId.hashCode ^
       rootId.hashCode ^
       password.hashCode ^
       refreshToken.hashCode ^
       clientSecret.hashCode ^
-      cookie.hashCode;
+      cookie.hashCode ^
+      note.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -111,11 +137,16 @@ class SourceBundleDto {
           type == other.type &&
           name == other.name &&
           path == other.path &&
+          url == other.url &&
+          username == other.username &&
+          port == other.port &&
+          clientId == other.clientId &&
           rootId == other.rootId &&
           password == other.password &&
           refreshToken == other.refreshToken &&
           clientSecret == other.clientSecret &&
-          cookie == other.cookie;
+          cookie == other.cookie &&
+          note == other.note;
 }
 
 /// 导出结果统计。

@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1540633441;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1849164274;
 
 // Section: executor
 
@@ -3528,6 +3528,41 @@ fn wire__crate__api__package__rchpkg_export_impl(
         },
     )
 }
+fn wire__crate__api__package__rchpkg_export_snapshot_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "rchpkg_export_snapshot",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            let api_passphrase = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::package::rchpkg_export_snapshot(api_path, api_passphrase)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__package__rchpkg_export_with_credentials_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -5234,21 +5269,31 @@ impl SseDecode for crate::api::package::SourceBundleDto {
         let mut var_type = <String>::sse_decode(deserializer);
         let mut var_name = <String>::sse_decode(deserializer);
         let mut var_path = <String>::sse_decode(deserializer);
+        let mut var_url = <Option<String>>::sse_decode(deserializer);
+        let mut var_username = <Option<String>>::sse_decode(deserializer);
+        let mut var_port = <Option<i64>>::sse_decode(deserializer);
+        let mut var_clientId = <Option<String>>::sse_decode(deserializer);
         let mut var_rootId = <Option<String>>::sse_decode(deserializer);
         let mut var_password = <Option<String>>::sse_decode(deserializer);
         let mut var_refreshToken = <Option<String>>::sse_decode(deserializer);
         let mut var_clientSecret = <Option<String>>::sse_decode(deserializer);
         let mut var_cookie = <Option<String>>::sse_decode(deserializer);
+        let mut var_note = <String>::sse_decode(deserializer);
         return crate::api::package::SourceBundleDto {
             id: var_id,
             r#type: var_type,
             name: var_name,
             path: var_path,
+            url: var_url,
+            username: var_username,
+            port: var_port,
+            client_id: var_clientId,
             root_id: var_rootId,
             password: var_password,
             refresh_token: var_refreshToken,
             client_secret: var_clientSecret,
             cookie: var_cookie,
+            note: var_note,
         };
     }
 }
@@ -5561,58 +5606,64 @@ fn pde_ffi_dispatcher_primary_impl(
             data_len,
         ),
         97 => wire__crate__api__package__rchpkg_export_impl(port, ptr, rust_vec_len, data_len),
-        98 => wire__crate__api__package__rchpkg_export_with_credentials_impl(
+        98 => wire__crate__api__package__rchpkg_export_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        99 => wire__crate__api__package__rchpkg_import_impl(port, ptr, rust_vec_len, data_len),
-        100 => wire__crate__api__package__rchpkg_import_with_credentials_impl(
+        99 => wire__crate__api__package__rchpkg_export_with_credentials_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        101 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
-        102 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        103 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
-        104 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
-        105 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
-        106 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        107 => {
+        100 => wire__crate__api__package__rchpkg_import_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__package__rchpkg_import_with_credentials_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        102 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        103 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        104 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
+        105 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
+        106 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
+        107 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        108 => {
             wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
         }
-        108 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
-        109 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
-        110 => {
+        109 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
+        110 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
+        111 => {
             wire__crate__api__package__source_bundle_decrypt_impl(port, ptr, rust_vec_len, data_len)
         }
-        111 => {
+        112 => {
             wire__crate__api__package__source_bundle_encrypt_impl(port, ptr, rust_vec_len, data_len)
         }
-        112 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        113 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        114 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        115 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        116 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        117 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
-        118 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        119 => {
+        113 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        114 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        115 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        116 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        117 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        118 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
+        119 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        120 => {
             wire__crate__api__source__webdav_download_file_impl(port, ptr, rust_vec_len, data_len)
         }
-        120 => wire__crate__api__source__webdav_download_progress_impl(
+        121 => wire__crate__api__source__webdav_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        121 => {
+        122 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        122 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
-        123 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
-        124 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
+        123 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        124 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
+        125 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -6105,11 +6156,16 @@ impl flutter_rust_bridge::IntoDart for crate::api::package::SourceBundleDto {
             self.r#type.into_into_dart().into_dart(),
             self.name.into_into_dart().into_dart(),
             self.path.into_into_dart().into_dart(),
+            self.url.into_into_dart().into_dart(),
+            self.username.into_into_dart().into_dart(),
+            self.port.into_into_dart().into_dart(),
+            self.client_id.into_into_dart().into_dart(),
             self.root_id.into_into_dart().into_dart(),
             self.password.into_into_dart().into_dart(),
             self.refresh_token.into_into_dart().into_dart(),
             self.client_secret.into_into_dart().into_dart(),
             self.cookie.into_into_dart().into_dart(),
+            self.note.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6715,11 +6771,16 @@ impl SseEncode for crate::api::package::SourceBundleDto {
         <String>::sse_encode(self.r#type, serializer);
         <String>::sse_encode(self.name, serializer);
         <String>::sse_encode(self.path, serializer);
+        <Option<String>>::sse_encode(self.url, serializer);
+        <Option<String>>::sse_encode(self.username, serializer);
+        <Option<i64>>::sse_encode(self.port, serializer);
+        <Option<String>>::sse_encode(self.client_id, serializer);
         <Option<String>>::sse_encode(self.root_id, serializer);
         <Option<String>>::sse_encode(self.password, serializer);
         <Option<String>>::sse_encode(self.refresh_token, serializer);
         <Option<String>>::sse_encode(self.client_secret, serializer);
         <Option<String>>::sse_encode(self.cookie, serializer);
+        <String>::sse_encode(self.note, serializer);
     }
 }
 

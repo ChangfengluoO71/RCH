@@ -8,6 +8,15 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.4.3] — 2026-08-08
+
+### Added
+
+- **115 网盘 Cookie 自动续期**：扫码 Cookie 失效时自动弹出扫码框，扫码成功后自动替换 Cookie、清理会话并重连（浏览 / 打开 / 封面通用）；编辑书源支持一键「重新扫码获取 Cookie」
+- **更新下载通道镜像（国内加速）**：设置 → 关于与更新 → 下载通道，内置 ghproxy.net / ghfast.top 等预设 + 自定义镜像前缀；应用从 jsDelivr CDN 自动拉取最新镜像列表（24h 自动 + 手动刷新）；下载失败自动切换下一个通道
+
+---
+
 ## [0.4.2] — 2026-08-08
 
 ### Added

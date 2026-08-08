@@ -1,11 +1,22 @@
 fn main() {
-    if cfg!(windows) {
+    // `cfg!(windows)` 在 build script 里按宿主求值：Windows 主机交叉编译
+    // Android 时也会注入 powrprof/shell32，导致 cdylib 链接失败。
+    // 必须按目标平台判断（与下方 isnt.cpp 的处理一致）。
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "windows" {
         println!("cargo:rustc-flags=-lpowrprof");
         println!("cargo:rustc-link-lib=shell32");
         if cfg!(target_env = "gnu") {
             println!("cargo:rustc-link-lib=pthread");
         }
+    } else if target_os == "android" {
+        // Android 上 C++ 标准库走 libc++_shared.so（随 APK 打包进 jniLibs）。
+        // 显式链接 -lc++，让最终 cdylib 带 DT_NEEDED libc++_shared.so，
+        // 否则加载器不会加载它，std::length_error 等符号无法解析。
+        println!("cargo:rustc-link-lib=c++");
     } else {
+        // Android 的 bionic 将 pthread 并入 libc，没有独立的 libpthread；
+        // 其余类 Unix 平台需要 -lpthread。
         println!("cargo:rustc-link-lib=pthread");
     }
     let mut files: Vec<String> = [

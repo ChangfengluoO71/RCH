@@ -4,5 +4,6 @@ pub mod cache;
 pub mod db;
 pub mod export;
 pub mod package;
+pub mod pdf;
 pub mod simple;
 pub mod source;

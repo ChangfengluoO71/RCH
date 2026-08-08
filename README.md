@@ -1,10 +1,10 @@
-# RCH — 本地优先的 Windows 漫画阅读器
+# RCH — 本地优先的 Windows + Android 漫画阅读器
 
-打开大压缩包**不用解压、边下边读**；自带 **AI 2x 超分**、**标签管理** 与 **多源远程书架**（WebDAV / SMB / SFTP / 百度网盘 / 115 / 夸克网盘），数据全部留在本机。
+打开大压缩包**不用解压、边下边读**；自带 **AI 2x 超分**、**标签管理** 与 **多源远程书架**（WebDAV / SMB / SFTP / 百度网盘 / 115 / 夸克网盘），数据全部留在本机。同一套代码在 **Windows 与 Android** 双端运行。
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.44-blue?logo=flutter)](https://flutter.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.97-orange?logo=rust)](https://www.rust-lang.org)
-[![Platform](https://img.shields.io/badge/Platform-Windows-brightgreen)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Android-blue)]()
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
@@ -20,10 +20,11 @@
 - 📦 **漫画整理** — 本地漫画自动转 CBZ，zip/cbz/文件夹视为同一本，进度标签不丢
 - ☁️ **多源远程书架** — WebDAV / SMB / SFTP / 百度网盘 / 115 / 夸克网盘，流式阅读，首次下载后秒开
 - 🔒 **本地优先** — 阅读记录、标签、设置全部存本机（SQLite + JSON 备份），无账号、无云依赖
+- 📱 **Android 支持** — 触屏翻页/缩放、系统返回、SAF 导入本地漫画；PDF / CBR / RAR 原生可读（PDF 按需渲染）
 
 ## 🚀 快速开始
 
-**普通用户**：前往 [GitHub Releases](https://github.com/ChangfengluoO71/RCH/releases) 下载最新版安装包（Windows）。
+**普通用户**：前往 [GitHub Releases](https://github.com/ChangfengluoO71/RCH/releases) 下载最新版安装包（Windows 安装包 / Android APK）。
 
 **开发者**：
 
@@ -31,6 +32,8 @@
 git clone https://github.com/ChangfengluoO71/RCH.git
 cd RCH/app
 flutter run -d windows
+flutter run -d <android设备>      # Android 真机/模拟器（需 SDK/NDK）
+flutter build apk --debug         # 构建安卓 debug APK
 ```
 
 构建环境（Rust / Flutter / VS 2022 BuildTools / flutter_rust_bridge_codegen）见 [SETUP.md](SETUP.md)。
@@ -40,7 +43,7 @@ flutter run -d windows
 ### 打开即读，格式通吃
 
 - **流式解析**：ZIP/CBZ/EPUB 只读取文件尾部中央目录，按需解压单页，几百 MB 的压缩包也是即点即读
-- **格式支持**：ZIP / CBZ、EPUB、文件夹（Folder）、CB7 / 7Z、CBT / TAR、PDF、CBR / RAR、MOBI / AZW / AZW3
+- **格式支持**：ZIP / CBZ、EPUB、文件夹（Folder）、CB7 / 7Z、CBT / TAR、PDF、CBR / RAR、MOBI / AZW / AZW3（Android 端 PDF 按需渲染、CBR/RAR 原生解码）
 - **文件夹漫画**：包含图片的文件夹自动识别为漫画，自动读取 `ComicInfo.xml` / `metadata.json` 元数据（标题 / 作者 / 系列 / 类别）
 - **本地书架**：浏览本地目录，漫画文件夹在海报墙直接显示封面卡片，点击进入详情页
 

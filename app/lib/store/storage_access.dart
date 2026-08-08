@@ -20,3 +20,13 @@ Future<void> openAllFilesAccessSettings() async {
     await _channel.invokeMethod<void>('openAllFilesAccessSettings');
   } catch (_) {}
 }
+
+/// Android 应用原生库目录（含打包的 libpdfium.so），供 Rust 端 pdfium 加载。
+Future<String?> nativeLibraryDir() async {
+  if (!isAndroidPlatform) return null;
+  try {
+    return await _channel.invokeMethod<String>('nativeLibraryDir');
+  } catch (_) {
+    return null;
+  }
+}

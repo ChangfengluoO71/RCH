@@ -170,7 +170,7 @@
 #define SAVE_LINKS
 #endif
 
-#if defined(__linux) || defined(__FreeBSD__)
+#if (defined(__linux) || defined(__FreeBSD__)) && !defined(__ANDROID__)
 #include <sys/time.h>
 #define USE_LUTIMES
 #endif

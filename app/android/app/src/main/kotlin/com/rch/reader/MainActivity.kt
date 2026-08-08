@@ -18,6 +18,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "isAllFilesAccessGranted" -> result.success(isAllFilesAccessGranted())
+                    "nativeLibraryDir" -> result.success(applicationInfo.nativeLibraryDir)
                     "openAllFilesAccessSettings" -> {
                         openAllFilesAccessSettings()
                         result.success(null)

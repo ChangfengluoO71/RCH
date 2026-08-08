@@ -10,11 +10,26 @@ use std::sync::OnceLock;
 
 static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 
+/// pdfium 原生库目录（Android：由 Dart 侧传入 `ApplicationInfo.nativeLibraryDir`）。
+static NATIVE_LIB_DIR: OnceLock<String> = OnceLock::new();
+
+/// 设置 pdfium 动态库所在目录。设置后打开 PDF 时优先从该目录加载
+/// `libpdfium.so`（Android 打包进 jniLibs 后即位于 nativeLibraryDir）。
+pub fn set_native_lib_dir(dir: String) {
+    let _ = NATIVE_LIB_DIR.set(dir);
+}
+
 fn get_pdfium() -> Result<&'static Pdfium> {
     PDFIUM
         .get_or_init(|| {
-            // 依次尝试：进程工作目录 → RCH.exe 所在目录 → PATH → 系统目录。
-            let mut dirs: Vec<String> = vec!["./".to_string()];
+            // 依次尝试：nativeLibraryDir(Android) → 进程工作目录 → RCH.exe 所在目录 → PATH → 系统目录。
+            let mut dirs: Vec<String> = vec![];
+            if let Some(dir) = NATIVE_LIB_DIR.get() {
+                if !dir.is_empty() {
+                    dirs.push(dir.clone());
+                }
+            }
+            dirs.push("./".to_string());
             if let Ok(exe) = std::env::current_exe() {
                 if let Some(dir) = exe.parent() {
                     dirs.push(dir.to_string_lossy().into_owned());
@@ -42,7 +57,7 @@ fn get_pdfium() -> Result<&'static Pdfium> {
 }
 
 pub struct PdfBook {
-    pages: Vec<Vec<u8>>,
+    doc: PdfDocument<'static>,
     title: String,
 }
 
@@ -54,54 +69,24 @@ impl PdfBook {
             .context("读取 PDF 文件失败")?;
 
         let pdfium = get_pdfium()?;
+        // 懒加载：只解析文档与页数，页面按需渲染（page_bytes），
+        // 避免整本 PDF 在 open 阶段全量栅格化导致下载 100% 后长时间无响应。
         let doc = pdfium
             .load_pdf_from_byte_vec(data, None)
             .context("加载 PDF 失败(可能是加密或损坏)")?;
-
-        let page_count = doc.pages().len() as usize;
-        let mut pages = Vec::with_capacity(page_count);
-
-        for i in 0..page_count {
-            let page = doc
-                .pages()
-                .get(i as i32)
-                .with_context(|| format!("获取 PDF 第 {i} 页失败"))?;
-
-            let render_width: Pixels = 1600;
-            let h = page.height();
-            let w = page.width();
-            let height: Pixels = (h.value as f64 * 1600.0 / w.value as f64) as Pixels;
-            let bitmap = page
-                .render(render_width, height, None)
-                .with_context(|| format!("渲染 PDF 第 {i} 页失败"))?;
-
-            let img = bitmap
-                .as_image()
-                .with_context(|| format!("PDF 位图转图片失败: 第 {i} 页"))?;
-
-            let mut buf = Vec::new();
-            let mut cursor = std::io::Cursor::new(&mut buf);
-            img.write_to(&mut cursor, image::ImageFormat::WebP)
-                .with_context(|| format!("编码 PDF 第 {i} 页为 WebP 失败"))?;
-            pages.push(buf);
-        }
-
-        if pages.is_empty() {
-            anyhow::bail!("PDF 没有页面: {path}");
-        }
 
         let title = std::path::Path::new(path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
 
-        Ok(PdfBook { pages, title })
+        Ok(PdfBook { doc, title })
     }
 }
 
 impl Document for PdfBook {
     fn page_count(&self) -> u32 {
-        self.pages.len() as u32
+        self.doc.pages().len() as u32
     }
 
     fn metadata(&self) -> DocumentMeta {
@@ -112,10 +97,26 @@ impl Document for PdfBook {
     }
 
     fn page_bytes(&self, index: u32) -> Result<Vec<u8>> {
-        self.pages
-            .get(index as usize)
-            .cloned()
-            .with_context(|| format!("页索引越界: {index}"))
+        let page = self
+            .doc
+            .pages()
+            .get(index as i32)
+            .with_context(|| format!("获取 PDF 第 {index} 页失败"))?;
+        let render_width: Pixels = 1600;
+        let h = page.height();
+        let w = page.width();
+        let height: Pixels = (h.value as f64 * 1600.0 / w.value as f64) as Pixels;
+        let bitmap = page
+            .render(render_width, height, None)
+            .with_context(|| format!("渲染 PDF 第 {index} 页失败"))?;
+        let img = bitmap
+            .as_image()
+            .with_context(|| format!("PDF 位图转图片失败: 第 {index} 页"))?;
+        let mut buf = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+        img.write_to(&mut cursor, image::ImageFormat::WebP)
+            .with_context(|| format!("编码 PDF 第 {index} 页为 WebP 失败"))?;
+        Ok(buf)
     }
 }
 

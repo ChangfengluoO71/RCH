@@ -3,19 +3,30 @@ import 'dart:io';
 
 import 'package:app/src/rust/api/cache.dart';
 import 'package:app/src/rust/api/db.dart';
+import 'package:app/src/rust/api/pdf.dart';
 import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
+import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
+
+  // Android：把 jniLibs 的原生库目录传给 Rust，供 pdfium 加载 libpdfium.so。
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    final dir = await nativeLibraryDir();
+    if (dir != null && dir.isNotEmpty) {
+      await setNativeLibDir(dir: dir);
+    }
+  }
 
   // 启动恢复自定义根：标记文件优先，library.json 兜底（在打开数据库之前）。
   final customRoot = await readCacheRootMarker() ?? await _cacheDirFromLibraryJson();

@@ -34,9 +34,9 @@ p0-android-buildchain → (p1-local-reader ∥ p3-native-formats) → p2-remote-
 - [ ] Windows 回归:`cargo test` + `flutter analyze`
 
 ### Step 3:P3 原生格式(与 P1 并行)
-- [ ] libpdfium.so 按 ABI 打包 + pdf.rs 加载路径适配,真机渲染 PDF 一页
-- [ ] unrar NDK 编译验证;失败则执行预案并记录结论
-- [ ] PDF / CBR 合入阅读器
+- [x] libpdfium.so 按 ABI 打包 + pdf.rs 加载路径适配,真机渲染 PDF 一页（2026-08-08：pdfium 7881 预编译 .so 进 jniLibs；set_native_lib_dir 链路；MuMu 真机 1/1 页渲染通过）
+- [x] unrar NDK 编译验证（2026-08-08 通过：放开 Android 隔离 + vendored os.hpp 禁用 USE_LUTIMES + build.rs 按目标平台修 powrprof/pthread 并加 -lc++；MuMu 真机 CBR 2 页解码翻页通过）
+- [x] PDF / CBR 合入阅读器（阅读器直接走 open_document 分支，真机均验证）
 
 ### Step 4:P2 远程书源
 - [ ] WebDAV / SFTP 真机闭环

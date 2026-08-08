@@ -67,3 +67,37 @@ jobs:
         with:
           files: dist/RCH-v*.exe
           body_path: ${{ runner.temp }}/release_body.md
+
+  build-android:
+    name: Build & Publish Android APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44'
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Flutter pub get (cargokit)
+        run: dart pub get
+        working-directory: app/rust_builder/cargokit/build_tool
+
+      - name: Build Android Release APK (split per ABI)
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload APKs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/app/outputs/flutter-apk/app-*-release.apk

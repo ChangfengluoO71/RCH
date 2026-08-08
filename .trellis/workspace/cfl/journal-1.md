@@ -214,3 +214,66 @@ M5 收尾提交；M6 实现百度/115 官方 API 书源（OAuth/设备码授权�
 ### Status
 
 [OK] 修复完成并实机验证；待用户真实凭据继续验收 WebDAV/百度/115/夸克 添加闭环
+
+
+## Session 8: 提交 P1/对话框修复 + P3 原生库可行性评估
+
+**Date**: 2026-08-08
+**Task**: M6 Android — 提交更新 + P3 PDF/RAR 评估
+**Branch**: `master`
+
+### Summary
+
+提交上一批更新（commit `18565f1`：P1 SAF 导入 + 书源对话框错误自动可见 + 回归测试 + Trellis 记录）。随后对 P3 原生格式做实证评估：
+
+**RAR/CBR — 构建级已验证可行**：P0 时 unrar 在 Android 上被隔离；放开隔离后交叉编译唯一报错是 bionic 无 `lutimes`（unrar os.hpp 在 `__linux` 下定义 USE_LUTIMES，Android 也定义 `__linux`）。修复为 vendored os.hpp 加 `!defined(__ANDROID__)` 条件。`cargo check --target aarch64-linux-android` 与 `flutter build apk --debug`（4 ABI）全部通过；RarBook 实现全可移植（临时文件 + 静态 libunrar.a + 内存读页），待真机验收。
+
+**PDF — 待打包 .so 与加载路径**：pdfium-render 0.9.3 已参与 Android 编译；缺 libpdfium.so 按 ABI 进 jniLibs（来源 bblanchon/pdfium-binaries 或 pdfium-android Maven 制品）+ pdf.rs 通过 nativeLibraryDir 显式加载（Dart 侧 method channel 取 ApplicationInfo.nativeLibraryDir 传给 Rust，仿 set_cache_root_path 参数模式）。
+
+### Main Changes
+
+- `app/rust/Cargo.toml`、`app/rust/src/document/mod.rs`：解除 unrar 的 Android 隔离（工作区未提交）
+- `app/rust/vendor/unrar_sys/vendor/unrar/os.hpp`：Android 禁用 USE_LUTIMES 补丁（工作区未提交）
+- `.trellis/.../research/android-native-libs.md`：记录 RAR 验证结论；父任务 implement.md 勾选 unrar NDK 编译验证项
+
+### Testing
+
+- [OK] cargo check --target aarch64-linux-android（含 unrar）通过
+- [OK] flutter build apk --debug（armv7/aarch64/x86_64/i686 全 ABI）通过
+
+### Status
+
+[WIP] RAR 侧构建打通待真机；PDF 侧待 .so 打包 + 加载路径；P3 建议按父任务设计继续
+
+
+## Session 9: P3 收尾 — PDF/RAR 真机验证通过并回归提交
+
+**Date**: 2026-08-08
+**Task**: M6 P3 原生格式 PDF/RAR 安卓适配
+**Branch**: `master`
+
+### Summary
+
+P3 全部验收达成。过程要点：
+
+1. **构建链修复**：Gradle 9.1.0 transforms 缓存大面积丢失导致 Kotlin/Gradle 失败 → 移走 `~/.gradle/caches/9.1.0/transforms` 后恢复。
+2. **cargokit host build-script 失败**：诊断确认瞬态/环境残留（干净 shell 复现成功），非工具链配置问题。
+3. **C++ 运行时缺失**：unrar C++ 代码使 cdylib 引用 libc++ 符号；仅打包 `libc++_shared.so` 不够，因 DT_NEEDED 缺失。最终方案：unrar_sys build.rs 对 Android 输出 `cargo:rustc-link-lib=c++` → DT_NEEDED libc++_shared.so → 运行时自动加载。
+4. **真机验证（MuMu x86_64）**：应用启动无崩溃；PDF（dummy.pdf）1/1 页渲染 + 进度记录；CBR（手工 RAR4 stored，2 张 PNG）2 页解码 + 翻页；全程无报错。
+
+### Main Changes（待提交）
+
+- Rust：解除 unrar 的 Android 隔离；os.hpp 禁用 USE_LUTIMES；build.rs 按目标平台修 powrprof/pthread 并加 `-lc++`；pdf.rs 支持 native lib 目录；新增 api/pdf.rs `set_native_lib_dir`
+- Android：MainActivity method channel `nativeLibraryDir`；jniLibs 打包 libpdfium.so（arm64/x86_64）+ libc++_shared.so（4 ABI）
+- Dart：main.dart 启动时注入 nativeLibraryDir；storage_access.dart 新增方法
+- FRB：codegen 重新生成绑定 + Windows release DLL
+
+### Testing
+
+- [OK] flutter analyze 0 issues；flutter test 全过
+- [OK] cargo test --lib 全过（Windows 回归）
+- [OK] MuMu 真机 PDF/CBR 阅读闭环
+
+### Status
+
+[OK] P3 完成，待提交

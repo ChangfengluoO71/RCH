@@ -9,6 +9,7 @@ import 'api/cache.dart';
 import 'api/db.dart';
 import 'api/export.dart';
 import 'api/package.dart';
+import 'api/pdf.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
 import 'dart:async';

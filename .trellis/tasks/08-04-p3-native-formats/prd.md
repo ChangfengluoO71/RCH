@@ -17,8 +17,8 @@
 
 ## Acceptance Criteria
 
-- [ ] 真机打开 PDF 与 CBR 各一本,可渲染页面并翻页。
-- [ ] 失败预案已执行:若 NDK 编译不可行,结论写入研究记录,并回退为"首版暂不支持该格式",同时明确告知用户。
+- [x] 真机打开 PDF 与 CBR 各一本,可渲染页面并翻页（2026-08-08 MuMu x86_64 验证：PDF 1/1 页渲染+进度记录；CBR 手工 RAR4 2 页解码+翻页，均无报错）。
+- [x] 失败预案已执行:若 NDK 编译不可行,结论写入研究记录,并回退为"首版暂不支持该格式",同时明确告知用户。（预案未触发：unrar NDK 交叉编译经 3 处 vendored 补丁后成功，见 research/android-native-libs.md）
 
 ## Dependencies
 

@@ -8,6 +8,40 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.4.1] — 2026-08-08
+
+### Added
+
+- **应用内更新系统（Windows + Android）**：设置页「关于与更新」检查更新、启动自动检测、GitHub Releases 下载；Windows 静默安装（安装器自动关闭并重启应用），Android 经系统安装器覆盖升级
+- **Android 正式签名（P4）**：release APK 使用正式 keystore 签名（本地 key.properties / CI Secrets 注入），版本号由发布 tag 自动注入（versionCode = 主×10000+次×100+修）
+
+### Fixed
+
+- 日漫/美漫模式无法滑动翻页（PageView 承载页面 + photo_view 手势让位 + 双页模式缩放后手势接管）
+- 条漫模式高 DPI 屏幕图片模糊（按设备像素比解码）
+- 条漫模式无法双指缩放（开启 InteractiveViewer 缩放，与单指滚动共存）
+- 美漫模式底栏翻页箭头方向反了
+- 阅读器每页独立缩放控制器，滑动翻页时新旧页缩放互不干扰
+
+---
+
+## [0.4.0] — 2026-08-08
+
+### Added
+
+- **Android 支持**：同一套代码在 Windows 与 Android 双端运行；触屏翻页/缩放、系统返回、横竖屏、SAF 导入本地漫画、窄屏响应式布局
+- **PDF / CBR / RAR 原生格式（Android）**：按 ABI 打包 libpdfium.so 与 libc++_shared.so；PDF 按需渲染
+- 安卓构建链打通：Rust 核心（含 unrar C++）NDK 交叉编译、FRB 绑定、Gradle 9 / AGP 9 / Kotlin 2.3 全链路
+
+### Fixed
+
+- 详情页安卓横屏矮视口下封面列 RenderFlex 溢出
+- 云端 PDF 下载完成后长时间无响应（改按需渲染）
+- 添加书源对话框错误信息自动滚动可见；窄屏/横屏提交失败不再无反馈
+- 书源页新增「导入本地漫画」入口
+
+---
+
 ## [0.3.5] — 2026-08-07
 
 ### Added

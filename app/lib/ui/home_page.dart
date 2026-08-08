@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:app/src/rust/api/source.dart';
@@ -9,6 +10,7 @@ import 'package:app/store/netdisk_credentials.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
+import 'package:app/store/update_manager.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -16,6 +18,7 @@ import 'package:app/ui/common.dart';
 import 'package:app/ui/opener.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:app/ui/sync_panel.dart';
+import 'package:app/ui/update_panel.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -49,11 +52,36 @@ class _HomePageState extends State<HomePage> {
   String? _detailTag;
   /// 元数据标签各组的展开状态（会话内保持，按类别名索引）。
   final Map<String, bool> _metaExpandedGroups = {};
+  bool _updatePromptShown = false;
 
   @override
   void initState() {
     super.initState();
     LibraryStore.instance.load();
+    _scheduleUpdateCheck();
+  }
+
+  /// 启动后静默检查一次更新；发现新版本时用 SnackBar 提示。
+  Future<void> _scheduleUpdateCheck() async {
+    final m = UpdateManager.instance;
+    try {
+      await m.init();
+    } catch (_) {}
+    if (!mounted) return;
+    m.status.addListener(_onUpdateStatus);
+    unawaited(m.check(silent: true));
+  }
+
+  void _onUpdateStatus() {
+    final m = UpdateManager.instance;
+    if (m.status.value != UpdateStatus.updateAvailable || _updatePromptShown) return;
+    _updatePromptShown = true;
+    if (!mounted) return;
+    final v = m.info?.version ?? '';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('发现新版本 v$v'),
+      action: SnackBarAction(label: '查看', onPressed: () => showUpdateDialog(context)),
+    ));
   }
 
   bool _portraitLocked = false;
@@ -793,7 +821,7 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSettings() {
     final s = LibraryStore.instance.settings;
     return ListenableBuilder(listenable: LibraryStore.instance, builder: (c, _) => ListView(padding: const EdgeInsets.all(24), children: [
-      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const _StoragePermissionTile(), const SizedBox(height: 28), _tabletLayout(s), const SizedBox(height: 16), const CacheManagerPanel(), const SizedBox(height: 28), const SyncPanel(), const SizedBox(height: 28),
+      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const _StoragePermissionTile(), const SizedBox(height: 28), _tabletLayout(s), const SizedBox(height: 16), const CacheManagerPanel(), const SizedBox(height: 28), const SyncPanel(), const SizedBox(height: 28), const UpdatePanel(), const SizedBox(height: 28),
       _readingDefaults(s), const SizedBox(height: 16), _remoteSources(s), const SizedBox(height: 16), _localComics(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
     ]));
   }

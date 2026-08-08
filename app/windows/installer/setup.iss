@@ -3,7 +3,7 @@
 
 #define MyAppName "RCH"
 #ifndef MyAppVersion
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.4.1"
 #endif
 #ifndef OutputBaseFilename
 #define OutputBaseFilename "RCH-" + MyAppVersion + "-windows-x64"
@@ -32,6 +32,9 @@ PrivilegesRequired=admin
 Uninstallable=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; 应用内更新依赖：静默安装时自动关闭正在运行的 RCH（随后由 [Run] 重新启动）。
+CloseApplications=yes
+RestartApplications=no
 WizardStyle=modern
 
 [Languages]
@@ -49,7 +52,7 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall
 
 [Code]
 function InitializeSetup: Boolean;

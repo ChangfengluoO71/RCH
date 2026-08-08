@@ -158,29 +158,69 @@ cmake --version   # 需 ≥ 3.16
 
 ## 发布（构建安装包）
 
-固定流程（历史版本 v0.1.x ~ v0.3.x 均按此执行）：
+打 tag 后由 CI（`.github/workflows/release.yml`）自动构建并上传 GitHub Release：
 
 ```powershell
-# 1. 升版本号（保持三处一致）：
-#    app/pubspec.yaml  version: x.y.z+n
-#    app/windows/runner/Runner.rc  VERSION_AS_NUMBER / VERSION_AS_STRING
-#    app/windows/installer/setup.iss  MyAppVersion / OutputBaseFilename
-
-# 2. Release 构建（产物：app/build/windows/x64/runner/Release/RCH.exe）
-cd app
-flutter build windows --release
-
-# 3. Inno Setup 打包（需安装 Inno Setup 6，winget install JRSoftware.InnoSetup）
-#    产物：dist/RCH-vX.Y.Z-windows-x64.exe
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" app/windows/installer/setup.iss
-
-# 4. 提交版本变更 + 打 tag + 推送
-git add CHANGELOG.md app/pubspec.yaml app/windows/runner/Runner.rc app/windows/installer/setup.iss
+# 1. 升版本号（只需改 app/pubspec.yaml；exe 版本资源 / 安装包文件名由 CI 从 tag 注入）
+git add app/pubspec.yaml
 git commit -m "release: vX.Y.Z — 摘要"
+
+# 2. 打 tag 并推送（触发 CI 构建 Windows 安装包 + 各 ABI Android APK）
 git tag -a vX.Y.Z -m "RCH vX.Y.Z"
 git push origin master --tags
 
-# 5. 创建/更新 GitHub Release（草稿→上传安装包→发布）
-gh release create vX.Y.Z --title "RCH vX.Y.Z" --notes-file release_notes_vX.Y.Z.md --draft
-gh release upload vX.Y.Z dist/RCH-vX.Y.Z-windows-x64.exe
+# 3. 检查 GitHub Actions Release 工作流结果，必要时在 Release 页补 notes 后发布
+```
+
+版本号约定：tag 去掉 `v` 前缀即为版本（如 `v0.4.0` → `0.4.0`），构建号按
+`主版本*10000 + 次版本*100 + 修订号` 注入（`0.4.0` → `400`），保证 Android
+versionCode 单调递增。
+
+### 应用内更新
+
+- 入口：设置页「关于与更新」→ 检查更新；启动时也会静默检查一次，发现新版本会提示。
+- 数据源：GitHub Releases latest（`https://api.github.com/repos/ChangfengluoO71/RCH/releases/latest`）。
+- Windows：下载 `RCH-<版本>-windows-x64.exe` 到临时目录，静默安装（安装器
+  `CloseApplications=yes` 自动关闭运行中的应用，装完自动重启）。安装器需要管理员权限，会弹 UAC。
+- Android：下载 `app-arm64-v8a-release.apk`（无 arm64 时回退其他 ABI）到应用外部目录，
+  经 FileProvider 拉起系统安装器；首次使用需在系统弹窗中允许「安装未知应用」。
+- GitHub API 不可达（限流/网络）时，面板会提供「打开 GitHub Releases」兜底。
+
+### Android 正式签名（P4）
+
+发布 APK 必须用正式签名（debug 签名每台机器/每次 CI 都不同，无法覆盖升级）。
+本地签名文件不入库（`app/android/.gitignore` 已排除）：
+
+- `app/android/upload-keystore.jks` — 正式 keystore（alias=`upload`，RSA 2048，有效期 10000 天）
+- `app/android/key.properties` — 本地签名配置（storeFile / storePassword / keyAlias / keyPassword）
+
+**重要：keystore 与密码务必备份到仓库之外的安全位置。密钥一旦丢失，
+已安装用户将无法升级（签名不一致只能卸载重装）。**
+
+CI（GitHub Actions）通过仓库 Secrets 注入签名，缺省会直接报错阻止发布：
+
+| Secret | 值 |
+|---|---|
+| `RELEASE_KEYSTORE_B64` | keystore 文件的 Base64（见下方命令） |
+| `RELEASE_STORE_PASSWORD` | keystore 密码 |
+| `RELEASE_KEY_ALIAS` | `upload` |
+| `RELEASE_KEY_PASSWORD` | 密钥密码（与 keystore 密码相同） |
+
+生成 Base64（Windows PowerShell）：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("app\android\upload-keystore.jks"))
+```
+
+> 注意：当前已发布的 v0.4.0 APK 是 debug 签名。首个正式签名版本发布后，
+> 老用户无法原地覆盖升级，需要手动卸载重装一次；之后版本即可无缝升级。
+
+### 本地构建 Windows Release（工具环境卡 cl.exe 时）
+
+已知问题：在自动化工具上下文里 `flutter build windows --release` 会在
+MSBuild→cl.exe 阶段无限挂起（cl.exe 零 CPU）。改用 WMI 在任务 job 之外启动即可：
+
+```powershell
+$cmd = 'cmd.exe /c "cd /d C:\Users\cfl\Desktop\RCH\app && set MSBUILDDISABLENODEREUSE=1 && flutter build windows --release > build_release.log 2>&1"'
+Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd }
 ```

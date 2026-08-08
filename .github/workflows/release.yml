@@ -33,7 +33,12 @@ jobs:
         run: flutter pub get
 
       - name: Build Windows Release
-        run: flutter build windows --release
+        shell: powershell
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $parts = $ver -split '\.'
+          $code = [int]$parts[0] * 10000 + [int]$parts[1] * 100 + [int]$parts[2]
+          flutter build windows --release --build-name="$ver" --build-number="$code"
 
       - name: Bundle PDFium runtime
         shell: powershell
@@ -96,8 +101,32 @@ jobs:
         run: dart pub get
         working-directory: app/rust_builder/cargokit/build_tool
 
+      - name: Configure release signing
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > android/upload-keystore.jks
+            printf 'storeFile=upload-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/key.properties
+            echo "release signing configured"
+          else
+            echo "::error::RELEASE_KEYSTORE_B64 未配置，发布包必须使用正式签名，请先在仓库 Secrets 中配置"
+            exit 1
+          fi
+
       - name: Build Android Release APK (split per ABI)
-        run: flutter build apk --release --split-per-abi
+        shell: bash
+        run: |
+          ver="${{ github.ref_name }}"
+          ver="${ver#v}"
+          IFS='.' read -r maj min pat <<< "$ver"
+          code=$((maj * 10000 + min * 100 + pat))
+          flutter build apk --release --split-per-abi --build-name="$ver" --build-number="$code"
 
       - name: Upload APKs to GitHub Release
         uses: softprops/action-gh-release@v2

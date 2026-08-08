@@ -277,3 +277,24 @@ P3 全部验收达成。过程要点：
 ### Status
 
 [OK] P3 完成，待提交
+
+
+## Session 6: 115 扫码 Cookie 书源 + v0.4.2 发布
+
+**Date**: 2026-08-08
+**Task**: 115 扫码 Cookie 书源 + v0.4.2 发布
+**Branch**: `master`
+
+### Summary
+
+115 网盘新增扫码获取 Cookie 书源（无需 APP ID）：web_qr_* 三接口、Cloud115WebClient 列表/直链/Range/缓存、p115client 固定 key m115 加密、默认 wechatmini 扫码设备；全局 errors.log；修复扫码对话框、pickcode 字段、setState during build。Rust 84 + Dart 45 测试全绿，打 tag v0.4.2 发布。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e9a4ebb` | (see git log) |
+
+### Status
+
+[OK] **Completed**

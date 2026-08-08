@@ -90,6 +90,14 @@ class _ReaderPageState extends State<ReaderPage> {
     if (zoomed != _dualZoomed) setState(() => _dualZoomed = zoomed);
   }
 
+  /// 双击在 1x / 2x 之间切换（条漫、双页模式；单页 PhotoView 自带双击缩放）。
+  void _toggleZoomByDoubleTap(TransformationController c) {
+    final zoomed = c.value.getMaxScaleOnAxis() > 1.01;
+    c.value = zoomed
+        ? Matrix4.identity()
+        : (Matrix4.identity()..scaleByDouble(2.0, 2.0, 2.0, 1.0));
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -448,18 +456,21 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Widget _buildPair({required Uint8List leftBytes, required int leftIdx, Uint8List? rightBytes, required int rightIdx}) {
     final isManga=_mode==ReadMode.manga;_ensure(rightIdx);
-    return Center(child: InteractiveViewer(
-      transformationController: _dualZoomCtrl, minScale: 1.0, maxScale: 4.0,
-      scaleEnabled: false, panEnabled: _dualZoomed,
-      child: LayoutBuilder(builder:(context,c){final div=_gap.clamp(0,20);
-        // 向下取整保证 2*halfW+div <= maxWidth，避免双页拼接 Row 亚像素溢出
-        // （round() 向上取整会偶发 RIGHT OVERFLOWED BY 0.x PIXELS 遮挡画面）。
-        final halfW=((c.maxWidth-div)/2).floor().clamp(1,4096);
-        Widget tile(Uint8List b, int idx)=>ClipRect(child:FittedBox(fit:BoxFit.contain,child:RotatedBox(quarterTurns:_rotationOf(idx)~/90,child:SizedBox(width:halfW.toDouble(),child:Image(image:ResizeImage(MemoryImage(b),width:halfW),fit:BoxFit.contain)))));
-        Widget leftWidget=tile(leftBytes,leftIdx);Widget rightWidget=rightBytes!=null?tile(rightBytes,rightIdx):const Center(child:SizedBox(width:24,height:24,child:CircularProgressIndicator(strokeWidth:2)));
-        return Row(mainAxisSize:MainAxisSize.min,children:[if(isManga)rightWidget,if(isManga&&div>0)SizedBox(width:div.toDouble()),leftWidget,if(!isManga&&div>0)SizedBox(width:div.toDouble()),if(!isManga)rightWidget,]);
-      }),
-    ));
+    return GestureDetector(
+      onDoubleTap: () => _toggleZoomByDoubleTap(_dualZoomCtrl),
+      child: Center(child: InteractiveViewer(
+        transformationController: _dualZoomCtrl, minScale: 1.0, maxScale: 4.0,
+        scaleEnabled: false, panEnabled: _dualZoomed,
+        child: LayoutBuilder(builder:(context,c){final div=_gap.clamp(0,20);
+          // 向下取整保证 2*halfW+div <= maxWidth，避免双页拼接 Row 亚像素溢出
+          // （round() 向上取整会偶发 RIGHT OVERFLOWED BY 0.x PIXELS 遮挡画面）。
+          final halfW=((c.maxWidth-div)/2).floor().clamp(1,4096);
+          Widget tile(Uint8List b, int idx)=>ClipRect(child:FittedBox(fit:BoxFit.contain,child:RotatedBox(quarterTurns:_rotationOf(idx)~/90,child:SizedBox(width:halfW.toDouble(),child:Image(image:ResizeImage(MemoryImage(b),width:halfW),fit:BoxFit.contain)))));
+          Widget leftWidget=tile(leftBytes,leftIdx);Widget rightWidget=rightBytes!=null?tile(rightBytes,rightIdx):const Center(child:SizedBox(width:24,height:24,child:CircularProgressIndicator(strokeWidth:2)));
+          return Row(mainAxisSize:MainAxisSize.min,children:[if(isManga)rightWidget,if(isManga&&div>0)SizedBox(width:div.toDouble()),leftWidget,if(!isManga&&div>0)SizedBox(width:div.toDouble()),if(!isManga)rightWidget,]);
+        }),
+      )),
+    );
   }
 
   // ---- 条漫 ----
@@ -467,14 +478,17 @@ class _ReaderPageState extends State<ReaderPage> {
     return LayoutBuilder(builder:(context,c){final vw=c.maxWidth;
       // 按设备像素比解码,避免用逻辑宽度解码导致高 DPI 屏幕模糊。
       final decodeW=(vw*MediaQuery.devicePixelRatioOf(context)).ceil().clamp(1,4096);
-      return InteractiveViewer(
-        transformationController: _webtoonZoomCtrl,
-        minScale: 1.0, maxScale: 4.0,
-        scaleEnabled: true, panEnabled: false,
-        child: ListView.builder(controller:_webtoonCtrl,itemCount:b.pageCount,itemBuilder:(context,i){final bytes=_bytes[i];
-          if(bytes==null){_ensure(i);return const SizedBox(height:200,child:Center(child:CircularProgressIndicator()));}
-          return GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:decodeW),fit:BoxFit.fitWidth),);
-        },),
+      return GestureDetector(
+        onDoubleTap: () => _toggleZoomByDoubleTap(_webtoonZoomCtrl),
+        child: InteractiveViewer(
+          transformationController: _webtoonZoomCtrl,
+          minScale: 1.0, maxScale: 4.0,
+          scaleEnabled: true, panEnabled: false,
+          child: ListView.builder(controller:_webtoonCtrl,itemCount:b.pageCount,itemBuilder:(context,i){final bytes=_bytes[i];
+            if(bytes==null){_ensure(i);return const SizedBox(height:200,child:Center(child:CircularProgressIndicator()));}
+            return GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:decodeW),fit:BoxFit.fitWidth),);
+          },),
+        ),
       );
     });
   }

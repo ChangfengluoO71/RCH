@@ -13,6 +13,7 @@ import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -129,11 +130,20 @@ class RchApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           title: 'RCH',
           navigatorKey: AiUpscaleManager.navigatorKey,
-          builder: (context, child) => Stack(
-            children: [
-              ?child,
-              const Align(alignment: Alignment.topRight, child: AiFloatingProgress()),
-            ],
+          builder: (context, child) => MediaQuery(
+            // 安卓触屏：降低手势判定阈值（touchSlop 18→12,panSlop 36→24），
+            // 双指缩放/滑动更容易触发（指甲长、小幅捏合也能识别）。
+            data: MediaQuery.of(context).copyWith(
+              gestureSettings: defaultTargetPlatform == TargetPlatform.android
+                  ? const DeviceGestureSettings(touchSlop: 12)
+                  : null,
+            ),
+            child: Stack(
+              children: [
+                ?child,
+                const Align(alignment: Alignment.topRight, child: AiFloatingProgress()),
+              ],
+            ),
           ),
           theme: ThemeData.light(useMaterial3: true),
           darkTheme: ThemeData.dark(useMaterial3: true),

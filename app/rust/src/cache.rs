@@ -397,17 +397,32 @@ pub fn migrate_cache_root(from: &str, to: &str, support_dir: &str) -> Result<u64
             migration_targets().lock().unwrap().push(t);
         }
         // 校验：目录文件数量一致、文件大小一致。
+        // Windows 下文件刚复制完可能被杀软/索引服务瞬时锁定（metadata 读取失败
+        // 会被 file_count 跳过），用短重试容忍瞬时抖动，避免误报迁移失败并触发回滚清理。
         for it in &items {
             let s = from_p.join(&it.name);
             let t = to_p.join(&it.name);
-            if it.is_dir {
-                if file_count(&s) != file_count(&t) {
-                    bail!("迁移校验失败：{} 文件数量不一致", it.name);
+            let mut verified = false;
+            for attempt in 0..5 {
+                if it.is_dir {
+                    if file_count(&s) == file_count(&t) {
+                        verified = true;
+                        break;
+                    }
+                } else {
+                    let sl = std::fs::metadata(&s).map(|m| m.len()).unwrap_or(0);
+                    let tl = std::fs::metadata(&t).map(|m| m.len()).unwrap_or(0);
+                    if sl != 0 && sl == tl {
+                        verified = true;
+                        break;
+                    }
                 }
-            } else {
-                let sl = std::fs::metadata(&s).map(|m| m.len()).unwrap_or(0);
-                let tl = std::fs::metadata(&t).map(|m| m.len()).unwrap_or(0);
-                if sl == 0 || sl != tl {
+                std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+            }
+            if !verified {
+                if it.is_dir {
+                    bail!("迁移校验失败：{} 文件数量不一致", it.name);
+                } else {
                     bail!("迁移校验失败：{} 大小不一致", it.name);
                 }
             }
@@ -522,7 +537,8 @@ mod tests {
 
     #[test]
     fn migrate_copies_db_cache_skips_support() {
-        let base = std::env::temp_dir().join("rch_test_migrate_v2");
+        // 进程唯一临时目录，避免上次运行残留（删除被锁/失败时遗留）干扰本次断言。
+        let base = std::env::temp_dir().join(format!("rch_test_migrate_v2_{}", std::process::id()));
         let from = base.join("from");
         let to = base.join("to");
         let support = from.join("RCH");

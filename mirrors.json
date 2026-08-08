@@ -1,0 +1,29 @@
+{
+  "updated": "2026-08-08",
+  "mirrors": [
+    {
+      "name": "ghproxy.net",
+      "url": "https://ghproxy.net/"
+    },
+    {
+      "name": "gh-proxy.com",
+      "url": "https://gh-proxy.com/"
+    },
+    {
+      "name": "ghfast.top",
+      "url": "https://ghfast.top/"
+    },
+    {
+      "name": "mirror.ghproxy.com",
+      "url": "https://mirror.ghproxy.com/"
+    },
+    {
+      "name": "ghp.ci",
+      "url": "https://ghp.ci/"
+    },
+    {
+      "name": "moeyy.cn/gh-proxy",
+      "url": "https://moeyy.cn/gh-proxy/"
+    }
+  ]
+}

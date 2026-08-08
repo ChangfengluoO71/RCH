@@ -274,6 +274,9 @@ class AppSettings {
   bool autoConvertCbz; // 刷新本地书源时自动将漫画文件夹/zip 转为 CBZ
   BookOpenStrategy bookOpenStrategy; // 远程书源打开策略（WebDAV/SFTP 共用）
   String tabletLayout; // 'auto' | 'desktop' | 'mobile'：平板布局模式（auto=按宽度，desktop=桌面侧栏，mobile=手机底部导航）
+  String updateMirror; // GitHub 下载镜像前缀（''=官方直连；自定义镜像也存这里）
+  String updateMirrorList; // 远程拉取的镜像列表 JSON（[{name,url}]），供自动更新
+  int updateMirrorFetchedAt; // 镜像列表最后成功拉取时间（ms epoch，0=从未）
 
   AppSettings({
     this.coverQuality = CoverQuality.medium,
@@ -288,6 +291,9 @@ class AppSettings {
     this.autoConvertCbz = true,
     this.bookOpenStrategy = BookOpenStrategy.auto,
     this.tabletLayout = 'auto',
+    this.updateMirror = '',
+    this.updateMirrorList = '[]',
+    this.updateMirrorFetchedAt = 0,
   }) : keys = keys ?? KeyBinds();
 
   Map<String, dynamic> toJson() => {
@@ -303,6 +309,9 @@ class AppSettings {
         'autoConvertCbz': autoConvertCbz,
         'bookOpenStrategy': bookOpenStrategy.name,
         'tabletLayout': tabletLayout,
+        'updateMirror': updateMirror,
+        'updateMirrorList': updateMirrorList,
+        'updateMirrorFetchedAt': updateMirrorFetchedAt,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -330,6 +339,9 @@ class AppSettings {
           orElse: () => BookOpenStrategy.auto,
         ),
         tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
+        updateMirror: (j['updateMirror'] as String?) ?? '',
+        updateMirrorList: (j['updateMirrorList'] as String?) ?? '[]',
+        updateMirrorFetchedAt: (j['updateMirrorFetchedAt'] as int?) ?? 0,
       );
 }
 

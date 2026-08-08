@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:app/store/library_store.dart';
 
 /// 更新流程状态。
 enum UpdateStatus {
@@ -56,6 +57,21 @@ class UpdateManager {
   static const String _apiLatest =
       'https://api.github.com/repos/$repoOwner/$repoName/releases/latest';
 
+  /// 远程镜像列表地址：仓库内 `mirrors.json`，经 jsDelivr CDN 分发
+  /// （国内可直连、不依赖 GitHub），应用启动/打开更新面板时自动拉取合并。
+  static const String mirrorListUrl =
+      'https://cdn.jsdelivr.net/gh/$repoOwner/$repoName@master/mirrors.json';
+
+  /// 下载镜像预设（前缀代理：官方直链前加镜像前缀即可加速）。
+  /// 镜像为第三方社区服务，可用性随时可能变化；`ghproxy.link` 会列出最新可用地址。
+  static const List<MapEntry<String, String>> mirrorPresets = [
+    MapEntry('官方 GitHub（直连）', ''),
+    MapEntry('ghproxy.net', 'https://ghproxy.net/'),
+    MapEntry('gh-proxy.com', 'https://gh-proxy.com/'),
+    MapEntry('ghfast.top', 'https://ghfast.top/'),
+    MapEntry('mirror.ghproxy.com', 'https://mirror.ghproxy.com/'),
+  ];
+
   final ValueNotifier<UpdateStatus> status = ValueNotifier(UpdateStatus.idle);
   final ValueNotifier<double> progress = ValueNotifier(0);
   final ValueNotifier<String?> error = ValueNotifier(null);
@@ -64,6 +80,105 @@ class UpdateManager {
   UpdateInfo? info;
   String? _downloadedPath;
   bool _initDone = false;
+
+  /// 用户选择的镜像前缀（来自设置；可为自定义地址）。
+  String get mirrorPrefix {
+    final raw = LibraryStore.instance.settings.updateMirror.trim();
+    if (raw.isEmpty) return '';
+    return raw.endsWith('/') ? raw : '$raw/';
+  }
+
+  /// 生效镜像列表：远端拉取（已持久化）在前，内置预设兜底；按 URL 去重。
+  List<MapEntry<String, String>> get effectiveMirrors {
+    final byUrl = <String, String>{};
+    final order = <String>[];
+    void add(String name, String url) {
+      final u = url.trim();
+      if (u.isEmpty) return;
+      if (!byUrl.containsKey(u)) order.add(u);
+      byUrl[u] = name;
+    }
+    try {
+      final remote =
+          jsonDecode(LibraryStore.instance.settings.updateMirrorList)
+          as List;
+      for (final item in remote) {
+        final m = (item as Map).cast<String, dynamic>();
+        final name = m['name']?.toString() ?? '';
+        final url = m['url']?.toString() ?? '';
+        if (url.startsWith('https://')) add(name.isEmpty ? url : name, url);
+      }
+    } catch (_) {
+      // 远端列表损坏时忽略，仅用内置预设
+    }
+    for (final p in mirrorPresets) {
+      add(p.key, p.value);
+    }
+    return order.map((u) => MapEntry(byUrl[u] ?? u, u)).toList();
+  }
+
+  /// 上次拉取镜像列表距今是否超过 24 小时。
+  bool get remoteMirrorsStale {
+    final at = LibraryStore.instance.settings.updateMirrorFetchedAt;
+    return DateTime.now().millisecondsSinceEpoch - at >
+        const Duration(hours: 24).inMilliseconds;
+  }
+
+  /// 从 CDN 拉取最新镜像列表并持久化；失败返回 false（保留旧列表）。
+  Future<bool> refreshRemoteMirrors() async {
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+      final req = await client.getUrl(Uri.parse(mirrorListUrl));
+      req.headers.set(HttpHeaders.userAgentHeader, 'RCH-Updater');
+      final resp = await req.close();
+      final body = await resp.transform(utf8.decoder).join();
+      client.close();
+      if (resp.statusCode != 200) return false;
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final mirrors = (json['mirrors'] as List?) ?? const [];
+      final normalized = <Map<String, String>>[];
+      for (final item in mirrors) {
+        final m = (item as Map).cast<String, dynamic>();
+        final name = m['name']?.toString().trim() ?? '';
+        final url = m['url']?.toString().trim() ?? '';
+        if (name.isNotEmpty && url.startsWith('https://')) {
+          normalized.add({'name': name, 'url': url});
+        }
+      }
+      if (normalized.isEmpty) return false;
+      final s = LibraryStore.instance.settings;
+      s.updateMirrorList = jsonEncode(normalized);
+      s.updateMirrorFetchedAt = DateTime.now().millisecondsSinceEpoch;
+      LibraryStore.instance.updateSettings(s);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 下载通道候选（当前选择优先，其余镜像兜底，去重）。
+  @visibleForTesting
+  static List<String> downloadCandidates(
+      String selected, List<MapEntry<String, String>> mirrors) {
+    final urls = <String>[];
+    void add(String u) {
+      final t = u.trim();
+      if (!urls.contains(t)) urls.add(t);
+    }
+    add(selected);
+    for (final m in mirrors) {
+      add(m.value);
+    }
+    return urls;
+  }
+
+  /// 官方直链套镜像前缀（仅下载用）；镜像为空时原样返回。
+  @visibleForTesting
+  static String buildDownloadUrl(String officialUrl, String mirror) {
+    final m = mirror.trim();
+    if (m.isEmpty) return officialUrl;
+    return '${m.endsWith('/') ? m : '$m/'}$officialUrl';
+  }
 
   /// 读取当前安装版本（Windows 取 exe 版本资源，Android 取 versionName）。
   Future<void> init() async {
@@ -182,6 +297,8 @@ class UpdateManager {
   }
 
   /// 下载安装包到本地（Windows: 临时目录; Android: 应用外部目录）。
+  /// 按「当前选择 → 其余镜像」顺序尝试，单个通道失败自动切换下一个；
+  /// 全部失败才报错，错误信息里带尝试过的通道列表。
   Future<void> download() async {
     final i = info;
     if (i == null) return;
@@ -194,12 +311,46 @@ class UpdateManager {
           : await getTemporaryDirectory();
       await dir.create(recursive: true);
       final file = File('${dir.path}${Platform.pathSeparator}${i.asset.name}');
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
-      final req = await client.getUrl(Uri.parse(i.asset.url));
+      final candidates = downloadCandidates(mirrorPrefix, effectiveMirrors);
+      final tried = <String>[];
+      Object? lastErr;
+      for (final mirror in candidates) {
+        final label = mirror.isEmpty ? '官方直连' : mirror;
+        tried.add(label);
+        try {
+          await _downloadVia(file, i, mirror);
+          _downloadedPath = file.path;
+          status.value = UpdateStatus.downloaded;
+          return;
+        } catch (e) {
+          lastErr = e;
+          if (file.existsSync()) {
+            try {
+              file.deleteSync();
+            } catch (_) {}
+          }
+          if (candidates.length > 1) {
+            error.value = '通道「$label」失败，自动切换下一个…';
+          }
+        }
+      }
+      throw HttpException(
+          '全部下载通道失败（已尝试：${tried.join('、')}）。$lastErr');
+    } catch (e) {
+      error.value = '$e';
+      status.value = UpdateStatus.error;
+    }
+  }
+
+  Future<void> _downloadVia(File file, UpdateInfo i, String mirror) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
+    try {
+      final req =
+          await client.getUrl(Uri.parse(buildDownloadUrl(i.asset.url, mirror)));
       req.headers.set(HttpHeaders.userAgentHeader, 'RCH-Updater');
       final resp = await req.close();
       if (resp.statusCode != 200) {
-        throw HttpException('下载失败：HTTP ${resp.statusCode}');
+        throw HttpException('HTTP ${resp.statusCode}');
       }
       final total = resp.contentLength;
       final sink = file.openWrite();
@@ -210,15 +361,11 @@ class UpdateManager {
         if (total > 0) progress.value = (got / total).clamp(0.0, 1.0);
       }
       await sink.close();
-      client.close();
       if (i.asset.size > 0 && file.lengthSync() != i.asset.size) {
-        throw const FileSystemException('安装包大小校验失败，请重试');
+        throw const FileSystemException('安装包大小校验失败');
       }
-      _downloadedPath = file.path;
-      status.value = UpdateStatus.downloaded;
-    } catch (e) {
-      error.value = '$e';
-      status.value = UpdateStatus.error;
+    } finally {
+      client.close();
     }
   }
 

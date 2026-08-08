@@ -68,6 +68,8 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 > 安装后可在应用内 **设置 → 关于与更新** 自动检查并安装新版本；以下直链为当前版本，最新版本请访问 [Releases 页](https://github.com/ChangfengluoO71/RCH/releases/latest)。
 
+> 国内下载慢时，可在 **设置 → 关于与更新 → 下载通道** 选择镜像加速（ghproxy.net / ghfast.top 等）。应用会自动更新镜像列表并在下载失败时自动切换通道，也支持填写自定义镜像前缀。
+
 | 平台 | 文件 | 大小 | 下载 |
 |---|---|---|---|
 | Windows 10/11 x64 | RCH-0.4.2-windows-x64.exe | 19.7 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/RCH-0.4.2-windows-x64.exe) |
@@ -205,7 +207,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 **注意事项**
 
 - 两种方式获取的都是登录凭证（Cookie / refresh_token），明文保存在本机 SQLite，注意不要泄露。
-- 方式 A 的 Cookie 有有效期，失效后按同样步骤重新扫码即可（编辑书源可直接替换 Cookie）；同设备重复扫码会顶掉旧登录。
+- 方式 A 的 Cookie 有有效期：**失效时应用会自动弹出扫码框续期**（扫码成功后自动替换 Cookie 并重连）；也可在编辑书源时点「重新扫码获取 Cookie」手动续期；同设备重复扫码会顶掉旧登录。
 - 方式 B 同账号同应用最多同时存在 2 个有效 refresh_token，重复授权会顶掉最早的一个（旧书源失效，删除重建即可）。
 - **两种方式都没有 200MB 下载上限**（200MB 限制只存在于 115 网页版简易下载接口，RCH 未使用该接口）。
 
@@ -261,6 +263,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 | 百度提示登录状态失效 / 需要重新授权 | token 被轮换或过期，重新走一遍「授权登录」即可，重启后无需重复授权 |
 | 夸克书架打不开 / 提示 Cookie 失效 | 重新去 pan.quark.cn 复制 Cookie 并更新书源 |
 | 115 旧书源突然失效 | 官方 APP ID 模式：被顶掉了 refresh_token，删除旧书源重新授权；扫码 Cookie 模式：Cookie 过期，编辑书源重新扫码替换 |
+| 更新下载慢 / 失败 | 国内访问 GitHub 慢属网络问题：设置 → 关于与更新 → 下载通道选一个镜像；应用会自动更新镜像列表并在失败时切换通道，也支持自定义镜像前缀 |
 | 远程下载慢 | 百度普通用户限速与会员等级相关（官方限制，非软件问题）；可改用「优先下载整本」离线读 |
 
 ## 🌐 开源声明

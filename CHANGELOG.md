@@ -8,6 +8,23 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.4.2] — 2026-08-08
+
+### Added
+
+- **115 网盘「扫码获取 Cookie」连接方式（默认入口）**：无需申请 APP ID，115 App 扫码即用；浏览 / 打开 / 封面 / 缓存全流程；支持根文件夹 ID 挂载子目录
+- 扫码设备选择（默认 `wechatmini` 等冷门设备，避免挤掉网页端 / App 旧登录；Windows/Mac/Linux 客户端已下架不可选）
+- **全局错误日志**：未捕获异常（含完整堆栈）写入缓存目录 `errors.log`，便于远程排查
+
+### Fixed
+
+- 115 扫码 Cookie 对话框无法弹出（QrImageView 与 AlertDialog 布局冲突 → 自绘二维码）
+- 115 Cookie 模式列表为空 / 打开漫画报错：webapi 文件项 pickcode 字段为 `pc`（`u` 是缩略图）、
+  直链解密改用 p115client 固定 key 方案（含 128 字节 RSA 分块）、取链/下载 UA 置空 + Referer 签名一致、payload 携带 user_id
+- 阅读器 / 详情页偶发 `setState() or markNeedsBuild() called during build` 崩溃
+
+---
+
 ## [0.4.1] — 2026-08-08
 
 ### Added

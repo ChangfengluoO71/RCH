@@ -129,6 +129,7 @@ class _Cloud115CookieQrScanDialogState extends State<Cloud115CookieQrScanDialog>
 
   @override
   Widget build(BuildContext c) => AlertDialog(
+        scrollable: true,
         title: const Text('115 扫码获取 Cookie'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text('用 115 手机 App 扫码，无需申请 APP ID',

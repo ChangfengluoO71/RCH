@@ -1344,6 +1344,7 @@ class _QrScanDialogState extends State<_QrScanDialog> {
 
   @override
   Widget build(BuildContext c) => AlertDialog(
+        scrollable: true,
         title: const Text('115 扫码授权'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           // 与 Cookie 对话框一致：避免 QrImageView 的 LayoutBuilder 与

@@ -678,14 +678,19 @@ pub async fn open_cloud115_cookie_book(
         let client = Arc::clone(&client);
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
-            let name = client.resolve_name(&path)?;
             let open_local =
                 |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    // 缓存目录里的文件名就是真实文件名（下载时按 info.name 落盘）。
+                    let name = local_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "file.cbz".to_string());
                     let src = crate::source::local::LocalFile::open(&local_path)?;
                     document::open_document(src, &name)
                 };
             let open_stream =
                 |client: Arc<Cloud115WebClient>| -> Result<Box<dyn document::Document>> {
+                    let name = client.resolve_name(&path)?;
                     let info = client.downurl(&path)?;
                     let (supports, size) = client.probe(&info.url);
                     if !supports {
@@ -701,7 +706,16 @@ pub async fn open_cloud115_cookie_book(
                     tracing::info!("115 整本已缓存: {}", local_path.display());
                     open_local(local_path)
                 }
-                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Stream => {
+                    // 已缓存时直接本地打开（pickcode 失效也能读），未缓存才走流式。
+                    match cloud115_source::web_raw_cache_path(&client.origin(), &path) {
+                        Some(local_path) => {
+                            tracing::info!("115 命中缓存，直接本地打开: {}", local_path.display());
+                            open_local(local_path)
+                        }
+                        None => open_stream(Arc::clone(&client)),
+                    }
+                }
                 OpenStrategy::Auto => {
                     match client.download_to_raw_cache(&path, progress) {
                         Ok(local_path) => {

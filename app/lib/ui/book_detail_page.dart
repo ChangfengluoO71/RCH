@@ -323,7 +323,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
         ];
         final header = Padding(
           padding: const EdgeInsets.all(20),
-          child: Column(children: headerWidgets),
+          // 矮屏（如安卓横屏逻辑高 480dp）下封面列高度可能超出视口，
+          // 包一层滚动避免 RenderFlex 底部溢出（黄黑报错条遮挡按钮）。
+          child: SingleChildScrollView(
+            child: Column(children: headerWidgets),
+          ),
         );
         final info = ListView(padding: const EdgeInsets.all(20), children: infoWidgets);
         if (!compact) {

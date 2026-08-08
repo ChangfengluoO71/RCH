@@ -242,13 +242,15 @@ class _ComicCoverState extends State<ComicCover> {
       try {
         final session = await cloud115SessionFor(widget.source);
         final hasRaw =
-            await cloud115HasRawCache(session: session, path: widget.path);
+            await cloud115HasRawCacheFor(widget.source,
+                session: session, path: widget.path);
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
       final session = await cloud115SessionFor(widget.source);
-      final p = await cloud115Cover(
+      final p = await cloud115CoverFor(
+          widget.source,
           session: session,
           path: widget.path,
           page: meta.coverPage,

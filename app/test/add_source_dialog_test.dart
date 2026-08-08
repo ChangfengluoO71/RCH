@@ -46,10 +46,11 @@ void main() {
     expect(find.text('授权登录'), findsOneWidget);
     expect(find.text('refresh_token(授权后自动填入，也可直接粘贴)'), findsOneWidget);
 
-    // 切到 115 网盘：根文件夹 ID + 扫码授权
+    // 切到 115 网盘：根文件夹 ID + 扫码获取 Cookie（无需 APP ID）
     await selectType('115 网盘');
-    expect(find.text('根文件夹 ID(默认 0)'), findsOneWidget);
-    expect(find.text('扫码授权'), findsOneWidget);
+    expect(find.text('根文件夹 ID(留空=网盘根目录)'), findsOneWidget);
+    expect(find.text('扫码获取 Cookie（无需 APP ID）'), findsOneWidget);
+    expect(find.text('Cookie（扫码后自动填入，也可浏览器 F12 复制）'), findsOneWidget);
 
     // 切到夸克网盘：根文件夹 ID + Cookie 字段
     await selectType('夸克网盘');

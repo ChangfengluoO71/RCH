@@ -5,6 +5,7 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/package.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/storage_access.dart';
@@ -659,7 +660,7 @@ class _HomePageState extends State<HomePage> {
         if (src.isWebDav) ...[_fd('服务器地址', urlCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径', pathCtrl)]
         else if (src.isSftp) ...[_fd('服务器地址', urlCtrl), _fd('端口(默认22)', portCtrl), _fd('用户名', userCtrl), _fdPw('密码', passCtrl), _fd('初始路径(默认/)', pathCtrl)]
         else if (src.isBaidu) ...[_fd('根目录(默认/)', pathCtrl), _fdPw('refresh_token', tokenCtrl), _fd('AppKey(必填)', appKeyCtrl), _fdPw('SecretKey(必填)', secretCtrl)]
-        else if (src.is115) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('refresh_token', tokenCtrl), _fd('APP ID(必填)', appKeyCtrl)]
+        else if (src.is115) ...[_fd('根文件夹 ID(留空=网盘根目录)', rootIdCtrl), _fdPw('Cookie（115 网页扫码或 F12 复制）', cookieCtrl), _fdPw('refresh_token（官方模式，可选）', tokenCtrl), _fd('APP ID（官方模式必填）', appKeyCtrl)]
         else if (src.isQuark) ...[_fd('根文件夹 ID', rootIdCtrl), _fdPw('Cookie', cookieCtrl)]
         else if (src.isSmb) _fd('共享目录路径(UNC)', pathCtrl)
         else _fd('目录路径', pathCtrl),
@@ -682,6 +683,7 @@ class _HomePageState extends State<HomePage> {
               cookie: cookieCtrl.text.trim().isEmpty ? null : cookieCtrl.text.trim(),
               note: noteCtrl.text.trim());
           if (src.isQuark) clearQuarkSession(src.id);
+          if (src.is115) clearCloud115Session(src.id);
           Navigator.of(ctx).pop();
         }, child: const Text('保存'))]));
   }
@@ -940,12 +942,16 @@ class _AddDialogState extends State<AddSourceDialog> {
   bool _showAdv = false;
   final _scrollCtrl = ScrollController();
   final _a = TextEditingController(), _b = TextEditingController(), _u = TextEditingController(), _p = TextEditingController(), _s = TextEditingController(), _port = TextEditingController(),
-      _token = TextEditingController(), _appKey = TextEditingController(), _secret = TextEditingController(), _rootId = TextEditingController(), _cookie = TextEditingController();
+      _token = TextEditingController(), _appKey = TextEditingController(), _secret = TextEditingController(), _rootId = TextEditingController(), _cookie = TextEditingController(),
+      _cookie115 = TextEditingController();
+  /// 115 扫码设备（默认 wechatmini 等冷门设备，避免挤掉网页端/App 旧登录）。
+  String _qrApp = 'wechatmini';
   bool _t = false; String? _e;
 
   @override
   void dispose() {
     _scrollCtrl.dispose();
+    _cookie115.dispose();
     super.dispose();
   }
 
@@ -1024,22 +1030,39 @@ class _AddDialogState extends State<AddSourceDialog> {
   }
 
   Future<void> _submit115(String n) async {
+    final cookie = _cookie115.text.trim();
     final rt = _token.text.trim();
-    if (rt.isEmpty) { _setError('请先扫码授权或粘贴 refresh_token'); return; }
+    if (cookie.isEmpty && rt.isEmpty) {
+      _setError('请先「扫码获取 Cookie」（无需 APP ID），或展开高级选项走官方 APP ID 模式授权');
+      return;
+    }
     setState(() { _t = true; _e = null; });
     try {
-      final s = await cloud115Connect(
-          refreshToken: rt,
-          appId: _appId,
-          rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim());
-      LibraryStore.instance.addSource(BookSource(
-          id: '115_${DateTime.now().millisecondsSinceEpoch}',
-          type: '115',
-          name: n.isEmpty ? '115 网盘' : n,
-          path: s.root,
-          refreshToken: s.refreshToken,
-          clientId: _appId,
-          rootId: s.root));
+      if (cookie.isNotEmpty) {
+        final s = await cloud115CookieConnect(
+            cookie: cookie,
+            rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim());
+        LibraryStore.instance.addSource(BookSource(
+            id: '115_${DateTime.now().millisecondsSinceEpoch}',
+            type: '115',
+            name: n.isEmpty ? '115 网盘' : n,
+            path: s.root,
+            rootId: s.root,
+            cookie: s.cookie));
+      } else {
+        final s = await cloud115Connect(
+            refreshToken: rt,
+            appId: _appId,
+            rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim());
+        LibraryStore.instance.addSource(BookSource(
+            id: '115_${DateTime.now().millisecondsSinceEpoch}',
+            type: '115',
+            name: n.isEmpty ? '115 网盘' : n,
+            path: s.root,
+            refreshToken: s.refreshToken,
+            clientId: _appId,
+            rootId: s.root));
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (e) { _setError('连接失败:$e'); } finally { if (mounted) setState(() => _t = false); }
   }
@@ -1107,8 +1130,10 @@ class _AddDialogState extends State<AddSourceDialog> {
       _setError('未配置 115 APP ID（必填：展开高级选项填写）');
       return;
     }
+    setState(() { _t = true; _e = null; });
     try {
-      final qr = await cloud115QrStart(appId: _appId);
+      final qr = await cloud115QrStart(appId: _appId)
+          .timeout(const Duration(seconds: 20));
       if (!mounted) return;
       await showDialog<void>(
         context: context,
@@ -1127,7 +1152,45 @@ class _AddDialogState extends State<AddSourceDialog> {
           },
         ),
       );
-    } catch (e) { if (mounted) _setError('获取二维码失败:$e'); }
+    } on TimeoutException {
+      if (mounted) _setError('获取 115 二维码超时（请检查网络/代理后重试）');
+    } catch (e) {
+      if (mounted) _setError('获取 115 二维码失败（请检查网络/代理后重试）:$e');
+    } finally {
+      if (mounted) setState(() => _t = false);
+    }
+  }
+
+  /// 115 网页扫码获取 Cookie：弹二维码 → 115 App 扫码 → 自动填 Cookie（无需 APP ID）。
+  Future<void> _cloud115CookieAuthorize() async {
+    setState(() { _t = true; _e = null; });
+    try {
+      final qr = await cloud115CookieQrStart()
+          .timeout(const Duration(seconds: 20));
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (c) => _CookieQrScanDialog(
+          uid: qr.uid,
+          time: qr.time,
+          sign: qr.sign,
+          qrcode: qr.qrcode,
+          app: _qrApp,
+          onCookie: (cookie) {
+            if (mounted) setState(() { _cookie115.text = cookie; _e = null; });
+          },
+          onError: (msg) {
+            if (mounted) _setError(msg);
+          },
+        ),
+      );
+    } on TimeoutException {
+      if (mounted) _setError('获取 115 二维码超时（请检查网络/代理后重试）');
+    } catch (e) {
+      if (mounted) _setError('获取 115 二维码失败（请检查网络/代理后重试）:$e');
+    } finally {
+      if (mounted) setState(() => _t = false);
+    }
   }
 
   /// 解析 SFTP 服务器地址：`host` / `host:port`，端口缺省取端口字段或 22。
@@ -1186,16 +1249,150 @@ class _AddDialogState extends State<AddSourceDialog> {
       TextField(controller: _rootId, decoration: const InputDecoration(labelText: '根文件夹 ID(默认 0)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
       TextField(controller: _cookie, obscureText: true, decoration: const InputDecoration(labelText: 'Cookie(pan.quark.cn 登录后 F12 复制)', hintText: 'stoken=...; pds=...; __puus=...', border: OutlineInputBorder(), isDense: true)),
     ] else ...[
-      TextField(controller: _rootId, decoration: const InputDecoration(labelText: '根文件夹 ID(默认 0)', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
-      OutlinedButton.icon(onPressed: _t ? null : _cloud115Authorize, icon: const Icon(Icons.qr_code), label: const Text('扫码授权')),
-      const SizedBox(height: 10),
-      TextField(controller: _token, obscureText: true, decoration: const InputDecoration(labelText: 'refresh_token(扫码后自动填入，也可直接粘贴)', border: OutlineInputBorder(), isDense: true)),
+      TextField(controller: _rootId, decoration: const InputDecoration(labelText: '根文件夹 ID(留空=网盘根目录)', hintText: '115 网页端进入目标文件夹，复制 URL 中 cid= 后的数字', border: OutlineInputBorder(), isDense: true)), const SizedBox(height: 10),
+      OutlinedButton.icon(onPressed: _t ? null : _cloud115CookieAuthorize, icon: const Icon(Icons.qr_code_2), label: const Text('扫码获取 Cookie（无需 APP ID）')),
       const SizedBox(height: 6),
-      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（必填 APP ID）')),
-      if (_showAdv) TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'APP ID(必填)', border: OutlineInputBorder(), isDense: true)),
+      TextField(controller: _cookie115, obscureText: true, decoration: const InputDecoration(labelText: 'Cookie（扫码后自动填入，也可浏览器 F12 复制）', hintText: 'UID=...; CID=...; SEID=...; KID=...', border: OutlineInputBorder(), isDense: true)),
+      const SizedBox(height: 6),
+      TextButton(onPressed: () => setState(() => _showAdv = !_showAdv), child: Text(_showAdv ? '收起高级选项' : '高级选项（扫码设备 / 官方 APP ID 模式）')),
+      if (_showAdv) ...[
+        DropdownButton<String>(
+          value: _qrApp,
+          isExpanded: true,
+          items: const [
+            DropdownMenuItem(value: 'wechatmini', child: Text('wechatmini（微信小程序，默认推荐）')),
+            DropdownMenuItem(value: 'tv', child: Text('tv（电视端，冷门推荐）')),
+            DropdownMenuItem(value: 'android', child: Text('android')),
+            DropdownMenuItem(value: 'ios', child: Text('ios')),
+            DropdownMenuItem(value: 'alipaymini', child: Text('alipaymini（支付宝小程序）')),
+            DropdownMenuItem(value: 'qandroid', child: Text('qandroid')),
+            DropdownMenuItem(value: 'web', child: Text('web（会顶掉网页端登录）')),
+          ],
+          onChanged: (v) => setState(() => _qrApp = v ?? 'wechatmini'),
+        ),
+        const SizedBox(height: 4),
+        const Text('提示：选不常用设备可避免挤掉网页端/App 旧登录；Windows/Mac/Linux 客户端已下架不可用。', style: TextStyle(fontSize: 11, color: Colors.white54)),
+        const Divider(height: 16),
+        OutlinedButton.icon(onPressed: _t ? null : _cloud115Authorize, icon: const Icon(Icons.qr_code), label: const Text('官方模式：APP ID 扫码授权')),
+        const SizedBox(height: 6),
+        TextField(controller: _token, obscureText: true, decoration: const InputDecoration(labelText: 'refresh_token（官方模式，授权后自动填入）', border: OutlineInputBorder(), isDense: true)),
+        const SizedBox(height: 8),
+        TextField(controller: _appKey, decoration: const InputDecoration(labelText: 'APP ID（官方模式必填）', border: OutlineInputBorder(), isDense: true)),
+      ],
     ],
     if (_e != null) Padding(padding: const EdgeInsets.only(top: 10), child: Text(_e!, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
   ]))), actions: [TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')), FilledButton(onPressed: _t ? null : _submit, child: Text(_t ? '测试中…' : '添加'))]);
+}
+
+/// 115 网页扫码获取 Cookie 对话框：渲染二维码、轮询状态，成功后自动换取 Cookie。
+class _CookieQrScanDialog extends StatefulWidget {
+  final String uid;
+  final int time;
+  final String sign;
+  final String qrcode;
+  final String app;
+  final void Function(String cookie) onCookie;
+  final void Function(String msg) onError;
+  const _CookieQrScanDialog({
+    required this.uid,
+    required this.time,
+    required this.sign,
+    required this.qrcode,
+    required this.app,
+    required this.onCookie,
+    required this.onError,
+  });
+  @override State<_CookieQrScanDialog> createState() => _CookieQrScanDialogState();
+}
+
+class _CookieQrScanDialogState extends State<_CookieQrScanDialog> {
+  final ValueNotifier<String> _status = ValueNotifier('请用 115 APP 扫码');
+  Timer? _timer;
+  bool _polling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _pollOnce());
+    _pollOnce();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _status.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pollOnce() async {
+    if (_polling) return; // 防止上次请求未返回时并发轮询
+    _polling = true;
+    try {
+      final status = await cloud115CookieQrPoll(
+          uid: widget.uid, time: widget.time, sign: widget.sign);
+      if (!mounted) return;
+      if (status == 2) {
+        _timer?.cancel();
+        try {
+          final cookie =
+              await cloud115CookieQrResult(uid: widget.uid, app: widget.app);
+          if (!mounted) return;
+          widget.onCookie(cookie);
+          Navigator.of(context).pop();
+        } catch (e) {
+          if (!mounted) return;
+          widget.onError('获取 Cookie 失败（请检查网络后重新扫码）:$e');
+          Navigator.of(context).pop();
+        }
+        return;
+      }
+      if (status == 1) {
+        _status.value = '已扫码，请在手机上确认';
+      } else if (status == -1) {
+        _timer?.cancel();
+        widget.onError('二维码已过期，请重新获取');
+        Navigator.of(context).pop();
+      } else if (status == -2) {
+        _timer?.cancel();
+        widget.onError('已取消扫码');
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _status.value = '查询状态失败:$e，继续等待…';
+    } finally {
+      _polling = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) => AlertDialog(
+        title: const Text('115 扫码获取 Cookie'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('用 115 手机 App 扫码，无需申请 APP ID', style: TextStyle(fontSize: 12, color: Colors.white70)),
+          const SizedBox(height: 10),
+          // 注意：不能用 QrImageView——其内部 LayoutBuilder 与 AlertDialog 的
+          // IntrinsicWidth 冲突，performLayout 抛异常导致对话框渲染不出来。
+          SizedBox(
+            width: 220,
+            height: 220,
+            child: CustomPaint(
+              painter: QrPainter(
+                data: widget.qrcode,
+                version: QrVersions.auto,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          ValueListenableBuilder<String>(
+            valueListenable: _status,
+            builder: (_, s, _) => Text(s, style: const TextStyle(fontSize: 12)),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('关闭')),
+        ],
+      );
 }
 
 /// 115 扫码授权对话框：渲染二维码并轮询状态。
@@ -1207,37 +1404,50 @@ class _QrScanDialog extends StatefulWidget {
 }
 
 class _QrScanDialogState extends State<_QrScanDialog> {
-  String _status = '请用 115 APP 扫码';
+  final ValueNotifier<String> _status = ValueNotifier('请用 115 APP 扫码');
+  Timer? _timer;
+  bool _polling = false;
 
   @override
   void initState() {
     super.initState();
-    _poll();
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _pollOnce());
+    _pollOnce();
   }
 
-  Future<void> _poll() async {
-    while (mounted) {
-      await Future.delayed(const Duration(seconds: 2));
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _status.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pollOnce() async {
+    if (_polling) return; // 防止上次请求未返回时并发轮询
+    _polling = true;
+    try {
+      final r = await cloud115QrPoll(
+          uid: widget.payload.uid,
+          time: widget.payload.time,
+          sign: widget.payload.sign);
       if (!mounted) return;
-      try {
-        final r = await cloud115QrPoll(
-            uid: widget.payload.uid,
-            time: widget.payload.time,
-            sign: widget.payload.sign);
-        if (!mounted) return;
-        if (r.status == 2) {
-          widget.onResult(2, r.accessToken, r.refreshToken);
-          Navigator.of(context).pop();
-          return;
-        }
-        if (r.status == 1) {
-          setState(() => _status = '已扫码，请在手机上确认');
-        } else if (r.status == -1 || r.status == -2) {
-          widget.onResult(r.status, null, null);
-          Navigator.of(context).pop();
-          return;
-        }
-      } catch (_) {}
+      if (r.status == 2) {
+        _timer?.cancel();
+        widget.onResult(2, r.accessToken, r.refreshToken);
+        Navigator.of(context).pop();
+        return;
+      }
+      if (r.status == 1) {
+        _status.value = '已扫码，请在手机上确认';
+      } else if (r.status == -1 || r.status == -2) {
+        _timer?.cancel();
+        widget.onResult(r.status, null, null);
+        Navigator.of(context).pop();
+      }
+    } catch (_) {
+      // 网络抖动继续下一轮
+    } finally {
+      _polling = false;
     }
   }
 
@@ -1245,9 +1455,23 @@ class _QrScanDialogState extends State<_QrScanDialog> {
   Widget build(BuildContext c) => AlertDialog(
         title: const Text('115 扫码授权'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          QrImageView(data: widget.payload.qrcode, size: 220),
+          // 与 Cookie 对话框一致：避免 QrImageView 的 LayoutBuilder 与
+          // AlertDialog IntrinsicWidth 冲突导致对话框无法渲染。
+          SizedBox(
+            width: 220,
+            height: 220,
+            child: CustomPaint(
+              painter: QrPainter(
+                data: widget.payload.qrcode,
+                version: QrVersions.auto,
+              ),
+            ),
+          ),
           const SizedBox(height: 10),
-          Text(_status, style: const TextStyle(fontSize: 12)),
+          ValueListenableBuilder<String>(
+            valueListenable: _status,
+            builder: (_, s, _) => Text(s, style: const TextStyle(fontSize: 12)),
+          ),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('关闭')),

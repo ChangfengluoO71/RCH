@@ -16,6 +16,7 @@ import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/cover_editor_page.dart';
 import 'package:app/ui/opener.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 class BookDetailPage extends StatefulWidget {
   final BookSource source;
@@ -56,7 +57,18 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   void _onAiChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // 若在构建/布局帧内收到通知（例如 ReaderPage 挂载时 AI 管理器 notify），
+    // 延迟到帧结束后再刷新，避免 "setState() called during build"。
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+      return;
+    }
+    setState(() {});
   }
 
   @override void dispose() {
@@ -102,7 +114,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                       session: await baiduSessionFor(s),
                       path: widget.path,
                       strategy: strategy),
-                  '115' => await openCloud115Book(
+                  '115' => await openCloud115BookFor(s,
                       session: await cloud115SessionFor(s),
                       path: widget.path,
                       strategy: strategy),

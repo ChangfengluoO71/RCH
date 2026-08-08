@@ -38,16 +38,16 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 构建环境（Rust / Flutter / VS 2022 BuildTools / flutter_rust_bridge_codegen）见 [SETUP.md](SETUP.md)。
 
-## ⬇️ 下载（v0.4.1）
+## ⬇️ 下载（v0.4.2）
 
 > 安装后可在应用内 **设置 → 关于与更新** 自动检查并安装新版本；以下直链为当前版本，最新版本请访问 [Releases 页](https://github.com/ChangfengluoO71/RCH/releases/latest)。
 
 | 平台 | 文件 | 大小 | 下载 |
 |---|---|---|---|
-| Windows 10/11 x64 | RCH-0.4.1-windows-x64.exe | 19.6 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/RCH-0.4.1-windows-x64.exe) |
-| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | 39.2 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/app-arm64-v8a-release.apk) |
-| Android armeabi-v7a | app-armeabi-v7a-release.apk | 26.0 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/app-armeabi-v7a-release.apk) |
-| Android x86_64 | app-x86_64-release.apk | 41.9 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.1/app-x86_64-release.apk) |
+| Windows 10/11 x64 | RCH-0.4.2-windows-x64.exe | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/RCH-0.4.2-windows-x64.exe) |
+| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-arm64-v8a-release.apk) |
+| Android armeabi-v7a | app-armeabi-v7a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-armeabi-v7a-release.apk) |
+| Android x86_64 | app-x86_64-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.2/app-x86_64-release.apk) |
 
 **安装说明**
 
@@ -95,7 +95,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 - **SMB**：直接填 UNC 共享路径（`\\NAS\漫画`）即可浏览，无需额外配置
 - **SFTP**：密码认证远程书架，支持流式读取与整本下载缓存
 - **百度网盘**：直连百度官方 API，浏览器 OAuth 授权一次即可，支持根目录/子目录挂载
-- **115 网盘**：直连 115 官方 API，应用内二维码扫码授权，支持根文件夹 ID 挂载
+- **115 网盘**：两种连接方式——扫码获取 Cookie（无需申请，默认）或官方 APP ID 模式，支持根文件夹 ID 挂载
 - **夸克网盘**：Cookie 认证（pan.quark.cn 登录后粘贴），fid 目录浏览，三态打开策略与封面/本地缓存
 - **打开策略（全局设置）**：自动（先整本下载，失败转流式）/ 优先下载整本 / 直接流式，所有远程书源通用
 - **流式阅读**：支持 Range 的服务边下边读；否则首次整本下载到本地缓存，之后秒开
@@ -150,18 +150,38 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 ### 3. 115 网盘
 
-115 通过官方开放平台 API 直连，应用内**扫码授权**。
+115 提供两种连接方式，在「添加书源」对话框里二选一（扫码获取 Cookie 为默认入口）：
+
+| 对比项 | 方式 A：扫码获取 Cookie | 方式 B：官方 APP ID |
+|---|---|---|
+| 需要申请 | 不需要，扫码即用 | 需要到 115 开放平台申请（审核约数天） |
+| 认证 | 115 App 扫码，自动获取登录 Cookie | 开放平台设备码扫码，refresh_token 自动续期 |
+| 接口 | 非官方 Web 接口（webapi / proapi） | 官方开放平台 API |
+| 稳定性 | 逆向接口，可能随官方调整（内置容错与清晰报错） | 官方接口稳定，但受开放平台规则约束 |
+| 下载上限 | 无 200MB 限制（chrome/downurl 直链） | 无 200MB 限制（官方 downurl 直链） |
+| 失效处理 | Cookie 过期后重新扫码即可 | refresh_token 被顶掉/过期后重新授权 |
+
+**方式 A：扫码获取 Cookie（无需 APP ID，默认）**
 
 1. 类型选「115 网盘」；
-2. 「根文件夹 ID」默认 `0`（网盘根目录），也可以填某个文件夹的 ID 只挂载该目录；
-3. 展开「高级选项（必填 APP ID）」，填写自己申请的 APP ID（必填，当前版本没有内置凭据，需要自行到 115 开放平台申请）；
-4. 点「**扫码授权**」：app 内显示二维码，用手机 **115 网盘 APP** 扫码并在手机上确认；
-5. 授权成功后 refresh_token 自动填入，点「添加」。
+2. 「根文件夹 ID」留空 = 网盘根目录；也可以填某个文件夹的 ID 只挂载该目录（在 115 网页端进入目标文件夹，复制 URL 中 `cid=` 后的数字）；
+3. 点「**扫码获取 Cookie（无需 APP ID）**」：app 内显示二维码，用手机 **115 网盘 APP** 扫码并确认；
+4. Cookie 自动填入，点「添加」。
+
+展开「高级选项」可切换扫码设备：默认 `wechatmini` / `tv` 等冷门设备，避免挤掉网页端 / App 旧登录；`web` 会顶掉网页端登录；Windows / Mac / Linux 客户端已下架不可选。
+
+**方式 B：官方 APP ID 模式**
+
+1. 到 [115 开放平台](https://open.115.com) 申请 APP ID；
+2. 展开「高级选项（扫码设备 / 官方 APP ID 模式）」→ 填 APP ID → 点「官方模式：APP ID 扫码授权」；
+3. 授权成功后 refresh_token 自动填入，点「添加」。
 
 **注意事项**
 
-- 同账号同应用最多同时存在 2 个有效 refresh_token，重复授权会顶掉最早的一个（此时旧书源会失效，删除重建即可）。
-- token 明文保存在本机 SQLite，等同登录凭证，注意不要泄露。
+- 两种方式获取的都是登录凭证（Cookie / refresh_token），明文保存在本机 SQLite，注意不要泄露。
+- 方式 A 的 Cookie 有有效期，失效后按同样步骤重新扫码即可（编辑书源可直接替换 Cookie）；同设备重复扫码会顶掉旧登录。
+- 方式 B 同账号同应用最多同时存在 2 个有效 refresh_token，重复授权会顶掉最早的一个（旧书源失效，删除重建即可）。
+- **两种方式都没有 200MB 下载上限**（200MB 限制只存在于 115 网页版简易下载接口，RCH 未使用该接口）。
 
 ### 4. 夸克网盘
 
@@ -214,7 +234,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 |---|---|
 | 百度提示登录状态失效 / 需要重新授权 | token 被轮换或过期，重新走一遍「授权登录」即可，重启后无需重复授权 |
 | 夸克书架打不开 / 提示 Cookie 失效 | 重新去 pan.quark.cn 复制 Cookie 并更新书源 |
-| 115 旧书源突然失效 | 同账号重复授权顶掉了旧 refresh_token，删除旧书源重新扫码添加 |
+| 115 旧书源突然失效 | 官方 APP ID 模式：被顶掉了 refresh_token，删除旧书源重新授权；扫码 Cookie 模式：Cookie 过期，编辑书源重新扫码替换 |
 | 远程下载慢 | 百度普通用户限速与会员等级相关（官方限制，非软件问题）；可改用「优先下载整本」离线读 |
 
 ## 🌐 开源声明
@@ -224,7 +244,7 @@ RCH 是一款**完全开源**的 Windows + Android 漫画阅读器：
 - **开源协议**：基于 [MIT](LICENSE) 许可证发布，任何人均可自由使用、修改与再分发（需保留版权声明）。
 - **源码与构建**：源码托管在 [GitHub](https://github.com/ChangfengluoO71/RCH)，构建环境与步骤见 [SETUP.md](SETUP.md)；欢迎通过 [Issues](https://github.com/ChangfengluoO71/RCH/issues) 反馈问题、[Pull Requests](https://github.com/ChangfengluoO71/RCH/pulls) 贡献代码，参与规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 - **不含内容**：本项目不提供、不托管、不索引任何漫画内容。所有漫画均来自用户自己导入的本地文件，或用户自己拥有/授权的远程存储（本地目录 / WebDAV / NAS / 网盘账号）。请确保你拥有访问与阅读相关内容的权利。
-- **第三方接口**：百度网盘 / 115 / 夸克网盘等书源直连各平台官方或公开接口，接口规则可能随时调整（夸克为非官方 Web 接口，失效需重新粘贴 Cookie）；本项目与上述平台无任何关联，也不对接口可用性负责。
+- **第三方接口**：百度网盘 / 115 / 夸克网盘等书源直连各平台官方或公开接口，接口规则可能随时调整（夸克、115 扫码 Cookie 方式为非官方 Web 接口，失效需重新粘贴 / 扫码获取 Cookie）；本项目与上述平台无任何关联，也不对接口可用性负责。
 - **隐私**：应用无账号体系，阅读记录、标签与设置仅保存在本机，不向任何服务器上传用户数据（详见上文「数据与隐私」）。
 
 ## 📄 许可证

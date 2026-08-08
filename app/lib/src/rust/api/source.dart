@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `quark_downloads`, `quark_sessions`, `sessions`, `sftp_downloads`, `sftp_sessions`
+// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `quark_downloads`, `quark_sessions`, `sessions`, `sftp_downloads`, `sftp_sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
 
@@ -153,6 +153,95 @@ Future<PageImage> sftpCover({
   required int height,
   CropRect? crop,
 }) => RustLib.instance.api.crateApiSourceSftpCover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
+);
+
+/// 第一步：获取 115 网页登录二维码（无需 APP ID）。
+Future<Cloud115CookieQrPayload> cloud115CookieQrStart() =>
+    RustLib.instance.api.crateApiSourceCloud115CookieQrStart();
+
+/// 第二步：轮询扫码状态（0 等待 / 1 已扫 / 2 已登录 / -1 过期 / -2 取消）。
+Future<int> cloud115CookieQrPoll({
+  required String uid,
+  required PlatformInt64 time,
+  required String sign,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieQrPoll(
+  uid: uid,
+  time: time,
+  sign: sign,
+);
+
+/// 第三步：扫码成功后换取 Cookie（`k=v; k2=v2`，末尾不带 `;`）。
+Future<String> cloud115CookieQrResult({
+  required String uid,
+  required String app,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieQrResult(
+  uid: uid,
+  app: app,
+);
+
+/// 连接 115（Cookie 模式）：列表根目录做连通性测试，返回会话。
+Future<Cloud115CookieSessionInfo> cloud115CookieConnect({
+  required String cookie,
+  required String rootId,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieConnect(
+  cookie: cookie,
+  rootId: rootId,
+);
+
+/// 断开 115 Cookie 会话。
+Future<void> cloud115CookieDisconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceCloud115CookieDisconnect(id: id);
+
+/// 列出 115 目录（path 为文件夹 ID，根目录 `0`）。
+Future<List<DirEntry>> cloud115CookieList({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieList(
+  session: session,
+  path: path,
+);
+
+/// 打开 115 上的书籍（path 为 pickcode，三态策略）。
+Future<BookInfo> openCloud115CookieBook({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenCloud115CookieBook(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 115 Cookie 下载进度（0.0~1.0，非下载中返回 1.0）。
+Future<double> cloud115CookieDownloadProgress({required BigInt session}) =>
+    RustLib.instance.api.crateApiSourceCloud115CookieDownloadProgress(
+      session: session,
+    );
+
+/// 115 Cookie 书籍是否已有 raw/ 本地缓存。
+Future<bool> cloud115CookieHasRawCache({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieHasRawCache(
+  session: session,
+  path: path,
+);
+
+/// 115 Cookie 书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+Future<PageImage> cloud115CookieCover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieCover(
   session: session,
   path: path,
   page: page,
@@ -454,6 +543,66 @@ class BaiduTokenPair {
           runtimeType == other.runtimeType &&
           accessToken == other.accessToken &&
           refreshToken == other.refreshToken;
+}
+
+/// 115 网页扫码二维码载荷。
+class Cloud115CookieQrPayload {
+  final String uid;
+  final PlatformInt64 time;
+  final String sign;
+  final String qrcode;
+
+  const Cloud115CookieQrPayload({
+    required this.uid,
+    required this.time,
+    required this.sign,
+    required this.qrcode,
+  });
+
+  @override
+  int get hashCode =>
+      uid.hashCode ^ time.hashCode ^ sign.hashCode ^ qrcode.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115CookieQrPayload &&
+          runtimeType == other.runtimeType &&
+          uid == other.uid &&
+          time == other.time &&
+          sign == other.sign &&
+          qrcode == other.qrcode;
+}
+
+/// 115 Cookie 模式会话信息。
+class Cloud115CookieSessionInfo {
+  final BigInt id;
+  final String root;
+  final String capabilityLabel;
+
+  /// 当前会话 Cookie（与 DB 不一致时 Dart 回写）。
+  final String cookie;
+
+  const Cloud115CookieSessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+    required this.cookie,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ root.hashCode ^ capabilityLabel.hashCode ^ cookie.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115CookieSessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel &&
+          cookie == other.cookie;
 }
 
 /// 115 扫码授权二维码载荷。

@@ -3,7 +3,7 @@
 use super::book::{register_book, BookInfo, CropRect, DirEntry, PageImage};
 use crate::document;
 use crate::source::baidu::{self as baidu_source, BaiduClient};
-use crate::source::cloud115::{self as cloud115_source, Cloud115Client};
+use crate::source::cloud115::{self as cloud115_source, Cloud115Client, Cloud115WebClient};
 use crate::source::quark::{self as quark_source, QuarkClient};
 use crate::source::sftp::{self as sftp_source, SftpClient};
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
@@ -16,6 +16,8 @@ static SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<WebDavClient>>>> = OnceLock::ne
 static SFTP_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<SftpClient>>>> = OnceLock::new();
 static BAIDU_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<BaiduClient>>>> = OnceLock::new();
 static CLOUD115_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<Cloud115Client>>>> = OnceLock::new();
+static CLOUD115_COOKIE_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<Cloud115WebClient>>>> =
+    OnceLock::new();
 static QUARK_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<QuarkClient>>>> = OnceLock::new();
 static NEXT: OnceLock<Mutex<u64>> = OnceLock::new();
 
@@ -24,6 +26,8 @@ static DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLoc
 static SFTP_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static BAIDU_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static CLOUD115_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
+static CLOUD115_COOKIE_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> =
+    OnceLock::new();
 static QUARK_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 
 fn downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
@@ -56,6 +60,14 @@ fn cloud115_sessions() -> &'static Mutex<HashMap<u64, Arc<Cloud115Client>>> {
 
 fn cloud115_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
     CLOUD115_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cloud115_cookie_sessions() -> &'static Mutex<HashMap<u64, Arc<Cloud115WebClient>>> {
+    CLOUD115_COOKIE_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cloud115_cookie_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
+    CLOUD115_COOKIE_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn quark_sessions() -> &'static Mutex<HashMap<u64, Arc<QuarkClient>>> {
@@ -519,6 +531,277 @@ pub async fn sftp_cover(
     .await??;
     let cache_write_path = client
         .raw_cache_path(&path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref wp) = cache_write_path {
+        let _ = cache::cover_cache_write(
+            &wp.to_string_lossy(),
+            page,
+            width,
+            height,
+            crop_tuple,
+            &img.rgba,
+        );
+    }
+    Ok(PageImage {
+        rgba: img.rgba,
+        width: img.width,
+        height: img.height,
+    })
+}
+
+// ============================================================
+// 115 网页扫码 Cookie 模式（无需 APP ID，115 App 扫码即可）
+// ============================================================
+
+/// 115 网页扫码二维码载荷。
+pub struct Cloud115CookieQrPayload {
+    pub uid: String,
+    pub time: i64,
+    pub sign: String,
+    pub qrcode: String,
+}
+
+/// 115 Cookie 模式会话信息。
+pub struct Cloud115CookieSessionInfo {
+    pub id: u64,
+    pub root: String,
+    pub capability_label: String,
+    /// 当前会话 Cookie（与 DB 不一致时 Dart 回写）。
+    pub cookie: String,
+}
+
+/// 第一步：获取 115 网页登录二维码（无需 APP ID）。
+pub async fn cloud115_cookie_qr_start() -> Result<Cloud115CookieQrPayload> {
+    let p = tokio::task::spawn_blocking(cloud115_source::web_qr_start).await??;
+    Ok(Cloud115CookieQrPayload {
+        uid: p.uid,
+        time: p.time,
+        sign: p.sign,
+        qrcode: p.qrcode,
+    })
+}
+
+/// 第二步：轮询扫码状态（0 等待 / 1 已扫 / 2 已登录 / -1 过期 / -2 取消）。
+pub async fn cloud115_cookie_qr_poll(uid: String, time: i64, sign: String) -> Result<i32> {
+    tokio::task::spawn_blocking(move || cloud115_source::web_qr_poll(&uid, time, &sign)).await?
+}
+
+/// 第三步：扫码成功后换取 Cookie（`k=v; k2=v2`，末尾不带 `;`）。
+pub async fn cloud115_cookie_qr_result(uid: String, app: String) -> Result<String> {
+    tokio::task::spawn_blocking(move || cloud115_source::web_qr_cookie(&uid, &app)).await?
+}
+
+/// 连接 115（Cookie 模式）：列表根目录做连通性测试，返回会话。
+pub async fn cloud115_cookie_connect(
+    cookie: String,
+    root_id: String,
+) -> Result<Cloud115CookieSessionInfo> {
+    let (client, root) =
+        tokio::task::spawn_blocking(move || -> Result<(Cloud115WebClient, String)> {
+            let client = Cloud115WebClient::new(&cookie, &root_id)?;
+            client.check()?; // 列表根目录，登录失效会在这里暴露
+            let root = client.root().to_string();
+            Ok((client, root))
+        })
+        .await??;
+    let id = next_id();
+    let session_cookie = client.cookie();
+    cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(client));
+    Ok(Cloud115CookieSessionInfo {
+        id,
+        root,
+        capability_label: "115".to_string(),
+        cookie: session_cookie,
+    })
+}
+
+/// 断开 115 Cookie 会话。
+pub async fn cloud115_cookie_disconnect(id: u64) {
+    let client = cloud115_cookie_sessions().lock().unwrap().remove(&id);
+    if let Some(client) = client {
+        let _ = tokio::task::spawn_blocking(move || drop(client)).await;
+    }
+}
+
+/// 列出 115 目录（path 为文件夹 ID，根目录 `0`）。
+pub async fn cloud115_cookie_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("115 Cookie 会话不存在，请重新连接"))?;
+    let entries = tokio::task::spawn_blocking(move || client.list(&path)).await??;
+    Ok(entries
+        .into_iter()
+        .map(|e| DirEntry {
+            name: e.name,
+            path: e.path,
+            is_dir: e.is_dir,
+            size: e.size,
+            mtime: e.mtime,
+        })
+        .collect())
+}
+
+/// 打开 115 上的书籍（path 为 pickcode，三态策略）。
+pub async fn open_cloud115_cookie_book(
+    session: u64,
+    path: String,
+    strategy: String,
+) -> Result<BookInfo> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("115 Cookie 会话不存在，请重新连接"))?;
+    let origin = client.origin();
+    let cache_ns = format!("115|{}|{}", origin, path);
+    let strat = parse_strategy(&strategy);
+
+    let progress = if strat != OpenStrategy::Stream {
+        let p = Arc::new(DownloadProgress::new(0));
+        cloud115_cookie_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&p));
+        Some(p)
+    } else {
+        None
+    };
+
+    let book = {
+        let client = Arc::clone(&client);
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+            let name = client.resolve_name(&path)?;
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    let src = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(src, &name)
+                };
+            let open_stream =
+                |client: Arc<Cloud115WebClient>| -> Result<Box<dyn document::Document>> {
+                    let info = client.downurl(&path)?;
+                    let (supports, size) = client.probe(&info.url);
+                    if !supports {
+                        anyhow::bail!("115 直链不支持 Range，请改用整本下载策略");
+                    }
+                    let src =
+                        cloud115_source::Cloud115WebFile::new(client, path.clone(), size, info.url);
+                    document::open_document(src, &name)
+                };
+            match strat {
+                OpenStrategy::Download => {
+                    let local_path = client.download_to_raw_cache(&path, progress)?;
+                    tracing::info!("115 整本已缓存: {}", local_path.display());
+                    open_local(local_path)
+                }
+                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Auto => {
+                    match client.download_to_raw_cache(&path, progress) {
+                        Ok(local_path) => {
+                            tracing::info!("115 整本已缓存: {}", local_path.display());
+                            open_local(local_path)
+                        }
+                        Err(e) => {
+                            tracing::warn!("115 整本下载失败，回退流式: {e}");
+                            open_stream(Arc::clone(&client))
+                        }
+                    }
+                }
+            }
+        })
+        .await??
+    };
+
+    if strat != OpenStrategy::Stream {
+        cloud115_cookie_downloads().lock().unwrap().remove(&session);
+    }
+    Ok(register_book(book, &cache_ns))
+}
+
+/// 115 Cookie 下载进度（0.0~1.0，非下载中返回 1.0）。
+pub fn cloud115_cookie_download_progress(session: u64) -> f64 {
+    cloud115_cookie_downloads()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .map(|p| p.fraction())
+        .unwrap_or(1.0)
+}
+
+/// 115 Cookie 书籍是否已有 raw/ 本地缓存。
+pub fn cloud115_cookie_has_raw_cache(session: u64, path: String) -> bool {
+    let client = match cloud115_cookie_sessions().lock().unwrap().get(&session).cloned() {
+        Some(c) => c,
+        None => return false,
+    };
+    cloud115_source::web_raw_cache_path(&client.origin(), &path).is_some()
+}
+
+/// 115 Cookie 书籍封面（cover/ 磁盘缓存 → raw/ 本地缓存 → 流式解码）。
+pub async fn cloud115_cookie_cover(
+    session: u64,
+    path: String,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<CropRect>,
+) -> Result<PageImage> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("115 Cookie 会话不存在，请重新连接"))?;
+    let origin = client.origin();
+    let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
+    let cache_lookup_path = cloud115_source::web_raw_cache_path(&origin, &path)
+        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    if let Some(ref lookup) = cache_lookup_path {
+        let lookup_str = lookup.to_string_lossy();
+        if let Some((rgba, w, h)) =
+            cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
+        {
+            return Ok(PageImage { rgba, width: w, height: h });
+        }
+    }
+    let origin_clone = origin.clone();
+    let path_clone = path.clone();
+    let client_clone = Arc::clone(&client);
+    let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let name = client_clone.resolve_name(&path_clone)?;
+        if let Some(local_path) = cloud115_source::web_raw_cache_path(&origin_clone, &path_clone) {
+            let src = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(src, &name)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let info = client_clone.downurl(&path_clone)?;
+        let (supports, size) = client_clone.probe(&info.url);
+        if !supports {
+            let local_path = client_clone.download_to_raw_cache(&path_clone, None)?;
+            let src = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(src, &name)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let src =
+            cloud115_source::Cloud115WebFile::new(client_clone, path_clone.clone(), size, info.url);
+        let book = document::open_document(src, &name)?;
+        let bytes = book.page_bytes(page)?;
+        let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
+        crate::decode::decode_cover(&bytes, width, height, crop)
+    })
+    .await??;
+    let cache_write_path = cloud115_source::web_raw_cache_path(&origin, &path)
         .or_else(|| Some(std::path::PathBuf::from(&path)));
     if let Some(ref wp) = cache_write_path {
         let _ = cache::cover_cache_write(

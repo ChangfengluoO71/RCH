@@ -2,6 +2,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/ai_upscale_manager.dart';
+import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/ui/common.dart';
@@ -121,7 +122,13 @@ class _ReaderPageState extends State<ReaderPage> {
     _open();
     AiUpscaleManager.instance.addListener(_onAiManager);
     final s = widget.source;
-    AiUpscaleManager.instance.setReadingBook(s == null ? null : bookKeyOf(s.type, s.id, widget.path));
+    // 延迟到本帧构建结束后再通知 AI 管理器：setReadingBook 会 notifyListeners，
+    // 若在 initState（Navigator push 构建期间）同步触发，详情页监听器 setState 会
+    // 抛 "setState() called during build"。
+    final bk = s == null ? null : bookKeyOf(s.type, s.id, widget.path);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) AiUpscaleManager.instance.setReadingBook(bk);
+    });
   }
 
   void _onAiManager() {
@@ -217,8 +224,9 @@ class _ReaderPageState extends State<ReaderPage> {
       setState(() { _book = b; });
     } else if (src?.is115 == true && widget.webdavSession != null) {
       _startPollingProgress(
-          progressFn: () => cloud115DownloadProgress(session: widget.webdavSession!));
-      final b = await openCloud115Book(
+          progressFn: () => cloud115DownloadProgressFor(src!,
+              session: widget.webdavSession!));
+      final b = await openCloud115BookFor(src!,
           session: widget.webdavSession!, path: widget.path, strategy: strategy);
       _downloadProgress = null;
       if (!mounted) return;

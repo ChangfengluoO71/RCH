@@ -86,6 +86,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CacheSize dco_decode_cache_size(dynamic raw);
 
   @protected
+  Cloud115CookieQrPayload dco_decode_cloud_115_cookie_qr_payload(dynamic raw);
+
+  @protected
+  Cloud115CookieSessionInfo dco_decode_cloud_115_cookie_session_info(
+    dynamic raw,
+  );
+
+  @protected
   Cloud115QrPayload dco_decode_cloud_115_qr_payload(dynamic raw);
 
   @protected
@@ -289,6 +297,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CacheSize sse_decode_cache_size(SseDeserializer deserializer);
+
+  @protected
+  Cloud115CookieQrPayload sse_decode_cloud_115_cookie_qr_payload(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115CookieSessionInfo sse_decode_cloud_115_cookie_session_info(
+    SseDeserializer deserializer,
+  );
 
   @protected
   Cloud115QrPayload sse_decode_cloud_115_qr_payload(
@@ -534,6 +552,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_cache_size(CacheSize self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_115_cookie_qr_payload(
+    Cloud115CookieQrPayload self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_cookie_session_info(
+    Cloud115CookieSessionInfo self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_cloud_115_qr_payload(

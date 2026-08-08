@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -19,6 +20,7 @@ import 'package:path_provider/path_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  _installErrorLog();
   await RustLib.init();
 
   // Android：把 jniLibs 的原生库目录传给 Rust，供 pdfium 加载 libpdfium.so。
@@ -61,6 +63,36 @@ Future<void> main() async {
   final root = await cacheRootPath();
   final pending = await pendingMigration(root: root);
   runApp(RchApp(startupPending: pending));
+}
+
+/// 全局错误日志：未捕获异常（含完整堆栈）追加写入缓存根目录 errors.log，
+/// 用于远程排查（例如进入 115 子目录时的 RangeError）。
+void _installErrorLog() {
+  final prev = FlutterError.onError;
+  FlutterError.onError = (details) {
+    prev?.call(details);
+    unawaited(_appendErrorLog(
+        details.exceptionAsString(), details.stack?.toString() ?? ''));
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    unawaited(_appendErrorLog(error.toString(), stack.toString()));
+    return false; // 交给默认错误处理
+  };
+}
+
+Future<void> _appendErrorLog(String error, String stack) async {
+  try {
+    final root = await cacheRootPath();
+    final f = File('$root${Platform.pathSeparator}errors.log');
+    final sink = f.openWrite(mode: FileMode.append);
+    sink.writeln('--- ${DateTime.now().toIso8601String()} ---');
+    sink.writeln(error);
+    sink.writeln(stack);
+    sink.writeln();
+    await sink.close();
+  } catch (_) {
+    // 日志写入失败不影响应用
+  }
 }
 
 /// 从 library.json 读取 settings.cacheDir（标记文件缺失时的兜底）。

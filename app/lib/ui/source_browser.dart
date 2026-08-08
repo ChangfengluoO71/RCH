@@ -86,7 +86,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
         'webdav' => await webdavList(session: _session!, path: path),
         'sftp' => await sftpList(session: _session!, path: path),
         'baidu' => await baiduList(session: _session!, path: path),
-        '115' => await cloud115List(session: _session!, path: path),
+        '115' => await cloud115ListFor(widget.source,
+            session: _session!, path: path),
         'quark' => await quarkList(session: _session!, path: path),
         _ => await listLocalDir(path: path),
       };
@@ -158,6 +159,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             targets[dirTarget] = e.path;
           }
         } else if (e.name.toLowerCase().endsWith('.zip')) {
+          if (e.path.length < 4) continue; // 防御：路径过短/为空时跳过
           final target = '${e.path.substring(0, e.path.length - 4)}.cbz';
           if (!File(target).existsSync()) {
             tasks.add(target);
@@ -247,6 +249,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       return File('${e.path}.cbz').existsSync();
     }
     if (e.name.toLowerCase().endsWith('.zip')) {
+      if (e.path.length < 4) return false; // 防御：路径过短/为空时不做判重
       return File('${e.path.substring(0, e.path.length - 4)}.cbz').existsSync();
     }
     return false;
@@ -327,7 +330,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
           'webdav' => await webdavList(session: _session!, path: p),
           'sftp' => await sftpList(session: _session!, path: p),
           'baidu' => await baiduList(session: _session!, path: p),
-          '115' => await cloud115List(session: _session!, path: p),
+          '115' => await cloud115ListFor(widget.source,
+              session: _session!, path: p),
           'quark' => await quarkList(session: _session!, path: p),
           _ => await listLocalDir(path: p),
         };

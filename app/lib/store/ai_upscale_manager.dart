@@ -290,7 +290,7 @@ class AiUpscaleManager extends ChangeNotifier {
             session: await baiduSessionFor(source),
             path: task.path,
             strategy: strategy),
-        '115' => openCloud115Book(
+        '115' => openCloud115BookFor(source,
             session: await cloud115SessionFor(source),
             path: task.path,
             strategy: strategy),

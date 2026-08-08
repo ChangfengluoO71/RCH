@@ -45,6 +45,15 @@ fn decode_str(s: &str) -> String {
         .unwrap_or_else(|_| s.to_string())
 }
 
+/// 将 URL 路径归一化为请求基础前缀：去尾部斜杠；空或 `/` 表示根目录。
+fn normalize_base(path: &str) -> String {
+    let mut b = path.trim_end_matches('/');
+    if b == "/" {
+        b = "";
+    }
+    b.to_string()
+}
+
 /// 把 href(可能是完整 URL 或服务器绝对路径)统一为服务器绝对路径。
 fn href_to_path(href: &str) -> String {
     // 先按完整 URL 解析取路径部分,否则按路径处理;最后统一 percent-decode。
@@ -61,6 +70,8 @@ pub struct WebDavClient {
     client: Client,
     /// scheme://host[:port],不含路径(路径由每次调用的绝对路径给出)。
     origin: String,
+    /// URL 携带的基础路径前缀(如 `/dav`),用于把相对路径补全;空串表示根目录。
+    base: String,
     user: String,
     pass: String,
     /// 服务器能力报告(连接时自动探测)。
@@ -144,10 +155,12 @@ impl WebDavClient {
         } else {
             u.path().to_string()
         };
+        let base = normalize_base(&root);
         Ok((
             WebDavClient {
                 client,
                 origin,
+                base,
                 user: user.to_string(),
                 pass: pass.to_string(),
                 capability: ServerCapability::default(),
@@ -162,7 +175,17 @@ impl WebDavClient {
         } else {
             format!("/{}", path)
         };
-        format!("{}{}", self.origin, encode_path(&p))
+        // 基础前缀补全：URL 携带 `/dav` 时,相对路径(如同步目录)自动补上;
+        // PROPFIND 返回的 href 已含前缀,不会重复拼接。
+        let full = if self.base.is_empty()
+            || p == self.base
+            || p.starts_with(&format!("{}/", self.base))
+        {
+            p
+        } else {
+            format!("{}{}", self.base, p)
+        };
+        format!("{}{}", self.origin, encode_path(&full))
     }
 
     /// 服务器 origin(scheme://host[:port]),用于缓存命名空间等。
@@ -419,6 +442,7 @@ impl WebDavClient {
                     Arc::new(WebDavClient {
                         client: self.client.clone(),
                         origin: self.origin.clone(),
+                        base: self.base.clone(),
                         user: self.user.clone(),
                         pass: self.pass.clone(),
                         capability: self.capability.clone(),
@@ -460,6 +484,7 @@ impl WebDavClient {
             Arc::new(WebDavClient {
                 client: self.client.clone(),
                 origin: self.origin.clone(),
+                base: self.base.clone(),
                 user: self.user.clone(),
                 pass: self.pass.clone(),
                 capability: self.capability.clone(),
@@ -791,5 +816,54 @@ mod tests {
             "/dav/a b.cbz"
         );
         assert_eq!(href_to_path("/dav/x.cbz"), "/dav/x.cbz");
+    }
+
+    #[test]
+    fn normalize_base_works() {
+        assert_eq!(normalize_base(""), "");
+        assert_eq!(normalize_base("/"), "");
+        assert_eq!(normalize_base("/dav"), "/dav");
+        assert_eq!(normalize_base("/dav/"), "/dav");
+    }
+
+    #[test]
+    fn url_prepends_base_path_for_relative_paths() {
+        let c = WebDavClient {
+            client: reqwest::blocking::Client::new(),
+            origin: "https://example.com".to_string(),
+            base: normalize_base("/dav"),
+            user: String::new(),
+            pass: String::new(),
+            capability: ServerCapability::default(),
+        };
+        assert_eq!(c.url("/RCH/sync"), "https://example.com/dav/RCH/sync");
+        assert_eq!(c.url("RCH/sync"), "https://example.com/dav/RCH/sync");
+        // 已含基础前缀不重复拼接。
+        assert_eq!(c.url("/dav/RCH/sync"), "https://example.com/dav/RCH/sync");
+        assert_eq!(c.url("/dav"), "https://example.com/dav");
+        assert_eq!(c.url("/dav/"), "https://example.com/dav/");
+        assert_eq!(
+            c.url("/RCH/a b.cbz"),
+            "https://example.com/dav/RCH/a%20b.cbz"
+        );
+    }
+
+    #[test]
+    fn url_keeps_relative_path_when_no_base() {
+        for base in ["", "/"] {
+            let c = WebDavClient {
+                client: reqwest::blocking::Client::new(),
+                origin: "https://example.com".to_string(),
+                base: normalize_base(base),
+                user: String::new(),
+                pass: String::new(),
+                capability: ServerCapability::default(),
+            };
+            assert_eq!(c.url("/RCH/sync"), "https://example.com/RCH/sync");
+            assert_eq!(
+                c.url("/dav/RCH/sync"),
+                "https://example.com/dav/RCH/sync"
+            );
+        }
     }
 }

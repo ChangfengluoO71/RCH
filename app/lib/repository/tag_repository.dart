@@ -198,6 +198,14 @@ class TagRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 移除某前缀（通常是某书源）下所有漫画的标签关联。
+  /// 仅改内存；SQLite 落盘由 [saveToSqlite] 的全量 diff 同步。
+  void removeBookTagsByPrefix(String prefix) {
+    final before = _bookTags.length;
+    _bookTags.removeWhere((bt) => bt.bookKey.startsWith(prefix));
+    if (_bookTags.length != before) notifyListeners();
+  }
+
   /// 将一本书的标签关联迁移到新 key（后缀别名归一化后用），合并去重。
   void remapBookKey(String oldKey, String newKey) {
     if (oldKey == newKey) return;

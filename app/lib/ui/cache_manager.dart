@@ -328,11 +328,11 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
               width: double.infinity,
               child: OutlinedButton.icon(
                 onPressed: () {
-                  final r = LibraryStore.instance.purgeStaleRecords();
-                  _snack('已清理 $r 条失效记录');
+                  final (r, m) = LibraryStore.instance.purgeStaleData();
+                  _snack('已清理 $r 条失效记录、$m 条失效元数据');
                 },
                 icon: const Icon(Icons.cleaning_services, size: 18),
-                label: const Text('清理失效漫画记录'),
+                label: const Text('清理失效漫画数据'),
               ),
             ),
           ]),

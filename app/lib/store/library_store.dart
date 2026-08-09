@@ -419,6 +419,7 @@ class LibraryStore extends ChangeNotifier {
       final prefix = '${src.type}|${src.id}|';
       _records.removeByPrefix(prefix);
       _books.metas.removeWhere((k, _) => k.startsWith(prefix));
+      TagRepository.instance.removeBookTagsByPrefix(prefix);
       // SQLite 同步删除：saveToSqlite 只 upsert 不删行，漏删会让书源/记录重启后复活。
       dbDeleteSource(id: id);
       dbDeleteRecordsBySourcePrefix(prefix: prefix);
@@ -457,15 +458,49 @@ class LibraryStore extends ChangeNotifier {
   List<ReadRecord> get recent => _records.recent();
   List<ReadRecord> get mostRead => _records.mostRead();
 
-  int purgeStaleRecords() {
-    final removed = _records.purgeStale(sources);
-    if (removed.isNotEmpty) {
-      for (final k in removed) {
-        dbDeleteRecord(key: k);
-      }
-      notifyListeners(); saveToDisk();
+  /// 清理失效漫画数据：源已删除的记录/元数据、本地文件丢失的记录，以及这些 key 上的标签关联。
+  /// 返回 (清理的记录数, 清理的元数据数)。
+  (int, int) purgeStaleData() {
+    final sourceIds = sources.map((s) => s.id).toSet();
+
+    // 1) 失效阅读记录（源已删除 / 本地文件丢失）
+    final staleRecords = _records.purgeStale(sources);
+
+    // 2) 失效元数据（来源已删除）
+    final staleMetas = <String>[];
+    for (final m in _books.metas.values) {
+      final parts = m.key.split('|');
+      final sid = parts.length > 1 ? parts[1] : '';
+      if (!sourceIds.contains(sid)) staleMetas.add(m.key);
     }
-    return removed.length;
+
+    final removedKeys = <String>{...staleRecords, ...staleMetas};
+    if (removedKeys.isEmpty) return (0, 0);
+
+    // 内存清理：元数据 + 失效 key 上的标签关联
+    for (final k in staleMetas) {
+      _books.metas.remove(k);
+    }
+    for (final k in removedKeys) {
+      TagRepository.instance.setBookTags(k, const []);
+    }
+
+    // SQLite 清理：记录逐条删；元数据按来源前缀批量删（连未进内存的残留行一起清）
+    for (final k in staleRecords) {
+      dbDeleteRecord(key: k);
+    }
+    final prefixes = <String>{};
+    for (final k in staleMetas) {
+      final parts = k.split('|');
+      if (parts.length >= 2) prefixes.add('${parts[0]}|${parts[1]}|');
+    }
+    for (final p in prefixes) {
+      dbDeleteMetasBySourcePrefix(prefix: p);
+    }
+
+    notifyListeners();
+    saveToDisk();
+    return (staleRecords.length, staleMetas.length);
   }
 
   // ---- Meta（委托给 BookRepository） ----

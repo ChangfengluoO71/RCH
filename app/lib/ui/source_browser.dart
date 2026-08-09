@@ -15,6 +15,7 @@ import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// 文件夹卡片封面形态（纯本地判定，不发网盘请求）。
 enum _FolderCoverKind {
@@ -294,9 +295,88 @@ class _SourceBrowserState extends State<SourceBrowser> {
       );
     } catch (e) {
       if (mounted) setState(() => _error = '刷新 refresh_token 失败:$e');
+      await _reauthorizeBaidu(e);
     } finally {
       _refreshingToken = false;
       if (mounted) setState(() {});
+    }
+  }
+
+  /// 百度网盘 refresh_token 已失效时的重新授权流程：
+  /// 打开官方授权页（redirect_uri=oob）→ 用户粘贴授权码 → 换新 token →
+  /// 回写 DB 并重连，成功后重新列出当前目录。
+  Future<void> _reauthorizeBaidu(Object error) async {
+    final appKey = widget.source.clientId ?? '';
+    final secret = widget.source.clientSecret ?? '';
+    if (appKey.isEmpty || secret.isEmpty) {
+      if (mounted) {
+        setState(() =>
+            _error = '刷新 refresh_token 失败:$error\n（未配置 AppKey/SecretKey，请编辑书源填写）');
+      }
+      return;
+    }
+    try {
+      final url = await baiduAuthUrl(appKey: appKey);
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+    if (!mounted) return;
+    final codeCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('百度网盘授权已失效'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('刷新失败：$error\n浏览器已打开百度授权页，登录并同意后把页面显示的授权码粘贴到这里。',
+              style: const TextStyle(fontSize: 12)),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () async {
+              try {
+                final url = await baiduAuthUrl(appKey: appKey);
+                await launchUrl(Uri.parse(url),
+                    mode: LaunchMode.externalApplication);
+              } catch (_) {}
+            },
+            icon: const Icon(Icons.open_in_browser, size: 18),
+            label: const Text('重新打开授权页面'),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: codeCtrl,
+            decoration: const InputDecoration(
+                labelText: '授权码', border: OutlineInputBorder(), isDense: true),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(c).pop(true),
+              child: const Text('提交授权码')),
+        ],
+      ),
+    );
+    if (ok != true || codeCtrl.text.trim().isEmpty) return;
+    try {
+      final pair = await baiduExchangeCode(
+          appKey: appKey,
+          clientSecret: secret,
+          code: codeCtrl.text.trim());
+      widget.source.refreshToken = pair.refreshToken;
+      LibraryStore.instance
+          .updateSource(widget.source.id, refreshToken: pair.refreshToken);
+      final s = await baiduRefreshTokenFor(widget.source);
+      if (!mounted) return;
+      setState(() {
+        _session = s;
+        _error = null;
+      });
+      await _list(_path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('授权成功，refresh_token 已更新并重连')),
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = '重新授权失败:$e');
     }
   }
 

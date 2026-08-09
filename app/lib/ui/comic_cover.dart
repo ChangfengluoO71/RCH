@@ -109,10 +109,29 @@ class ComicCover extends StatefulWidget {
   static void evictAll(String sourceId, String path) {
     _cache.removeWhere((k, _) => k.startsWith('$sourceId|$path'));
   }
+
+  /// “未缓存”占位（网盘文件未下载 / 网盘文件夹无本地数据共用）。
+  static Widget uncachedPlaceholder() => Container(
+        color: Colors.black26,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_download_outlined,
+                  size: 36, color: Colors.lightBlueAccent.withAlpha(120)),
+              const SizedBox(height: 4),
+              const Text('未缓存',
+                  style: TextStyle(fontSize: 10, color: Colors.white38)),
+            ],
+          ),
+        ),
+      );
 }
 
 class _ComicCoverState extends State<ComicCover> {
   Future<ui.Image>? _future;
+  /// 上一次使用的缓存 key；封面页/裁切/画质等元数据变化时用于触发重载。
+  String? _lastCacheKey;
 
   String get _cacheKey {
     final store = LibraryStore.instance;
@@ -132,18 +151,24 @@ class _ComicCoverState extends State<ComicCover> {
   @override
   void initState() {
     super.initState();
+    _lastCacheKey = _cacheKey;
     _maybeLoad();
   }
 
   @override
   void didUpdateWidget(covariant ComicCover oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final newKey = _cacheKey;
     if (oldWidget.source.id != widget.source.id ||
         oldWidget.path != widget.path ||
-        oldWidget.force != widget.force) {
+        oldWidget.force != widget.force ||
+        newKey != _lastCacheKey) {
       // 路径变化：取消旧队列任务，重新加载
-      _CoverLoadQueue.instance.cancel(_cacheKey);
+      if (_lastCacheKey != null) {
+        _CoverLoadQueue.instance.cancel(_lastCacheKey!);
+      }
       _future = null;
+      _lastCacheKey = newKey;
       _maybeLoad();
     }
   }
@@ -312,20 +337,7 @@ class _ComicCoverState extends State<ComicCover> {
     ),
   );
 
-  Widget _placeholder() => Container(
-    color: Colors.black26,
-    child: Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.cloud_download_outlined,
-              size: 36, color: Colors.lightBlueAccent.withAlpha(120)),
-          const SizedBox(height: 4),
-          const Text('未缓存', style: TextStyle(fontSize: 10, color: Colors.white38)),
-        ],
-      ),
-    ),
-  );
+  Widget _placeholder() => ComicCover.uncachedPlaceholder();
 }
 
 /// 漫画卡片：封面 + 标题 + 副标题，海报墙通用。

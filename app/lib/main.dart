@@ -7,6 +7,7 @@ import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/api/pdf.dart';
 import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/ai_upscale_manager.dart';
+import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/store/storage_access.dart';
@@ -52,6 +53,8 @@ Future<void> main() async {
 
   // 加载数据（优先 SQLite，fallback JSON）
   await LibraryStore.instance.load();
+  // 加载远程目录快照（文件夹封面全本地判定用，跨重启保留）
+  await FolderSnapshotStore.instance.load();
 
   // 备份/同步：加载配置并按需启动定时同步。
   await SyncManager.instance.init();
@@ -218,6 +221,7 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
 
   Future<void> _flush() async {
     await LibraryStore.instance.flushPendingSave();
+    await FolderSnapshotStore.instance.flush();
   }
 
   /// 启动时检测到未完成的根目录迁移 → 提供"继续迁移"。

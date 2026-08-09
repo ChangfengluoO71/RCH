@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:app/src/rust/api/book.dart';
@@ -6,6 +5,7 @@ import 'package:app/src/rust/api/export.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
@@ -15,6 +15,18 @@ import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
+
+/// 文件夹卡片封面形态（纯本地判定，不发网盘请求）。
+enum _FolderCoverKind {
+  /// 普通文件夹：本地确认无漫画文件 → 无封面。
+  plain,
+  /// 本地无数据（仅网盘）：与漫画文件一致显示“未缓存”。
+  uncached,
+  /// 文件夹式漫画书（本地图片目录）：封面 = cover.jpg / 首页，点击进详情。
+  book,
+  /// 容器文件夹（内含漫画包）：封面 = 第一个漫画文件封面，点击下钻。
+  container,
+}
 
 /// 书源浏览器:浏览某个书源的漫画。
 /// 本地 → 海报墙(目录可下钻);WebDAV → 列表(目录可下钻)。
@@ -44,15 +56,45 @@ class _SourceBrowserState extends State<SourceBrowser> {
   int _convertTotal = 0;
   String _convertCurrent = '';
   bool _convertCancelled = false; // 用户点击取消
+  bool _refreshingToken = false; // 百度网盘：正在强制刷新 refresh_token
 
-  /// 漫画文件夹检测结果：path → true 表示该目录是漫画文件夹。
-  /// 本地模式使用；WebDAV 暂不检测（避免大量网络请求）。
-  final Map<String, bool> _comicDirs = {};
+  /// 漫画文件夹检测结果：path → 封面形态（纯本地判定，不发网盘请求）。
+  final Map<String, _FolderCoverKind> _folderKinds = {};
+  /// 容器文件夹的第一个漫画文件路径（kind == container 时有效）。
+  final Map<String, String> _folderFirstFile = {};
+
+  /// 漫画文件扩展名（与列表过滤一致）。
+  static const List<String> _comicExts = [
+    '.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar',
+    '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3',
+  ];
+
+  static bool _isComicEntry(DirEntry e) =>
+      !e.isDir && _comicExts.any((ext) => e.name.toLowerCase().endsWith(ext));
 
   @override
   void initState() {
     super.initState();
+    LibraryStore.instance.addListener(_onStoreChanged);
     _init();
+  }
+
+  @override
+  void dispose() {
+    LibraryStore.instance.removeListener(_onStoreChanged);
+    super.dispose();
+  }
+
+  /// 阅读记录/元数据变化后重跑网盘目录判定（纯本地），
+  /// 例如下载完成 / 记录加载后 未缓存 → 封面。
+  void _onStoreChanged() {
+    if (widget.source.isLocalFs || _entries.isEmpty) return;
+    setState(() {
+      for (final e in _entries) {
+        if (!e.isDir) continue;
+        _detectRemoteFolderKind(e);
+      }
+    });
   }
 
   Future<void> _init() async {
@@ -79,7 +121,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
     setState(() {
       _loading = true;
       _error = null;
-      _comicDirs.clear();
+      _folderKinds.clear();
+      _folderFirstFile.clear();
     });
     try {
       final list = switch (widget.source.type) {
@@ -92,18 +135,25 @@ class _SourceBrowserState extends State<SourceBrowser> {
         _ => await listLocalDir(path: path),
       };
       if (!mounted) return;
+      // 远程：把本次列表响应写入本地快照（复用同一次请求，不新增网盘请求）
+      if (!widget.source.isLocalFs) {
+        FolderSnapshotStore.instance.put(
+          widget.source,
+          path,
+          list
+              .map((e) => FolderSnapshotEntry(
+                    name: e.name,
+                    path: e.path,
+                    isDir: e.isDir,
+                  ))
+              .toList(),
+        );
+      }
       setState(() {
         _path = path;
-        _entries = list
-            .where((e) =>
-                e.isDir ||
-                ['.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar', '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3'].any((ext) => e.name.toLowerCase().endsWith(ext)))
-            .toList();
+        _entries = list.where((e) => e.isDir || _isComicEntry(e)).toList();
       });
-      // 本地文件系统（local/SMB）：异步检测子目录是否为漫画文件夹
-      if (widget.source.isLocalFs) {
-        _detectComicFolders();
-      }
+      _detectComicFolders();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
@@ -111,16 +161,99 @@ class _SourceBrowserState extends State<SourceBrowser> {
     }
   }
 
-  /// 异步检测当前列表中的子目录是否为漫画文件夹。
-  void _detectComicFolders() {
-    for (final e in _entries) {
-      if (!e.isDir) continue;
-      // 逐目录检测（非并发，避免 IO 抖动）
-      unawaited(isComicFolder(dirPath: e.path).then((isComic) {
-        if (!mounted) return;
-        setState(() => _comicDirs[e.path] = isComic);
-      }));
+  /// 检测当前列表中的子目录封面形态。
+  /// 本地：图片目录 book / 容器目录 container / 无漫画 plain（本地 IO，无网络）；
+  /// 网盘：只读本地快照 + 阅读记录，缺失时视为 uncached，绝不发起网盘请求。
+  Future<void> _detectComicFolders() async {
+    if (widget.source.isLocalFs) {
+      for (final e in _entries) {
+        if (!e.isDir) continue;
+        try {
+          if (await isComicFolder(dirPath: e.path)) {
+            _setFolderKind(e.path, _FolderCoverKind.book);
+            continue;
+          }
+          final first = _firstComicFileOf(await listLocalDir(path: e.path));
+          if (!mounted) return;
+          setState(() {
+            _folderKinds[e.path] = first == null
+                ? _FolderCoverKind.plain
+                : _FolderCoverKind.container;
+            if (first == null) {
+              _folderFirstFile.remove(e.path);
+            } else {
+              _folderFirstFile[e.path] = first;
+            }
+          });
+        } catch (_) {
+          _setFolderKind(e.path, _FolderCoverKind.plain);
+        }
+      }
+      return;
     }
+    // 网盘：纯本地判定（快照 / 阅读记录），同步完成
+    setState(() {
+      for (final e in _entries) {
+        if (!e.isDir) continue;
+        _detectRemoteFolderKind(e);
+      }
+    });
+  }
+
+  /// 网盘子目录封面判定（纯本地，无任何网盘请求）。
+  void _detectRemoteFolderKind(DirEntry e) {
+    final snap = FolderSnapshotStore.instance.entriesFor(widget.source, e.path);
+    final first = snap != null
+        ? _firstComicFileOfSnapshot(snap)
+        : _firstRecordedComicUnder(e.path);
+    if (first == null) {
+      _folderKinds[e.path] =
+          snap != null ? _FolderCoverKind.plain : _FolderCoverKind.uncached;
+      _folderFirstFile.remove(e.path);
+    } else {
+      _folderKinds[e.path] = _FolderCoverKind.container;
+      _folderFirstFile[e.path] = first;
+    }
+  }
+
+  void _setFolderKind(String path, _FolderCoverKind kind) {
+    if (!mounted) return;
+    setState(() => _folderKinds[path] = kind);
+  }
+
+  /// 返回列表中按自然序第一个漫画文件路径；无则 null。
+  String? _firstComicFileOf(List<DirEntry> list) {
+    final comics = list.where(_isComicEntry).toList();
+    if (comics.isEmpty) return null;
+    comics.sort((a, b) => _naturalCompare(a.name, b.name));
+    return comics.first.path;
+  }
+
+  /// 从目录快照条目中按自然序找第一个漫画文件路径；无则 null。
+  String? _firstComicFileOfSnapshot(List<FolderSnapshotEntry> list) {
+    final comics = list
+        .where((e) =>
+            !e.isDir &&
+            _comicExts.any((ext) => e.name.toLowerCase().endsWith(ext)))
+        .toList();
+    if (comics.isEmpty) return null;
+    comics.sort((a, b) => _naturalCompare(a.name, b.name));
+    return comics.first.path;
+  }
+
+  /// 从本地阅读记录找该目录下按自然序最小的漫画路径（用户已打开/下载过）。
+  String? _firstRecordedComicUnder(String dirPath) {
+    final prefix = dirPath.endsWith('/') ? dirPath : '$dirPath/';
+    final candidates = LibraryStore.instance.records.values
+        .where((r) =>
+            r.sourceType == widget.source.type &&
+            r.sourceId == widget.source.id &&
+            r.path.startsWith(prefix))
+        .map((r) => r.path)
+        .toList();
+    if (candidates.isEmpty) return null;
+    candidates.sort(_naturalCompare);
+    return candidates.first;
   }
 
   void _openDir(String path) {
@@ -138,6 +271,33 @@ class _SourceBrowserState extends State<SourceBrowser> {
     if (!mounted || !widget.source.isLocalFs) return;
     await _autoConvertToCbz();
     if (mounted) await _list(_path);
+  }
+
+  /// 百度网盘：强制重新连接并刷新 refresh_token（每次 connect 都会调用
+  /// refresh_token 接口轮换 token 并回写 DB），成功后重新列出当前目录。
+  Future<void> _refreshBaiduToken() async {
+    if (_refreshingToken) return;
+    _refreshingToken = true;
+    final old = _session;
+    try {
+      if (old != null) await baiduDisconnect(id: old);
+      final s = await baiduRefreshTokenFor(widget.source);
+      if (!mounted) return;
+      setState(() {
+        _session = s;
+        _error = null;
+      });
+      await _list(_path);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('refresh_token 已重新刷新并保存')),
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = '刷新 refresh_token 失败:$e');
+    } finally {
+      _refreshingToken = false;
+      if (mounted) setState(() {});
+    }
   }
 
   /// 后台自动转 CBZ：漫画文件夹 → `name.cbz`；zip → `stem.cbz`。
@@ -245,7 +405,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 已被同名 .cbz 取代的源条目（文件夹 / zip）不再显示，避免书架重复。
   bool _isConvertedOriginal(DirEntry e) {
     if (e.isDir) {
-      if (_comicDirs[e.path] != true) return false;
+      if (_folderKinds[e.path] != _FolderCoverKind.book) return false;
       return File('${e.path}.cbz').existsSync();
     }
     if (e.name.toLowerCase().endsWith('.zip')) {
@@ -255,8 +415,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
     return false;
   }
 
-  /// 漫画文件夹也作为漫画条目参与过滤。
-  bool _isComicDir(String path) => _comicDirs[path] == true;
+  /// 漫画文件夹（book / container）也作为漫画条目参与过滤。
+  bool _isComicDir(String path) {
+    final k = _folderKinds[path];
+    return k == _FolderCoverKind.book || k == _FolderCoverKind.container;
+  }
 
   /// 排序：目录保持在前；按字母用自然序（数字感知），按加入时间用 mtime 降序（最新在前，
   /// mtime=0 视为最旧排最后，同值按名称兜底）。
@@ -347,10 +510,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             } else {
               pending.add(e.path);
             }
-          } else if ([
-            '.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar',
-            '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3'
-          ].any((ext) => e.name.toLowerCase().endsWith(ext))) {
+          } else if (_isComicEntry(e)) {
             result.add(e.path);
           }
         }
@@ -510,6 +670,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   PopupMenuItem(value: 'added', child: Text('按加入时间')),
                 ],
               ),
+              if (widget.source.isBaidu)
+                IconButton(
+                  icon: const Icon(Icons.vpn_key),
+                  tooltip: '重新连接并刷新 refresh_token',
+                  onPressed: _refreshingToken ? null : _refreshBaiduToken,
+                ),
               IconButton(icon: Icon(_posterMode ? Icons.view_list : Icons.grid_view), tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙', onPressed: () => setState(() => _posterMode = !_posterMode)),
               IconButton(icon: const Icon(Icons.refresh), tooltip: '刷新', onPressed: _refresh),
             ]),
@@ -540,11 +706,14 @@ class _SourceBrowserState extends State<SourceBrowser> {
       itemCount: entries.length,
       itemBuilder: (context, i) {
         final e = entries[i];
-        // 目录：区分漫画文件夹 vs 普通文件夹
+        // 目录：按封面形态区分卡片
         if (e.isDir) {
-          if (_isComicDir(e.path)) {
-            // 漫画文件夹 → 显示为海报卡片，点击进详情而非下钻
-            return _comicFolderCard(e);
+          final kind = _folderKinds[e.path] ??
+              (widget.source.isLocalFs
+                  ? _FolderCoverKind.plain
+                  : _FolderCoverKind.uncached);
+          if (kind != _FolderCoverKind.plain) {
+            return _folderCoverCard(e, kind);
           }
           // 普通文件夹 → 现有文件夹卡片
           final sel = _selectMode && _selectedPaths.contains(e.path);
@@ -588,18 +757,22 @@ class _SourceBrowserState extends State<SourceBrowser> {
     );
   }
 
-  /// 漫画文件夹卡片: 带封面（优先 cover.jpg → 首页缩略图），点击进详情。
-  Widget _comicFolderCard(DirEntry e) {
+  /// 带封面的文件夹卡片：book 进详情；container / uncached 下钻。
+  Widget _folderCoverCard(DirEntry e, _FolderCoverKind kind) {
     final sel = _selectMode && _selectedPaths.contains(e.path);
     final card = _ComicFolderCoverCard(
       source: widget.source,
       dirPath: e.path,
       name: e.name,
+      kind: kind,
+      firstComicFile: _folderFirstFile[e.path],
       onTap: _selectMode
           ? () {}
-          : () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => BookDetailPage(
-                  source: widget.source, path: e.path, title: e.name))),
+          : kind == _FolderCoverKind.book
+              ? () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => BookDetailPage(
+                      source: widget.source, path: e.path, title: e.name)))
+              : () => _openDir(e.path),
     );
     if (!_selectMode) return card;
     return Stack(children: [
@@ -676,17 +849,23 @@ class _FolderCard extends StatelessWidget {
   }
 }
 
-/// 漫画文件夹封面卡片：优先用 cover.jpg，无封面则取首页做缩略图。
+/// 漫画文件夹封面卡片。
+/// book：cover.jpg 优先，无封面用首页；container：第一个漫画文件封面；
+/// uncached：与漫画文件一致显示“未缓存”。
 class _ComicFolderCoverCard extends StatefulWidget {
   final BookSource source;
   final String dirPath;
   final String name;
+  final _FolderCoverKind kind;
+  final String? firstComicFile;
   final VoidCallback onTap;
 
   const _ComicFolderCoverCard({
     required this.source,
     required this.dirPath,
     required this.name,
+    required this.kind,
+    this.firstComicFile,
     required this.onTap,
   });
 
@@ -702,7 +881,8 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
   @override
   void initState() {
     super.initState();
-    _detectCover();
+    // book 模式需要本地检测 cover.jpg；container / uncached 直接渲染
+    if (widget.kind == _FolderCoverKind.book) _detectCover();
   }
 
   Future<void> _detectCover() async {
@@ -761,6 +941,15 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
   }
 
   Widget _buildCover() {
+    // 网盘无本地数据 → 与漫画文件一致的“未缓存”占位
+    if (widget.kind == _FolderCoverKind.uncached) {
+      return ComicCover.uncachedPlaceholder();
+    }
+    // 容器文件夹 → 第一个漫画文件封面（未下载时由 ComicCover 显示“未缓存”）
+    if (widget.kind == _FolderCoverKind.container) {
+      final f = widget.firstComicFile;
+      return f == null ? ComicCover.uncachedPlaceholder() : _loadCover(f);
+    }
     // 有显式封面 → 优先用封面路径解码（第 0 页）
     if (_coverPath != null && _coverPath!.isNotEmpty) {
       return _loadCover(_coverPath!);
@@ -783,7 +972,11 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
   }
 
   Widget _loadCover(String path) {
+    // 下载/阅读记录变化后强制重建 ComicCover，让 未缓存 → 封面 自动生效
+    final key = bookKeyOf(widget.source.type, widget.source.id, path);
+    final cached = LibraryStore.instance.records.containsKey(key);
     return ComicCover(
+      key: ValueKey('$key|${cached ? 'cached' : 'pending'}'),
       source: widget.source,
       path: path,
       force: true,

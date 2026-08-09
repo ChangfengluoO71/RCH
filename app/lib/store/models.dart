@@ -340,9 +340,19 @@ class AppSettings {
         ),
         tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
         updateMirror: (j['updateMirror'] as String?) ?? '',
-        updateMirrorList: (j['updateMirrorList'] as String?) ?? '[]',
+        updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),
         updateMirrorFetchedAt: (j['updateMirrorFetchedAt'] as int?) ?? 0,
       );
+}
+
+/// 兼容 `updateMirrorList` 的两种存储形态：JSON 字符串或已解析的 List/Map。
+///
+/// SQLite 落库时该字段是 JSON 数组字符串，加载时 `_tryParseJson` 会把它解成
+/// List；直接按 String 强转会导致整个设置加载失败并回退 JSON 模式。
+String _stringFromJson(dynamic raw, String fallback) {
+  if (raw is String) return raw;
+  if (raw is List || raw is Map) return jsonEncode(raw);
+  return fallback;
 }
 
 /// 兼容 `keys` 设置的两种存储形态：Map 或 JSON 字符串。

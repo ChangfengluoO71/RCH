@@ -62,6 +62,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AiTaskDto dco_decode_box_autoadd_ai_task_dto(dynamic raw);
 
   @protected
+  BookInfo dco_decode_box_autoadd_book_info(dynamic raw);
+
+  @protected
   BookMetaDto dco_decode_box_autoadd_book_meta_dto(dynamic raw);
 
   @protected
@@ -166,6 +169,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
+  BookInfo? dco_decode_opt_box_autoadd_book_info(dynamic raw);
+
+  @protected
   CropRect? dco_decode_opt_box_autoadd_crop_rect(dynamic raw);
 
   @protected
@@ -265,6 +271,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AiTaskDto sse_decode_box_autoadd_ai_task_dto(SseDeserializer deserializer);
+
+  @protected
+  BookInfo sse_decode_box_autoadd_book_info(SseDeserializer deserializer);
 
   @protected
   BookMetaDto sse_decode_box_autoadd_book_meta_dto(
@@ -397,6 +406,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
+  BookInfo? sse_decode_opt_box_autoadd_book_info(SseDeserializer deserializer);
+
+  @protected
   CropRect? sse_decode_opt_box_autoadd_crop_rect(SseDeserializer deserializer);
 
   @protected
@@ -508,6 +520,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_ai_task_dto(
     AiTaskDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_book_info(
+    BookInfo self,
     SseSerializer serializer,
   );
 
@@ -675,6 +693,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_book_info(
+    BookInfo? self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_opt_box_autoadd_crop_rect(

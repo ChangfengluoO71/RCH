@@ -239,7 +239,12 @@ pub async fn open_webdav_book(session: u64, path: String, strategy: String) -> R
                     document::open_document(src, &path)
                 }
                 OpenStrategy::Stream => {
-                    if client.range_supported(&path)? {
+                    // 缓存优先：已有 raw/ 本地缓存直接本地打开，不联网
+                    if let Some(local_path) = webdav::raw_cache_path(client.origin(), &path) {
+                        tracing::info!("WebDAV 命中缓存，直接本地打开: {}", local_path.display());
+                        let src = crate::source::local::LocalFile::open(&local_path)?;
+                        document::open_document(src, &path)
+                    } else if client.range_supported(&path)? {
                         let len = client.file_size(&path)?;
                         let src = WebDavFile::new(client, path.clone(), len);
                         document::open_document(src, &path)
@@ -300,6 +305,95 @@ pub fn webdav_has_raw_cache(session: u64, path: String) -> bool {
         Err(_) => return false,
     };
     webdav::raw_cache_path(client.origin(), &path).is_some()
+}
+
+/// 缓存命中时直接本地打开远程书（封面编辑器等纯本地操作），全程不联网。
+/// 未命中返回 `Ok(None)`，由调用方回退到策略打开（auto/download/stream）。
+/// 命中时复用对应书源的 page/ 磁盘缓存命名空间，翻页与封面可直接命中本地。
+pub async fn open_cached_remote_book(
+    kind: String,
+    session: u64,
+    path: String,
+) -> Result<Option<BookInfo>, String> {
+    // 按书源类型解析 raw/ 缓存路径与缓存命名空间（与 open_*_book 保持一致）
+    let (local_path, cache_ns) = match kind.as_str() {
+        "webdav" => {
+            let client = get_session(session).map_err(|e| e.to_string())?;
+            let origin = client.origin().to_string();
+            (
+                webdav::raw_cache_path(&origin, &path),
+                format!("webdav|{}|{}", origin, path),
+            )
+        }
+        "sftp" => {
+            let client = get_sftp_session(session).map_err(|e| e.to_string())?;
+            let endpoint = client.endpoint().to_string();
+            (
+                sftp_source::raw_cache_path(&endpoint, &path),
+                format!("sftp|{}|{}", endpoint, path),
+            )
+        }
+        "baidu" => {
+            let client = get_baidu_session(session).map_err(|e| e.to_string())?;
+            let origin = client.origin();
+            (
+                baidu_source::raw_cache_path(&origin, &path),
+                format!("baidu|{}|{}", origin, path),
+            )
+        }
+        "115" => {
+            // Cookie 模式与官方 APP ID 模式会话表不同：先查 Cookie 表，再查设备表
+            if let Some(client) = cloud115_cookie_sessions()
+                .lock()
+                .unwrap()
+                .get(&session)
+                .cloned()
+            {
+                let origin = client.origin();
+                (
+                    cloud115_source::web_raw_cache_path(&origin, &path),
+                    format!("115|{}|{}", origin, path),
+                )
+            } else {
+                let client = get_cloud115_session(session).map_err(|e| e.to_string())?;
+                let origin = client.origin();
+                (
+                    cloud115_source::raw_cache_path(&origin, &path),
+                    format!("115|{}|{}", origin, path),
+                )
+            }
+        }
+        "quark" => {
+            let client = get_quark_session(session).map_err(|e| e.to_string())?;
+            let origin = client.origin();
+            (
+                quark_source::raw_cache_path(&origin, &path),
+                format!("quark|{}|{}", origin, path),
+            )
+        }
+        _ => return Err(format!("未知远程书源类型: {kind}")),
+    };
+
+    let local_path = match local_path {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+
+    let cache_ns_open = cache_ns.clone();
+    let book = tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+        // 缓存目录里的文件名即真实文件名（下载时按源文件名落盘）
+        let name = local_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file.cbz".to_string());
+        let src = crate::source::local::LocalFile::open(&local_path)?;
+        document::open_document(src, &name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    Ok(Some(register_book(book, &cache_ns_open)))
 }
 
 /// 上传文件到 WebDAV 路径（P2 同步包推送）。
@@ -434,9 +528,15 @@ pub async fn open_sftp_book(
                     open_local(local_path)
                 }
                 OpenStrategy::Stream => {
-                    let len = client.file_size(&path)?;
-                    let src = sftp_source::SftpFile::new(client, path.clone(), len);
-                    document::open_document(src, &path)
+                    // 缓存优先：已有 raw/ 本地缓存直接本地打开，不联网
+                    if let Some(local_path) = sftp_source::raw_cache_path(client.endpoint(), &path) {
+                        tracing::info!("SFTP 命中缓存，直接本地打开: {}", local_path.display());
+                        open_local(local_path)
+                    } else {
+                        let len = client.file_size(&path)?;
+                        let src = sftp_source::SftpFile::new(client, path.clone(), len);
+                        document::open_document(src, &path)
+                    }
                 }
                 OpenStrategy::Auto => {
                     match client.download_to_raw_cache(&path, progress) {
@@ -916,12 +1016,17 @@ pub async fn open_quark_book(
         let client = Arc::clone(&client);
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
-            let name = client.resolve_name(&path)?;
             let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                // 缓存目录里的文件名即真实文件名（下载时按源文件名落盘）
+                let name = local_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "file.cbz".to_string());
                 let src = crate::source::local::LocalFile::open(&local_path)?;
                 document::open_document(src, &name)
             };
             let open_stream = |client: Arc<QuarkClient>| -> Result<Box<dyn document::Document>> {
+                let name = client.resolve_name(&path)?;
                 let info = client.downlink(&path)?;
                 let (supports, size) = client.probe(&info.url);
                 if !supports {
@@ -936,7 +1041,16 @@ pub async fn open_quark_book(
                     tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
                     open_local(local_path)
                 }
-                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Stream => {
+                    // 缓存优先：已有 raw/ 本地缓存直接本地打开，不联网
+                    match quark_source::raw_cache_path(&client.origin(), &path) {
+                        Some(local_path) => {
+                            tracing::info!("夸克命中缓存，直接本地打开: {}", local_path.display());
+                            open_local(local_path)
+                        }
+                        None => open_stream(Arc::clone(&client)),
+                    }
+                }
                 OpenStrategy::Auto => {
                     match client.download_to_raw_cache(&path, progress) {
                         Ok(local_path) => {
@@ -1244,7 +1358,16 @@ pub async fn open_baidu_book(
                     tracing::info!("百度网盘整本已缓存: {}", local_path.display());
                     open_local(local_path)
                 }
-                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Stream => {
+                    // 缓存优先：已有 raw/ 本地缓存直接本地打开，不联网
+                    match baidu_source::raw_cache_path(&client.origin(), &path) {
+                        Some(local_path) => {
+                            tracing::info!("百度网盘命中缓存，直接本地打开: {}", local_path.display());
+                            open_local(local_path)
+                        }
+                        None => open_stream(Arc::clone(&client)),
+                    }
+                }
                 OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
                     Ok(local_path) => {
                         tracing::info!("百度网盘整本已缓存: {}", local_path.display());
@@ -1504,7 +1627,16 @@ pub async fn open_cloud115_book(
                     tracing::info!("115 整本已缓存: {}", local_path.display());
                     open_local(local_path)
                 }
-                OpenStrategy::Stream => open_stream(Arc::clone(&client)),
+                OpenStrategy::Stream => {
+                    // 缓存优先：已有 raw/ 本地缓存直接本地打开，不联网
+                    match cloud115_source::raw_cache_path(&client.origin(), &path) {
+                        Some(local_path) => {
+                            tracing::info!("115 命中缓存，直接本地打开: {}", local_path.display());
+                            open_local(local_path)
+                        }
+                        None => open_stream(Arc::clone(&client)),
+                    }
+                }
                 OpenStrategy::Auto => {
                     match client.download_to_raw_cache(&path, &path, progress) {
                         Ok(local_path) => {

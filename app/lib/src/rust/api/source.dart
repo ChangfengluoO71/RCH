@@ -62,6 +62,19 @@ Future<bool> webdavHasRawCache({
   path: path,
 );
 
+/// 缓存命中时直接本地打开远程书（封面编辑器等纯本地操作），全程不联网。
+/// 未命中返回 `Ok(None)`，由调用方回退到策略打开（auto/download/stream）。
+/// 命中时复用对应书源的 page/ 磁盘缓存命名空间，翻页与封面可直接命中本地。
+Future<BookInfo?> openCachedRemoteBook({
+  required String kind,
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceOpenCachedRemoteBook(
+  kind: kind,
+  session: session,
+  path: path,
+);
+
 /// 上传文件到 WebDAV 路径（P2 同步包推送）。
 Future<void> webdavUploadFile({
   required BigInt session,

@@ -85,7 +85,7 @@ fn next_id() -> u64 {
     *g
 }
 
-fn get_session(id: u64) -> Result<Arc<WebDavClient>> {
+pub(crate) fn get_session(id: u64) -> Result<Arc<WebDavClient>> {
     sessions()
         .lock()
         .unwrap()

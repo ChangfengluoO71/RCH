@@ -8,10 +8,12 @@ import 'api/book.dart';
 import 'api/cache.dart';
 import 'api/db.dart';
 import 'api/export.dart';
+import 'api/library.dart';
 import 'api/package.dart';
 import 'api/pdf.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
+import 'api/sync.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
@@ -30,6 +32,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  Map<String, PlatformInt64> dco_decode_Map_String_i_64_None(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
@@ -46,6 +51,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BookMetaDto dco_decode_book_meta_dto(dynamic raw);
+
+  @protected
+  BookSearchDto dco_decode_book_search_dto(dynamic raw);
 
   @protected
   BookSourceDto dco_decode_book_source_dto(dynamic raw);
@@ -84,6 +92,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, String) dco_decode_box_autoadd_record_string_string(dynamic raw);
 
   @protected
+  SourceSnapshotDto dco_decode_box_autoadd_source_snapshot_dto(dynamic raw);
+
+  @protected
   CacheSize dco_decode_cache_size(dynamic raw);
 
   @protected
@@ -113,6 +124,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DirEntry dco_decode_dir_entry(dynamic raw);
 
   @protected
+  EntityCountDto dco_decode_entity_count_dto(dynamic raw);
+
+  @protected
   double dco_decode_f_64(dynamic raw);
 
   @protected
@@ -122,6 +136,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
+  IndexEntryInput dco_decode_index_entry_input(dynamic raw);
+
+  @protected
+  LibEntryDto dco_decode_lib_entry_dto(dynamic raw);
+
+  @protected
+  LibraryIndexDto dco_decode_library_index_dto(dynamic raw);
+
+  @protected
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
@@ -129,6 +152,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BookMetaDto> dco_decode_list_book_meta_dto(dynamic raw);
+
+  @protected
+  List<BookSearchDto> dco_decode_list_book_search_dto(dynamic raw);
 
   @protected
   List<BookSourceDto> dco_decode_list_book_source_dto(dynamic raw);
@@ -143,6 +169,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<DirEntry> dco_decode_list_dir_entry(dynamic raw);
 
   @protected
+  List<EntityCountDto> dco_decode_list_entity_count_dto(dynamic raw);
+
+  @protected
+  List<IndexEntryInput> dco_decode_list_index_entry_input(dynamic raw);
+
+  @protected
+  List<LibEntryDto> dco_decode_list_lib_entry_dto(dynamic raw);
+
+  @protected
+  List<LibraryIndexDto> dco_decode_list_library_index_dto(dynamic raw);
+
+  @protected
   List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -155,10 +193,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<ReadRecordDto> dco_decode_list_read_record_dto(dynamic raw);
 
   @protected
+  List<(String, PlatformInt64)> dco_decode_list_record_string_i_64(dynamic raw);
+
+  @protected
   List<SettingEntryDto> dco_decode_list_setting_entry_dto(dynamic raw);
 
   @protected
-  List<SourceBundleDto> dco_decode_list_source_bundle_dto(dynamic raw);
+  List<SourceAvailabilityDto> dco_decode_list_source_availability_dto(
+    dynamic raw,
+  );
+
+  @protected
+  List<SourceTreeNodeDto> dco_decode_list_source_tree_node_dto(dynamic raw);
+
+  @protected
+  List<SyncDeviceDto> dco_decode_list_sync_device_dto(dynamic raw);
+
+  @protected
+  List<SyncHistoryDto> dco_decode_list_sync_history_dto(dynamic raw);
 
   @protected
   List<TagDto> dco_decode_list_tag_dto(dynamic raw);
@@ -184,6 +236,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SourceSnapshotDto? dco_decode_opt_box_autoadd_source_snapshot_dto(
+    dynamic raw,
+  );
+
+  @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -194,6 +251,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReadRecordDto dco_decode_read_record_dto(dynamic raw);
+
+  @protected
+  (String, PlatformInt64) dco_decode_record_string_i_64(dynamic raw);
 
   @protected
   (String, String) dco_decode_record_string_string(dynamic raw);
@@ -208,13 +268,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SftpSessionInfo dco_decode_sftp_session_info(dynamic raw);
 
   @protected
-  SourceBundleDto dco_decode_source_bundle_dto(dynamic raw);
+  SourceAvailabilityDto dco_decode_source_availability_dto(dynamic raw);
+
+  @protected
+  SourceSnapshotDto dco_decode_source_snapshot_dto(dynamic raw);
+
+  @protected
+  SourceTreeNodeDto dco_decode_source_tree_node_dto(dynamic raw);
+
+  @protected
+  SyncDeviceDto dco_decode_sync_device_dto(dynamic raw);
 
   @protected
   SyncExportInfo dco_decode_sync_export_info(dynamic raw);
 
   @protected
+  SyncHistoryDto dco_decode_sync_history_dto(dynamic raw);
+
+  @protected
   SyncImportStats dco_decode_sync_import_stats(dynamic raw);
+
+  @protected
+  SyncOutcomeDto dco_decode_sync_outcome_dto(dynamic raw);
+
+  @protected
+  SyncStatusDto dco_decode_sync_status_dto(dynamic raw);
 
   @protected
   TagDto dco_decode_tag_dto(dynamic raw);
@@ -241,6 +319,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  Map<String, PlatformInt64> sse_decode_Map_String_i_64_None(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
@@ -257,6 +340,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BookMetaDto sse_decode_book_meta_dto(SseDeserializer deserializer);
+
+  @protected
+  BookSearchDto sse_decode_book_search_dto(SseDeserializer deserializer);
 
   @protected
   BookSourceDto sse_decode_book_source_dto(SseDeserializer deserializer);
@@ -303,6 +389,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SourceSnapshotDto sse_decode_box_autoadd_source_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CacheSize sse_decode_cache_size(SseDeserializer deserializer);
 
   @protected
@@ -340,6 +431,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DirEntry sse_decode_dir_entry(SseDeserializer deserializer);
 
   @protected
+  EntityCountDto sse_decode_entity_count_dto(SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
@@ -349,6 +443,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
+  IndexEntryInput sse_decode_index_entry_input(SseDeserializer deserializer);
+
+  @protected
+  LibEntryDto sse_decode_lib_entry_dto(SseDeserializer deserializer);
+
+  @protected
+  LibraryIndexDto sse_decode_library_index_dto(SseDeserializer deserializer);
+
+  @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
@@ -356,6 +459,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BookMetaDto> sse_decode_list_book_meta_dto(SseDeserializer deserializer);
+
+  @protected
+  List<BookSearchDto> sse_decode_list_book_search_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<BookSourceDto> sse_decode_list_book_source_dto(
@@ -370,6 +478,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<DirEntry> sse_decode_list_dir_entry(SseDeserializer deserializer);
+
+  @protected
+  List<EntityCountDto> sse_decode_list_entity_count_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<IndexEntryInput> sse_decode_list_index_entry_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<LibEntryDto> sse_decode_list_lib_entry_dto(SseDeserializer deserializer);
+
+  @protected
+  List<LibraryIndexDto> sse_decode_list_library_index_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<Uint8List> sse_decode_list_list_prim_u_8_strict(
@@ -388,12 +514,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<(String, PlatformInt64)> sse_decode_list_record_string_i_64(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<SettingEntryDto> sse_decode_list_setting_entry_dto(
     SseDeserializer deserializer,
   );
 
   @protected
-  List<SourceBundleDto> sse_decode_list_source_bundle_dto(
+  List<SourceAvailabilityDto> sse_decode_list_source_availability_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SourceTreeNodeDto> sse_decode_list_source_tree_node_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SyncDeviceDto> sse_decode_list_sync_device_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SyncHistoryDto> sse_decode_list_sync_history_dto(
     SseDeserializer deserializer,
   );
 
@@ -421,6 +567,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SourceSnapshotDto? sse_decode_opt_box_autoadd_source_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
@@ -431,6 +582,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ReadRecordDto sse_decode_read_record_dto(SseDeserializer deserializer);
+
+  @protected
+  (String, PlatformInt64) sse_decode_record_string_i_64(
+    SseDeserializer deserializer,
+  );
 
   @protected
   (String, String) sse_decode_record_string_string(
@@ -447,13 +603,37 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SftpSessionInfo sse_decode_sftp_session_info(SseDeserializer deserializer);
 
   @protected
-  SourceBundleDto sse_decode_source_bundle_dto(SseDeserializer deserializer);
+  SourceAvailabilityDto sse_decode_source_availability_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SourceSnapshotDto sse_decode_source_snapshot_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SourceTreeNodeDto sse_decode_source_tree_node_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SyncDeviceDto sse_decode_sync_device_dto(SseDeserializer deserializer);
 
   @protected
   SyncExportInfo sse_decode_sync_export_info(SseDeserializer deserializer);
 
   @protected
+  SyncHistoryDto sse_decode_sync_history_dto(SseDeserializer deserializer);
+
+  @protected
   SyncImportStats sse_decode_sync_import_stats(SseDeserializer deserializer);
+
+  @protected
+  SyncOutcomeDto sse_decode_sync_outcome_dto(SseDeserializer deserializer);
+
+  @protected
+  SyncStatusDto sse_decode_sync_status_dto(SseDeserializer deserializer);
 
   @protected
   TagDto sse_decode_tag_dto(SseDeserializer deserializer);
@@ -483,6 +663,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_Map_String_i_64_None(
+    Map<String, PlatformInt64> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
@@ -505,6 +691,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_book_meta_dto(BookMetaDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_book_search_dto(BookSearchDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_book_source_dto(BookSourceDto self, SseSerializer serializer);
@@ -567,6 +756,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_source_snapshot_dto(
+    SourceSnapshotDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cache_size(CacheSize self, SseSerializer serializer);
 
   @protected
@@ -609,6 +804,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_dir_entry(DirEntry self, SseSerializer serializer);
 
   @protected
+  void sse_encode_entity_count_dto(
+    EntityCountDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
@@ -616,6 +817,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_index_entry_input(
+    IndexEntryInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_lib_entry_dto(LibEntryDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_library_index_dto(
+    LibraryIndexDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
@@ -629,6 +845,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_book_meta_dto(
     List<BookMetaDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_book_search_dto(
+    List<BookSearchDto> self,
     SseSerializer serializer,
   );
 
@@ -654,6 +876,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_dir_entry(List<DirEntry> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_entity_count_dto(
+    List<EntityCountDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_index_entry_input(
+    List<IndexEntryInput> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_lib_entry_dto(
+    List<LibEntryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_library_index_dto(
+    List<LibraryIndexDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_list_prim_u_8_strict(
     List<Uint8List> self,
     SseSerializer serializer,
@@ -675,14 +921,38 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_record_string_i_64(
+    List<(String, PlatformInt64)> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_setting_entry_dto(
     List<SettingEntryDto> self,
     SseSerializer serializer,
   );
 
   @protected
-  void sse_encode_list_source_bundle_dto(
-    List<SourceBundleDto> self,
+  void sse_encode_list_source_availability_dto(
+    List<SourceAvailabilityDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_source_tree_node_dto(
+    List<SourceTreeNodeDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_sync_device_dto(
+    List<SyncDeviceDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_sync_history_dto(
+    List<SyncHistoryDto> self,
     SseSerializer serializer,
   );
 
@@ -720,6 +990,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_source_snapshot_dto(
+    SourceSnapshotDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_list_prim_u_8_strict(
     Uint8List? self,
     SseSerializer serializer,
@@ -736,6 +1012,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_read_record_dto(ReadRecordDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_record_string_i_64(
+    (String, PlatformInt64) self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_record_string_string(
@@ -762,10 +1044,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_source_bundle_dto(
-    SourceBundleDto self,
+  void sse_encode_source_availability_dto(
+    SourceAvailabilityDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_source_snapshot_dto(
+    SourceSnapshotDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_source_tree_node_dto(
+    SourceTreeNodeDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_device_dto(SyncDeviceDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_sync_export_info(
@@ -774,10 +1071,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_sync_history_dto(
+    SyncHistoryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_sync_import_stats(
     SyncImportStats self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_sync_outcome_dto(
+    SyncOutcomeDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_status_dto(SyncStatusDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_tag_dto(TagDto self, SseSerializer serializer);

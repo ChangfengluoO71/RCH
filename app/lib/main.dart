@@ -10,7 +10,9 @@ import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
+import 'package:app/store/library_catalog.dart';
 import 'package:app/store/storage_access.dart';
+import 'package:app/store/sync_engine.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
@@ -35,7 +37,14 @@ Future<void> main() async {
   // 启动恢复自定义根：标记文件优先，library.json 兜底（在打开数据库之前）。
   final customRoot = await readCacheRootMarker() ?? await _cacheDirFromLibraryJson();
   if (customRoot != null && customRoot.isNotEmpty) {
-    await setCacheRootPath(path: customRoot);
+    if (_isInvalidRootForPlatform(customRoot)) {
+      // 移动端残留 Windows 绝对路径（如 D:\...）：直接忽略并清掉标记，回退默认根，
+      // 否则 SQLite 会在不存在的路径上打开失败导致启动崩溃。
+      await writeCacheRootMarker('');
+      debugPrint('[main] 忽略跨平台无效缓存根: $customRoot');
+    } else {
+      await setCacheRootPath(path: customRoot);
+    }
   }
   // 数据愈合：当前根缺 database.db 时，从旧位置挑最新的一份搬入。
   await _healDatabaseLocation();
@@ -55,9 +64,13 @@ Future<void> main() async {
   await LibraryStore.instance.load();
   // 加载远程目录快照（文件夹封面全本地判定用，跨重启保留）
   await FolderSnapshotStore.instance.load();
+  // 资料库目录树（设备 → 书源 → 可用性；Phase 6.1）
+  await LibraryCatalogStore.instance.loadTree();
 
   // 备份/同步：加载配置并按需启动定时同步。
   await SyncManager.instance.init();
+  // 自动同步引擎：防抖 + 定时 + 启动拉取（ADR-024）。
+  await SyncEngine.instance.init();
 
   // 后台 AI 超分：加载持久化队列并续跑。
   await AiUpscaleManager.instance.init();
@@ -66,6 +79,12 @@ Future<void> main() async {
   final root = await cacheRootPath();
   final pending = await pendingMigration(root: root);
   runApp(RchApp(startupPending: pending));
+}
+
+/// 移动端（Android）拒绝 Windows 风格绝对路径（盘符 / UNC）作为缓存根。
+bool _isInvalidRootForPlatform(String root) {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) return false;
+  return RegExp(r'^[A-Za-z]:[\\/]').hasMatch(root) || root.startsWith(r'\\');
 }
 
 /// 全局错误日志：未捕获异常（含完整堆栈）追加写入缓存根目录 errors.log，

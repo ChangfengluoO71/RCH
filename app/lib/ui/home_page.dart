@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
-import 'package:app/src/rust/api/package.dart';
 import 'package:app/store/baidu_session.dart';
+import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/models.dart';
@@ -13,12 +13,14 @@ import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/store/update_manager.dart';
 import 'package:app/ui/book_detail_page.dart';
+import 'package:app/ui/backup_panel.dart';
 import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/cloud115_qr_scan.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
-import 'package:app/ui/opener.dart';
+import 'package:app/ui/global_search.dart';
 import 'package:app/ui/source_browser.dart';
+import 'package:app/ui/source_tree.dart';
 import 'package:app/ui/sync_panel.dart';
 import 'package:app/ui/update_panel.dart';
 import 'package:file_selector/file_selector.dart';
@@ -51,6 +53,7 @@ class _HomePageState extends State<HomePage> {
   String _tagDraft = '';             // 正在输入的标签片段（#后文字）
   final TextEditingController _searchCtrl = TextEditingController();
   bool _globalMode = false;          // false=筛选当前视图, true=跨书源搜索
+  final ValueNotifier<int> _globalCount = ValueNotifier<int>(0);
   String? _detailTag;
   /// 元数据标签各组的展开状态（会话内保持，按类别名索引）。
   final Map<String, bool> _metaExpandedGroups = {};
@@ -324,21 +327,31 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildSourceList() {
-    final store = LibraryStore.instance;
     return Column(children: [
       Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Row(children: [
         const Text('书源', style: TextStyle(color: Colors.white54, fontSize: 12)), const Spacer(),
         InkWell(onTap: () => _importLocalComics(), borderRadius: BorderRadius.circular(4),
           child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add_photo_alternate_outlined, size: 18, color: Colors.white70))),
-        InkWell(onTap: () => _exportSourceBundle(), borderRadius: BorderRadius.circular(4),
-          child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.upload_file_outlined, size: 18, color: Colors.white70))),
-        InkWell(onTap: () => _importSourceBundle(), borderRadius: BorderRadius.circular(4),
-          child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.file_open_outlined, size: 18, color: Colors.white70))),
         InkWell(onTap: () => showDialog(context: context, builder: (c) => const AddSourceDialog()), borderRadius: BorderRadius.circular(4),
           child: const Padding(padding: EdgeInsets.all(2), child: Icon(Icons.add, size: 18, color: Colors.white70))),
       ])),
       const SizedBox(height: 4),
-      Expanded(child: ListView(children: store.sources.where((s) => !s.remoteOnly).map(_sourceTile).toList())),
+      Expanded(
+        child: SourceTreePanel(
+          onEditSource: (s) {
+            final src = LibraryStore.instance.sourceById(s.sourceId);
+            if (src != null) _showEditSource(src);
+          },
+          onShowDetail: (s) {
+            final src = LibraryStore.instance.sourceById(s.sourceId);
+            if (src != null) _showSourceDetail(src);
+          },
+          onDeleteSource: (s) {
+            final src = LibraryStore.instance.sourceById(s.sourceId);
+            if (src != null) _deleteSource(src);
+          },
+        ),
+      ),
     ]);
   }
 
@@ -392,6 +405,7 @@ class _HomePageState extends State<HomePage> {
     if (src == null) {
       src = BookSource(id: 'local_import', type: 'local', name: '导入的漫画', path: booksPath);
       store.addSource(src);
+      LibraryCatalogStore.instance.loadTree();
     }
 
     if (!mounted) return;
@@ -409,194 +423,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 从加密"书源凭据包"导入书源（含 cookie/token，口令解密）。
-  Future<void> _importSourceBundle() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(
-          label: 'RCH 书源包',
-          extensions: ['txt', 'rchbundle', 'json'],
-          // Android 文件管理器按 MIME 过滤，`rchbundle` 是未知扩展名，
-          // 必须放行 octet-stream 才能选中本机保存的书源包。
-          mimeTypes: ['text/plain', 'application/json', 'application/octet-stream'],
-        ),
-      ],
-    );
-    if (file == null || !mounted) return;
-    final pass = await _askBundlePassphrase();
-    if (pass == null || !mounted) return;
-    try {
-      final data = await file.readAsString();
-      final sources = await sourceBundleDecrypt(passphrase: pass, data: data);
-      var added = 0;
-      for (final s in sources) {
-        if (s.type.isEmpty) continue;
-        LibraryStore.instance.addSource(BookSource(
-          id: s.id.isEmpty ? '${s.type}_${DateTime.now().millisecondsSinceEpoch}' : s.id,
-          type: s.type,
-          name: s.name.isEmpty ? s.type : s.name,
-          path: s.path,
-          url: s.url,
-          username: s.username,
-          port: s.port?.toInt(),
-          clientId: s.clientId,
-          rootId: s.rootId,
-          cookie: s.cookie,
-          password: s.password,
-          refreshToken: s.refreshToken,
-          clientSecret: s.clientSecret,
-          note: s.note,
-        ));
-        added++;
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('已导入 $added 个书源（含加密凭据）')));
-      }
-    } catch (e) {
-      debugPrint('[import] 导入失败: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('导入失败: $e')));
-      }
-    }
-  }
-
-  /// 导出加密"书源凭据包"：仅含带凭据的远程书源（本地/SMB 与幽灵源不导出）。
-  /// 与"导入书源凭据包"互为镜像，用于跨设备显式共享书源（含 cookie/token）。
-  Future<void> _exportSourceBundle() async {
-    final candidates = LibraryStore.instance.sources
-        .where((s) => !s.remoteOnly && !s.isLocalFs)
-        .where((s) =>
-            (s.password?.isNotEmpty ?? false) ||
-            (s.refreshToken?.isNotEmpty ?? false) ||
-            (s.clientSecret?.isNotEmpty ?? false) ||
-            (s.cookie?.isNotEmpty ?? false))
-        .toList();
-    if (candidates.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('没有可导出的带凭据远程书源')),
-        );
-      }
-      return;
-    }
-    final pass = await _askBundleExportPassphrase();
-    if (pass == null || !mounted) return;
-    if (pass.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('口令不能为空')),
-      );
-      return;
-    }
-    final stamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName = 'rch_sources_$stamp.rchbundle';
-    final String destPath;
-    if (isAndroidPlatform) {
-      // Android 的 file_selector 未实现"保存文件"对话框，降级为"选择目录后写入"。
-      if (!await ensureAllFilesAccess(context)) return;
-      final dir = await getDirectoryPath(confirmButtonText: '选择此目录');
-      if (dir == null || !mounted) return;
-      destPath = '$dir${Platform.pathSeparator}$fileName';
-    } else {
-      final loc = await getSaveLocation(
-        suggestedName: fileName,
-        acceptedTypeGroups: const [
-          XTypeGroup(label: 'RCH 书源包', extensions: ['rchbundle', 'txt', 'json']),
-        ],
-      );
-      if (loc == null || !mounted) return;
-      destPath = loc.path;
-    }
-    try {
-      final sources = candidates
-          .map((s) => SourceBundleDto(
-                id: s.id,
-                type: s.type,
-                name: s.name,
-                path: s.path,
-                url: s.url,
-                username: s.username,
-                port: s.port,
-                clientId: s.clientId,
-                rootId: s.rootId,
-                password: s.password,
-                refreshToken: s.refreshToken,
-                clientSecret: s.clientSecret,
-                cookie: s.cookie,
-                note: s.note,
-              ))
-          .toList();
-      final data = await sourceBundleEncrypt(passphrase: pass, sources: sources);
-      await File(destPath).writeAsString(data);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已加密导出 ${sources.length} 个书源（含凭据）')),
-        );
-      }
-    } catch (e) {
-      debugPrint('[export] 书源凭据包导出失败: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('导出失败: $e')));
-      }
-    }
-  }
-
-  Future<String?> _askBundleExportPassphrase() {
-    final ctrl = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('导出加密书源包'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('设置口令以加密书源凭据；目标设备导入时需输入同一口令。', style: TextStyle(fontSize: 12)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: ctrl,
-            obscureText: true,
-            autofocus: true,
-            decoration: const InputDecoration(
-                labelText: '口令', border: OutlineInputBorder(), isDense: true),
-          ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(null), child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.of(c).pop(ctrl.text.trim()),
-              child: const Text('加密导出')),
-        ],
-      ),
-    );
-  }
-
-  Future<String?> _askBundlePassphrase() {
-    final ctrl = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('导入加密书源包'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('输入导出时设置的口令以解密书源凭据。', style: TextStyle(fontSize: 12)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: ctrl,
-            obscureText: true,
-            autofocus: true,
-            decoration: const InputDecoration(
-                labelText: '口令', border: OutlineInputBorder(), isDense: true),
-          ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(null), child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.of(c).pop(ctrl.text.trim()),
-              child: const Text('解密导入')),
-        ],
-      ),
-    );
-  }
-
   Widget _nav(IconData icon, String label, String s) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
     child: ListTile(dense: true, leading: Icon(icon, size: 20), title: Text(label, style: const TextStyle(fontSize: 14)),
@@ -604,56 +430,6 @@ class _HomePageState extends State<HomePage> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       onTap: () => _select(s)),
   );
-
-  Widget _sourceTile(BookSource src) {
-    final sel = _section == 'source' && _source?.id == src.id;
-    final icon = src.isWebDav
-        ? Icons.cloud
-        : src.isSftp
-            ? Icons.dns
-            : src.isSmb
-                ? Icons.lan
-                : src.isBaidu
-                    ? Icons.cloud_queue
-                : src.is115
-                    ? Icons.cloud_upload
-                    : src.isQuark
-                        ? Icons.cloud_done
-                        : Icons.folder;
-    final iconColor = src.isWebDav
-        ? Colors.lightBlueAccent
-        : src.isSftp
-            ? Colors.tealAccent
-            : src.isBaidu
-                ? Colors.orangeAccent
-                : src.is115
-                    ? Colors.amber
-                    : src.isQuark
-                        ? Colors.cyanAccent
-                        : Colors.amber;
-    return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1), child: ListTile(
-      dense: true, leading: Icon(icon, size: 20, color: iconColor),
-      title: Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(src.capabilityDisplay.emoji, style: const TextStyle(fontSize: 12)), const SizedBox(width: 4),
-        Flexible(child: Text(src.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14))),
-      ]),
-      selected: sel, selectedTileColor: Colors.white10, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      onTap: () => _select('source', src),
-      trailing: PopupMenuButton<String>(itemBuilder: (c) => const [
-        PopupMenuItem(value: 'edit', child: Text('编辑书源')),
-        PopupMenuItem(value: 'detail', child: Text('书源详情')),
-        PopupMenuItem(value: 'delete', child: Text('删除书源')),
-      ], onSelected: (act) {
-        if (act == 'edit') {
-          _showEditSource(src);
-        } else if (act == 'detail') {
-          _showSourceDetail(src);
-        } else {
-          _deleteSource(src);
-        }
-      }),
-    ));
-  }
 
   // ============================================================
   // 右侧内容区 —— 全局模式 vs 筛选模式共用 _textSearch + _tags
@@ -678,34 +454,18 @@ class _HomePageState extends State<HomePage> {
 
   // ---- 全局搜索结果 ----
   Widget _buildGlobalResults() {
-    final results = LibraryStore.instance.globalSearch(
-      text: _textSearch,
-      tags: _tags,
-      includeRemoteOnly: SyncManager.instance.crossDeviceSearch,
-    );
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _buildFilterBar(results.length),
+      ValueListenableBuilder<int>(
+        valueListenable: _globalCount,
+        builder: (c, n, _) => _buildFilterBar(n),
+      ),
       Expanded(
-        child: results.isEmpty
-            ? const Center(child: Text('没有匹配的漫画', style: TextStyle(color: Colors.white38)))
-            : GridView.builder(padding: const EdgeInsets.all(16), gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 180, childAspectRatio: 0.66, crossAxisSpacing: 12, mainAxisSpacing: 12),
-                itemCount: results.length, itemBuilder: (c, i) {
-                  final r = results[i];
-                  final ghost = r.source.remoteOnly;
-                  return ComicCard(
-                    source: r.source,
-                    path: r.path,
-                    title: r.title,
-                    subtitle: ghost
-                        ? '仅元数据 · 来自${SyncManager.instance.deviceNameOf(r.source.originDeviceId)}'
-                        : r.source.name,
-                    onTap: ghost
-                        ? () => Navigator.of(context).push(MaterialPageRoute(
-                            builder: (_) => BookDetailPage(
-                                source: r.source, path: r.path, title: r.title)))
-                        : () => openBook(context, r.source, r.path, r.title),
-                  );
-                }),
+        child: GlobalSearchResults(
+          query: _textSearch,
+          tags: _tags,
+          includeRemote: SyncManager.instance.crossDeviceSearch,
+          countNotifier: _globalCount,
+        ),
       ),
     ]);
   }
@@ -819,6 +579,7 @@ class _HomePageState extends State<HomePage> {
               rootId: rootIdCtrl.text.trim().isEmpty ? null : rootIdCtrl.text.trim(),
               cookie: cookieCtrl.text.trim().isEmpty ? null : cookieCtrl.text.trim(),
               note: noteCtrl.text.trim());
+          LibraryCatalogStore.instance.loadTree();
           if (src.isQuark) clearQuarkSession(src.id);
           if (src.is115) clearCloud115Session(src.id);
           if (src.isBaidu) clearBaiduSession(src.id);
@@ -856,7 +617,14 @@ class _HomePageState extends State<HomePage> {
   void _deleteSource(BookSource src) {
     showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: Text('删除书源"${src.name}"?'), content: const Text('将同时删除该书源下的所有阅读记录和元数据'),
       actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('删除'))]))
-      .then((ok) { if (ok == true) { LibraryStore.instance.removeSourceWithCleanup(src.id); setState(() {}); } });
+      .then((ok) {
+        if (ok == true) {
+          LibraryStore.instance.removeSourceWithCleanup(src.id);
+          // 设备→书源树同步刷新（否则删除要重启才生效）
+          LibraryCatalogStore.instance.loadTree();
+          setState(() {});
+        }
+      });
   }
 
   // ============================================================
@@ -960,7 +728,7 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSettings() {
     final s = LibraryStore.instance.settings;
     return ListenableBuilder(listenable: LibraryStore.instance, builder: (c, _) => ListView(padding: const EdgeInsets.all(24), children: [
-      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const _StoragePermissionTile(), const SizedBox(height: 28), _tabletLayout(s), const SizedBox(height: 16), const CacheManagerPanel(), const SizedBox(height: 28), const SyncPanel(), const SizedBox(height: 28), const UpdatePanel(), const SizedBox(height: 28),
+      const Text('设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 28), const _StoragePermissionTile(), const SizedBox(height: 28), _tabletLayout(s), const SizedBox(height: 16), const CacheManagerPanel(), const SizedBox(height: 28), const SyncPanel(), const SizedBox(height: 28), const BackupPanel(), const SizedBox(height: 28), const UpdatePanel(), const SizedBox(height: 28),
       _readingDefaults(s), const SizedBox(height: 16), _remoteSources(s), const SizedBox(height: 16), _localComics(s), const SizedBox(height: 16), _keybinds(s), const SizedBox(height: 28), _coverQuality(s), const SizedBox(height: 32), _theme(s),
     ]));
   }

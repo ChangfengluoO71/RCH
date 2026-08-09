@@ -6,8 +6,6 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`
-
 /// 导出标准包到文件。`incremental=true` 时只导出自上次游标以来的变更。
 Future<SyncExportInfo> rchpkgExport({
   required String path,
@@ -58,96 +56,6 @@ Future<SyncImportStats> rchpkgImportWithCredentials({
 /// 默认同步目录约定：`<root>/RCH/sync`。
 Future<String> rchpkgDefaultSyncDir({required String root}) =>
     RustLib.instance.api.crateApiPackageRchpkgDefaultSyncDir(root: root);
-
-/// 加密导出"书源凭据包"：返回 JSON 文本（AES-256-GCM + 口令派生）。
-Future<String> sourceBundleEncrypt({
-  required String passphrase,
-  required List<SourceBundleDto> sources,
-}) => RustLib.instance.api.crateApiPackageSourceBundleEncrypt(
-  passphrase: passphrase,
-  sources: sources,
-);
-
-/// 解密"书源凭据包"：口令错误或数据损坏会报错。
-Future<List<SourceBundleDto>> sourceBundleDecrypt({
-  required String passphrase,
-  required String data,
-}) => RustLib.instance.api.crateApiPackageSourceBundleDecrypt(
-  passphrase: passphrase,
-  data: data,
-);
-
-/// 书源凭据包条目（加密导入用）。
-class SourceBundleDto {
-  final String id;
-  final String type;
-  final String name;
-  final String path;
-  final String? url;
-  final String? username;
-  final PlatformInt64? port;
-  final String? clientId;
-  final String? rootId;
-  final String? password;
-  final String? refreshToken;
-  final String? clientSecret;
-  final String? cookie;
-  final String note;
-
-  const SourceBundleDto({
-    required this.id,
-    required this.type,
-    required this.name,
-    required this.path,
-    this.url,
-    this.username,
-    this.port,
-    this.clientId,
-    this.rootId,
-    this.password,
-    this.refreshToken,
-    this.clientSecret,
-    this.cookie,
-    required this.note,
-  });
-
-  @override
-  int get hashCode =>
-      id.hashCode ^
-      type.hashCode ^
-      name.hashCode ^
-      path.hashCode ^
-      url.hashCode ^
-      username.hashCode ^
-      port.hashCode ^
-      clientId.hashCode ^
-      rootId.hashCode ^
-      password.hashCode ^
-      refreshToken.hashCode ^
-      clientSecret.hashCode ^
-      cookie.hashCode ^
-      note.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is SourceBundleDto &&
-          runtimeType == other.runtimeType &&
-          id == other.id &&
-          type == other.type &&
-          name == other.name &&
-          path == other.path &&
-          url == other.url &&
-          username == other.username &&
-          port == other.port &&
-          clientId == other.clientId &&
-          rootId == other.rootId &&
-          password == other.password &&
-          refreshToken == other.refreshToken &&
-          clientSecret == other.clientSecret &&
-          cookie == other.cookie &&
-          note == other.note;
-}
 
 /// 导出结果统计。
 class SyncExportInfo {

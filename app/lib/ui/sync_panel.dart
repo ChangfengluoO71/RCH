@@ -1,11 +1,14 @@
-// 设置页"备份 / 同步"面板（P2）：模式选择、目录/书源配置、手动同步与恢复。
+// 同步设置（Phase 6.5 收敛版）。
+//
+// 只保留：WebDAV 配置 + 测试连接 + 设备名称 + 自动同步 + 最后同步/状态 + 立即同步 +
+// 参与设备 + 同步历史。旧概念（Push/Pull/Export/Import/Archive/rchbundle）本阶段从面板移除，
+// 正式删除在 Phase 7。
 
-import 'dart:io';
+// ignore_for_file: unused_element
 
+import 'package:app/src/rust/api/sync.dart' as syncapi;
+import 'package:app/store/sync_engine.dart';
 import 'package:app/store/sync_manager.dart';
-import 'package:app/store/storage_access.dart';
-import 'package:app/ui/common.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 class SyncPanel extends StatefulWidget {
@@ -20,6 +23,11 @@ class _SyncPanelState extends State<SyncPanel> {
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _dirCtrl = TextEditingController();
+  final _deviceNameCtrl = TextEditingController();
+
+  String _lastSyncText = '从未';
+  List<syncapi.SyncHistoryDto> _history = [];
+  List<syncapi.SyncDeviceDto> _devices = [];
 
   @override
   void initState() {
@@ -29,103 +37,36 @@ class _SyncPanelState extends State<SyncPanel> {
     _userCtrl.text = mgr.webdavUsername;
     _passCtrl.text = mgr.webdavPassword;
     _dirCtrl.text = mgr.webdavDir;
-    SyncManager.instance.addListener(_onChanged);
+    _deviceNameCtrl.text = mgr.deviceName;
+    _refreshMeta();
   }
 
   @override
   void dispose() {
-    SyncManager.instance.removeListener(_onChanged);
     _urlCtrl.dispose();
     _userCtrl.dispose();
     _passCtrl.dispose();
     _dirCtrl.dispose();
+    _deviceNameCtrl.dispose();
     super.dispose();
   }
 
-  void _onChanged() {
+  Future<void> _refreshMeta() async {
+    try {
+      final st = await syncapi.syncStatus();
+      if (st.lastError.isNotEmpty) {
+        _lastSyncText = '上次失败: ${st.lastError}';
+      } else if (!st.initialized) {
+        _lastSyncText = '从未';
+      } else {
+        final t = DateTime.fromMillisecondsSinceEpoch(st.lastSyncAt).toLocal();
+        final s = t.toString();
+        _lastSyncText = '${s.substring(0, s.length > 19 ? 19 : s.length)}（v${st.revision}）';
+      }
+      _history = await syncapi.syncHistoryRecent(limit: 8);
+      _devices = await syncapi.syncDevicesList();
+    } catch (_) {}
     if (mounted) setState(() {});
-  }
-
-  Future<void> _pickDir() async {
-    final picked = await getDirectoryPath();
-    if (picked == null || !mounted) return;
-    await SyncManager.instance.setDir(picked);
-  }
-
-  Future<void> _restore() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(label: 'RCH 同步包', extensions: ['rchpkg']),
-      ],
-    );
-    if (file == null || !mounted) return;
-    final pass = await _askPassphrase();
-    if (pass == null || !mounted) return;
-    final result = pass.isEmpty
-        ? await SyncManager.instance.restoreFrom(file.path)
-        : await SyncManager.instance.restoreFromWithCredentials(file.path, pass);
-    if (mounted) _snack(result);
-  }
-
-  /// 导出标准同步包到用户选择的位置（可选加密凭据）。
-  Future<void> _exportToFile() async {
-    final pass = await _askPassphrase(
-      title: '导出到文件',
-      message: '如需将书源凭据一并加密写入包，请设置口令；留空则导出不含凭据的同步包。',
-    );
-    if (pass == null || !mounted) return;
-    final stamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName = 'rch_sync_$stamp.rchpkg';
-    final String destPath;
-    if (isAndroidPlatform) {
-      // Android 的 file_selector 未实现"保存文件"对话框，降级为"选择目录后写入"。
-      if (!await ensureAllFilesAccess(context)) return;
-      final dir = await getDirectoryPath(confirmButtonText: '选择此目录');
-      if (dir == null || !mounted) return;
-      destPath = '$dir${Platform.pathSeparator}$fileName';
-    } else {
-      final loc = await getSaveLocation(
-        suggestedName: fileName,
-        acceptedTypeGroups: const [
-          XTypeGroup(label: 'RCH 同步包', extensions: ['rchpkg']),
-        ],
-      );
-      if (loc == null || !mounted) return;
-      destPath = loc.path;
-    }
-    final result = await SyncManager.instance.exportToFile(destPath, passphrase: pass);
-    if (mounted) _snack(result);
-  }
-
-  /// 询问是否包含加密凭据的口令（留空 = 不含凭据的普通包）。
-  Future<String?> _askPassphrase({
-    String title = '恢复',
-    String message = '若该同步包包含加密书源凭据，请输入导出时设置的口令；否则留空。',
-  }) {
-    final ctrl = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: Text(title),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(message, style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: ctrl,
-            obscureText: true,
-            autofocus: true,
-            decoration: const InputDecoration(
-                labelText: '口令（可选）', border: OutlineInputBorder(), isDense: true),
-          ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(null), child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.of(c).pop(ctrl.text.trim()),
-              child: const Text('确定')),
-        ],
-      ),
-    );
   }
 
   Future<void> _saveWebdav() async {
@@ -137,36 +78,24 @@ class _SyncPanelState extends State<SyncPanel> {
     );
   }
 
+  Future<void> _saveDeviceName() async {
+    SyncManager.instance.deviceName = _deviceNameCtrl.text.trim();
+    await SyncManager.instance.save();
+  }
+
   Future<void> _testWebdav() async {
     await _saveWebdav();
     final r = await SyncManager.instance.testWebdavConnection();
     if (mounted) _snack(r);
   }
 
-  Future<void> _cleanArchives() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('清理归档副本'),
-        content: const Text(
-          '将删除同步目标 archive/ 目录里的全部历史包（保留当前 latest.rchpkg）。'
-          '这些是回滚历史，删除后无法再恢复旧版本数据。继续？',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(c, true),
-            child: const Text('清理'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    final r = await SyncManager.instance.cleanArchives();
-    if (mounted) _snack(r.message);
+  Future<void> _syncNow() async {
+    final m = await SyncEngine.instance.syncNow();
+    if (mounted) {
+      setState(() {});
+      await _refreshMeta();
+      _snack(m);
+    }
   }
 
   Widget _configField(String label, TextEditingController ctrl,
@@ -200,134 +129,89 @@ class _SyncPanelState extends State<SyncPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final mgr = SyncManager.instance;
-    final last = mgr.lastAt == 0
-        ? '从未'
-        : DateTime.fromMillisecondsSinceEpoch(mgr.lastAt)
-            .toLocal()
-            .toString()
-            .substring(0, 19);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('备份 / 同步', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const Text('同步', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         const SizedBox(height: 4),
         const Text(
-          '无服务器，通过你自己的 WebDAV 或网盘同步盘双向同步；敏感凭据不会写入同步包。',
+          '通过 WebDAV 同步文件夹进行多设备同步；浏览使用离线索引，凭据仅保存在本机。',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 8),
+        _configField('WebDAV 地址', _urlCtrl,
+            hint: 'https://dav.example.com/dav', onChanged: (_) => _saveWebdav()),
+        _configField('账号', _userCtrl, onChanged: (_) => _saveWebdav()),
+        _configField('密码', _passCtrl, obscure: true, onChanged: (_) => _saveWebdav()),
+        _configField('远程目录', _dirCtrl,
+            hint: 'RCH/sync（留空用默认）', onChanged: (_) => _saveWebdav()),
+        _configField('设备名称', _deviceNameCtrl,
+            hint: '我的 Windows（随同步传播）', onChanged: (_) => _saveDeviceName()),
+        const SizedBox(height: 8),
         Row(children: [
-          const Text('模式: '),
-          DropdownButton<SyncMode>(
-            value: mgr.mode,
-            items: SyncMode.values
-                .map((m) => DropdownMenuItem(value: m, child: Text(m.label)))
-                .toList(),
-            onChanged: (v) {
-              if (v != null) mgr.setMode(v);
+          TextButton.icon(
+            onPressed: _testWebdav,
+            icon: const Icon(Icons.wifi_tethering, size: 18),
+            label: const Text('测试连接'),
+          ),
+          TextButton.icon(
+            onPressed: _syncNow,
+            icon: const Icon(Icons.sync, size: 18),
+            label: const Text('立即同步'),
+          ),
+          const Spacer(),
+          const Text('自动同步', style: TextStyle(fontSize: 12)),
+          Switch(
+            value: SyncEngine.instance.autoSync,
+            onChanged: (v) async {
+              await SyncEngine.instance.setAutoSync(v);
+              if (mounted) setState(() {});
             },
           ),
         ]),
-        if (mgr.mode == SyncMode.folder) ...[
-          Row(children: [
-            Expanded(
-              child: Text(
-                mgr.dir.isEmpty ? '未选择同步目录' : mgr.dir,
-                style: const TextStyle(fontSize: 12),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            TextButton(onPressed: _pickDir, child: const Text('选择目录')),
-          ]),
-          const Text(
-            '提示：选择网盘同步盘（OneDrive / 坚果云 / 百度同步空间等）的本地文件夹。',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-        ],
-        if (mgr.mode == SyncMode.webdav) ...[
-          _configField('WebDAV 地址', _urlCtrl, hint: 'https://dav.example.com/dav',
-              onChanged: (_) => _saveWebdav()),
-          _configField('用户名', _userCtrl,
-              onChanged: (_) => _saveWebdav()),
-          _configField('密码', _passCtrl, obscure: true,
-              onChanged: (_) => _saveWebdav()),
-          _configField('远程目录', _dirCtrl, hint: 'RCH/sync（留空用默认）',
-              onChanged: (_) => _saveWebdav()),
-          Row(children: [
-            TextButton.icon(
-              onPressed: mgr.busy ? null : _testWebdav,
-              icon: const Icon(Icons.wifi_tethering, size: 18),
-              label: const Text('测试连接'),
-            ),
-          ]),
-          const Text(
-            '提示：同步包写入自定义远程目录（默认 RCH/sync），凭据仅保存在本机、不进入同步包。',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-        ],
-        if (mgr.mode != SyncMode.off) ...[
-          Row(children: [
-            const Expanded(child: Text('跨设备搜索', style: TextStyle(fontSize: 14))),
-            Switch(
-              value: mgr.crossDeviceSearch,
-              onChanged: (v) => mgr.setCrossDeviceSearch(v),
-            ),
-          ]),
-          const Text(
-            '开启后，全局搜索包含其他设备的本地书源（仅元数据，可编辑不可阅读）。',
-            style: TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-        ],
-        const SizedBox(height: 4),
-        Wrap(spacing: 4, runSpacing: 2, children: [
-          if (mgr.mode != SyncMode.off) ...[
-            TextButton.icon(
-              onPressed: mgr.busy
-                  ? null
-                  : () => mgr.pushNow().then((m) {
-                        if (mounted) _snack(m);
-                      }),
-              icon: const Icon(Icons.upload),
-              label: const Text('立即推送'),
-            ),
-            TextButton.icon(
-              onPressed: mgr.busy
-                  ? null
-                  : () => mgr.pullNow().then((m) {
-                        if (mounted) _snack(m);
-                      }),
-              icon: const Icon(Icons.download),
-              label: const Text('立即拉取'),
-            ),
-          ],
-          TextButton.icon(
-            onPressed: mgr.busy ? null : _exportToFile,
-            icon: const Icon(Icons.save_alt, size: 18),
-            label: const Text('导出到文件'),
-          ),
-          TextButton.icon(
-            onPressed: mgr.busy ? null : _restore,
-            icon: const Icon(Icons.restore),
-            label: const Text('从文件恢复'),
-          ),
-          if (mgr.mode != SyncMode.off)
-            TextButton.icon(
-              onPressed: mgr.busy ? null : _cleanArchives,
-              icon: const Icon(Icons.cleaning_services, size: 18),
-              label: const Text('清理归档'),
-            ),
-        ]),
-        Text('最近同步: $last', style: const TextStyle(fontSize: 12)),
+        const Text(
+          '同步间隔 60 秒；启动/回前台/本地变更（防抖 2 秒）自动触发；失败自动重试。',
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        Text('最后同步: $_lastSyncText', style: const TextStyle(fontSize: 12)),
         Text(
-          mgr.lastStatus,
+          '状态: ${SyncEngine.instance.lastStatus}',
           style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
         ),
-        if (mgr.ignoredCopies > 0)
-          Text(
-            '检测到 ${mgr.ignoredCopies} 个冲突/临时副本，自动同步已忽略',
-            style: const TextStyle(fontSize: 12, color: Colors.orange),
-          ),
+        const SizedBox(height: 12),
+        const Text('参与设备', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        if (_devices.isEmpty)
+          const Text('暂无', style: TextStyle(fontSize: 12, color: Colors.white38))
+        else
+          ..._devices.map((d) => Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  '${d.deviceName}（${d.platform}）· 最后同步 v${d.lastRevision}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              )),
+        const SizedBox(height: 12),
+        const Text('同步历史', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        if (_history.isEmpty)
+          const Text('暂无', style: TextStyle(fontSize: 12, color: Colors.white38))
+        else
+          ..._history.map((h) {
+            final t = DateTime.fromMillisecondsSinceEpoch(h.startTime).toLocal();
+            final s = t.toString();
+            final time = s.substring(0, s.length > 19 ? 19 : s.length);
+            final err = h.error.isEmpty ? '' : ' · 失败: ${h.error}';
+            return Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '$time  v${h.revisionBefore}→v${h.revisionAfter}'
+                '  拉${h.pullCount} 推${h.pushCount} 合${h.mergeCount} 冲突${h.conflictCount}$err',
+                style: const TextStyle(fontSize: 11, color: Colors.white70),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          }),
       ],
     );
   }

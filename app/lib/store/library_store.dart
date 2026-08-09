@@ -9,6 +9,7 @@ import '../repository/book_repository.dart';
 import '../repository/record_repository.dart';
 import '../repository/tag_repository.dart';
 import '../src/rust/api/db.dart';
+import 'library_index_service.dart';
 import 'models.dart';
 
 /// 应用数据存储 facade（ADR-016/018）。
@@ -53,8 +54,12 @@ class LibraryStore extends ChangeNotifier {
   /// 最近一次持久化失败的原因（无失败为 null）。供 UI 观测。
   Object? get lastSaveError => _lastSaveError;
 
-  Future<void> load() async {
-    if (_loaded) return;
+  /// 加载全部数据（SQLite 优先，空则回退 library.json）。
+  /// `force=true`：同步成功后强制重载，避免 Rust 侧已变更而 Dart 内存态过期
+  /// （ADR-028 §12.5；repository 的 loadFromSqlite 均先 clear，重载安全）。
+  Future<void> load({bool force = false}) async {
+    if (_loaded && !force) return;
+    _loaded = false;
     try {
       final migrated = await dataIsMigrated();
       if (migrated) {
@@ -402,6 +407,13 @@ class LibraryStore extends ChangeNotifier {
 
   void updateSource(String id, {String? name, String? url, String? username, String? password, int? port, String? path, String? refreshToken, String? clientId, String? clientSecret, String? rootId, String? cookie, String? note}) {
     _books.updateSource(id, name: name, url: url, username: username, password: password, port: port, path: path, refreshToken: refreshToken, clientId: clientId, clientSecret: clientSecret, rootId: rootId, cookie: cookie, note: note);
+    // Phase 6.1 采纳语义：用户编辑保存即视为"本机配置该书源"——
+    // 同步进来的远端书源（remote_only）编辑后转为逻辑本地源（归入本机区）。
+    final src = sourceById(id);
+    if (src != null && src.remoteOnly) {
+      src.remoteOnly = false;
+      src.originDeviceId = null;
+    }
     notifyListeners(); saveToDisk();
   }
 
@@ -439,6 +451,8 @@ class LibraryStore extends ChangeNotifier {
     final key = RecordRepository.keyOf(source.type, source.id, path);
     final r = _records.upsert(source: source, path: path, title: title, page: page);
     TagRepository.instance.link(key, '已读');
+    // ADR-029 触及即补：已读的书自动入离线索引（本地 upsert，零网络）
+    LibraryIndexService.ensureIndexed(source, path, name: title);
     notifyListeners();
     try {
       // 轻量落盘（B 方案）：只写记录 + 标签关联，不写全量 JSON。
@@ -662,6 +676,8 @@ class LibraryStore extends ChangeNotifier {
       for (final p in paths) {
         final key = bookKeyOf(src.type, src.id, p);
         TagRepository.instance.link(key, '已读');
+        // ADR-029 触及即补：批量标签的书（含未读）自动入离线索引
+        LibraryIndexService.ensureIndexed(src, p);
       }
       notifyListeners(); saveToDisk();
       return;
@@ -676,6 +692,7 @@ class LibraryStore extends ChangeNotifier {
     for (final p in paths) {
       final m = metaOf(src, p);
       final key = bookKeyOf(src.type, src.id, p);
+      LibraryIndexService.ensureIndexed(src, p, name: m.title);
       if (existingField == null) {
         if (!m.tags.contains(tag)) { m.tags.add(tag); TagRepository.instance.link(key, tag); }
       } else {

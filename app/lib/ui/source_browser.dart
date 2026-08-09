@@ -2,10 +2,13 @@ import 'dart:io';
 
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/export.dart';
+import 'package:app/src/rust/api/library.dart' as frblib;
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/folder_snapshot_store.dart';
+import 'package:app/store/library_catalog.dart';
+import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
@@ -35,8 +38,16 @@ class SourceBrowser extends StatefulWidget {
   final BookSource source;
   final String search;
   final Set<String> selectedTags;
+  /// 作为独立路由推入时显示"返回"按钮（桌面端没有系统返回键）。
+  final bool showBack;
 
-  const SourceBrowser({super.key, required this.source, this.search = '', this.selectedTags = const {}});
+  const SourceBrowser({
+    super.key,
+    required this.source,
+    this.search = '',
+    this.selectedTags = const {},
+    this.showBack = false,
+  });
 
   @override
   State<SourceBrowser> createState() => _SourceBrowserState();
@@ -51,6 +62,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   BigInt? _session;
   bool _posterMode = true; // true=海报墙, false=简略列表
   String _sort = 'alpha'; // alpha=按字母, added=按加入时间(最新在前)
+  bool _offlineMode = false; // Phase 6.3：离线索引浏览（不连服务器）
   bool _converting = false; // 自动转 CBZ 执行中（防并发触发）
   bool _showConvertProgress = false; // 底部转换进度条可见
   int _convertDone = 0;
@@ -89,7 +101,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 阅读记录/元数据变化后重跑网盘目录判定（纯本地），
   /// 例如下载完成 / 记录加载后 未缓存 → 封面。
   void _onStoreChanged() {
-    if (widget.source.isLocalFs || _entries.isEmpty) return;
+    if (_offlineMode || widget.source.isLocalFs || _entries.isEmpty) return;
     setState(() {
       for (final e in _entries) {
         if (!e.isDir) continue;
@@ -99,23 +111,124 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   Future<void> _init() async {
-    if (widget.source.needsSession) {
-      try {
-        _session = widget.source.isWebDav
-            ? await webdavSessionFor(widget.source)
-            : widget.source.isSftp
-                ? await sftpSessionFor(widget.source)
-                : widget.source.isBaidu
-                    ? await baiduSessionFor(widget.source)
-                    : widget.source.isQuark
-                        ? await quarkSessionFor(widget.source)
-                        : await cloud115SessionFor(widget.source);
-      } catch (e) {
-        if (mounted) setState(() => _error = '连接远程书源失败:$e');
-        return;
+    final src = widget.source;
+    final localFs = src.isLocalFs;
+    if (localFs && Directory(src.path).existsSync()) {
+      // 本地源：路径在本机存在 → 默认在线浏览（真实目录）
+      await _list(_path);
+      return;
+    }
+    if (localFs || src.remoteOnly) {
+      // 本地路径不存在（如同步来的其他设备本地源）/ 远端幽灵源 → 只读离线索引；
+      // 本地源可随时通过 ☁"退出离线浏览"切回在线尝试。
+      _enterOffline();
+      return;
+    }
+    // 云端本机源：默认在线浏览（连接服务器真实目录）。
+    // 离线索引浏览作为可选模式：☁ 切换、浏览/触及自动积累、"生成离线索引（本地快照）"进入。
+    await _connectSession();
+    if (_session == null) {
+      // 连不上：有离线索引则回退离线浏览，否则提示错误
+      final count = await frblib.dbSourceIndexCount(sourceId: src.id);
+      if (count > 0) {
+        _enterOffline();
+      } else if (mounted) {
+        setState(() => _error = '连接远程书源失败，暂无离线索引');
       }
+      return;
     }
     await _list(_path);
+  }
+
+  Future<void> _connectSession() async {
+    if (_session != null || !widget.source.needsSession) return;
+    try {
+      _session = widget.source.isWebDav
+          ? await webdavSessionFor(widget.source)
+          : widget.source.isSftp
+              ? await sftpSessionFor(widget.source)
+              : widget.source.isBaidu
+                  ? await baiduSessionFor(widget.source)
+                  : widget.source.isQuark
+                      ? await quarkSessionFor(widget.source)
+                      : await cloud115SessionFor(widget.source);
+    } catch (e) {
+      if (mounted) setState(() => _error = '连接远程书源失败:$e');
+    }
+  }
+
+  void _enterOffline() {
+    setState(() {
+      _offlineMode = true;
+      _loading = true;
+      _error = null;
+      _folderKinds.clear();
+      _folderFirstFile.clear();
+    });
+    _listOffline(_path);
+  }
+
+  /// 退出离线索引浏览，切回在线浏览（云端源需要已连接会话）。
+  Future<void> _exitOffline() async {
+    if (!_offlineMode) return;
+    setState(() {
+      _offlineMode = false;
+      _error = null;
+    });
+    await _connectSession();
+    if (_session == null) {
+      // 连不上：提示并留在离线浏览
+      if (mounted) {
+        setState(() {
+          _offlineMode = true;
+          _error = '连接远程书源失败，无法切换在线浏览';
+        });
+      }
+      return;
+    }
+    await _list(_path);
+  }
+
+  /// 离线浏览：从 library_index 读取当前目录直接子条目（不建会话、不 list 服务器）。
+  Future<void> _listOffline(String path) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _folderKinds.clear();
+      _folderFirstFile.clear();
+    });
+    try {
+      final entries = await frblib.dbSourceDirEntries(
+        sourceId: widget.source.id,
+        dirPath: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _path = path;
+        _entries = entries
+            .map((e) => DirEntry(
+                  name: e.name,
+                  path: e.path,
+                  isDir: e.entryType == 'dir',
+                  size: BigInt.from(e.size ?? 0),
+                  mtime: e.modifiedAt ?? 0,
+                ))
+            .where((e) => e.isDir || _isComicEntry(e))
+            .toList();
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _relist() async {
+    if (_offlineMode) {
+      await _listOffline(_path);
+    } else {
+      await _list(_path);
+    }
   }
 
   Future<void> _list(String path) async {
@@ -138,17 +251,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
       if (!mounted) return;
       // 远程：把本次列表响应写入本地快照（复用同一次请求，不新增网盘请求）
       if (!widget.source.isLocalFs) {
-        FolderSnapshotStore.instance.put(
-          widget.source,
-          path,
-          list
-              .map((e) => FolderSnapshotEntry(
-                    name: e.name,
-                    path: e.path,
-                    isDir: e.isDir,
-                  ))
-              .toList(),
-        );
+        final snap = list
+            .map((e) => FolderSnapshotEntry(
+                  name: e.name,
+                  path: e.path,
+                  isDir: e.isDir,
+                ))
+            .toList();
+        FolderSnapshotStore.instance.put(widget.source, path, snap);
+        // ADR-029 浏览即索引：看过的目录顺手写入离线索引（本地，零网络）
+        LibraryIndexService.indexDirSnapshot(widget.source, path, snap);
       }
       setState(() {
         _path = path;
@@ -258,20 +370,100 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   void _openDir(String path) {
-    _stack.add(_path);
-    _list(path);
+    setState(() {
+      _stack.add(_path);
+      _path = path;
+    });
+    _relist();
   }
 
   void _goUp() {
-    if (_stack.isNotEmpty) _list(_stack.removeLast());
+    if (_stack.isEmpty) return;
+    setState(() {
+      _path = _stack.removeLast();
+    });
+    _relist();
   }
 
   /// 刷新：重新列出目录；本地来源且开启"自动转 CBZ"时，后台转换后再次列出。
   Future<void> _refresh() async {
-    await _list(_path);
-    if (!mounted || !widget.source.isLocalFs) return;
+    await _relist();
+    if (!mounted || _offlineMode || !widget.source.isLocalFs) return;
     await _autoConvertToCbz();
-    if (mounted) await _list(_path);
+    if (mounted) await _relist();
+  }
+
+  /// 生成离线索引（本地化）：从本地浏览快照构建，零网络请求（ADR-029）。
+  /// 本地源直接全量扫描（本地 IO）；云端源只用 FolderSnapshotStore 已有缓存。
+  Future<void> _refreshIndex() async {
+    final src = widget.source;
+    if (src.isLocalFs) {
+      await _rebuildIndexFull();
+      return;
+    }
+    final n = await LibraryIndexService.buildIndexFromSnapshots(src);
+    if (!mounted) return;
+    _enterOffline();
+    await LibraryCatalogStore.instance.loadTree();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          n == 0
+              ? '本地暂无浏览记录：在线浏览过的目录会自动积累离线索引'
+              : '已从本地浏览记录生成 $n 条离线索引（未联网）',
+        ),
+      ),
+    );
+  }
+
+  /// 全量重建索引（联网）：枚举整棵树写入 library_index + 快照。
+  /// 高级选项：会遍历整个云端书源，可能耗时较长。
+  Future<void> _rebuildIndexFull() async {
+    final src = widget.source;
+    try {
+      await _connectSession();
+      final session = _session;
+      if (src.needsSession && session == null) {
+        if (mounted) setState(() => _error = '连接远程书源失败，无法重建索引');
+        return;
+      }
+      await LibraryIndexService.instance.refreshSourceIndex(
+        source: src,
+        force: true,
+        listRemote: session == null
+            ? null
+            : (p) async {
+                final list = switch (src.type) {
+                  'webdav' => await webdavList(session: session, path: p),
+                  'sftp' => await sftpList(session: session, path: p),
+                  'baidu' => await baiduList(session: session, path: p),
+                  '115' => await cloud115ListFor(src, session: session, path: p),
+                  'quark' => await quarkList(session: session, path: p),
+                  _ => await listLocalDir(path: p),
+                };
+                return list
+                    .map((e) => FolderSnapshotEntry(
+                          name: e.name,
+                          path: e.path,
+                          isDir: e.isDir,
+                        ))
+                    .toList();
+              },
+      );
+      if (!mounted) return;
+      _enterOffline();
+      await LibraryCatalogStore.instance.loadTree();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已全量重建离线索引（联网）')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('重建索引失败: $e')));
+      }
+    }
   }
 
   /// 百度网盘：强制重新连接并刷新 refresh_token（每次 connect 都会调用
@@ -712,22 +904,39 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: LibraryStore.instance,
-      builder: (context, _) => Stack(children: [
+    return Scaffold(
+      body: ListenableBuilder(
+        listenable: LibraryStore.instance,
+        builder: (context, _) => Stack(children: [
       Column(
       children: [
         Material(
           color: Colors.black26,
           child: ListTile(
             dense: true,
-            leading: IconButton(
-              icon: const Icon(Icons.arrow_upward),
-              tooltip: '上级目录',
-              onPressed: _stack.isEmpty ? null : _goUp,
-            ),
+            leading: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (widget.showBack)
+                IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: '返回书源列表',
+                  onPressed: () => Navigator.of(context).maybePop(),
+                ),
+              // 上级目录按钮始终存在：避免用户误把"返回书源"当成"上一级"
+              IconButton(
+                icon: const Icon(Icons.arrow_upward),
+                tooltip: '上级目录',
+                onPressed: _stack.isEmpty ? null : _goUp,
+              ),
+            ]),
             title: _selectMode ? Text('已选 ${_selectedPaths.length} 项', maxLines: 1) : Text(_path, maxLines: 1, overflow: TextOverflow.ellipsis),
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              // 离线索引浏览 → 切回在线浏览（本地源同样适用）
+              if (_offlineMode)
+                IconButton(
+                  icon: const Icon(Icons.cloud_outlined),
+                  tooltip: '退出离线浏览（切换在线）',
+                  onPressed: _exitOffline,
+                ),
               if (_selectMode) ...[
                 TextButton(onPressed: () => setState(() { _selectedPaths.clear(); }), child: const Text('取消全选')),
                 TextButton(onPressed: () => setState(() { for (var e in _filtered) { _selectedPaths.add(e.path); } }), child: const Text('全选')),
@@ -742,14 +951,31 @@ class _SourceBrowserState extends State<SourceBrowser> {
               ],
               PopupMenuButton<String>(
                 icon: const Icon(Icons.sort),
-                tooltip: '排序',
+                tooltip: '更多',
                 initialValue: _sort,
-                onSelected: (v) => setState(() => _sort = v),
-                itemBuilder: (c) => const [
-                  PopupMenuItem(value: 'alpha', child: Text('按字母')),
-                  PopupMenuItem(value: 'added', child: Text('按加入时间')),
+                onSelected: (v) {
+                  if (v == 'rebuild_full') {
+                    _rebuildIndexFull();
+                    return;
+                  }
+                  setState(() => _sort = v);
+                },
+                itemBuilder: (c) => [
+                  const PopupMenuItem(value: 'alpha', child: Text('按字母')),
+                  const PopupMenuItem(value: 'added', child: Text('按加入时间')),
+                  if (!widget.source.isLocalFs)
+                    const PopupMenuItem(
+                      value: 'rebuild_full',
+                      child: Text('全量重建索引（联网）'),
+                    ),
                 ],
               ),
+              if (!widget.source.isLocalFs)
+                IconButton(
+                  icon: const Icon(Icons.auto_fix_high),
+                  tooltip: '生成离线索引（本地快照，不联网）',
+                  onPressed: _refreshIndex,
+                ),
               if (widget.source.isBaidu)
                 IconButton(
                   icon: const Icon(Icons.vpn_key),
@@ -762,12 +988,24 @@ class _SourceBrowserState extends State<SourceBrowser> {
           ),
         ),
         if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+        if (_offlineMode && !_loading && _error == null)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 2, 12, 2),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '离线索引浏览（不连服务器）· 阅读时按本机资源/凭据判断',
+                style: TextStyle(fontSize: 11, color: Colors.blueGrey),
+              ),
+            ),
+          ),
         Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : _posterMode ? _gridView() : _listView()),
       ],
     ),
-    if (_showConvertProgress)
-      Positioned(left: 0, right: 0, bottom: 0, child: _convertProgressBar()),
-    ]),
+      if (_showConvertProgress)
+        Positioned(left: 0, right: 0, bottom: 0, child: _convertProgressBar()),
+      ]),
+      ),
     );
   }
 

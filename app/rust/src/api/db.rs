@@ -413,3 +413,193 @@ pub fn db_delete_ai_task(id: String) -> Result<(), String> {
 pub fn db_delete_setting(key: String) -> Result<(), String> {
     db::delete_setting(&key).map_err(|e| format!("{e}"))
 }
+
+// ============================================================
+// Library Index（ADR-020/021：物理资产发现层）
+// ============================================================
+
+/// 读取书源 fingerprint（无则 None；ADR-020：身份由 Rust 统一计算）。
+pub fn db_get_source_fingerprint(source_id: String) -> Result<Option<String>, String> {
+    Ok(db::get_source_fingerprint(&source_id))
+}
+
+/// library_index 条目 DTO（与 Dart LibraryIndexEntry 对应）。
+pub struct LibraryIndexDto {
+    pub id: String,
+    pub source_id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub path: String,
+    pub entry_type: String,
+    pub size: Option<i64>,
+    pub modified_at: Option<i64>,
+    pub cover_path: Option<String>,
+    pub hash: Option<String>,
+    pub updated_at: i64,
+    pub deleted: bool,
+}
+
+/// 书源目录快照 DTO。
+pub struct SourceSnapshotDto {
+    pub source_id: String,
+    pub last_scan_time: i64,
+    pub entry_count: i64,
+    pub root_hash: Option<String>,
+}
+
+fn library_index_to_dto(r: db::LibraryIndexRow) -> LibraryIndexDto {
+    LibraryIndexDto {
+        id: r.id,
+        source_id: r.source_id,
+        parent_id: r.parent_id,
+        name: r.name,
+        path: r.path,
+        entry_type: r.entry_type,
+        size: r.size,
+        modified_at: r.modified_at,
+        cover_path: r.cover_path,
+        hash: r.hash,
+        updated_at: r.updated_at,
+        deleted: r.deleted,
+    }
+}
+
+/// 批量 upsert library_index 条目（单事务）。
+pub fn db_upsert_library_index_entries(entries: Vec<LibraryIndexDto>) -> Result<(), String> {
+    let mut conn = db::get().lock().unwrap();
+    let tx = conn.transaction().map_err(|e| format!("{e}"))?;
+    for e in &entries {
+        let row = db::LibraryIndexRow {
+            id: e.id.clone(),
+            source_id: e.source_id.clone(),
+            parent_id: e.parent_id.clone(),
+            name: e.name.clone(),
+            path: e.path.clone(),
+            entry_type: e.entry_type.clone(),
+            size: e.size,
+            modified_at: e.modified_at,
+            cover_path: e.cover_path.clone(),
+            hash: e.hash.clone(),
+            updated_at: e.updated_at,
+            deleted: e.deleted,
+        };
+        db::upsert_library_index_on(&tx, &row).map_err(|e| format!("{e}"))?;
+    }
+    tx.commit().map_err(|e| format!("{e}"))
+}
+
+/// 整源重建（首次全量刷新 / 增量合并后替换）：
+/// - 传入条目 upsert（deleted=0）；
+/// - 该源旧索引中**不在新集合**的条目改为软删（deleted=1, updated_at=now），
+///   使"文件消失"能以墓碑进入同步传播，而不是硬删除丢失历史。
+pub fn db_replace_source_library_index(
+    source_id: String,
+    entries: Vec<LibraryIndexDto>,
+) -> Result<(), String> {
+    let conn = db::get().lock().unwrap();
+    let rows: Vec<db::LibraryIndexRow> = entries
+        .into_iter()
+        .map(|e| db::LibraryIndexRow {
+            id: e.id,
+            source_id: source_id.clone(),
+            parent_id: e.parent_id,
+            name: e.name,
+            path: e.path,
+            entry_type: e.entry_type,
+            size: e.size,
+            modified_at: e.modified_at,
+            cover_path: e.cover_path,
+            hash: e.hash,
+            updated_at: e.updated_at,
+            deleted: e.deleted,
+        })
+        .collect();
+    db::replace_library_index_for_source_on(&conn, &source_id, &rows).map_err(|e| format!("{e}"))
+}
+
+/// 写入书源目录快照（root_hash 用于判断目录是否变化）。
+pub fn db_set_source_snapshot(
+    source_id: String,
+    last_scan_time: i64,
+    entry_count: i64,
+    root_hash: Option<String>,
+) -> Result<(), String> {
+    db::set_source_snapshot(&source_id, last_scan_time, entry_count, root_hash.as_deref())
+        .map_err(|e| format!("{e}"))
+}
+
+/// 读取书源目录快照。
+pub fn db_get_source_snapshot(source_id: String) -> Result<Option<SourceSnapshotDto>, String> {
+    Ok(db::get_source_snapshot(&source_id).map(|(t, c, h)| SourceSnapshotDto {
+        source_id,
+        last_scan_time: t,
+        entry_count: c,
+        root_hash: h,
+    }))
+}
+
+/// 读取某书源当前（未删除）索引条目，离线浏览查询入口。
+pub fn db_load_library_index_for_source(source_id: String) -> Result<Vec<LibraryIndexDto>, String> {
+    Ok(db::load_library_index_for_source(&source_id)
+        .into_iter()
+        .map(library_index_to_dto)
+        .collect())
+}
+
+/// 补写索引条目的输入（id/parent 由 Rust 按 book_id 规则计算，调用方只给路径语义）。
+pub struct IndexEntryInput {
+    pub path: String,
+    pub entry_type: String,
+    pub name: String,
+    pub size: Option<i64>,
+    pub modified_at: Option<i64>,
+    /// 显式父目录（扁平路径源如夸克/115 必传；None = 从 path 推导）。
+    pub parent_path: Option<String>,
+}
+
+/// 补写一条索引条目（含父目录链；纯本地，零网络）。
+/// ADR-029：缓存/已读/标签触及的漫画自动入离线索引。
+pub fn db_ensure_index_entry(
+    source_id: String,
+    path: String,
+    entry_type: String,
+    name: String,
+    parent_path: Option<String>,
+) -> Result<(), String> {
+    let conn = db::get().lock().unwrap();
+    db::ensure_index_entry_on(
+        &conn,
+        &source_id,
+        &path,
+        &entry_type,
+        &name,
+        None,
+        None,
+        parent_path.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 批量补写索引条目（同一书源一个事务；每条含父链）。
+/// ADR-029：浏览即索引 / 从本地浏览快照生成离线索引。
+pub fn db_ensure_index_entries(
+    source_id: String,
+    entries: Vec<IndexEntryInput>,
+) -> Result<(), String> {
+    let mut conn = db::get().lock().unwrap();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for e in &entries {
+        db::ensure_index_entry_on(
+            &tx,
+            &source_id,
+            &e.path,
+            &e.entry_type,
+            &e.name,
+            e.size,
+            e.modified_at,
+            e.parent_path.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}

@@ -8,5 +8,6 @@ pub mod downloader;
 pub mod rchpkg;
 pub mod reader;
 pub mod source;
+pub mod sync;
 pub mod util;
 mod frb_generated;

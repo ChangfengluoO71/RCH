@@ -6,6 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `library_index_to_dto`
+
 /// 数据是否已从 library.json 迁移到 SQLite。
 Future<bool> dataIsMigrated() =>
     RustLib.instance.api.crateApiDbDataIsMigrated();
@@ -124,6 +126,79 @@ Future<void> dbDeleteAiTask({required String id}) =>
 
 Future<void> dbDeleteSetting({required String key}) =>
     RustLib.instance.api.crateApiDbDbDeleteSetting(key: key);
+
+/// 读取书源 fingerprint（无则 None；ADR-020：身份由 Rust 统一计算）。
+Future<String?> dbGetSourceFingerprint({required String sourceId}) =>
+    RustLib.instance.api.crateApiDbDbGetSourceFingerprint(sourceId: sourceId);
+
+/// 批量 upsert library_index 条目（单事务）。
+Future<void> dbUpsertLibraryIndexEntries({
+  required List<LibraryIndexDto> entries,
+}) => RustLib.instance.api.crateApiDbDbUpsertLibraryIndexEntries(
+  entries: entries,
+);
+
+/// 整源重建（首次全量刷新 / 增量合并后替换）：
+/// - 传入条目 upsert（deleted=0）；
+/// - 该源旧索引中**不在新集合**的条目改为软删（deleted=1, updated_at=now），
+///   使"文件消失"能以墓碑进入同步传播，而不是硬删除丢失历史。
+Future<void> dbReplaceSourceLibraryIndex({
+  required String sourceId,
+  required List<LibraryIndexDto> entries,
+}) => RustLib.instance.api.crateApiDbDbReplaceSourceLibraryIndex(
+  sourceId: sourceId,
+  entries: entries,
+);
+
+/// 写入书源目录快照（root_hash 用于判断目录是否变化）。
+Future<void> dbSetSourceSnapshot({
+  required String sourceId,
+  required PlatformInt64 lastScanTime,
+  required PlatformInt64 entryCount,
+  String? rootHash,
+}) => RustLib.instance.api.crateApiDbDbSetSourceSnapshot(
+  sourceId: sourceId,
+  lastScanTime: lastScanTime,
+  entryCount: entryCount,
+  rootHash: rootHash,
+);
+
+/// 读取书源目录快照。
+Future<SourceSnapshotDto?> dbGetSourceSnapshot({required String sourceId}) =>
+    RustLib.instance.api.crateApiDbDbGetSourceSnapshot(sourceId: sourceId);
+
+/// 读取某书源当前（未删除）索引条目，离线浏览查询入口。
+Future<List<LibraryIndexDto>> dbLoadLibraryIndexForSource({
+  required String sourceId,
+}) => RustLib.instance.api.crateApiDbDbLoadLibraryIndexForSource(
+  sourceId: sourceId,
+);
+
+/// 补写一条索引条目（含父目录链；纯本地，零网络）。
+/// ADR-029：缓存/已读/标签触及的漫画自动入离线索引。
+Future<void> dbEnsureIndexEntry({
+  required String sourceId,
+  required String path,
+  required String entryType,
+  required String name,
+  String? parentPath,
+}) => RustLib.instance.api.crateApiDbDbEnsureIndexEntry(
+  sourceId: sourceId,
+  path: path,
+  entryType: entryType,
+  name: name,
+  parentPath: parentPath,
+);
+
+/// 批量补写索引条目（同一书源一个事务；每条含父链）。
+/// ADR-029：浏览即索引 / 从本地浏览快照生成离线索引。
+Future<void> dbEnsureIndexEntries({
+  required String sourceId,
+  required List<IndexEntryInput> entries,
+}) => RustLib.instance.api.crateApiDbDbEnsureIndexEntries(
+  sourceId: sourceId,
+  entries: entries,
+);
 
 /// AI 超分后台任务 DTO。
 class AiTaskDto {
@@ -389,6 +464,112 @@ class DeviceDto {
           name == other.name;
 }
 
+/// 补写索引条目的输入（id/parent 由 Rust 按 book_id 规则计算，调用方只给路径语义）。
+class IndexEntryInput {
+  final String path;
+  final String entryType;
+  final String name;
+  final PlatformInt64? size;
+  final PlatformInt64? modifiedAt;
+
+  /// 显式父目录（扁平路径源如夸克/115 必传；None = 从 path 推导）。
+  final String? parentPath;
+
+  const IndexEntryInput({
+    required this.path,
+    required this.entryType,
+    required this.name,
+    this.size,
+    this.modifiedAt,
+    this.parentPath,
+  });
+
+  @override
+  int get hashCode =>
+      path.hashCode ^
+      entryType.hashCode ^
+      name.hashCode ^
+      size.hashCode ^
+      modifiedAt.hashCode ^
+      parentPath.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is IndexEntryInput &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          entryType == other.entryType &&
+          name == other.name &&
+          size == other.size &&
+          modifiedAt == other.modifiedAt &&
+          parentPath == other.parentPath;
+}
+
+/// library_index 条目 DTO（与 Dart LibraryIndexEntry 对应）。
+class LibraryIndexDto {
+  final String id;
+  final String sourceId;
+  final String? parentId;
+  final String name;
+  final String path;
+  final String entryType;
+  final PlatformInt64? size;
+  final PlatformInt64? modifiedAt;
+  final String? coverPath;
+  final String? hash;
+  final PlatformInt64 updatedAt;
+  final bool deleted;
+
+  const LibraryIndexDto({
+    required this.id,
+    required this.sourceId,
+    this.parentId,
+    required this.name,
+    required this.path,
+    required this.entryType,
+    this.size,
+    this.modifiedAt,
+    this.coverPath,
+    this.hash,
+    required this.updatedAt,
+    required this.deleted,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      sourceId.hashCode ^
+      parentId.hashCode ^
+      name.hashCode ^
+      path.hashCode ^
+      entryType.hashCode ^
+      size.hashCode ^
+      modifiedAt.hashCode ^
+      coverPath.hashCode ^
+      hash.hashCode ^
+      updatedAt.hashCode ^
+      deleted.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LibraryIndexDto &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          sourceId == other.sourceId &&
+          parentId == other.parentId &&
+          name == other.name &&
+          path == other.path &&
+          entryType == other.entryType &&
+          size == other.size &&
+          modifiedAt == other.modifiedAt &&
+          coverPath == other.coverPath &&
+          hash == other.hash &&
+          updatedAt == other.updatedAt &&
+          deleted == other.deleted;
+}
+
 /// 阅读记录 DTO。
 class ReadRecordDto {
   final String key;
@@ -454,6 +635,38 @@ class SettingEntryDto {
           runtimeType == other.runtimeType &&
           key == other.key &&
           value == other.value;
+}
+
+/// 书源目录快照 DTO。
+class SourceSnapshotDto {
+  final String sourceId;
+  final PlatformInt64 lastScanTime;
+  final PlatformInt64 entryCount;
+  final String? rootHash;
+
+  const SourceSnapshotDto({
+    required this.sourceId,
+    required this.lastScanTime,
+    required this.entryCount,
+    this.rootHash,
+  });
+
+  @override
+  int get hashCode =>
+      sourceId.hashCode ^
+      lastScanTime.hashCode ^
+      entryCount.hashCode ^
+      rootHash.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SourceSnapshotDto &&
+          runtimeType == other.runtimeType &&
+          sourceId == other.sourceId &&
+          lastScanTime == other.lastScanTime &&
+          entryCount == other.entryCount &&
+          rootHash == other.rootHash;
 }
 
 /// 标签实体 DTO。

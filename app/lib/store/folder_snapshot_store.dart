@@ -78,6 +78,26 @@ class FolderSnapshotStore {
   List<FolderSnapshotEntry>? entriesFor(BookSource source, String path) =>
       _snapshots[keyOf(source, path)];
 
+  /// 该源全部已浏览目录的快照（path → 子项），供"本地化生成离线索引"。
+  /// ADR-029：零网络，只基于浏览时留下的缓存。
+  Map<String, List<FolderSnapshotEntry>> foldersFor(BookSource source) {
+    final prefix = '${source.type}|${source.id}|';
+    return {
+      for (final e in _snapshots.entries)
+        if (e.key.startsWith(prefix)) e.key.substring(prefix.length): e.value,
+    };
+  }
+
+  /// 反查包含该 path 的父目录。
+  /// 夸克/115 等扁平路径源（path 是 fid，无层级前缀）的层级只能依赖浏览快照；
+  /// 找不到返回 null（调用方回退为"挂根/路径推导"）。
+  String? parentDirOf(BookSource source, String path) {
+    for (final e in foldersFor(source).entries) {
+      if (e.value.any((x) => x.path == path)) return e.key;
+    }
+    return null;
+  }
+
   /// 浏览某目录成功后写入快照（复用同一次列表响应，不新增请求）。
   void put(BookSource source, String path, List<FolderSnapshotEntry> entries) {
     _snapshots[keyOf(source, path)] = entries;

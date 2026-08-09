@@ -401,6 +401,50 @@ impl WebDavClient {
         Ok(())
     }
 
+    /// 移动/重命名文件（MOVE；同步状态 manifest 原子提交用：先写 .tmp 再 MOVE）。
+    pub fn move_file(&self, from: &str, to: &str) -> Result<()> {
+        let resp = self
+            .client
+            .request(Method::from_bytes(b"MOVE").unwrap(), self.url(from))
+            .header("Destination", self.url(to))
+            // RFC 4918：不带 Overwrite: T 时目标已存在返回 409 DuplicateName。
+            .header("Overwrite", "T")
+            .basic_auth(&self.user, Some(&self.pass))
+            .send()
+            .context("MOVE 请求失败")?;
+        let status = resp.status();
+        if !status.is_success() {
+            if status == StatusCode::CONFLICT {
+                // 坚果云等服务器忽略 Overwrite: T，目标已存在仍返回 409 →
+                // 先删除目标再重试一次（保持"先写 tmp 再 MOVE"的原子语义）。
+                self.delete_file(to)?;
+                let retry = self
+                    .client
+                    .request(Method::from_bytes(b"MOVE").unwrap(), self.url(from))
+                    .header("Destination", self.url(to))
+                    .basic_auth(&self.user, Some(&self.pass))
+                    .send()
+                    .context("MOVE 重试请求失败")?;
+                if !retry.status().is_success() {
+                    let status = retry.status();
+                    let body = retry.text().unwrap_or_default();
+                    let snippet = if body.len() > 300 { &body[..300] } else { &body };
+                    bail!(
+                        "移动失败:HTTP {} {}{}",
+                        status.as_u16(),
+                        if body.is_empty() { "" } else { " " },
+                        snippet
+                    );
+                }
+                return Ok(());
+            }
+            let body = resp.text().unwrap_or_default();
+            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            bail!("移动失败:HTTP {} {}{}", status.as_u16(), if body.is_empty() { "" } else { " " }, snippet);
+        }
+        Ok(())
+    }
+
     /// 探测服务器是否支持 Range(对 bytes=0-0 应返回 206)。
     pub fn range_supported(&self, path: &str) -> Result<bool> {
         let resp = self

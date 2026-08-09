@@ -176,6 +176,12 @@ git push origin master --tags
 `主版本*10000 + 次版本*100 + 修订号` 注入（`0.4.0` → `400`），保证 Android
 versionCode 单调递增。
 
+> **Android 依赖仓库镜像开关**：`android/settings.gradle.kts` 与
+> `android/build.gradle.kts` 中的阿里云 Maven 镜像（及本机 `D:/Temp/local-maven`）
+> 默认关闭，CI 直接使用官方 `google()` / `mavenCentral()`，避免镜像故障导致构建失败。
+> 本地构建需要镜像加速时，在 `~/.gradle/gradle.properties` 写入
+> `rch.aliyun.mirror=true`（或设置环境变量 `RCH_ALIYUN_MIRROR=true`）。
+
 ### 应用内更新
 
 - 入口：设置页「关于与更新」→ 检查更新；启动时也会静默检查一次，发现新版本会提示。

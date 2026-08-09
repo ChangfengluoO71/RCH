@@ -23,6 +23,14 @@ Future<BigInt> baiduSessionFor(BookSource source) async {
   return s.id;
 }
 
+/// 强制重新连接百度网盘书源：清掉会话缓存后重连，Rust 侧每次 connect 都会
+/// 调用 refresh_token 接口轮换 refresh_token，成功后将最新 token 回写 DB。
+/// 当 token 被顶掉/失效（如同 AppKey 多书源互踢、下载报 31045）时手动调用。
+Future<BigInt> baiduRefreshTokenFor(BookSource source) async {
+  clearBaiduSession(source.id);
+  return baiduSessionFor(source);
+}
+
 /// 书源被编辑/删除后使会话失效（下次自动重连）。
 void clearBaiduSession(String sourceId) {
   _baiduSessions.remove(sourceId);

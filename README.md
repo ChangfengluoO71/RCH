@@ -13,7 +13,7 @@
 
 - [✨ 核心亮点](#-核心亮点)
 - [🚀 快速开始](#-快速开始)
-- [⬇️ 下载（v0.4.4）](#️-下载v044)
+- [⬇️ 下载（v0.4.5）](#️-下载v045)
 - [📖 功能介绍](#-功能介绍)
   - [打开即读，格式通吃](#打开即读格式通吃)
   - [流畅的阅读体验](#流畅的阅读体验)
@@ -64,7 +64,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 构建环境（Rust / Flutter / VS 2022 BuildTools / flutter_rust_bridge_codegen）见 [SETUP.md](SETUP.md)。
 
-## ⬇️ 下载（v0.4.4）
+## ⬇️ 下载（v0.4.5）
 
 > 安装后可在应用内 **设置 → 关于与更新** 自动检查并安装新版本；以下直链为当前版本，最新版本请访问 [Releases 页](https://github.com/ChangfengluoO71/RCH/releases/latest)。
 
@@ -72,10 +72,10 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 | 平台 | 文件 | 大小 | 下载 |
 |---|---|---|---|
-| Windows 10/11 x64 | RCH-0.4.4-windows-x64.exe | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.4/RCH-0.4.4-windows-x64.exe) |
-| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.4/app-arm64-v8a-release.apk) |
-| Android armeabi-v7a | app-armeabi-v7a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.4/app-armeabi-v7a-release.apk) |
-| Android x86_64 | app-x86_64-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.4/app-x86_64-release.apk) |
+| Windows 10/11 x64 | RCH-0.4.5-windows-x64.exe | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.5/RCH-0.4.5-windows-x64.exe) |
+| Android arm64-v8a（推荐） | app-arm64-v8a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.5/app-arm64-v8a-release.apk) |
+| Android armeabi-v7a | app-armeabi-v7a-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.5/app-armeabi-v7a-release.apk) |
+| Android x86_64 | app-x86_64-release.apk | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.4.5/app-x86_64-release.apk) |
 
 **安装说明**
 
@@ -128,6 +128,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 - **打开策略（全局设置）**：自动（先整本下载，失败转流式）/ 优先下载整本 / 直接流式，所有远程书源通用
 - **流式阅读**：支持 Range 的服务边下边读；否则首次整本下载到本地缓存，之后秒开
 - 下载进度条实时显示；封面懒加载，已下载漫画封面不走网络；token 自动刷新，重启无需重新授权
+- **百度网盘 token 维护**：书源浏览页顶部钥匙按钮可手动重新连接并刷新 refresh_token；失效时自动打开授权页引导重新授权
 
 > 📖 各网盘的详细添加步骤见下文「添加远程书源教程」。
 
@@ -169,6 +170,12 @@ flutter build apk --debug         # 构建安卓 debug APK
 4. 点「**授权登录**」：浏览器会打开百度授权页，登录你的网盘账号并点击同意（确认勾选网盘权限）；
 5. 授权完成后，把页面显示的**授权码**复制回 app，点「换取 token」；
 6. refresh_token 会自动填入「refresh_token」输入框，点「添加」即可。
+
+**token 刷新与失效处理**
+
+- 书源浏览页顶部有**钥匙图标按钮**，点击即可强制重新连接并刷新 refresh_token，成功后自动保存到书源；
+- 若 refresh_token 已被百度作废（长期未使用、被同 AppKey 的其他书源顶掉、或账号解除授权），点按钮会失败并**自动打开百度授权页**，把页面显示的授权码粘贴到弹出的对话框即可完成重新授权，token 自动更新；
+- 编辑书源修改了 AppKey / SecretKey / refresh_token 后保存，下次打开会自动用新凭据重连。
 
 **目录说明**
 
@@ -260,7 +267,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 | 现象 | 原因与处理 |
 |---|---|
-| 百度提示登录状态失效 / 需要重新授权 | token 被轮换或过期，重新走一遍「授权登录」即可，重启后无需重复授权 |
+| 百度提示登录状态失效 / 需要重新授权 | token 被轮换或过期：在书源浏览页点顶部钥匙按钮刷新；若已失效会自动弹授权页，粘贴授权码即可恢复，重启后无需重复授权 |
 | 夸克书架打不开 / 提示 Cookie 失效 | 重新去 pan.quark.cn 复制 Cookie 并更新书源 |
 | 115 旧书源突然失效 | 官方 APP ID 模式：被顶掉了 refresh_token，删除旧书源重新授权；扫码 Cookie 模式：Cookie 过期，编辑书源重新扫码替换 |
 | 115 扫码时 115 App 扫截图报错 / 无法识别 | 115 App 扫一扫对截图二维码兼容性较差（官方社区亦有反馈）；改用**微信扫截图**、通过 115 小程序确认即可；二维码有效期约 2~3 分钟，确认要快 |

@@ -310,8 +310,6 @@ fn build_book_query(
     query: &str,
     tags: &[String],
     include_remote: bool,
-    limit: i64,
-    offset: i64,
 ) -> String {
     let mut sql = String::from(
         "SELECT li.id, s.id, s.name, s.type, li.path,
@@ -482,7 +480,7 @@ pub fn db_search_books(
 ) -> Result<Vec<BookSearchDto>, String> {
     let conn = db::get().lock().unwrap();
     let own_id = db::get_or_create_device_id_on(&conn).map_err(|e| e.to_string())?;
-    let sql = build_book_query(None, &own_id, &query, &tags, include_remote, limit, offset);
+    let sql = build_book_query(None, &own_id, &query, &tags, include_remote);
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if !query.trim().is_empty() {
         params.push(Box::new(format!("%{}%", query.trim())));
@@ -506,7 +504,7 @@ pub fn db_source_books(
 ) -> Result<Vec<BookSearchDto>, String> {
     let conn = db::get().lock().unwrap();
     let own_id = db::get_or_create_device_id_on(&conn).map_err(|e| e.to_string())?;
-    let sql = build_book_query(Some(&source_id), &own_id, &query, &tags, true, limit, offset);
+    let sql = build_book_query(Some(&source_id), &own_id, &query, &tags, true);
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(source_id)];
     if !query.trim().is_empty() {
         params.push(Box::new(format!("%{}%", query.trim())));

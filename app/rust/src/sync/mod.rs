@@ -418,7 +418,7 @@ pub fn sync_with_webdav_global(
     };
     let result = (|| -> Result<SyncOutcome> {
         let own = {
-            let mut conn = db::get().lock().unwrap();
+            let conn = db::get().lock().unwrap();
             actor::own_device(&conn, platform)?
         };
         let mut conflict_retries = 0i64;
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn unresolved_entries_go_pending_and_never_tombstone() {
-        let mut conn = schema_conn();
+        let conn = schema_conn();
         // 远端条目来自另一台设备的源（本机无该 fingerprint 源）→ apply 无法解析
         let remote_fp = db::compute_source_fingerprint(
             "webdav",

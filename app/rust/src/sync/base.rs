@@ -84,6 +84,7 @@ pub fn upsert_base(row: &SyncBaseRow) -> Result<()> {
     upsert_base_on(&conn, row)
 }
 
+#[allow(dead_code)] // 保留：同步重置/清理维护 API（含测试覆盖）
 pub(crate) fn delete_base_on(
     conn: &Connection,
     entity_type: &str,
@@ -97,6 +98,7 @@ pub(crate) fn delete_base_on(
 }
 
 /// 删除某实体全部基线（如源删除级联清理该书源所有索引基线）。
+#[allow(dead_code)] // 保留：同步重置/清理维护 API（含测试覆盖）
 pub(crate) fn delete_entity_base_on(conn: &Connection, entity_type: &str) -> Result<usize> {
     Ok(conn.execute(
         "DELETE FROM sync_base WHERE entity_type = ?1",

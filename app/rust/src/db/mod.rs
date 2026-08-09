@@ -2328,14 +2328,6 @@ pub fn load_library_index_for_source(source_id: &str) -> Vec<LibraryIndexRow> {
     load_library_index_for_source_on(&conn, source_id)
 }
 
-pub(crate) fn delete_library_index_for_source_on(conn: &Connection, source_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM library_index WHERE source_id = ?1",
-        params![source_id],
-    )?;
-    Ok(())
-}
-
 /// 整源替换（Phase 5.2）：传入条目 upsert（deleted=0），该源旧索引中不在新集合的
 /// 条目改为**软删**（deleted=1, updated_at=now），使"文件消失"能以墓碑进入同步传播。
 pub(crate) fn replace_library_index_for_source_on(

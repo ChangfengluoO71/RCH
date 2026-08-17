@@ -13,7 +13,7 @@
 
 - [✨ 核心亮点](#-核心亮点)
 - [🚀 快速开始](#-快速开始)
-- [⬇️ 下载（v0.5.0）](#️-下载v050)
+- [⬇️ 下载（v0.5.1）](#️-下载v051)
 - [📖 功能介绍](#-功能介绍)
   - [打开即读，格式通吃](#打开即读格式通吃)
   - [流畅的阅读体验](#流畅的阅读体验)
@@ -68,7 +68,7 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 构建环境（Rust / Flutter / VS 2022 BuildTools / flutter_rust_bridge_codegen）见 [SETUP.md](SETUP.md)。
 
-## ⬇️ 下载（v0.5.0）
+## ⬇️ 下载（v0.5.1）
 
 > 安装后可在应用内 **设置 → 关于与更新** 自动检查并安装新版本；以下直链为当前版本，最新版本请访问 [Releases 页](https://github.com/ChangfengluoO71/RCH/releases/latest)。
 
@@ -76,8 +76,8 @@ flutter build apk --debug         # 构建安卓 debug APK
 
 | 平台 | 文件 | 大小 | 下载 |
 |---|---|---|---|
-| Windows 10/11 x64 | RCH-0.5.0-windows-x64.exe | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.5.0/RCH-0.5.0-windows-x64.exe) |
-| Android 全架构（arm64 / armeabi-v7a / x86_64） | app-release.apk | ~108 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.5.0/app-release.apk) |
+| Windows 10/11 x64 | RCH-0.5.1-windows-x64.exe | — | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.5.1/RCH-0.5.1-windows-x64.exe) |
+| Android 全架构（arm64 / armeabi-v7a / x86_64） | app-release.apk | ~108 MB | [下载](https://github.com/ChangfengluoO71/RCH/releases/download/v0.5.1/app-release.apk) |
 
 **安装说明**
 

@@ -38,6 +38,8 @@ class _ReaderPageState extends State<ReaderPage> {
   PageController? _pageCtrl;
   bool _dualZoomed = false; // 双页模式已放大(>1)时接管拖拽,否则让给 PageView 翻页
   final FocusNode _focus = FocusNode(); final ScrollController _webtoonCtrl = ScrollController();
+  /// 条漫模式各页实际渲染高度缓存(图片高度不一,滚动时据此定位视口页码)。
+  final List<double> _webtoonHeights = [];
   late ReadMode _mode; late bool _invert; late DualPageMode _dual; late int _gap; late bool _skipCover;
   late KeyBinds _keys;
   /// 进入阅读器时是否为紧凑（手机）布局：退出时据此恢复竖屏锁定或保持可旋转。
@@ -110,6 +112,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override void initState() { super.initState();
     _dualZoomCtrl.addListener(_onDualZoomChanged);
+    _webtoonCtrl.addListener(_onWebtoonScroll);
     if (defaultTargetPlatform == TargetPlatform.android) {
       SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     }
@@ -146,6 +149,7 @@ class _ReaderPageState extends State<ReaderPage> {
   void _toggleAiVersion() {
     setState(() {
       _useAiVersion = !_useAiVersion;
+      _webtoonHeights.clear(); // 超分图 2x 分辨率,显示高度变化,页高缓存作废
       for (var i = _page - 1; i <= _page + 2; i++) {
         if (i >= 0) {
           _bytes.remove(i);
@@ -298,7 +302,24 @@ class _ReaderPageState extends State<ReaderPage> {
   // ---- 翻页 ----
   void _forward() { final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?-s:s); }
   void _back(){ final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?s:-s); }
-  Future<void> _go(int d) async { final b=_book;if(b==null)return;final n=(_page+d).clamp(0,b.pageCount-1);
+  /// 条漫模式按页滚动到目标页(用页高累计定位),返回该页在列表顶部的滚动偏移。
+  double _webtoonOffsetTo(int page) {
+    double cum = 0;
+    for (var i = 0; i < page && i < _webtoonHeights.length; i++) { cum += _webtoonHeights[i]; }
+    return cum;
+  }
+  Future<void> _go(int d) async { final b=_book;if(b==null)return;
+    if (_mode == ReadMode.webtoon) {
+      // 条漫: 直接滚动到下一页/上一页(方向由 _forward/_back 已按 manga 翻转传入)。
+      final n=(_page+d).clamp(0,b.pageCount-1);
+      if(n==_page)return;
+      setState(()=>_page=n);
+      if (_webtoonCtrl.hasClients) _webtoonCtrl.animateTo(_webtoonOffsetTo(n),duration:const Duration(milliseconds:220),curve:Curves.easeOut);
+      for(var i=n-3;i<=n+3;i++){_ensure(i);}
+      final src=widget.source;if(src!=null){await LibraryStore.instance.recordRead(source:src,path:widget.path,title:widget.title,page:n);}
+      return;
+    }
+    final n=(_page+d).clamp(0,b.pageCount-1);
     if(n==_page)return;
     setState(()=>_page=n);
     _photoCtrlOf(n).reset();_scaleStateCtrlOf(n).reset();_dualZoomCtrl.value=Matrix4.identity();
@@ -327,7 +348,15 @@ class _ReaderPageState extends State<ReaderPage> {
   }
   void _showJumpDialog() { final b=_book;if(b==null)return;final ctrl=TextEditingController();
     showDialog(context:context,builder:(ctx)=>AlertDialog(title:const Text('跳转到页码'),content:TextField(controller:ctrl,keyboardType:TextInputType.number,autofocus:true,decoration:const InputDecoration(hintText:'输入页码',border:OutlineInputBorder()),onSubmitted:(v){_doJump(v,ctrl,ctx);}),actions:[TextButton(onPressed:()=>Navigator.of(ctx).pop(),child:const Text('取消')),FilledButton(onPressed:(){_doJump(ctrl.text,ctrl,ctx);},child:const Text('跳转'))]));}
-  void _doJump(String v, TextEditingController ctrl, BuildContext ctx) { final b=_book;if(b==null)return;final p=int.tryParse(v.trim());if(p!=null){final n=(p-1).clamp(0,b.pageCount-1);setState(()=>_page=n);_photoCtrlOf(n).reset();_scaleStateCtrlOf(n).reset();_dualZoomCtrl.value=Matrix4.identity();_pageCtrl?.jumpToPage(_viewOfPage(n));_disposeDistantPhotoCtrls(n);_ensure(n-2);_ensure(n-1);_ensure(n);_ensure(n+1);_ensure(n+2);}Navigator.of(ctx).pop();}
+  void _doJump(String v, TextEditingController ctrl, BuildContext ctx) { final b=_book;if(b==null)return;final p=int.tryParse(v.trim());if(p!=null){final n=(p-1).clamp(0,b.pageCount-1);setState(()=>_page=n);
+    if (_mode == ReadMode.webtoon) {
+      // 条漫: 滚动到目标页顶部。
+      if (_webtoonCtrl.hasClients) _webtoonCtrl.jumpTo(_webtoonOffsetTo(n));
+      _ensure(n-1);_ensure(n);_ensure(n+1);
+    } else {
+      _photoCtrlOf(n).reset();_scaleStateCtrlOf(n).reset();_dualZoomCtrl.value=Matrix4.identity();_pageCtrl?.jumpToPage(_viewOfPage(n));_disposeDistantPhotoCtrls(n);_ensure(n-2);_ensure(n-1);_ensure(n);_ensure(n+1);_ensure(n+2);
+    }
+  }Navigator.of(ctx).pop();}
 
   // ---- 键盘(可自定义的 5 个动作) ----
   KeyEventResult _onKey(FocusNode n, KeyEvent e) {
@@ -482,6 +511,24 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   // ---- 条漫 ----
+  /// 滚动时按各页累计高度定位「视口中心」对应的页，页码(AppBar 标题)实时跟随。
+  /// 仅页码变化时 setState，避免滚动期间高频重建。
+  void _onWebtoonScroll() {
+    if (_mode != ReadMode.webtoon) return;
+    final b = _book;
+    if (b == null || _webtoonHeights.isEmpty || !_webtoonCtrl.hasClients) return;
+    final target = _webtoonCtrl.offset + _webtoonCtrl.position.viewportDimension / 2;
+    double cum = 0;
+    var p = _webtoonHeights.length - 1;
+    for (var i = 0; i < _webtoonHeights.length; i++) {
+      cum += _webtoonHeights[i];
+      if (target < cum) { p = i; break; }
+    }
+    if (p < 0) p = 0;
+    if (p >= b.pageCount) p = b.pageCount - 1;
+    if (p != _page && mounted) setState(() => _page = p);
+  }
+
   Widget _buildWebtoon(){final b=_book;if(b==null)return const Center(child:CircularProgressIndicator());
     return LayoutBuilder(builder:(context,c){final vw=c.maxWidth;
       // 按设备像素比解码,避免用逻辑宽度解码导致高 DPI 屏幕模糊。
@@ -493,8 +540,24 @@ class _ReaderPageState extends State<ReaderPage> {
           minScale: 1.0, maxScale: 4.0,
           scaleEnabled: true, panEnabled: false,
           child: ListView.builder(controller:_webtoonCtrl,itemCount:b.pageCount,itemBuilder:(context,i){final bytes=_bytes[i];
-            if(bytes==null){_ensure(i);return const SizedBox(height:200,child:Center(child:CircularProgressIndicator()));}
-            return GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:decodeW),fit:BoxFit.fitWidth),);
+            Widget item;
+            if(bytes==null){_ensure(i);item=const SizedBox(height:200,child:Center(child:CircularProgressIndicator()));}
+            else{item=GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:decodeW),fit:BoxFit.fitWidth),);}
+            // 每帧 build 后测量该项实际高度并缓存(加载中占位→真实图片高度自动收敛),供滚动定位页码。
+            return Builder(builder:(itemCtx){
+              WidgetsBinding.instance.addPostFrameCallback((_){
+                if(!mounted)return;
+                final ro=itemCtx.findRenderObject();
+                if(ro is RenderBox){
+                  final h=ro.size.height;
+                  if(h>0){
+                    if(i>=_webtoonHeights.length){_webtoonHeights.addAll(List<double>.filled(i+1-_webtoonHeights.length,0));}
+                    if(_webtoonHeights[i]!=h)_webtoonHeights[i]=h;
+                  }
+                }
+              });
+              return item;
+            });
           },),
         ),
       );
@@ -596,7 +659,7 @@ class _ReaderPageState extends State<ReaderPage> {
       child: Scaffold(
       appBar:AppBar(title:GestureDetector(onTap:_showJumpDialog,child:Text(b==null?widget.title:'${b.title}  ($pageLabel)',maxLines:1,overflow:TextOverflow.ellipsis)),actions:[if(!isAndroidPlatform)IconButton(icon:Icon(_useAiVersion ? Icons.auto_fix_high : Icons.image_not_supported),tooltip:_useAiVersion ? '当前为超分版本，点击切换原版' : '当前为原版，点击切换超分版本',onPressed:_toggleAiVersion),IconButton(icon:const Icon(Icons.tune),tooltip:'阅读设置',onPressed:_showSettings)]),
       body:Focus(focusNode:_focus,autofocus:true,onKeyEvent:_onKey,child:GestureDetector(onSecondaryTapUp:_onRightClick,onLongPressStart:(d)=>_onRightClick(TapUpDetails(kind:PointerDeviceKind.touch,globalPosition:d.globalPosition)),child:_buildBody())),
-      bottomNavigationBar:_mode==ReadMode.webtoon||b==null?null:SafeArea(child:Padding(padding:EdgeInsets.symmetric(vertical:2),child:Row(mainAxisAlignment:MainAxisAlignment.center,children:[IconButton(icon:Icon(showL),onPressed:_back),GestureDetector(onTap:_showJumpDialog,child:Text(pageLabel,style:const TextStyle(decoration:TextDecoration.underline,decorationStyle:TextDecorationStyle.dotted))),IconButton(icon:Icon(showR),onPressed:_forward)]))),
+      bottomNavigationBar:b==null?null:SafeArea(child:Padding(padding:EdgeInsets.symmetric(vertical:2),child:Row(mainAxisAlignment:MainAxisAlignment.center,children:[IconButton(icon:Icon(showL),onPressed:_back),GestureDetector(onTap:_showJumpDialog,child:Text(pageLabel,style:const TextStyle(decoration:TextDecoration.underline,decorationStyle:TextDecorationStyle.dotted))),IconButton(icon:Icon(showR),onPressed:_forward)]))),
       ),
     );
   }

@@ -36,6 +36,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 RestartApplications=no
 WizardStyle=modern
+; 安装程序/卸载程序图标与主程序一致（相对本 .iss 文件路径）。
+SetupIconFile=..\runner\resources\app_icon.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

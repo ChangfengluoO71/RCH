@@ -905,9 +905,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: ListenableBuilder(
-        listenable: LibraryStore.instance,
-        builder: (context, _) => Stack(children: [
+      // 本页用自定义顶栏(Material+ListTile)替代 AppBar：无 AppBar 时 body 不自动
+      // 避让状态栏，≥600dp 宿主(home 无 AppBar)下顶栏会与状态栏重叠 → 整体包 SafeArea。
+      body: SafeArea(
+        child: ListenableBuilder(
+          listenable: LibraryStore.instance,
+          builder: (context, _) => Stack(children: [
       Column(
       children: [
         Material(
@@ -1004,7 +1007,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
     ),
       if (_showConvertProgress)
         Positioned(left: 0, right: 0, bottom: 0, child: _convertProgressBar()),
-      ]),
+        ]),
+        ),
       ),
     );
   }

@@ -319,3 +319,24 @@ P3 全部验收达成。过程要点：
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: 使用反馈修复：条漫页码 / 书源顶栏重叠 / PC 图标（v0.5.1）
+
+**Date**: 2026-08-17
+**Task**: 使用反馈修复：条漫页码 / 书源顶栏重叠 / PC 图标（v0.5.1）
+**Branch**: `master`
+
+### Summary
+
+修复飞书群RCH项目组长风落反馈的三项：①条漫模式底部页码/进度栏+滚动跟随+翻页跳转；②书源界面顶栏改用SafeArea修复与Android状态栏重叠；③PC端应用图标更换为紫底白字RCH并配安装器图标。生成图标工具make_app_icon.py。发布v0.5.1。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `971af41` | (see git log) |
+
+### Status
+
+[OK] **Completed**

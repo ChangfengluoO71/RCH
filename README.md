@@ -634,10 +634,6 @@ Original Comic Files
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
-项目设计与技术文档：
-
-[`docs/`](docs/)
-
 ---
 
 # 🗺️ Roadmap

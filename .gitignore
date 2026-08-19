@@ -36,3 +36,13 @@ Thumbs.db
 *.tmp
 *.swp
 *.pyc
+
+# Local AI assistant configuration
+.agents/
+.claude/
+.codex/
+
+# Local synchronization fixtures and build diagnostics
+remote_state/
+build_artifacts/*
+!build_artifacts/make_app_icon.py

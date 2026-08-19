@@ -8,7 +8,7 @@
 
 ## 开始之前
 
-1. **阅读文档**：[README](README.md)（当前状态）、[SPEC](SPEC.md)（目标设计）、[TODO](TODO.md)（任务看板）
+1. **阅读文档**：[README](README.md)（当前状态）、[SPEC](docs/project/SPEC.md)（目标设计）、[TODO](docs/project/TODO.md)（任务看板）
 2. **搜索已有 Issue/PR**：确认你的想法未被提出
 3. **大改先讨论**：架构级修改请先开 Issue 描述方案，获得确认后再动手
 

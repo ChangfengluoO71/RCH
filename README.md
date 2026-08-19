@@ -72,7 +72,7 @@ RCH 不只是一个“打开漫画文件”的阅读器，而是希望把**本�
 
 完整的安装、配置、阅读、远程书源、同步和故障排查流程，请直接阅读：
 
-> 📖 **[RCH 用户手册](user-guide.md)**
+> 📖 **[RCH 用户手册](docs/user-guide.md)**
 
 ---
 
@@ -133,7 +133,7 @@ RCH 提供下载通道与镜像切换功能。
 
 ## 📖 用户手册
 
-**RCH 的完整操作说明统一维护在仓库根目录的 [`user-guide.md`](user-guide.md)。**
+**RCH 的完整操作说明统一维护在 [`docs/user-guide.md`](docs/user-guide.md)。**
 
 用户手册不是开发文档，而是面向普通用户的完整使用说明。
 
@@ -161,25 +161,25 @@ RCH 提供下载通道与镜像切换功能。
 
 第一次使用：
 
-**[开始使用](user-guide.md#1-开始使用)** → **[添加本地漫画](user-guide.md#2-添加本地漫画)** → **[阅读漫画](user-guide.md#3-阅读漫画)**
+**[开始使用](docs/user-guide.md#1-开始使用)** → **[添加本地漫画](docs/user-guide.md#2-添加本地漫画)** → **[阅读漫画](docs/user-guide.md#3-阅读漫画)**
 
 使用 NAS / 服务器：
 
-**[WebDAV](user-guide.md#51-webdav)** · **[SMB](user-guide.md#52-smb)** · **[SFTP](user-guide.md#53-sftp)**
+**[WebDAV](docs/user-guide.md#51-webdav)** · **[SMB](docs/user-guide.md#52-smb)** · **[SFTP](docs/user-guide.md#53-sftp)**
 
 使用网盘：
 
-**[百度网盘](user-guide.md#54-百度网盘)** · **[115 网盘](user-guide.md#55-115-网盘)** · **[夸克网盘](user-guide.md#56-夸克网盘)**
+**[百度网盘](docs/user-guide.md#54-百度网盘)** · **[115 网盘](docs/user-guide.md#55-115-网盘)** · **[夸克网盘](docs/user-guide.md#56-夸克网盘)**
 
 Windows + Android：
 
-**[多设备同步](user-guide.md#9-多设备同步)** → **[离线索引](user-guide.md#10-离线索引)**
+**[多设备同步](docs/user-guide.md#9-多设备同步)** → **[离线索引](docs/user-guide.md#10-离线索引)**
 
 遇到问题：
 
-**[常见问题](user-guide.md#13-常见问题)**
+**[常见问题](docs/user-guide.md#13-常见问题)**
 
-> **普通用户只需要阅读 [`user-guide.md`](user-guide.md)。**
+> **普通用户只需要阅读 [`docs/user-guide.md`](docs/user-guide.md)。**
 >
 > README 负责介绍项目；用户手册负责回答“具体怎么用”。
 
@@ -315,7 +315,7 @@ RCH 使用 Provider 抽象统一接入不同存储来源。
 
 详细配置方法全部放在：
 
-**[用户手册 → 添加远程书源](user-guide.md#5-添加远程书源)**
+**[用户手册 → 添加远程书源](docs/user-guide.md#5-添加远程书源)**
 
 ---
 
@@ -406,7 +406,7 @@ RCH 的同步目标是同步**漫画库状态**，而不是同步漫画文件本
 
 完整配置与升级注意事项：
 
-**[用户手册 → 多设备同步](user-guide.md#9-多设备同步)**
+**[用户手册 → 多设备同步](docs/user-guide.md#9-多设备同步)**
 
 ---
 
@@ -441,7 +441,7 @@ RCH 的同步目标是同步**漫画库状态**，而不是同步漫画文件本
 
 详细说明：
 
-**[用户手册 → 离线索引](user-guide.md#10-离线索引)**
+**[用户手册 → 离线索引](docs/user-guide.md#10-离线索引)**
 
 ---
 
@@ -495,7 +495,7 @@ RCH 不提供自己的漫画云存储，因此：
 
 详细说明：
 
-**[用户手册 → 隐私与安全](user-guide.md#14-隐私与安全)**
+**[用户手册 → 隐私与安全](docs/user-guide.md#14-隐私与安全)**
 
 ---
 
@@ -631,7 +631,7 @@ Original Comic Files
 
 完整环境配置：
 
-**[SETUP.md](SETUP.md)**
+**[开发环境](docs/development/setup.md)**
 
 ---
 
@@ -665,13 +665,13 @@ flutter build apk --debug
 
 ## 📚 项目文档
 
-RCH 的文档主要位于**仓库根目录**，详细技术资料另外放在 `docs/`。
+RCH 的用户、开发和项目文档统一位于 `docs/`。
 
 | 文档                             | 用途                                      |
 | ------------------------------ | --------------------------------------- |
-| **[用户手册](user-guide.md)**      | 普通用户使用 RCH 的完整指南                        |
-| **[开发环境](SETUP.md)**           | Flutter / Rust / Android / Windows 开发环境 |
-| **[更新日志](CHANGELOG.md)**       | 各版本功能、修复与变化                             |
+| **[用户手册](docs/user-guide.md)**      | 普通用户使用 RCH 的完整指南                        |
+| **[开发环境](docs/development/setup.md)**           | Flutter / Rust / Android / Windows 开发环境 |
+| **[更新日志](docs/project/CHANGELOG.md)**       | 各版本功能、修复与变化                             |
 | **[贡献指南](CONTRIBUTING.md)**    | Issue / Pull Request / 开发规范             |
 | **[行为准则](CODE_OF_CONDUCT.md)** | 社区行为规范                                  |
 | **[`docs/`](docs/)**           | 项目设计、架构及其他技术文档                          |
@@ -681,15 +681,15 @@ RCH 的文档主要位于**仓库根目录**，详细技术资料另外放在 `d
 
 普通用户：
 
-**[用户手册](user-guide.md)**
+**[用户手册](docs/user-guide.md)**
 
 准备开发：
 
-**[开发环境](SETUP.md)** → **[`docs/`](docs/)** → **[贡献指南](CONTRIBUTING.md)**
+**[开发环境](docs/development/setup.md)** → **[`docs/`](docs/)** → **[贡献指南](CONTRIBUTING.md)**
 
 想了解版本变化：
 
-**[CHANGELOG.md](CHANGELOG.md)**
+**[更新日志](docs/project/CHANGELOG.md)**
 
 ---
 
@@ -726,7 +726,7 @@ Roadmap 会根据实际开发进度调整。
 
 开发环境与项目结构请先阅读：
 
-**[SETUP.md](SETUP.md)**
+**[开发环境](docs/development/setup.md)**
 
 贡献规范请阅读：
 

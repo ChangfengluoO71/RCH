@@ -227,6 +227,6 @@ CI（GitHub Actions）通过仓库 Secrets 注入签名，缺省会直接报错�
 MSBuild→cl.exe 阶段无限挂起（cl.exe 零 CPU）。改用 WMI 在任务 job 之外启动即可：
 
 ```powershell
-$cmd = 'cmd.exe /c "cd /d C:\Users\cfl\Desktop\RCH\app && set MSBUILDDISABLENODEREUSE=1 && flutter build windows --release > build_release.log 2>&1"'
+$cmd = 'cmd.exe /c "cd /d D:\Projects\RCH-source\app && set MSBUILDDISABLENODEREUSE=1 && flutter build windows --release > build_release.log 2>&1"'
 Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd }
 ```

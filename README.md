@@ -620,8 +620,6 @@ Original Comic Files
 
 # 📖 Documentation
 
-详细文档位于 [`docs/`](docs/)。
-
 开发环境配置：
 
 [`SETUP.md`](SETUP.md)

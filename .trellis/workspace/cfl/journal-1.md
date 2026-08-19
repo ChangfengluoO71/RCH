@@ -340,3 +340,25 @@ P3 全部验收达成。过程要点：
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: Repository documentation reorganization
+
+**Date**: 2026-08-19
+**Task**: Repository documentation reorganization
+**Branch**: `master`
+
+### Summary
+
+Moved user, setup, project, issue, and release documentation under docs; repaired relative links; added local-artifact ignore rules; rebased onto concurrent GitHub README updates and pushed.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7391607` | (see git log) |
+| `76f0a7b` | (see git log) |
+
+### Status
+
+[OK] **Completed**

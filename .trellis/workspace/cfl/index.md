@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
-- **Last Active**: 2026-08-17
+- **Total Sessions**: 9
+- **Last Active**: 2026-08-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~342 | Active |
+| `journal-1.md` | ~364 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-08-19 | Repository documentation reorganization | `7391607`, `76f0a7b` | `master` |
 | 8 | 2026-08-17 | 使用反馈修复：条漫页码 / 书源顶栏重叠 / PC 图标（v0.5.1） | `971af41` | `master` |
 | 7 | 2026-08-08 | 115 Cookie 自动续期 + GitHub 下载镜像 | `9e1a77e` | `master` |
 | 6 | 2026-08-08 | 115 扫码 Cookie 书源 + v0.4.2 发布 | `e9a4ebb` | `master` |

@@ -6,6 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `sftp_endpoint`, `webdav_origin`
+
 /// 获取所有缓存分类大小。
 Future<CacheSize> cacheSizes() =>
     RustLib.instance.api.crateApiCacheCacheSizes();
@@ -86,6 +88,40 @@ Future<(String, String)?> pendingMigration({required String root}) =>
 /// 清除迁移标记。
 Future<void> clearMigrationMarker({required String root}) =>
     RustLib.instance.api.crateApiCacheClearMigrationMarker(root: root);
+
+/// 清理单个失效漫画的磁盘缓存（page/ 页面 + raw/ 整本 + cover/ 封面），返回释放字节。
+///
+/// - `cache_ns` 按书源类型重建，与 `open_*_book` 时的命名空间完全一致，保证命中同一目录；
+/// - 输入均为 BookSource 身份字段（Dart 原样传入），不联网、不建会话：
+///   - `url`：webdav 的 base URL；sftp 的 `host` / `host:port` 地址
+///   - `port`：sftp 端口（缺省 22）
+///   - `root_path`：source.path（baidu 的 root 目录）
+///   - `client_id`：baidu app_key / 115 app_id
+///   - `root_id`：115 / quark 的根目录 id
+///   - `cookie_mode`：115 是否为网页 Cookie 模式（origin 前缀不同）
+///
+/// 说明：quark / 115 的浏览路径本身即内部素材 id（fid / pick_code），
+/// 与 `raw_cache_path(origin, path)` 的入参一致，raw/ 整本缓存可精确删除。
+/// AI 超分缓存按页面内容哈希组织，需打开书本才能枚举，由「清空 AI 缓存」统一管理。
+Future<BigInt> purgeStaleBookCache({
+  required String sourceType,
+  required String path,
+  String? url,
+  PlatformInt64? port,
+  required String rootPath,
+  String? clientId,
+  String? rootId,
+  required bool cookieMode,
+}) => RustLib.instance.api.crateApiCachePurgeStaleBookCache(
+  sourceType: sourceType,
+  path: path,
+  url: url,
+  port: port,
+  rootPath: rootPath,
+  clientId: clientId,
+  rootId: rootId,
+  cookieMode: cookieMode,
+);
 
 /// 缓存分类大小信息。
 class CacheSize {

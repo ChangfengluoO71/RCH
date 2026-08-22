@@ -1071,6 +1071,21 @@ pub fn delete_record(key: &str) -> Result<()> {
     Ok(())
 }
 
+/// 清空阅读统计：所有（未删除）记录阅读次数归零，保留记录行（最近阅读列表与
+/// 每本书的阅读进度不变）。供「清空全部缓存 → 仅清空阅读统计」使用。
+pub(crate) fn reset_all_read_counts_on(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "UPDATE read_records SET read_count = 0, updated_at = ?1 WHERE deleted = 0",
+        params![now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn reset_all_read_counts() -> Result<()> {
+    let conn = get().lock().unwrap();
+    reset_all_read_counts_on(&conn)
+}
+
 pub fn delete_records_by_source_prefix(prefix: &str) -> Result<u32> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
@@ -2326,6 +2341,28 @@ pub(crate) fn load_library_index_for_source_on(
 pub fn load_library_index_for_source(source_id: &str) -> Vec<LibraryIndexRow> {
     let conn = get().lock().unwrap();
     load_library_index_for_source_on(&conn, source_id)
+}
+
+/// 某书源的**软删墓碑**路径列表（`deleted=1` 条目）。仅返回 path 字符串，
+/// 供"失效清理"判定远程文件已消失（ADR-021：整源重建时消失条目软删墓碑）。
+pub(crate) fn load_library_index_tombstones_for_source_on(
+    conn: &Connection,
+    source_id: &str,
+) -> Vec<String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT path FROM library_index WHERE source_id = ?1 AND deleted = 1 ORDER BY path",
+        )
+        .unwrap();
+    stmt.query_map([source_id], |row| row.get(0))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+}
+
+pub fn load_library_index_tombstones_for_source(source_id: &str) -> Vec<String> {
+    let conn = get().lock().unwrap();
+    load_library_index_tombstones_for_source_on(&conn, source_id)
 }
 
 /// 整源替换（Phase 5.2）：传入条目 upsert（deleted=0），该源旧索引中不在新集合的
@@ -4100,6 +4137,34 @@ mod tests {
         conn.execute("UPDATE book_tags SET deleted=1 WHERE book_key='k1' AND tag_id='t1'", [])
             .unwrap();
         assert!(load_all_book_tags_on(&conn).is_empty());
+    }
+
+    #[test]
+    fn reset_all_read_counts_zeroes_live_keeps_tombstones() {
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO read_records (key, source_id, source_type, path, title, last_page, read_count, last_read_at, stable_id, updated_at, deleted) VALUES
+             ('k1','s1','local','/a','A',3,7,1,0,1,0),
+             ('k2','s1','local','/b','B',0,9,1,0,1,1)",
+            [],
+        )
+        .unwrap();
+        reset_all_read_counts_on(&conn).unwrap();
+        // 存活记录次数归零
+        let c1: i64 = conn
+            .query_row("SELECT read_count FROM read_records WHERE key='k1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(c1, 0);
+        // 软删记录不动（保留墓碑语义）
+        let c2: i64 = conn
+            .query_row("SELECT read_count FROM read_records WHERE key='k2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(c2, 9);
+        // 行保留
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM read_records", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2);
     }
 
 }

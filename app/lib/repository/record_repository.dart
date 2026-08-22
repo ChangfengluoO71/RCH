@@ -54,25 +54,39 @@ class RecordRepository {
     records.removeWhere((k, _) => k.startsWith(prefix));
   }
 
-  /// 清理失效记录（源已删除 / 本地文件丢失），返回被移除的 key 列表，
-  /// 调用方需据此同步删除 SQLite 中的行（saveToSqlite 只 upsert 不删行）。
-  List<String> purgeStale(List<BookSource> sources) {
-    final staleKeys = <String>[];
+  /// 清空全部阅读记录（内存态）。
+  void clearAll() => records.clear();
+
+  /// 清理失效记录，返回被移除的记录列表（调用方需据此同步删除
+  /// SQLite 行与磁盘缓存；saveToSqlite 只 upsert 不删行）。
+  ///
+  /// 失效判定（按优先级）：
+  /// 1. 书源已删除（sources 中不存在该 sourceId）；
+  /// 2. 远程书源：离线索引中该路径已被标记为已删除（[remoteTombstones] 的 deleted=1 墓碑，
+  ///    即整源重建时远程文件已消失的软删条目）；
+  /// 3. 本地文件系统书源：本地文件不存在。
+  List<ReadRecord> purgeStale(
+    List<BookSource> sources, {
+    Map<String, Set<String>> remoteTombstones = const {},
+  }) {
+    final stale = <ReadRecord>[];
     for (final r in records.values) {
       final src = sources.cast<BookSource?>().firstWhere(
         (s) => s?.id == r.sourceId,
         orElse: () => null,
       );
       if (src == null) {
-        staleKeys.add(r.key);
+        stale.add(r);
+      } else if (!src.isLocalFs && (remoteTombstones[src.id]?.contains(r.path) ?? false)) {
+        stale.add(r);
       } else if (src.isLocalFs && !File(r.path).existsSync()) {
-        staleKeys.add(r.key);
+        stale.add(r);
       }
     }
-    for (final k in staleKeys) {
-      records.remove(k);
+    for (final r in stale) {
+      records.remove(r.key);
     }
-    return staleKeys;
+    return stale;
   }
 
   // ---- Queries ----

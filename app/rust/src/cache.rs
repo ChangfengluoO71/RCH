@@ -198,6 +198,69 @@ pub fn clear_temp_cache() -> Result<u64> {
     if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
 }
 
+// ====== 按书清理（清理失效漫画数据用） ======
+
+/// 对缓存命名空间做稳定哈希,作为 page/ 下的目录名。
+/// 与 reader.rs 打开书籍时的命名空间哈希完全一致，保证按书删除命中同一目录。
+pub fn stable_hash(s: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// 删除某本书的 L2 页面缓存目录（page/<ns-hash>/），返回释放的字节数。
+/// `cache_ns` 必须与打开该书时的命名空间完全一致（如 `webdav|{origin}|{path}`）。
+pub fn delete_page_cache_for_ns(cache_ns: &str) -> Result<u64> {
+    let dir = CacheDir::Page.path().join(stable_hash(cache_ns));
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let freed = dir_size(&dir);
+    std::fs::remove_dir_all(&dir)?;
+    Ok(freed)
+}
+
+/// 删除某本书的整本下载缓存目录（raw/<key-hash>/），返回释放的字节数。
+/// `key` 必须与对应书源 `raw_cache_path` 的 hash 输入一致（通常为 `{origin}{path}`）。
+/// 目录级删除（不关心缓存文件的实际文件名），命中即整目录移除。
+pub fn delete_raw_cache_for_key(key: &str) -> Result<u64> {
+    let hash = stable_hash(key);
+    let dir = CacheDir::Raw.path().join(&hash);
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let freed = dir_size(&dir);
+    std::fs::remove_dir_all(&dir)?;
+    Ok(freed)
+}
+
+/// 删除某本书的封面缓存文件（cover/ 下以 path 哈希为前缀的 .cover 文件），返回释放字节。
+/// 封面 key 为 `{path_hash}_{page}_{w}_{h}[_crop].cover`，按 path 哈希前缀匹配删除，
+/// 无需知道具体页码/尺寸/裁剪组合。
+pub fn delete_cover_cache_for_path(path: &str) -> Result<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    let prefix = format!("{:x}_", hasher.finish());
+
+    let dir = CacheDir::Cover.path();
+    let mut freed = 0u64;
+    if !dir.exists() {
+        return Ok(0);
+    }
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let meta = entry.metadata()?;
+        if meta.is_file() && name.starts_with(&prefix) {
+            freed += meta.len();
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(freed)
+}
+
 /// 清空旧版遗留缓存：
 /// - cache/ 根目录下的 16 位哈希目录（v0.2 之前的页面缓存布局）；
 /// - 根级 download/ 目录（旧版 WebDAV 整本下载回退，自本版本起不再创建）。
@@ -533,6 +596,69 @@ mod tests {
         let _ = std::fs::create_dir_all(&tmp);
         assert_eq!(dir_size(&tmp), 0);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 按书清理三件套（page/raw/cover）只命中目标书，其他缓存不受影响。
+    /// 三者共享全局自定义缓存根，必须同一测试顺序执行（测试默认并发会互相覆盖该状态）。
+    #[test]
+    fn delete_by_book_helpers_only_remove_matching() {
+        use std::hash::{Hash, Hasher};
+        let base = std::env::temp_dir().join(format!("rch_test_purge_book_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        set_custom_cache_root(base.to_str().unwrap());
+
+        // ---- page/ ----
+        let ns_a = "webdav|https://host:443|/a.cbz";
+        let ns_b = "webdav|https://host:443|/b.cbz";
+        let _ = CacheDir::Page.ensure().unwrap();
+        let dir_a = CacheDir::Page.path().join(stable_hash(ns_a));
+        let dir_b = CacheDir::Page.path().join(stable_hash(ns_b));
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+        std::fs::write(dir_a.join("data.bin"), vec![9u8; 32]).unwrap();
+        let freed = delete_page_cache_for_ns(ns_a).unwrap();
+        assert_eq!(freed, 32);
+        assert!(!dir_a.exists());
+        assert!(dir_b.exists());
+        assert_eq!(delete_page_cache_for_ns("webdav|https://x|/n.cbz").unwrap(), 0);
+
+        // ---- raw/ ----
+        let key_a = "https://host:443/dav/漫画.cbz";
+        let key_b = "https://host:443/dav/另一本.cbz";
+        let _ = CacheDir::Raw.ensure().unwrap();
+        let raw_a = CacheDir::Raw.path().join(stable_hash(key_a));
+        let raw_b = CacheDir::Raw.path().join(stable_hash(key_b));
+        std::fs::create_dir_all(&raw_a).unwrap();
+        std::fs::create_dir_all(&raw_b).unwrap();
+        std::fs::write(raw_a.join("本.cbz"), vec![1u8; 64]).unwrap();
+        let freed = delete_raw_cache_for_key(key_a).unwrap();
+        assert_eq!(freed, 64);
+        assert!(!raw_a.exists());
+        assert!(raw_b.exists());
+
+        // ---- cover/ ----
+        let hash_of = |s: &str| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            s.hash(&mut h);
+            format!("{:x}", h.finish())
+        };
+        let path_a = "/dav/漫画A.cbz";
+        let path_b = "/dav/漫画B.cbz";
+        let cover = CacheDir::Cover.ensure().unwrap();
+        let f_a1 = cover.join(format!("{}_0_100_100.cover", hash_of(path_a)));
+        let f_a2 = cover.join(format!("{}_3_200_200.cover", hash_of(path_a)));
+        let f_b = cover.join(format!("{}_0_100_100.cover", hash_of(path_b)));
+        std::fs::write(&f_a1, vec![2u8; 16]).unwrap();
+        std::fs::write(&f_a2, vec![3u8; 16]).unwrap();
+        std::fs::write(&f_b, vec![4u8; 16]).unwrap();
+        let freed = delete_cover_cache_for_path(path_a).unwrap();
+        assert_eq!(freed, 32);
+        assert!(!f_a1.exists());
+        assert!(!f_a2.exists());
+        assert!(f_b.exists());
+
+        set_custom_cache_root("");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

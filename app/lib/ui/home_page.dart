@@ -55,6 +55,8 @@ class _HomePageState extends State<HomePage> {
   bool _globalMode = false;          // false=筛选当前视图, true=跨书源搜索
   final ValueNotifier<int> _globalCount = ValueNotifier<int>(0);
   String? _detailTag;
+  /// 阅读统计当前维度（漫画/系列/标签/作者/类别）。
+  String _statsDim = '漫画';
   /// 元数据标签各组的展开状态（会话内保持，按类别名索引）。
   final Map<String, bool> _metaExpandedGroups = {};
   bool _updatePromptShown = false;
@@ -196,7 +198,7 @@ class _HomePageState extends State<HomePage> {
         onDestinationSelected: _onCompactNav,
         destinations: const [
           NavigationDestination(icon: Icon(Icons.history), label: '最近'),
-          NavigationDestination(icon: Icon(Icons.whatshot), label: '最多'),
+          NavigationDestination(icon: Icon(Icons.analytics_outlined), selectedIcon: Icon(Icons.analytics), label: '统计'),
           NavigationDestination(icon: Icon(Icons.label_outline), selectedIcon: Icon(Icons.label), label: '标签'),
           NavigationDestination(icon: Icon(Icons.cloud_outlined), selectedIcon: Icon(Icons.cloud), label: '书源'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: '设置'),
@@ -207,7 +209,7 @@ class _HomePageState extends State<HomePage> {
 
   int get _compactNavIndex => switch (_section) {
         'recent' => 0,
-        'most' => 1,
+        'stats' => 1,
         'tags' => 2,
         'source' => 3,
         'settings' => 4,
@@ -219,7 +221,7 @@ class _HomePageState extends State<HomePage> {
       case 0:
         _select('recent');
       case 1:
-        _select('most');
+        _select('stats');
       case 2:
         _select('tags');
       case 3:
@@ -231,7 +233,7 @@ class _HomePageState extends State<HomePage> {
 
   String _compactTitle() => switch (_section) {
         'recent' => '最近阅读',
-        'most' => '最多阅读',
+        'stats' => '阅读统计',
         'tags' => '标签管理',
         'source' => '书源',
         'settings' => '设置',
@@ -247,7 +249,7 @@ class _HomePageState extends State<HomePage> {
       child: SizedBox(width: 230, child: Column(children: [
         _buildSearchHeader(),
         _nav(Icons.history, '最近阅读', 'recent'),
-        _nav(Icons.whatshot, '最多阅读', 'most'),
+        _nav(Icons.analytics, '阅读统计', 'stats'),
         _nav(Icons.label, '标签管理', 'tags'),
         const Divider(height: 18),
         Expanded(child: _buildSourceList()),
@@ -440,7 +442,7 @@ class _HomePageState extends State<HomePage> {
     // 筛选模式：过滤当前视图
     return switch (_section) {
       'recent'   => _buildLocalResults(LibraryStore.instance.recent, '最近阅读'),
-      'most'     => _buildLocalResults(LibraryStore.instance.mostRead, '最多阅读'),
+      'stats'    => _buildStats(),
       'source'   => _source == null
           ? (isCompact(context)
               ? _buildSourceList()
@@ -497,6 +499,110 @@ class _HomePageState extends State<HomePage> {
                   return ComicCard(source: s, path: r.path, title: r.title, subtitle: '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BookDetailPage(source: s, path: r.path, title: r.title))));
                 }),
+      ),
+    ]);
+  }
+
+  // ============================================================
+  // 阅读统计（最多阅读的漫画/系列/标签/作者/类别，各 Top10）
+  // ============================================================
+  /// 聚合某个元数据字段的阅读次数：{字段值: 总阅读次数}。
+  Map<String, int> _aggMetaStats(String Function(BookMeta) pick) {
+    final store = LibraryStore.instance;
+    final m = <String, int>{};
+    for (final r in store.records.values) {
+      if (r.readCount <= 0) continue;
+      final meta = store.metas[r.key];
+      if (meta == null) continue;
+      final v = pick(meta).trim();
+      if (v.isEmpty) continue;
+      m[v] = (m[v] ?? 0) + r.readCount;
+    }
+    return m;
+  }
+
+  /// 跳转到标签管理，并直接打开对应标签的详情。
+  void _gotoTag(String tag) => setState(() {
+    _section = 'tags'; _detailTag = tag;
+    _textSearch = ''; _tags.clear(); _tagDraft = ''; _searchCtrl.clear(); _globalMode = false;
+  });
+
+  Widget _buildStats() {
+    final store = LibraryStore.instance;
+    // (名称, 阅读次数, 关联记录[漫画维度，用于跳书详情页])
+    List<(String, int, ReadRecord?)> rows = [];
+    switch (_statsDim) {
+      case '漫画':
+        rows = store.mostRead.take(10).map((r) => (r.title, r.readCount, r)).toList();
+      case '系列':
+        final series = _aggMetaStats((m) => m.series).entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        rows = series.take(10).map((e) => (e.key, e.value, null)).toList();
+      case '标签':
+        rows = store.tagStats()
+            .where((s) => s.$3 > 0)
+            .take(10)
+            .map((s) => (s.$1, s.$3, null))
+            .toList();
+      case '作者':
+        final authors = _aggMetaStats((m) => m.author).entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        rows = authors.take(10).map((e) => (e.key, e.value, null)).toList();
+      case '类别':
+        final genres = _aggMetaStats((m) => m.genre).entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        rows = genres.take(10).map((e) => (e.key, e.value, null)).toList();
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+        child: Row(children: [
+          const Text('阅读统计', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Spacer(),
+          SegmentedButton<String>(
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            segments: const [
+              ButtonSegment(value: '漫画', label: Text('漫画')),
+              ButtonSegment(value: '系列', label: Text('系列')),
+              ButtonSegment(value: '标签', label: Text('标签')),
+              ButtonSegment(value: '作者', label: Text('作者')),
+              ButtonSegment(value: '类别', label: Text('类别')),
+            ],
+            selected: {_statsDim},
+            onSelectionChanged: (v) => setState(() => _statsDim = v.first),
+          ),
+        ]),
+      ),
+      Expanded(
+        child: rows.isEmpty
+            ? const Center(child: Text('暂无统计\n去书源里打开一些漫画吧', textAlign: TextAlign.center, style: TextStyle(color: Colors.white38)))
+            : ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                itemCount: rows.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (c, i) {
+                  final (name, count, rec) = rows[i];
+                  final medal = i < 3 ? ['🥇', '🥈', '🥉'][i] : '${i + 1}.';
+                  return ListTile(
+                    dense: true,
+                    leading: SizedBox(width: 34, child: Text(medal, style: const TextStyle(fontSize: 15))),
+                    title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text('共阅读 $count 次', style: const TextStyle(fontSize: 12)),
+                    trailing: const Icon(Icons.chevron_right, size: 18),
+                    onTap: () {
+                      if (_statsDim == '漫画' && rec != null) {
+                        final s = store.sourceById(rec.sourceId);
+                        if (s == null) return;
+                        Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) => BookDetailPage(source: s, path: rec.path, title: rec.title)));
+                      } else {
+                        _gotoTag(name);
+                      }
+                    },
+                  );
+                },
+              ),
       ),
     ]);
   }
@@ -617,9 +723,9 @@ class _HomePageState extends State<HomePage> {
   void _deleteSource(BookSource src) {
     showDialog<bool>(context: context, builder: (ctx) => AlertDialog(title: Text('删除书源"${src.name}"?'), content: const Text('将同时删除该书源下的所有阅读记录和元数据'),
       actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('删除'))]))
-      .then((ok) {
+      .then((ok) async {
         if (ok == true) {
-          LibraryStore.instance.removeSourceWithCleanup(src.id);
+          await LibraryStore.instance.removeSourceWithCleanup(src.id);
           // 设备→书源树同步刷新（否则删除要重启才生效）
           LibraryCatalogStore.instance.loadTree();
           setState(() {});
@@ -705,20 +811,27 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildTagDetail(String tag) {
-    final list = LibraryStore.instance.recordsByTag(tag);
+    final listF = LibraryStore.instance.recordsByTag(tag);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: Row(children: [
         Text('标签: $tag', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)), const Spacer(),
         IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => _detailTag = null)),
       ])),
-      Expanded(child: list.isEmpty
-        ? const Center(child: Text('没有匹配的漫画', style: TextStyle(color: Colors.white38)))
+      Expanded(child: FutureBuilder<List<ReadRecord>>(
+        future: listF,
+        builder: (c, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final list = snap.data!;
+          return list.isEmpty
+            ? const Center(child: Text('没有匹配的漫画', style: TextStyle(color: Colors.white38)))
         : GridView.builder(padding: const EdgeInsets.all(16), gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 180, childAspectRatio: 0.66, crossAxisSpacing: 12, mainAxisSpacing: 12), itemCount: list.length, itemBuilder: (c, i) {
             final r = list[i]; final s = LibraryStore.instance.sourceById(r.sourceId);
             if (s == null) return const SizedBox();
             return ComicCard(source: s, path: r.path, title: r.title, subtitle: '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BookDetailPage(source: s, path: r.path, title: r.title))));
-          })),
+          });
+        },
+      )),
     ]);
   }
 

@@ -265,6 +265,9 @@ class LibraryIndexService {
       final parentId = libraryIndexId(fingerprint, dirPath);
       for (final e in list) {
         final id = libraryIndexId(fingerprint, e.path);
+        // 漫画判定同时看 path 与 name：115/quark 等 id-path 源的浏览路径是内部素材
+        // id（无扩展名），只有 name 带扩展名；webdav/sftp/local 的 path 自带扩展名。
+        final comicName = isComicPath(e.name);
         if (e.isDir) {
           entries.add(frb.LibraryIndexDto(
             id: id,
@@ -280,8 +283,10 @@ class LibraryIndexService {
             updatedAt: now,
             deleted: false,
           ));
-          if (!visited.contains(e.path)) queue.add(e.path);
-        } else if (isComicPath(e.path)) {
+          // 漫画包型目录（115 把 zip 漫画当文件夹）：收为条目即可（供离线识别与
+          // 墓碑匹配），不递归进入内部（内部是图片，索引无意义且浪费网盘请求）。
+          if (!comicName && !visited.contains(e.path)) queue.add(e.path);
+        } else if (isComicPath(e.path) || comicName) {
           entries.add(frb.LibraryIndexDto(
             id: id,
             sourceId: source.id,

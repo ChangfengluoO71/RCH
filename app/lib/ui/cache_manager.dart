@@ -21,6 +21,7 @@ class CacheManagerPanel extends StatefulWidget {
 class _CacheManagerPanelState extends State<CacheManagerPanel> {
   CacheSize? _sizes;
   bool _loading = true;
+  bool _purging = false;
 
   @override
   void initState() {
@@ -34,7 +35,8 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _clear(String label, Future<BigInt> Function() fn, {bool clearCoverMemory = false}) async {
+  Future<void> _clear(String label, Future<BigInt> Function() fn,
+      {bool clearCoverMemory = false}) async {
     if (!mounted) return;
     final ok = await showDialog<bool>(
       context: context,
@@ -51,6 +53,56 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     final freed = await fn();
     if (clearCoverMemory) ComicCover.clear();
     if (mounted) _snack('已$label (释放 ${fmtSize(freed)})');
+    await _refresh();
+  }
+
+  /// 「清空全部缓存」：缓存与阅读数据分开确认——最近阅读记录、阅读统计
+  /// 各自独立征得同意后才清空对应的内容（数据不同源：清记录会连带清统计，
+  /// 清统计仅阅读次数归零、保留列表与进度）。
+  Future<void> _clearAllWithChoices() async {
+    if (!mounted) return;
+    var clearRecent = false;
+    var clearStats = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(builder: (c, setDlgState) => AlertDialog(
+        title: const Text('确认清理'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Padding(padding: EdgeInsets.only(bottom: 6), child: Text('确定要清空全部缓存吗？阅读数据请分别确认：')),
+          CheckboxListTile(
+            value: clearRecent,
+            dense: true,
+            onChanged: (v) => setDlgState(() => clearRecent = v ?? false),
+            title: const Text('同时清空最近阅读记录'),
+            subtitle: const Text('删除最近阅读/最多阅读列表与阅读进度；阅读统计同源于记录，会一并清空'),
+          ),
+          CheckboxListTile(
+            value: clearStats,
+            dense: true,
+            onChanged: (v) => setDlgState(() => clearStats = v ?? false),
+            title: const Text('同时清空阅读统计'),
+            subtitle: const Text('仅阅读次数归零；最近阅读列表与进度保留'),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确定')),
+        ],
+      )),
+    );
+    if (ok != true) return;
+    final msg = StringBuffer('已清空全部缓存');
+    if (clearRecent) {
+      await LibraryStore.instance.clearReadRecords();
+      msg.write('、最近阅读记录');
+    }
+    if (clearStats) {
+      await LibraryStore.instance.resetReadCounts();
+      msg.write('、阅读统计');
+    }
+    final freed = await clearAllCaches();
+    ComicCover.clear();
+    if (mounted) _snack('$msg (释放 ${fmtSize(freed)})');
     await _refresh();
   }
 
@@ -294,7 +346,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
-            onPressed: () => _clear('清空全部缓存', clearAllCaches, clearCoverMemory: true),
+            onPressed: () => _clearAllWithChoices(),
             icon: const Icon(Icons.delete_sweep, size: 18),
             label: const Text('清空全部缓存'),
           ),
@@ -327,12 +379,24 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () {
-                  final (r, m) = LibraryStore.instance.purgeStaleData();
-                  _snack('已清理 $r 条失效记录、$m 条失效元数据');
-                },
+                onPressed: _purging
+                    ? null
+                    : () async {
+                        setState(() => _purging = true);
+                        try {
+                          final (r, m, freed, failed) =
+                              await LibraryStore.instance.purgeStaleData();
+                          final tip = failed > 0
+                              ? '（$failed 个远程书源在线核对失败，已保留其数据，请检查网络/登录后重试）'
+                              : '';
+                          _snack('已清理 $r 条失效记录、$m 条失效元数据，释放 '
+                              '${fmtSize(BigInt.from(freed))} 缓存$tip');
+                        } finally {
+                          if (mounted) setState(() => _purging = false);
+                        }
+                      },
                 icon: const Icon(Icons.cleaning_services, size: 18),
-                label: const Text('清理失效漫画数据'),
+                label: Text(_purging ? '正在核对远程书源并清理…' : '清理失效漫画数据'),
               ),
             ),
           ]),

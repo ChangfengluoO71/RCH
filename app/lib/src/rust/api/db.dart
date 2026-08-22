@@ -41,6 +41,10 @@ Future<void> dbUpsertRecord({required ReadRecordDto record}) =>
 Future<void> dbDeleteRecord({required String key}) =>
     RustLib.instance.api.crateApiDbDbDeleteRecord(key: key);
 
+/// 清空阅读统计：所有未删除记录阅读次数归零（保留记录行与进度）。
+Future<void> dbResetReadCounts() =>
+    RustLib.instance.api.crateApiDbDbResetReadCounts();
+
 Future<int> dbDeleteRecordsBySourcePrefix({required String prefix}) => RustLib
     .instance
     .api
@@ -173,6 +177,14 @@ Future<List<LibraryIndexDto>> dbLoadLibraryIndexForSource({
 }) => RustLib.instance.api.crateApiDbDbLoadLibraryIndexForSource(
   sourceId: sourceId,
 );
+
+/// 读取某书源的**软删墓碑**路径列表（`deleted=1`）。`load_library_index_for_source`
+/// 只返回存活条目（SQL 过滤 deleted=0），失效清理需要的是"已消失"集合，
+/// 故单独提供本查询（仅返回 path，足够判定）。
+Future<List<String>> dbLoadLibraryIndexTombstones({required String sourceId}) =>
+    RustLib.instance.api.crateApiDbDbLoadLibraryIndexTombstones(
+      sourceId: sourceId,
+    );
 
 /// 补写一条索引条目（含父目录链；纯本地，零网络）。
 /// ADR-029：缓存/已读/标签触及的漫画自动入离线索引。

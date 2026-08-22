@@ -166,6 +166,11 @@ pub fn db_delete_record(key: String) -> Result<(), String> {
     db::delete_record(&key).map_err(|e| format!("{e}"))
 }
 
+/// 清空阅读统计：所有未删除记录阅读次数归零（保留记录行与进度）。
+pub fn db_reset_read_counts() -> Result<(), String> {
+    db::reset_all_read_counts().map_err(|e| format!("{e}"))
+}
+
 pub fn db_delete_records_by_source_prefix(prefix: String) -> Result<u32, String> {
     db::delete_records_by_source_prefix(&prefix).map_err(|e| format!("{e}"))
 }
@@ -544,6 +549,13 @@ pub fn db_load_library_index_for_source(source_id: String) -> Result<Vec<Library
         .into_iter()
         .map(library_index_to_dto)
         .collect())
+}
+
+/// 读取某书源的**软删墓碑**路径列表（`deleted=1`）。`load_library_index_for_source`
+/// 只返回存活条目（SQL 过滤 deleted=0），失效清理需要的是"已消失"集合，
+/// 故单独提供本查询（仅返回 path，足够判定）。
+pub fn db_load_library_index_tombstones(source_id: String) -> Result<Vec<String>, String> {
+    Ok(db::load_library_index_tombstones_for_source(&source_id))
 }
 
 /// 补写索引条目的输入（id/parent 由 Rust 按 book_id 规则计算，调用方只给路径语义）。

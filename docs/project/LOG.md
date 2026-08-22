@@ -710,3 +710,222 @@ ISCC.exe setup.iss   → dist/RCH-v0.2.0-windows-x64.exe
 
 - 书源顶栏 SafeArea 的 Android 实机验证依赖 ≥600dp 宿主（MuMu 大视口/平板布局）复测。
 ---
+
+## 2026-08-21|第44轮：修复「清理失效漫画数据」无效（远程删除漫画后缓存与数据库残留）
+
+**本轮目的**
+
+修复飞书群「RCH项目组」长风落 2026-08-21 反馈：远程书源删除漫画后，若该漫画曾被阅读并留有缓存，点击「清理失效漫画数据」无效——漫画仍可在本地阅读，缓存文件与数据库信息未清除。同时将该反馈整理为飞书 Bug 任务（guid `df3dd40e-98c2-4b21-bfc3-d4d4d999ae87`）。
+
+**根因（双向反馈后确认）**
+
+`LibraryStore.purgeStaleData`（设置 → 缓存管理 → 清理失效漫画数据）存在两个叠加缺陷：
+
+1. **失效判定缺失**：`RecordRepository.purgeStale` 只识别「书源被删除」「本地文件丢失」两类失效；远程书源的漫画记录（书源仍在、仅远程文件被删）永远不会被判为失效——不检查远程路径，也没有远程已删的证据来源，按钮因此"无效"。
+2. **清理不彻底**：即使记录被判失效，也只清内存 + SQLite 记录/元数据/标签，完全不动磁盘缓存（`page/` 页面、`raw/` 整本下载、`cover/` 封面）与 `ai_tasks` 队列残留，漫画可凭缓存继续本地阅读。
+
+**修改内容**
+
+### 1. Rust 缓存层（`app/rust/src/cache.rs` + `app/rust/src/api/cache.rs`）
+
+- `cache.rs`：`stable_hash` 提为 pub（原 `reader.rs` 私有函数，删除重复实现后统一引用）；新增按书清理三原语：
+  - `delete_page_cache_for_ns(cache_ns)` — 按命名空间删除 `page/<ns-hash>/` 整目录；
+  - `delete_raw_cache_for_key(key)` — 按 `origin+path` 哈希删除 `raw/<hash>/` 整目录（目录级删除，不依赖缓存文件名）；
+  - `delete_cover_cache_for_path(path)` — 按 path 哈希前缀匹配删除 `cover/` 下全部 `.cover` 文件（无需知道页码/尺寸/裁剪组合）。
+- `api/cache.rs`：新增 FRB 接口 `purge_stale_book_cache(source_type, path, url, port, root_path, client_id, root_id, cookie_mode) -> u64`：按书源类型重建缓存命名空间（与 `open_*_book` 时的命名空间逐字段对齐），删除 page/raw/cover 并返回释放字节。不联网、不建会话，纯身份字段计算。
+  - 各类型 origin 重建规则与打开路径完全一致：webdav=`scheme://host[:port]`（URL 解析）、sftp=`host`/`host:port`（端口 22 省略，与 Dart `_parseHostPort` 同规则）、baidu=`baidu:{client_id}:{root}`（root 空→`/`）、115=`115:{app_id}:{root_id}` / Cookie 模式 `115web:{root_id}`（root 空→`0`）、quark=`quark:{root_id}`（空→`0`）。
+  - 边界：quark 与 115 Cookie 模式的 raw/ 键内部用素材 id（fid/pick_code），与浏览路径不同，离线无法定位 → 仅清 page/cover；AI 超分缓存按页面内容哈希组织，需打开书本枚举，由「清空 AI 缓存」统一管理。
+
+### 2. Dart 失效判定（`app/lib/repository/record_repository.dart`）
+
+- `purgeStale` 增加第三类失效证据——**远程墓碑**：离线索引 `library_index` 整源重建时会把已消失的远程文件软删为 `deleted=1`（ADR-021），该路径即"远程已删除"的可靠离线证据；`remoteTombstones`（sourceId → 已删路径集合）命中即失效。本地源仍按文件存在性判定。返回值由 key 列表改为被移除的记录对象列表（供调用方清理缓存）。
+
+### 3. Dart 清理联动（`app/lib/store/library_store.dart`）
+
+- `purgeStaleData` 改为 async，返回 `(记录数, 元数据数, 释放缓存字节)`：
+  - 收集各远程源的索引墓碑（`dbLoadLibraryIndexForSource`，索引不可读时保守跳过）；
+  - 对每条失效记录调用 `purgeStaleBookCache`（幽灵书源跳过），并清理 `ai_tasks` 中 book_key 匹配的残留任务；
+  - 内存 / SQLite 清理逻辑保持不变。
+- `removeSourceWithCleanup` 改为 async：删除书源前捕获该源全部阅读记录，删除后用已捕获的身份字段逐本清理 page/raw/cover 缓存（源行已删、origin 无法再重建的问题由此绕开）。
+
+### 4. UI（`app/lib/ui/cache_manager.dart` / `app/lib/ui/home_page.dart`）
+
+- 「清理失效漫画数据」按钮改 async，SnackBar 显示「已清理 X 条失效记录、Y 条失效元数据，释放 Z 缓存」；
+- 删除书源对话框确认回调改 async 并 await `removeSourceWithCleanup`。
+
+### 5. 测试与桥接
+
+- `cache.rs` 新增 `delete_by_book_helpers_only_remove_matching` 测试（page/raw/cover 只命中目标书、不影响其他书、不存在时返回 0；共享全局缓存根故顺序执行）；
+- FRB 重新生成（`flutter_rust_bridge_codegen generate`），`frb_generated*.dart/rs`、`api/cache.dart` 同步更新。
+
+**决策原因**
+
+- 远程失效判定采用「离线索引墓碑」而非联网校验：清理按钮必须离线可用、不发起网络请求，且 RCH 的 ADR-029「浏览即索引/触及即补」保证读过/缓存过的漫画必然留下索引条目，删除后重建/刷新索引即为墓碑证据，判定可靠且零网络。
+- 缓存命名空间重建放在 Rust：origin 的派生规则分散在各 Provider（URL 解析 / 端口省略 / root 归一化），Dart 无法可靠复现，故由 Rust 按类型精确重建，保证与打开时哈希一致。
+- 不做孤儿缓存全盘扫描（避免误删正在阅读但尚未落记录的书），改为按失效记录精确清理 + 书源删除时逐本清理双路径覆盖。
+
+**影响范围**
+
+- Rust：`app/rust/src/cache.rs`（+63）、`app/rust/src/api/cache.rs`（+132）、`app/rust/src/reader.rs`（替换 stable_hash 引用）、`app/rust/src/frb_generated.rs`（codegen）。
+- Dart：`app/lib/repository/record_repository.dart`、`app/lib/store/library_store.dart`、`app/lib/ui/cache_manager.dart`、`app/lib/ui/home_page.dart`、`app/lib/src/rust/api/cache.dart` 与 `frb_generated*.dart`（codegen）。
+
+**验证**
+
+- `cargo check` 通过；`cargo test --lib cache`（10 过 / 0 失败，含新增按书清理测试）与 `source::*::raw_cache_path` 哈希一致性测试通过。
+- `flutter analyze`：本次改动文件 0 issue（工作区残留 2 个 `update_manager.dart` 的 `package_info_plus` 依赖环境问题，非本轮引入）。
+- 各书源缓存键重建与打开路径逐字段静态核对一致（webdav/sftp/baidu/115/115web/quark/local）。
+
+**遗留问题**
+
+- 待用户实机验证：远程书源删除已有缓存的漫画 → 清理失效漫画数据 → 记录消失、缓存释放、不可再本地阅读；
+- quark 与 115 Cookie 模式的 raw/ 整本缓存暂不随单本清理（离线无法定位内部素材 id），由「清空整本下载缓存」兜底；
+- `update_manager.dart` 的 `package_info_plus` 依赖问题待单独处理（与本次无关）。
+---
+
+## 2026-08-21|第44轮·修订(44.1)：清理失效漫画数据第二次根因修复（在线索引对齐 + id-path 源支持）
+
+**背景（用户实机验证不过）**
+
+用户验证「清理失效漫画数据」仍无效：最近阅读 / 标签界面照旧显示、本地缓存仍在、可点进阅读。现场数据库排查（`D:\Documents\RCH\database.db`）确认：
+
+1. **墓碑证据从未产生**：`library_index` 中 240 条 `deleted=1` 墓碑全部属于本地源；用户实际使用的 115（`sync_62556ad8_…`）与夸克源的墓碑数 = 0。「远程已删除」的墓碑只在"全量重建索引（联网）"（`dbReplaceSourceLibraryIndex` 整源替换）时生成，用户不会手动重建 → 判定 0 条失效，一切保留。
+2. **crawl 对 id-path 源判漫画失效**：115 / 夸克等网盘的浏览路径（`read_records.path`、`library_index.path`）是**内部素材 id**（115 的 `akr1a…`、夸克的 32 位 hex），无扩展名；`crawlRemoteSource` 的 `isComicPath(e.path)` 永远不命中 → 这些源的漫画文件本就不进离线索引（现有条目是旧版本遗留），索引对齐也无从匹配。
+3. **raw 缓存可删性误判**：`open_*_book` 的 raw 键就是 `raw_cache_path(origin, &path)`，`path` 即浏览路径（id）——**与清理时传入的 `r.path` 完全一致**。v1 代码把夸克 / 115 Cookie 模式的 raw 判为"离线无法定位"而跳过，是过度保守。
+
+**修改内容（v2）**
+
+### 1. 判定证据：清理时"在线索引对齐"（`app/lib/store/library_store.dart` + 新增 `remote_listing.dart`）
+
+- `purgeStaleData` 增加 Phase 0：对每个远程书源建会话（`webdavSessionFor` / `sftpSessionFor` / `baiduSessionFor` / `cloud115SessionFor`（自动分发 app/cookie）/ `quarkSessionFor`）→ `refreshSourceIndex(force: true, listRemote: …)` 全树重新枚举 → 消失条目软删墓碑化。**删除感知不再依赖用户手动重建索引**，点清理即自动核对远程现状。
+- 失败降级：会话建立 / 枚举异常 → 该源跳过，回退到存量墓碑证据（保守不清），返回值扩展为 `(记录数, 元数据数, 释放字节, 核对失败源数)`，UI 提示"X 个远程书源在线核对失败，请检查网络/登录"。
+- 新增 `app/lib/store/remote_listing.dart`：`remoteSessionFor` + `listRemoteDirFor`（按源类型分发 list，与 SourceBrowser 的 listRemote 同构），LibraryStore 与 SourceBrowser 共用，消除重复编排；独立成文件避免 session store ↔ LibraryStore 循环 import。
+
+### 2. 索引爬取：id-path 源漫画判定（`app/lib/store/library_index_service.dart`）
+
+- `crawlRemoteSource` 漫画判定从 `isComicPath(e.path)` 扩展为 `isComicPath(e.path) || isComicPath(e.name)`——115 / 夸克的 id-path 条目按 name（带扩展名）识别；
+- 漫画包型目录（115 把 zip 漫画当文件夹显示，`entry_type='dir'` 且 name 为漫画扩展名）：收为索引条目（供墓碑匹配）但**不递归进入内部**（内部是图片，无索引价值且浪费网盘请求/限流配额）。
+
+### 3. raw 整本缓存：全部源可精确删除（`app/rust/src/api/cache.rs`）
+
+- 移除"夸克 / 115 Cookie 模式跳过 raw"分支：这些源的 raw 键 = `origin + 浏览路径(id)`，与清理入参一致，精确删除。115 两种模式 origin 前缀（`115web:` / `115:{app_id}:`）保持区分。
+
+### 4. UI（`app/lib/ui/cache_manager.dart`）
+
+- 清理按钮加载态：点击后禁用并显示"正在核对远程书源并清理…"（全树枚举可能耗时，需明确进度反馈）；
+- SnackBar 汇总在线核对失败源数。
+
+**影响范围**
+
+- Rust：`app/rust/src/api/cache.rs`（quark/115 raw 分支）。
+- Dart：`app/lib/store/library_store.dart`（Phase 0 对齐 + 返回 4 元组）、`app/lib/store/remote_listing.dart`（新增）、`app/lib/store/library_index_service.dart`（漫画判定 + 漫画目录不递归）、`app/lib/ui/source_browser.dart`（listRemote 复用 helper）、`app/lib/ui/cache_manager.dart`（loading + 提示）。
+
+**验证**
+
+- `cargo build --release` 通过；`flutter analyze` 0 issue；`flutter test` 57 过 / 0 失败。
+- 数据库现场核对（虚拟验证）：用户 115 源 79 条索引 / 夸克 117 条（含大量 id-path 漫画文件）在 v2 爬取逻辑下按 name 正常入索引；记录 path 与索引 path 同构（`in_idx=1` 已抽样确认），墓碑判定可命中。
+- 在线索引对齐的端到端行为需实机验证（用户在真实网络下点清理）。
+
+**遗留问题**
+
+- 清理按钮现在会联网枚举远程书源全树（每目录 list + 250ms 节流），超大书源耗时较长 —— 属主动清理场景，UI 有加载反馈；
+- `run_in_background` 的 release DLL 构建完成后需重新打包 Windows 供用户验证。
+---
+
+## 2026-08-21|第44轮·修订(44.2)：第三次根因修复（墓碑查询 API 被 deleted=0 过滤）+ 失效记录元数据联动 + 标签详情书名修复
+
+**背景（两次实机验证仍无效 → 数据库取证定位）**
+
+用户实机验证（v2 在线对齐版）仍无效：夸克源已有 82 条 `deleted=1` 墓碑（SQL 直查可见，其中 3 条命中读记录），清理却不删任何记录。逐层排查 `dbLoadLibraryIndexForSource` 实现，发现**致命过滤**：
+
+```sql
+SELECT ... FROM library_index WHERE source_id = ?1 AND deleted = 0   -- 只返回存活条目
+```
+
+墓碑收集用该接口 → `if (e.deleted)` 恒 false → 失效证据恒为空集 → 判定 0 条。**前两版（墓碑判定 + 在线对齐）全部止步于这层 SQL 过滤**——库中真实存在的墓碑经该 API 一层就被滤掉。
+
+**修改内容（v2.1）**
+
+### 1. 新增专用墓碑查询（`app/rust/src/db/mod.rs` + `api/db.rs` + codegen）
+
+- `dbLoadLibraryIndexTombstones(source_id) -> Vec<String>`：`WHERE deleted = 1`，只返回消失路径列表；
+- 不修改原接口——`load_library_index_for_source` 的 `deleted=0` 语义被离线浏览树、增量扫描等依赖；
+- `purgeStaleData` 改用墓碑专用查询收集失效证据（`library_store.dart`）。
+
+### 2. 失效记录联动删除元数据（`app/lib/store/library_store.dart`）
+
+- 修复前：失效记录只删 `read_records` 行 + 磁盘缓存；`book_metas` 仅按"书源已删除"前缀清理，**本地删文件 / 远程删漫画（源仍在）时元数据、标签、封面全部残留**（书架/标签界面仍显示）；
+- 修复后：每条失效记录同时 `dbDeleteMeta(key)` + 内存 `metas.remove`（key 与记录同构），标签关联清除（原已覆盖）；清理"元数据数"统计改为包含记录 meta；
+- 效果：本地漫画删除 → 清理 → 记录、元数据（标签/封面）、page/cover 缓存全部清空。
+
+### 3. 标签详情书名修复（`app/lib/store/library_store.dart` + `app/lib/ui/home_page.dart`）
+
+- 现象：标签详情页很多书标题显示 32hex（如 `bc13a0a4…`）；数据库取证确认 quark 的浏览路径是 32hex 素材 id；
+- 根因：`recordsByTag` 对无读记录的标签书 `title = path.split('/').last` —— id-path 源的 path 没有"/"，整段 id 直接当书名；点开后再以该 title 写记录造成自污染；
+- 修复：`recordsByTag` 改为 async，无记录书名从**离线索引真实文件名**（`dbLoadLibraryIndexForSource` 的 name 字段，按 sourceId 缓存一次）取；层级路径（本地/WebDAV/SFTP）尾段逻辑保留；`_buildTagDetail` 用 FutureBuilder 适配；
+- 最近阅读/最多阅读仍显示记录 title（有记录的书标题正常；历史异常标题的书籍本体已失效，清理会删除其记录）。
+
+**影响范围**
+
+- Rust：`db/mod.rs`、`api/db.rs`（新墓碑查询）；`frb_generated*`（codegen）。
+- Dart：`library_store.dart`（墓碑收集换 API、失效记录删 meta、recordsByTag 异步 + 真实文件名）、`home_page.dart`（标签详情 FutureBuilder）、`api/db.dart`（codegen）。
+
+**验证**
+
+- `flutter analyze` 0 issue；`flutter test` 57 过 / 0 失败；
+- 数据库交叉验证（真实库）：夸克 82 条墓碑 / 3 条命中读记录 → 修复后该 3 条被清（用户实机确认"清理成功"）；
+- 用户实机确认清理生效；标签详情 32hex 标题修复待本次构建后验证。
+
+**遗留问题**
+
+- 历史遗留的 32hex 标题记录（如 `bc13a0a4…`）随其书失效被清理删除；若书仍在远程，仅极少数历史坏 title 记录，可由再次清理或下一次打开覆盖为正确书名；
+- tag 列表 11 个标签均创建于 2026-08-22 09:57（批量），来源为既有用户标签数据，与清理无关。
+---
+
+## 2026-08-21|第44轮·修订(44.3)：「清空全部缓存」联动清除最近阅读记录
+
+**需求**：用户提出——清空全部缓存后，缓存与"最近阅读/最多阅读"的进度数据均无意义，最近阅读记录应一并清除。
+
+**修改内容**
+
+- `app/lib/repository/record_repository.dart`：新增 `clearAll()`（清空内存记录表）；
+- `app/lib/store/library_store.dart`：新增 `clearReadRecords()`——内存清空 + SQLite 逐条 `dbDeleteRecord`（与正常删除同路径，保留同步墓碑语义）+ `notifyListeners` + `saveToDisk`；不影响书架元数据、标签、书源；
+- `app/lib/ui/cache_manager.dart`：`_clear` 增加 `alsoClearRecords` 参数；「清空全部缓存」按钮启用该参数，确认弹窗与 SnackBar 文案提示"并清除最近阅读记录"。
+
+**修改原因**：用户认知中"清空全部缓存"包含阅读进度（最近阅读即进度入口），缓存清空后残留读记录会造成列表指向无缓存内容、体验割裂。
+
+**影响范围**：仅缓存管理面板「清空全部缓存」一处行为变更；其余五个单项清理（页面/整本下载/封面/AI/临时）不受影响。
+
+**验证**：`flutter analyze` 0 issue；`flutter test` 57 过；Windows debug 构建成功。待用户实机验证。
+---
+
+## 2026-08-22|第44轮·修订(44.4)：阅读统计界面 + 「清空全部缓存」分别确认
+
+**需求**：
+1. 「最多阅读」升级为「阅读统计」：显示最多阅读的**漫画 / 系列 / 标签 / 作者 / 类别**各 Top10；条目可点击跳转——漫画→漫画详情页，其余→标签管理对应标签的详情页；
+2. 「清空全部缓存」时，最近阅读与阅读统计**分别提问**，仅清空用户同意的对应内容。
+
+**修改内容**
+
+- `app/lib/ui/home_page.dart`：侧栏「最多阅读」改为「阅读统计」（`_section='stats'`，compact 底部导航同步）；新增 `_buildStats()`（SegmentedButton 五维度切换 + Top10 列表，前三名奖牌图标）、`_aggMetaStats()`（按 meta 字段聚合阅读次数）、`_gotoTag()`（跳转标签管理并直接打开对应标签详情，作者/类别/系列为元数据标签，天然复用 `_buildTagDetail` 的匹配逻辑）；漫画维度点击跳 `BookDetailPage`；
+- `app/lib/store/library_store.dart`：新增 `resetReadCounts()`——所有记录 `readCount` 归零（保留记录行与进度），SQLite 批量 UPDATE；仍保留 `clearReadRecords()`（删行）；
+- `app/rust/src/db/mod.rs` / `api/db.rs`：新增 `db_reset_read_counts`（`UPDATE read_records SET read_count=0 WHERE deleted=0`，软删墓碑不动）+ 单测 `reset_all_read_counts_zeroes_live_keeps_tombstones`；
+- `app/lib/ui/cache_manager.dart`：「清空全部缓存」改为专用确认弹窗：两个独立 CheckboxListTile（「同时清空最近阅读记录」/「同时清空阅读统计」），各自确认后按勾选执行；SnackBar 汇总已清内容。语义：**清空记录**会连带清统计（统计同源于记录）；**清空统计**仅次数归零、保留最近阅读列表与进度。
+
+**设计决策**：阅读统计数据直接来自 `read_records.readCount` 聚合（不新增统计快照表），因此"清空阅读统计"在数据层等价于次数归零，与"清空最近阅读记录"（删行）构成两个可独立确认、语义不同的动作。
+
+**影响范围**：导航标签/图标（most→stats）、缓存管理弹窗、read_records 表 UPDATE 路径（新增 API，不影响既有读写）。
+
+**验证**：Rust 155 测试过（含新单测）；Dart 57 过；`flutter analyze` 0 issue；release DLL 构建成功；Windows 包因 RCH 运行中锁文件暂未完成，待用户关闭后重建。
+---
+
+## 2026-08-22|第44轮·修订(44.5)：编辑元数据标签冲掉「已读」状态
+
+**现象（用户报告）**：编辑标签/元数据标签后，原本已读的漫画变回未读（详情页"已读"按钮消失），但阅读统计仍有次数。
+
+**根因（代码级确认）**：详情页保存元数据走 `LibraryStore.updateMeta` → `TagRepository.setBookTags(m.key, m.tags)` **全量替换**该书的标签关联，而 `m.tags` 只有手动勾选的标签；「已读」是**自动/手动独立维护的关联**（`recordRead` 自动打标、详情页按钮可切换），既不在 `m.tags` 也不在 `BookMeta.metaTags`（仅 author/genre/series）→ 编辑一次元数据，所有书的"已读"关联即被清空。`readCount` 不受影响，于是出现"统计有次数、界面显示未读"。
+
+**修改**（`app/lib/store/library_store.dart` `updateMeta`）：全量替换前先检查该书是否已打「已读」，替换后原样加回；手动取消过已读的书不会被自动恢复（尊重用户显式状态）。
+
+**影响范围**：仅 `updateMeta`（详情页元数据编辑）一处；批量标签（`batchTag`）、标签重命名/删除、清理流程均不涉及。
+
+**验证**：`flutter analyze` 0 issue；Dart 57 测试过；待实机验证。

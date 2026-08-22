@@ -131,4 +131,135 @@ pub fn clear_migration_marker(root: String) {
     cache::clear_migration_marker(&root);
 }
 
+// ============================================================
+// 清理失效漫画数据（设置 → 缓存管理 → 清理失效漫画数据）
+// ============================================================
+
+/// 解析 WebDAV 服务器 origin（`scheme://host[:port]`），与 WebDavClient::new 一致。
+/// 仅解析身份，不建立任何连接。
+fn webdav_origin(url: &str) -> Option<String> {
+    let u = reqwest::Url::parse(url.trim()).ok()?;
+    let scheme = u.scheme().to_string();
+    let host = u.host_str()?.to_string();
+    Some(match u.port() {
+        Some(p) => format!("{scheme}://{host}:{p}"),
+        None => format!("{scheme}://{host}"),
+    })
+}
+
+/// 解析 SFTP endpoint（`host` 或 `host:port`，默认端口省略），
+/// 与 Dart 侧 `sftp_session._parseHostPort` + Rust `SftpClient::new` 的 endpoint 规则一致。
+fn sftp_endpoint(url: Option<&str>, port: Option<i64>) -> Option<String> {
+    let addr = url?.trim().trim_end_matches('/').to_string();
+    if addr.is_empty() {
+        return None;
+    }
+    let (host, p) = if addr.contains(':') {
+        let idx = addr.rfind(':')?;
+        match addr[idx + 1..].parse::<i64>() {
+            Ok(p) if p > 0 => (addr[..idx].to_string(), Some(p)),
+            _ => (addr.clone(), port),
+        }
+    } else {
+        (addr.clone(), port)
+    };
+    let p = p.unwrap_or(22);
+    if p == 22 {
+        Some(host)
+    } else {
+        Some(format!("{host}:{p}"))
+    }
+}
+
+/// 清理单个失效漫画的磁盘缓存（page/ 页面 + raw/ 整本 + cover/ 封面），返回释放字节。
+///
+/// - `cache_ns` 按书源类型重建，与 `open_*_book` 时的命名空间完全一致，保证命中同一目录；
+/// - 输入均为 BookSource 身份字段（Dart 原样传入），不联网、不建会话：
+///   - `url`：webdav 的 base URL；sftp 的 `host` / `host:port` 地址
+///   - `port`：sftp 端口（缺省 22）
+///   - `root_path`：source.path（baidu 的 root 目录）
+///   - `client_id`：baidu app_key / 115 app_id
+///   - `root_id`：115 / quark 的根目录 id
+///   - `cookie_mode`：115 是否为网页 Cookie 模式（origin 前缀不同）
+///
+/// 说明：quark / 115 的浏览路径本身即内部素材 id（fid / pick_code），
+/// 与 `raw_cache_path(origin, path)` 的入参一致，raw/ 整本缓存可精确删除。
+/// AI 超分缓存按页面内容哈希组织，需打开书本才能枚举，由「清空 AI 缓存」统一管理。
+pub fn purge_stale_book_cache(
+    source_type: String,
+    path: String,
+    url: Option<String>,
+    port: Option<i64>,
+    root_path: String,
+    client_id: Option<String>,
+    root_id: Option<String>,
+    cookie_mode: bool,
+) -> Result<u64, String> {
+    use crate::cache::{delete_cover_cache_for_path, delete_page_cache_for_ns, delete_raw_cache_for_key};
+    if path.is_empty() {
+        return Ok(0);
+    }
+    let mut freed = 0u64;
+
+    match source_type.as_str() {
+        "local" => {
+            // 本地书源只写 page/ 与 cover/，无 raw/。
+            freed += delete_page_cache_for_ns(&format!("local|{path}")).map_err(|e| e.to_string())?;
+            freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
+        }
+        "webdav" => {
+            let origin = match url.as_deref().and_then(webdav_origin) {
+                Some(o) => o,
+                None => return Ok(0),
+            };
+            freed += delete_page_cache_for_ns(&format!("webdav|{origin}|{path}")).map_err(|e| e.to_string())?;
+            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
+        }
+        "sftp" => {
+            let endpoint = match sftp_endpoint(url.as_deref(), port) {
+                Some(e) => e,
+                None => return Ok(0),
+            };
+            freed += delete_page_cache_for_ns(&format!("sftp|{endpoint}|{path}")).map_err(|e| e.to_string())?;
+            freed += delete_raw_cache_for_key(&format!("{endpoint}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
+        }
+        "baidu" => {
+            // BaiduClient::new 中 root 为空时归一为 "/"，origin 必须一致才能命中缓存。
+            let root = if root_path.trim().is_empty() { "/".to_string() } else { root_path };
+            let origin = format!("baidu:{}:{}", client_id.unwrap_or_default(), root);
+            freed += delete_page_cache_for_ns(&format!("baidu|{origin}|{path}")).map_err(|e| e.to_string())?;
+            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
+        }
+        "115" => {
+            // Cloud115Client::new / Cloud115WebClient::new 中 root_id 为空时归一为 "0"。
+            let root = root_id.unwrap_or_default();
+            let root = if root.trim().is_empty() { "0".to_string() } else { root };
+            let origin = if cookie_mode {
+                format!("115web:{root}")
+            } else {
+                format!("115:{}:{root}", client_id.unwrap_or_default())
+            };
+            freed += delete_page_cache_for_ns(&format!("115|{origin}|{path}")).map_err(|e| e.to_string())?;
+            // Cookie 模式 raw 键也以浏览路径（pick_code）为入参，同样可精确删除。
+            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
+        }
+        "quark" => {
+            // QuarkClient::new 中 root 为空时归一为 "0"。
+            let root = root_id.unwrap_or_default();
+            let root = if root.trim().is_empty() { "0".to_string() } else { root };
+            let origin = format!("quark:{root}");
+            freed += delete_page_cache_for_ns(&format!("quark|{origin}|{path}")).map_err(|e| e.to_string())?;
+            // raw 键以素材 fid（浏览路径）为入参，可精确删除。
+            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
+        }
+        _ => return Ok(0),
+    }
+    Ok(freed)
+}
+
 use std::path::PathBuf;

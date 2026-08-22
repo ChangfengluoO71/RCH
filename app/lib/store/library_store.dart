@@ -8,9 +8,11 @@ import 'package:path_provider/path_provider.dart';
 import '../repository/book_repository.dart';
 import '../repository/record_repository.dart';
 import '../repository/tag_repository.dart';
+import '../src/rust/api/cache.dart';
 import '../src/rust/api/db.dart';
 import 'library_index_service.dart';
 import 'models.dart';
+import 'remote_listing.dart';
 
 /// 应用数据存储 facade（ADR-016/018）。
 ///
@@ -424,8 +426,10 @@ class LibraryStore extends ChangeNotifier {
 
   BookSource? sourceById(String id) => _books.sourceById(id);
 
-  void removeSourceWithCleanup(String id) {
+  Future<void> removeSourceWithCleanup(String id) async {
     final src = sourceById(id);
+    // 删除前抓取该源全部阅读记录（用于删除后清理磁盘缓存）
+    final affected = _records.records.values.where((r) => r.sourceId == id).toList();
     _books.removeSource(id);
     if (src != null) {
       final prefix = '${src.type}|${src.id}|';
@@ -436,6 +440,23 @@ class LibraryStore extends ChangeNotifier {
       dbDeleteSource(id: id);
       dbDeleteRecordsBySourcePrefix(prefix: prefix);
       dbDeleteMetasBySourcePrefix(prefix: prefix);
+    }
+    // 磁盘缓存清理：源身份字段删除前已捕获，逐本删除 page/raw/cover 缓存。
+    for (final r in affected) {
+      try {
+        await purgeStaleBookCache(
+          sourceType: r.sourceType,
+          path: r.path,
+          url: src?.url,
+          port: src?.port,
+          rootPath: src?.path ?? '',
+          clientId: src?.clientId,
+          rootId: src?.rootId,
+          cookieMode: (src?.cookie ?? '').isNotEmpty,
+        );
+      } catch (e) {
+        debugPrint('[LibraryStore] removeSource cache cleanup failed for ${r.key}: $e');
+      }
     }
     notifyListeners(); saveToDisk();
   }
@@ -469,16 +490,64 @@ class LibraryStore extends ChangeNotifier {
 
   bool hasAnyRead() => _records.hasAnyRead();
 
+  /// 清空最近阅读 / 最多阅读记录（含每本书的阅读进度）。
+  /// 用户「清空全部缓存」时一并执行：内存 + SQLite 逐条删（与正常删除同路径，
+  /// 保留同步墓碑语义）；不影响书架元数据、标签、书源。
+  Future<void> clearReadRecords() async {
+    final keys = _records.records.keys.toList();
+    _records.clearAll();
+    for (final k in keys) {
+      await dbDeleteRecord(key: k);
+    }
+    notifyListeners();
+    saveToDisk();
+  }
+
+  /// 清空阅读统计：所有记录阅读次数归零（保留最近阅读列表与每本书的进度）。
+  /// 用户「清空全部缓存 → 仅清空阅读统计」时调用。
+  Future<void> resetReadCounts() async {
+    for (final r in _records.records.values) {
+      r.readCount = 0;
+    }
+    await dbResetReadCounts();
+    notifyListeners();
+    saveToDisk();
+  }
+
   List<ReadRecord> get recent => _records.recent();
   List<ReadRecord> get mostRead => _records.mostRead();
 
-  /// 清理失效漫画数据：源已删除的记录/元数据、本地文件丢失的记录，以及这些 key 上的标签关联。
-  /// 返回 (清理的记录数, 清理的元数据数)。
-  (int, int) purgeStaleData() {
+  /// 清理失效漫画数据：源已删除的记录/元数据、本地文件丢失或远程已删除
+  /// （在线索引对齐 + 离线索引墓碑）的记录，以及这些 key 上的标签关联、
+  /// AI 任务与磁盘缓存（page/raw/cover）。
+  /// 返回 (清理的记录数, 清理的元数据数, 释放的缓存字节数, 在线核对失败的远程源数)。
+  Future<(int, int, int, int)> purgeStaleData() async {
     final sourceIds = sources.map((s) => s.id).toSet();
 
-    // 1) 失效阅读记录（源已删除 / 本地文件丢失）
-    final staleRecords = _records.purgeStale(sources);
+    // Phase 0：在线索引对齐（仅远程源）。删除感知的前提是把"远程现状"落进
+    // library_index：整源重爬后消失的条目被软删（deleted=1）成为墓碑证据。
+    // 失败/离线 → 该源跳过，回退到 Phase 1 的存量墓碑证据（保守不清）。
+    var alignFailed = 0;
+    for (final s in sources) {
+      if (s.isLocalFs || s.isGhost) continue;
+      final ok = await _alignRemoteIndex(s);
+      if (!ok) alignFailed++;
+    }
+
+    // 远程失效证据：离线索引中 deleted=1 的条目 = 整源重建/对齐时远程文件已消失的软删墓碑。
+    // 注意必须用专用墓碑查询（dbLoadLibraryIndexForSource 的 SQL 过滤 deleted=0，拿不到墓碑）。
+    // 只对远程书源收集（本地书源以文件存在性判定）；索引缺失/不可读时跳过该证据。
+    final tombstones = <String, Set<String>>{};
+    for (final s in sources) {
+      if (s.isLocalFs) continue;
+      try {
+        final gone = await dbLoadLibraryIndexTombstones(sourceId: s.id);
+        if (gone.isNotEmpty) tombstones[s.id] = gone.toSet();
+      } catch (_) {/* 索引不可读则无墓碑证据，保守不清 */}
+    }
+
+    // 1) 失效阅读记录（源已删除 / 本地文件丢失 / 远程墓碑）
+    final staleRecords = _records.purgeStale(sources, remoteTombstones: tombstones);
 
     // 2) 失效元数据（来源已删除）
     final staleMetas = <String>[];
@@ -488,20 +557,31 @@ class LibraryStore extends ChangeNotifier {
       if (!sourceIds.contains(sid)) staleMetas.add(m.key);
     }
 
-    final removedKeys = <String>{...staleRecords, ...staleMetas};
-    if (removedKeys.isEmpty) return (0, 0);
+    // 2b) 失效记录对应的元数据（远程墓碑 / 本地文件缺失等：meta key 与记录 key 同构，
+    // 一一对应）。仅清"源已删"的 meta 不够——本地删了文件、远程删了漫画时源仍在，
+    // 必须随失效记录逐条删 meta，否则书架/标签/封面残留。
+    final recordMetaKeys = staleRecords
+        .where((r) => _books.metas.containsKey(r.key))
+        .map((r) => r.key)
+        .toList();
+    final allMetaKeys = <String>{...staleMetas, ...recordMetaKeys};
+
+    final removedKeys = <String>{...staleRecords.map((r) => r.key), ...staleMetas};
+    if (removedKeys.isEmpty) return (0, 0, 0, alignFailed);
 
     // 内存清理：元数据 + 失效 key 上的标签关联
-    for (final k in staleMetas) {
+    for (final k in allMetaKeys) {
       _books.metas.remove(k);
     }
     for (final k in removedKeys) {
       TagRepository.instance.setBookTags(k, const []);
     }
 
-    // SQLite 清理：记录逐条删；元数据按来源前缀批量删（连未进内存的残留行一起清）
-    for (final k in staleRecords) {
-      dbDeleteRecord(key: k);
+    // SQLite 清理：记录逐条删；失效记录对应的元数据逐条删；
+    // 源已删的元数据按来源前缀批量删（连未进内存的残留行一起清）。
+    for (final r in staleRecords) {
+      dbDeleteRecord(key: r.key);
+      dbDeleteMeta(key: r.key);
     }
     final prefixes = <String>{};
     for (final k in staleMetas) {
@@ -512,9 +592,57 @@ class LibraryStore extends ChangeNotifier {
       dbDeleteMetasBySourcePrefix(prefix: p);
     }
 
+    // 磁盘缓存清理：每条失效记录删除其 page/raw/cover 缓存（源身份字段重建命名空间）。
+    var freed = BigInt.zero;
+    for (final r in staleRecords) {
+      final src = sourceById(r.sourceId);
+      if (src == null || src.isGhost) continue; // 幽灵书源无可读缓存；源已删由 removeSource 路径处理
+      try {
+        freed += await purgeStaleBookCache(
+          sourceType: r.sourceType,
+          path: r.path,
+          url: src.url,
+          port: src.port,
+          rootPath: src.path,
+          clientId: src.clientId,
+          rootId: src.rootId,
+          cookieMode: (src.cookie ?? '').isNotEmpty,
+        );
+      } catch (e) {
+        debugPrint('[LibraryStore] purge stale cache failed for ${r.key}: $e');
+      }
+    }
+
+    // AI 超分遗留任务（按 book_key 匹配失效记录）一并清理。
+    try {
+      final tasks = await dbLoadAllAiTasks();
+      for (final t in tasks.where((t) => removedKeys.contains(t.bookKey))) {
+        await dbDeleteAiTask(id: t.id);
+      }
+    } catch (_) {}
+
     notifyListeners();
     saveToDisk();
-    return (staleRecords.length, staleMetas.length);
+    return (staleRecords.length, allMetaKeys.length, freed.toInt(), alignFailed);
+  }
+
+  /// 对远程书源做一次在线索引对齐（连接 + 全树枚举 → dbReplaceSourceLibraryIndex，
+  /// 消失条目墓碑化），为"远程已删除"判定提供证据。失败返回 false（保守跳过）。
+  Future<bool> _alignRemoteIndex(BookSource s) async {
+    if (!s.needsSession) return false;
+    try {
+      final session = await remoteSessionFor(s);
+      if (session == null) return false;
+      await LibraryIndexService.instance.refreshSourceIndex(
+        source: s,
+        force: true,
+        listRemote: (p) => listRemoteDirFor(s, session: session, path: p),
+      );
+      return true;
+    } catch (e) {
+      debugPrint('[LibraryStore] 在线索引对齐失败 ${s.id}: $e');
+      return false;
+    }
   }
 
   // ---- Meta（委托给 BookRepository） ----
@@ -523,7 +651,12 @@ class LibraryStore extends ChangeNotifier {
 
   void updateMeta(BookMeta m) {
     _books.updateMeta(m);
+    // '已读' 是自动/手动维护的独立关联（recordRead 打标、详情页可切换），不在
+    // m.tags（手动标签）里；setBookTags 是全量替换，替换前先保留'已读'，
+    // 否则编辑元数据标签会把已读状态冲掉（readCount 仍在，界面却显示未读）。
+    final hadReadTag = TagRepository.instance.bookKeysForTag('已读').contains(m.key);
     TagRepository.instance.setBookTags(m.key, m.tags);
+    if (hadReadTag) TagRepository.instance.link(m.key, '已读');
     for (final mt in m.metaTags) {
       if (mt.isNotEmpty) TagRepository.instance.link(m.key, mt);
     }
@@ -575,9 +708,24 @@ class LibraryStore extends ChangeNotifier {
     return list;
   }
 
-  List<ReadRecord> recordsByTag(String tag) {
+  /// 标签详情书目。有读记录的书用记录标题；没有记录的书（仅标签/元数据关联）
+  /// 标题从离线索引取**真实文件名**——不能直接取 path 尾段，因为 quark/115 等
+  /// id-path 源的 path 是 32hex 素材 id / pick_code，会显示成一串乱码。
+  Future<List<ReadRecord>> recordsByTag(String tag) async {
     final result = <ReadRecord>[];
     final seen = <String>{};
+    // sourceId -> {path: name}：离线索引真实文件名（按需惰性加载一次）。
+    final indexNames = <String, Map<String, String>>{};
+
+    Future<String> titleOf(String stype, String sid, String spath) async {
+      // 本地 / WebDAV / SFTP 等层级路径：尾段即文件名。
+      if (spath.contains('/')) return spath.split('/').last;
+      final names = indexNames[sid] ??= <String, String>{
+        for (final e in await dbLoadLibraryIndexForSource(sourceId: sid))
+          e.path: e.name,
+      };
+      return names[spath] ?? spath.split('/').last;
+    }
 
     final bookKeys = TagRepository.instance.bookKeysForTag(tag);
     for (final bk in bookKeys) {
@@ -590,7 +738,7 @@ class LibraryStore extends ChangeNotifier {
         final sid = parts.length > 1 ? parts[1] : '';
         final spath = parts.sublist(2).join('|');
         result.add(ReadRecord(key: bk, sourceType: stype, sourceId: sid, path: spath,
-            title: spath.split('/').last, lastPage: 0, readCount: 0, lastReadAt: 0));
+            title: await titleOf(stype, sid, spath), lastPage: 0, readCount: 0, lastReadAt: 0));
       }
       seen.add(bk);
     }
@@ -607,7 +755,7 @@ class LibraryStore extends ChangeNotifier {
         final sid = parts.length > 1 ? parts[1] : '';
         final spath = parts.sublist(2).join('|');
         result.add(ReadRecord(key: m.key, sourceType: stype, sourceId: sid, path: spath,
-            title: spath.split('/').last, lastPage: 0, readCount: 0, lastReadAt: 0));
+            title: await titleOf(stype, sid, spath), lastPage: 0, readCount: 0, lastReadAt: 0));
       }
       seen.add(m.key);
     }

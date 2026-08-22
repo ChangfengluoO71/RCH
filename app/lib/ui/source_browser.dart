@@ -12,6 +12,7 @@ import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/remote_listing.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -433,23 +434,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
         force: true,
         listRemote: session == null
             ? null
-            : (p) async {
-                final list = switch (src.type) {
-                  'webdav' => await webdavList(session: session, path: p),
-                  'sftp' => await sftpList(session: session, path: p),
-                  'baidu' => await baiduList(session: session, path: p),
-                  '115' => await cloud115ListFor(src, session: session, path: p),
-                  'quark' => await quarkList(session: session, path: p),
-                  _ => await listLocalDir(path: p),
-                };
-                return list
-                    .map((e) => FolderSnapshotEntry(
-                          name: e.name,
-                          path: e.path,
-                          isDir: e.isDir,
-                        ))
-                    .toList();
-              },
+            : (p) => listRemoteDirFor(src, session: session, path: p),
       );
       if (!mounted) return;
       _enterOffline();

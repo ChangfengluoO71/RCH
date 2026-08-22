@@ -84,11 +84,11 @@ RCH 不只是一个“打开漫画文件”的阅读器，而是希望把**本�
 
 当前稳定版本：
 
-**v0.5.1**
+**v0.5.2**
 
 | 平台                  | 文件                          | 说明                           |
 | ------------------- | --------------------------- | ---------------------------- |
-| Windows 10 / 11 x64 | `RCH-0.5.1-windows-x64.exe` | Windows 桌面版                  |
+| Windows 10 / 11 x64 | `RCH-0.5.2-windows-x64.exe` | Windows 桌面版                  |
 | Android             | `app-release.apk`           | arm64 / armeabi-v7a / x86_64 |
 
 ### Windows

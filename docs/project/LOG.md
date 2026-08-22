@@ -944,3 +944,14 @@ SELECT ... FROM library_index WHERE source_id = ?1 AND deleted = 0   -- 只返�
 6. README 下载区改为 3 个拆分 APK 文件名（对齐 CI 产物命名）。
 
 **经验（防再犯）**：发布必须走 setup.md 规范——升 pubspec → release notes → annotated tag → push tags 由 CI 构建双端资产；本地手动打包仅限无法跑 CI 的工具环境卡 cl.exe 场景。
+---
+
+## 2026-08-22|第44轮·修订(44.7)：手机端阅读统计排版溢出修复 + v0.5.3
+
+**现象（用户实机）**：手机端阅读统计界面顶部 5 段 SegmentedButton（漫画/系列/标签/作者/类别）与标题同行，窄屏溢出。
+
+**修改**（`app/lib/ui/home_page.dart` `_buildStats`）：窄屏（`isCompact`）下标题独占一行，维度切换放入横向 `SingleChildScrollView` 且 `showSelectedIcon: false` 省宽；桌面/平板保持原标题+切换条同行布局。
+
+**验证**：`flutter analyze` 0 issue；Dart 57 测试过；本地 Android 构建因 Google Maven 不可达失败（CI 网络正常，走发布流程由 CI 构建验证）。
+
+**发布**：v0.5.3（补丁号递增）——pubspec `0.5.2+502 → 0.5.3+503`、notes、CHANGELOG、annotated tag、push tags 触发 CI 双端构建。

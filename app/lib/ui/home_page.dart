@@ -554,26 +554,35 @@ class _HomePageState extends State<HomePage> {
         rows = genres.take(10).map((e) => (e.key, e.value, null)).toList();
     }
 
+    final dimSwitch = SegmentedButton<String>(
+      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+      showSelectedIcon: false,
+      segments: const [
+        ButtonSegment(value: '漫画', label: Text('漫画')),
+        ButtonSegment(value: '系列', label: Text('系列')),
+        ButtonSegment(value: '标签', label: Text('标签')),
+        ButtonSegment(value: '作者', label: Text('作者')),
+        ButtonSegment(value: '类别', label: Text('类别')),
+      ],
+      selected: {_statsDim},
+      onSelectionChanged: (v) => setState(() => _statsDim = v.first),
+    );
+    // 窄屏（手机）：标题独占一行，维度切换横滑，避免 5 段 SegmentedButton 溢出；
+    // 宽屏（桌面/平板）：标题与切换条同行。
+    final header = isCompact(context)
+        ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('阅读统计', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            SingleChildScrollView(scrollDirection: Axis.horizontal, child: dimSwitch),
+          ])
+        : Row(children: [
+            const Text('阅读统计', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Spacer(),
+            dimSwitch,
+          ]);
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-        child: Row(children: [
-          const Text('阅读统计', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const Spacer(),
-          SegmentedButton<String>(
-            style: const ButtonStyle(visualDensity: VisualDensity.compact),
-            segments: const [
-              ButtonSegment(value: '漫画', label: Text('漫画')),
-              ButtonSegment(value: '系列', label: Text('系列')),
-              ButtonSegment(value: '标签', label: Text('标签')),
-              ButtonSegment(value: '作者', label: Text('作者')),
-              ButtonSegment(value: '类别', label: Text('类别')),
-            ],
-            selected: {_statsDim},
-            onSelectionChanged: (v) => setState(() => _statsDim = v.first),
-          ),
-        ]),
-      ),
+      Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: header),
       Expanded(
         child: rows.isEmpty
             ? const Center(child: Text('暂无统计\n去书源里打开一些漫画吧', textAlign: TextAlign.center, style: TextStyle(color: Colors.white38)))

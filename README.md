@@ -89,7 +89,9 @@ RCH 不只是一个“打开漫画文件”的阅读器，而是希望把**本�
 | 平台                  | 文件                          | 说明                           |
 | ------------------- | --------------------------- | ---------------------------- |
 | Windows 10 / 11 x64 | `RCH-0.5.2-windows-x64.exe` | Windows 桌面版                  |
-| Android             | `app-release.apk`           | arm64 / armeabi-v7a / x86_64 |
+| Android arm64-v8a   | `app-arm64-v8a-release.apk` | Android 64 位（推荐）            |
+| Android armeabi-v7a | `app-armeabi-v7a-release.apk` | Android 32 位                 |
+| Android x86_64      | `app-x86_64-release.apk`    | Android x86 模拟器 / 通用        |
 
 ### Windows
 

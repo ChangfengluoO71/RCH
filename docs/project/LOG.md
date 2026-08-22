@@ -929,3 +929,18 @@ SELECT ... FROM library_index WHERE source_id = ?1 AND deleted = 0   -- 只返�
 **影响范围**：仅 `updateMeta`（详情页元数据编辑）一处；批量标签（`batchTag`）、标签重命名/删除、清理流程均不涉及。
 
 **验证**：`flutter analyze` 0 issue；Dart 57 测试过；待实机验证。
+---
+
+## 2026-08-22|第44轮·修订(44.6)：v0.5.2 双平台发布（CI 工作流）
+
+**背景**：首轮发布违规——未走 `.github/workflows/release.yml`（手动 ISCC + gh release），且只上传 Windows 安装包、漏 Android APK、未先升 `pubspec.yaml` 版本号。
+
+**纠正（按 `docs/development/setup.md` 发布章节重来）**：
+1. 取消未达标 run；删除手动 release 与旧 tag；
+2. `pubspec.yaml` 升 `0.5.1+501 → 0.5.2+502`；补 `docs/releases/release_notes_v0.5.2.md`；
+3. 重打 annotated tag `v0.5.2`（指向 release commit `790f8e0`）推送触发 CI；
+4. `release.yml` 双 job 全部成功：Windows 安装包（含 pdfium.dll，Inno 打包）+ Android 正式签名 APK（arm64-v8a / armeabi-v7a / x86_64，Secret 注入签名）；
+5. Release v0.5.2 = 4 资产齐全：`RCH-0.5.2-windows-x64.exe`、`app-arm64-v8a-release.apk`、`app-armeabi-v7a-release.apk`、`app-x86_64-release.apk`，标记 Latest；URL https://github.com/ChangfengluoO71/RCH/releases/tag/v0.5.2
+6. README 下载区改为 3 个拆分 APK 文件名（对齐 CI 产物命名）。
+
+**经验（防再犯）**：发布必须走 setup.md 规范——升 pubspec → release notes → annotated tag → push tags 由 CI 构建双端资产；本地手动打包仅限无法跑 CI 的工具环境卡 cl.exe 场景。

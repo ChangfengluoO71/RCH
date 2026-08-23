@@ -61,7 +61,15 @@
 - [ ] M5 书源扩展(SMB / SFTP / 更多网盘) — 已建任务 `08-02-m5-book-sources`(SMB+SFTP)
 - [ ] M6 Android 适配(手机 / 平板)
 - [x] M7 标签筛选:按标签过滤书架(标签数据模型 + 跨书源搜索已落地)
-- [ ] M8 智能拓展:智能刮削 + AI 元数据融合(SPEC §9 已规划,任务 `08-08-m8-smart-scraping` 规划中)
+- [ ] M8 Smart Scraping: catalog-only recognition + automatic sync integration (M8-M1 proposal slice frozen after real-sample validation; enrichment and canonical confirmation remain)
+  - [ ] M8-A0 Automation Coordinator & Sync Integration: implemented; verify startup, debounce, periodic and sync-before-scrape behavior
+  - [x] M8-M1 Catalog-Only Name & Role Extraction (`catalog-rules-v3`): frozen after after8 347-row local/Quark validation; proposal-only, zero remote book-source I/O
+  - [ ] M8-M2 Canonical Identity & Migration: ordered DDL, works / external IDs / work links
+  - [ ] M8-M3 Optional Provider Enrichment: independent AniList + Bangumi runtime
+  - [ ] M8-M4 Candidate & Explainable Ranking
+  - [ ] M8-M5 Review, Confirmation & Sync-Dirtiness
+  - [ ] M8-M6 Corpus Validation: 100 real comics and role-confusion matrix
+  - Later: M8.1 Provider Expansion; M8.2 Advanced Evidence; M8.3 Metadata Taxonomy; M8.4 Discovery; M8.5 Export & Interop
 
 ---
 

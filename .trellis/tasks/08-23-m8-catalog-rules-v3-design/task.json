@@ -1,0 +1,30 @@
+{
+  "id": "m8-catalog-rules-v3-design",
+  "name": "m8-catalog-rules-v3-design",
+  "title": "M8 Catalog Rules v3 Cross-Ecosystem Grammar",
+  "description": "Formalize a position-sensitive, local-only naming grammar and a golden corpus before replacing the v2 catalog parser.",
+  "status": "in_progress",
+  "dev_type": "design",
+  "scope": "Rule design, semantic output model, lexicon categories, parent/sibling reconciliation, golden corpus",
+  "package": "app",
+  "priority": "P0",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-23",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-08-m8-smart-scraping",
+  "relatedFiles": [
+    ".trellis/tasks/08-23-m8-catalog-rules-v3-design/prd.md",
+    ".trellis/tasks/08-23-m8-catalog-rules-v3-design/design.md",
+    ".trellis/tasks/08-23-m8-catalog-rules-v3-design/corpus/catalog-rules-v3-golden.jsonl"
+  ],
+  "notes": "v3 design approved by user; parser, catalog-only API, persistence, FRB bindings and review panel implemented. Golden corpus and automated verification pass; task is paused for manual validation with real library samples.",
+  "meta": {}
+}

@@ -3,8 +3,8 @@
 > 本文档是 RCH 的**核心指导规范**。修订须经用户确认，详见第 13 节。
 
 - 版本：v2.0（架构重塑）
-- 最近更新：2026-08-08
-- 修订摘要：新增第 9 节"智能刮削与元数据架构（M8）"（规划稿，任务 08-08-m8-smart-scraping）；M8 里程碑状态更新为已规划
+- 最近更新：2026-08-23
+- 修订摘要：新增第 9 节"智能刮削与元数据架构（M8）"；M8-M1 catalog-only 离线提案层已完成 after8 版 347 条本地/夸克样本验证，保持提案模式，不自动写入 canonical metadata
 
 ---
 
@@ -143,68 +143,57 @@ page_bytes → Rust ai/ 模块 → CLI 批量推理 / ONNX Runtime 直接推理 
 
 ---
 
-## 9. 智能刮削与元数据架构（M8）
+## 9. Smart Scraping and Metadata Architecture (M8)
 
-> 规划稿（2026-08-08，任务 `08-08-m8-smart-scraping`）。目标：RCH 从漫画阅读器跃迁为 **AI-native 个人漫画管理系统**——不做"外挂刮削器"（对比 Komga + Komf），刮削、融合、确认全部内建于 Rust 核心，离线可用。
+> The old M8.1-M8.9 plan is superseded. The approved first slice is a general, catalog-only recognizer with one automatic sync integration lane. Provider enrichment and canonical materialization remain later stages.
 
-### 9.1 核心原则
+### 9.1 P0 invariants
 
-- **元数据只存 SQLite**（works / book_metas / tags / 确认缓存），不向用户原始收藏目录写 sidecar 文件（metadata.json 仅作可选导出）。
-- **作品/文件两层身份**：`works`（作品）↔ `book_metas`（文件）多对一；刮削与推荐以作品为粒度，阅读与进度仍以文件为粒度。
-- **AI 永不静默写元数据**：自动匹配结果必须经用户确认（状态机）才落库；确认结果按指纹缓存，重扫不重复询问。
-- 只接官方开放 API（AniList GraphQL / Bangumi / MangaDex / ComicVine），不爬站。
+- **Local-first scraping:** the scraper consumes only persisted SQLite catalog text: filename, ancestor directory names and already-indexed sibling names.
+- **Scraping never reads remote book sources:** no WebDAV/SFTP/115/Quark/Baidu source adapter, ByteSource, Range read, stat/HEAD, directory refresh, or comic download is allowed during scraping.
+- **Content gate:** uncached RemoteOnly assets have no local content handle; LocalFile and FullyCached assets may be used by later evidence extractors. The first slice does not inspect bytes at all.
+- **Role separation:** title, chapter/volume, author and provider/platform are separate proposal fields. `creators[]` keeps circle and artist distinct; compatibility `authors[]` contains only person creator roles. Resource labels never become creators or providers. Ancestor relationships are compared up to four levels; conflicts are visible and never silently resolved.
+- **Publication/resource separation:** `work_title` is distinct from filename-derived `publication_title_raw`; `resource_edition`/`censorship` describe the acquired file, while canonical publication edition is deferred. Translation labels set `translation_state`; `translation_method` is populated only by explicit machine/human evidence.
+- **Sequence fidelity:** `前編`/`前篇`/`後編`/`后篇` are `sequence_kind=part` with `part` and `sequence_label`, not `special` or `chapter_title`. Chapter ordering uses a structured `ChapterOrderKey` and never a fractional chapter number.
+- **Working state vs canonical state:** automatic scraping writes only local working proposals, evidence and job status. Canonical works/links are written only by a later confirmation transaction.
+- **Sync boundary:** confirmation must only mark sync-dirty and never call sync inline.
+- **Network boundary:** AniList/Bangumi metadata APIs may be added later as optional providers; they are not remote book-source access and must not block local proposals.
+- **Single scheduler owner:** AutomationCoordinator owns startup, local-change debounce, periodic trigger and the sync-then-scrape order. SyncEngine remains the sync executor and retry/cooldown adapter.
 
-### 9.2 刮削管线
+### 9.2 Automatic flow
 
 ```
-漫画文件
-  ↓ 内嵌元数据（ComicInfo/OPF/MOBI）   ← 最高置信度
-  ↓ ComicFingerprint（sha256 + pHash） ← 命中 match_cache 直接建议
-  ↓ 文件名解析（查询构建器，非权威）     ← 构造查询词
-  ↓ OCR（扉页优先）/ pHash 视觉兜底     ← 低置信度证据
-  ↓ Provider 多源候选
-  ↓ 置信度排序 + 字段级融合（逐字段溯源）
-  ↓ 用户确认（confirmed / rejected / manual）
-  ↓ SQLite 落库
+startup / local catalog change / periodic tick / manual action
+  -> AutomationCoordinator deduplicates and runs one cycle
+  -> existing SyncEngine performs a lightweight revision check or sync
+  -> SQLite library_index supplies filename + ancestor directory names
+  -> catalog-only parser emits title/author/provider/volume/chapter proposal + evidence
+  -> scrape_jobs and scrape_proposals are persisted for review
+  -> (later) optional Provider enrichment
+  -> (later) user confirmation writes canonical works/work_links and sync-dirty
 ```
 
-信号优先级：**内嵌元数据 > 本地指纹 > 文件名解析 > OCR/视觉**。Provider 响应全部缓存，离线降级不阻塞管线。
+No sync configuration is required for the catalog-only pass. A sync failure does not erase or block local proposals.
 
-### 9.3 数据模型增量
+### 9.3 First implementation milestones
 
-- `works`：作品级实体（多语言标题 / 作者 / 年份 / 简介 / embedding / 状态）
-- `work_sources`：字段级来源溯源（provider / provider_id / fields）
-- `tag_synonyms`：Provider 标签 → RCH 规范标签映射；`tags.taxonomy`（genre / theme / audience / mood）
-- `match_cache`：指纹 → 确认结果（suggested / confirmed / rejected）
-- 存量列：`book_metas.work_id`、`book_tags.confidence`；schema_version 迁移，旧数据 work_id 为空时行为不变
+| Milestone | Scope | Status |
+|---|---|---|
+| M8-A0 | AutomationCoordinator, one scheduler owner, sync-before-scrape integration, persistent jobs/proposals | Implemented; automation behavior still needs dedicated runtime verification |
+| M8-M1 | `catalog-rules-v3`: filename + up to four ancestor levels + indexed siblings; role-separated semantic proposal and evidence | **Frozen after after8 347-row validation; proposal-only** |
+| M8-M2 | Ordered DDL migration; works, external IDs and work links | Later |
+| M8-M3 | Optional AniList/Bangumi provider runtime | Later |
+| M8-M4 | Candidate ranking and explainability | Later |
+| M8-M5 | Review, confirmation and sync-dirty transaction | Later |
+| M8-M6 | 100-book corpus validation | Required after manual rule validation |
 
-### 9.4 标签归一化
+### 9.4 Acceptance gates
 
-- 不直接合并各平台标签；经 `tag_synonyms` 映射到 RCH 规范标签。
-- 用户可手动合并标签，合并全库生效并持久化；首版不做完整本体/图谱，taxonomy 为分类列，随使用演化。
-
-### 9.5 AI 增强
-
-- OCR：目标页优先扉页/第一页（封面艺术字识别率低）；结果作查询词与低置信度证据。
-- 视觉：先 pHash 精确匹配（同版本/同汉化组封面相同），语料扩大后再加 CLIP embedding。
-- 向量检索：SQLite-vec（本地、无服务），embedding 按作品存，不上 Qdrant/Milvus。
-- AI 标签：候选标签带置信度，进确认流。
-
-### 9.6 子里程碑
-
-| 子里程碑 | 内容 |
-|---|---|
-| M8.1 | 作品身份层（works + 迁移） |
-| M8.2 | 文件名解析 + ComicFingerprint |
-| M8.3 | 内嵌元数据提取增强 |
-| M8.4 | Provider 框架 + AniList / Bangumi（MangaDex / ComicVine 紧随） |
-| M8.5 | 排名融合 + 字段级溯源 |
-| M8.6 | 标签归一化 + 用户合并 |
-| M8.7 | 确认机制 UI |
-| M8.8 | AI 增强（OCR / pHash / 视觉 / AI 标签） |
-| M8.9 | 语义检索 + 推荐 + Obsidian 导出 |
-
----
+- A RemoteOnly catalog entry with no raw cache produces a proposal with zero remote book-source requests and zero ByteSource reads.
+- A local or fully cached entry is still handled by catalog-only logic without source I/O.
+- Repeated ticks and restart recover from persisted jobs; sync failure does not block the scrape lane.
+- Provider failure, when added, leaves local proposals and the reader usable.
+- Manual review must verify title/chapter separation, author/provider separation, ancestor depth and missing-author behavior before provider or canonical work begins.
 
 ## 10. 格式支持矩阵
 

@@ -1,0 +1,35 @@
+{
+  "id": "m8-a0-automation-integration",
+  "name": "m8-a0-automation-integration",
+  "title": "M8-A0 Automation Coordinator and Sync Integration",
+  "description": "Own one automatic sync-then-catalog-scrape lane while keeping sync transport, catalog scraping, and future provider traffic isolated.",
+  "status": "in_progress",
+  "dev_type": "feature",
+  "scope": "app/lib/store/sync_engine.dart, app/lib/store/automation_coordinator.dart, app/lib/ui/sync_panel.dart, app/lib/ui/scrape_panel.dart, app/rust/src/scraper.rs, app/rust/src/api/scraper.rs, app/rust/src/db/mod.rs",
+  "package": "app",
+  "priority": "P0",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-08-m8-smart-scraping",
+  "relatedFiles": [
+    "app/lib/store/sync_engine.dart",
+    "app/lib/store/automation_coordinator.dart",
+    "app/lib/main.dart",
+    "app/lib/ui/scrape_panel.dart",
+    "app/rust/src/scraper.rs",
+    "app/rust/src/api/scraper.rs",
+    "app/rust/src/db/mod.rs"
+  ],
+  "notes": "Implementation checkpoint reached: catalog-only parser, persisted scrape jobs and proposals, FRB API, one automation coordinator, sync integration, and review panel are implemented. Awaiting manual validation with real catalog samples before refining rules or proceeding to provider or canonical materialization.",
+  "meta": {}
+}
+

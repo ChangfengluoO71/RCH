@@ -362,3 +362,38 @@ Moved user, setup, project, issue, and release documentation under docs; repaire
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: Freeze catalog-rules-v3 offline proposal baseline
+
+**Date**: 2026-08-23
+**Task**: Freeze catalog-rules-v3 offline proposal baseline
+**Branch**: `master`
+
+### Summary
+
+Committed the production catalog-rules-v3 offline proposal parser and archived its design task after the after8 347-row local/Quark validation.
+
+### Main Changes
+
+- Frozen zero-byte, zero-remote-book-source catalog parsing over persisted filename, ancestor and sibling metadata.
+- Retained explicit release groups, metadata-gated bilingual aliases and unresolved parenthetical context candidates.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6ccc696` | (see git log) |
+
+### Testing
+
+- [OK] cargo fmt -- --check; cargo test --lib -- --test-threads=1 (209 passed, 2 ignored)
+- [OK] flutter analyze --no-pub (no issues); flutter test --no-pub (57 passed)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Keep provider enrichment and canonical auto-materialization out of this baseline; continue only after manual proposal review.

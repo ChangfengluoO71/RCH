@@ -142,6 +142,8 @@ pub struct NameRoleProposal {
     pub sequence_kind: Option<String>,
     pub issue: Option<String>,
     pub season: Option<String>,
+    pub season_range: Option<String>,
+    pub chapter_range: Option<String>,
     pub part: Option<i64>,
     pub range: Option<String>,
     pub sequence_members: Vec<String>,
@@ -196,6 +198,8 @@ impl NameRoleProposal {
             sequence_kind: None,
             issue: None,
             season: None,
+            season_range: None,
+            chapter_range: None,
             part: None,
             range: None,
             sequence_members: Vec::new(),
@@ -249,6 +253,8 @@ struct SequenceData {
     chapter: Option<String>,
     issue: Option<String>,
     season: Option<String>,
+    season_range: Option<String>,
+    chapter_range: Option<String>,
     part: Option<i64>,
     range: Option<String>,
     sequence_members: Vec<String>,
@@ -280,6 +286,7 @@ pub fn parse_catalog(
 ) -> NameRoleProposal {
     let mut proposal = NameRoleProposal::new(rule_version);
     let decoded_filename = decode_html_entities(&snapshot.filename);
+    let decoded_filename = catalog_basename(&decoded_filename);
     let stem = strip_extension(&decoded_filename);
     let (groups, mut core) = extract_groups(&stem);
 
@@ -322,6 +329,13 @@ pub fn parse_catalog(
     };
     let depth = ancestor_depth.min(snapshot.ancestor_dirs.len());
     let ancestors = &snapshot.ancestor_dirs[..depth];
+    let normalized_ancestors = ancestors
+        .iter()
+        .enumerate()
+        .map(|(index, ancestor)| {
+            normalize_ancestor_title_candidate(ancestor, index, &mut proposal)
+        })
+        .collect::<Vec<_>>();
     adjust_sequence_from_context(&mut sequence, &core, ancestors, snapshot, &mut proposal);
     apply_sequence(&sequence, &mut proposal);
     let sibling_context = sibling_context(snapshot);
@@ -399,7 +413,7 @@ pub fn parse_catalog(
         }
     }
 
-    let (ancestor_title, title_index) = choose_ancestor_title(&core, ancestors);
+    let (ancestor_title, title_index) = choose_ancestor_title(&core, &normalized_ancestors);
 
     let special_sequence = proposal.sequence_kind.as_deref() == Some("special")
         && proposal.chapter_relation.as_deref() == Some("side_story");
@@ -486,7 +500,12 @@ pub fn parse_catalog(
         }
     }
 
-    collect_ancestor_creators(&mut proposal, ancestors, title_index, &snapshot.filename);
+    collect_ancestor_creators(
+        &mut proposal,
+        &normalized_ancestors,
+        title_index,
+        &snapshot.filename,
+    );
     if let Some(explicit) = explicit_file_author {
         let normalized = normalize_for_compare(&explicit);
         if proposal
@@ -563,6 +582,9 @@ pub fn parse_catalog(
 fn classify_group(group: &BracketGroup, proposal: &mut NameRoleProposal) {
     let value = group.content.trim();
     if value.is_empty() {
+        return;
+    }
+    if classify_full_color_label(value, proposal) {
         return;
     }
     if classify_resource_label(value, proposal) {
@@ -659,6 +681,21 @@ fn classify_group(group: &BracketGroup, proposal: &mut NameRoleProposal) {
             value,
             "filename-parenthesis",
             "parenthetical-part",
+        );
+        return;
+    }
+    if let Some(members) = parenthetical_sequence_members(value) {
+        for member in members {
+            if !proposal.sequence_members.iter().any(|item| item == &member) {
+                proposal.sequence_members.push(member);
+            }
+        }
+        push_evidence(
+            proposal,
+            "sequence_members",
+            value,
+            "filename-parenthesis",
+            "composite-part-marker",
         );
         return;
     }
@@ -961,9 +998,41 @@ fn parse_creator_group(value: &str, proposal: &mut NameRoleProposal) -> bool {
     false
 }
 
-fn classify_resource_label(value: &str, proposal: &mut NameRoleProposal) -> bool {
+fn classify_full_color_label(value: &str, proposal: &mut NameRoleProposal) -> bool {
     let lower = value.to_ascii_lowercase();
-    let mut matched = false;
+    if lower.contains("full color") || lower.contains("full-color") || value.contains("フルカラー")
+    {
+        proposal.color_state = Some("full_color".into());
+        push_tag(proposal, "full_color");
+        push_evidence(
+            proposal,
+            "color_state",
+            value,
+            "filename-bracket",
+            "full-color-marker",
+        );
+        true
+    } else {
+        false
+    }
+}
+
+fn classify_resource_label(value: &str, proposal: &mut NameRoleProposal) -> bool {
+    if contains_collection_marker(value) {
+        proposal.resource_completeness = Some("complete".into());
+        proposal.is_collection = true;
+        push_tag(proposal, "complete");
+        push_tag(proposal, "collection");
+        push_evidence(
+            proposal,
+            "resource_completeness",
+            value,
+            "filename-bracket",
+            "collection-marker",
+        );
+    }
+    let lower = value.to_ascii_lowercase();
+    let mut matched = contains_collection_marker(value);
     let chinese_language_only = matches!(value.trim(), "中国語" | "中国语" | "中文");
     if chinese_language_only {
         set_once(
@@ -1088,7 +1157,14 @@ fn classify_resource_label(value: &str, proposal: &mut NameRoleProposal) -> bool
         push_tag(proposal, "no_ads");
         matched = true;
     }
-    if lower == "complete" || value == "全" || value == "全集" || value == "全卷" {
+    if lower == "complete"
+        || lower == "end"
+        || value == "全"
+        || value == "全集"
+        || value == "全卷"
+        || value == "完"
+        || value == "完結"
+    {
         proposal.resource_completeness = Some("complete".into());
         push_tag(proposal, "complete");
         matched = true;
@@ -1159,6 +1235,16 @@ fn classify_inline_resource_terms(value: &str, proposal: &mut NameRoleProposal) 
     }
     if value.contains("单行本") || value.contains("単行本") {
         proposal.resource_tags.push("tankoubon".into());
+    }
+    if value.contains("全集") || value.contains("完結") || value.contains("完结") {
+        proposal.resource_completeness = Some("complete".into());
+        push_tag(proposal, "complete");
+    }
+    if contains_collection_marker(value) {
+        proposal.resource_completeness = Some("complete".into());
+        proposal.is_collection = true;
+        push_tag(proposal, "complete");
+        push_tag(proposal, "collection");
     }
     if lower.contains("low quality") || lower.split_whitespace().any(|token| token == "lq") {
         push_tag(proposal, "low_quality");
@@ -1373,15 +1459,33 @@ fn extract_sequence(value: &str, proposal: &mut NameRoleProposal) -> SequenceDat
         is_collection: proposal.is_collection,
         sequence_label: proposal.sequence_label.clone(),
         relation: proposal.chapter_relation.clone(),
+        season_range: proposal.season_range.clone(),
+        chapter_range: proposal.chapter_range.clone(),
         ..SequenceData::default()
     };
     let mut spans = Vec::new();
     let mut has_part_marker = false;
 
     for composite in extract_composite_sequences(value, sequence.range.is_some()) {
-        sequence.kind.get_or_insert_with(|| "issue".into());
-        if sequence.range.is_none() {
-            sequence.range = composite.range.clone();
+        let composite_axis = composite
+            .range
+            .as_ref()
+            .and_then(|_| sequence_axis(&value[composite.end..]));
+        match composite_axis {
+            Some("season") => {
+                sequence.kind.get_or_insert_with(|| "season".into());
+                sequence.season_range = composite.range.clone();
+            }
+            Some("chapter") => {
+                sequence.kind.get_or_insert_with(|| "chapter".into());
+                sequence.chapter_range = composite.range.clone();
+            }
+            _ => {
+                sequence.kind.get_or_insert_with(|| "issue".into());
+                if sequence.range.is_none() {
+                    sequence.range = composite.range.clone();
+                }
+            }
         }
         for member in composite.members {
             if !sequence
@@ -1397,6 +1501,27 @@ fn extract_sequence(value: &str, proposal: &mut NameRoleProposal) -> SequenceDat
             spans.push((composite.end, composite.end + suffix.len()));
         } else if let Some(suffix) = cjk_chapter_suffix(&value[composite.end..]) {
             spans.push((composite.end, composite.end + suffix.len()));
+        } else if let Some(axis) = composite_axis {
+            let suffix_len = value[composite.end..]
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or_default();
+            spans.push((composite.end, composite.end + suffix_len));
+            if (axis == "season" && sequence.chapter_range.is_some())
+                || (axis == "chapter" && sequence.season_range.is_some())
+            {
+                sequence.kind = Some("collection".into());
+                sequence.is_collection = true;
+            }
+        }
+        if let Some(axis) = composite_axis {
+            if (axis == "season" && sequence.chapter_range.is_some())
+                || (axis == "chapter" && sequence.season_range.is_some())
+            {
+                sequence.kind = Some("collection".into());
+                sequence.is_collection = true;
+            }
         }
         spans.push((composite.start, composite.end));
         push_evidence(
@@ -1494,9 +1619,11 @@ fn extract_sequence(value: &str, proposal: &mut NameRoleProposal) -> SequenceDat
         let mut relation = None;
         let mut rank = 0;
         let mut weak_terminal_number = false;
+        let range_axis = range.as_ref().and_then(|_| sequence_axis(after_trimmed));
 
         if let Some((suffix, rel, suffix_rank)) = continuation_suffix(after_trimmed) {
-            consumed_end += suffix.len();
+            let delimiter_len = after_trimmed.strip_prefix('+').map(|_| 1).unwrap_or(0);
+            consumed_end += delimiter_len + suffix.len();
             kind = Some("chapter");
             relation = Some(rel.into());
             rank = suffix_rank;
@@ -1546,6 +1673,8 @@ fn extract_sequence(value: &str, proposal: &mut NameRoleProposal) -> SequenceDat
         {
             kind = Some("special");
             relation = Some("side_story".into());
+        } else if let Some(axis) = range_axis {
+            kind = Some(axis);
         } else if range.is_some() {
             kind = Some(
                 if lower_context.ends_with('v')
@@ -1598,8 +1727,27 @@ fn extract_sequence(value: &str, proposal: &mut NameRoleProposal) -> SequenceDat
             sequence.weak_terminal_span = Some((start, consumed_end));
         }
         let rendered = if let Some((from, to)) = range.clone() {
-            sequence.range = Some(format!("{from}-{to}"));
-            format!("{from}-{to}")
+            let rendered_range = format!("{from}-{to}");
+            match range_axis {
+                Some("season") => {
+                    sequence.season_range = Some(rendered_range.clone());
+                    sequence.season = None;
+                    if sequence.chapter_range.is_some() {
+                        sequence.kind = Some("collection".into());
+                        sequence.is_collection = true;
+                    }
+                }
+                Some("chapter") => {
+                    sequence.chapter_range = Some(rendered_range.clone());
+                    sequence.chapter = None;
+                    if sequence.season_range.is_some() {
+                        sequence.kind = Some("collection".into());
+                        sequence.is_collection = true;
+                    }
+                }
+                _ => sequence.range = Some(rendered_range.clone()),
+            }
+            rendered_range
         } else {
             normalize_sequence_number(&first_number)
         };
@@ -1646,6 +1794,11 @@ fn extract_sequence(value: &str, proposal: &mut NameRoleProposal) -> SequenceDat
             }
             _ => {}
         }
+        if range_axis == Some("season") {
+            sequence.season = None;
+        } else if range_axis == Some("chapter") {
+            sequence.chapter = None;
+        }
         if relation.is_some() {
             sequence.relation = relation;
         }
@@ -1684,6 +1837,8 @@ fn apply_sequence(sequence: &SequenceData, proposal: &mut NameRoleProposal) {
     proposal.chapter = sequence.chapter.clone();
     proposal.issue = sequence.issue.clone();
     proposal.season = sequence.season.clone();
+    proposal.season_range = sequence.season_range.clone();
+    proposal.chapter_range = sequence.chapter_range.clone();
     proposal.part = sequence.part.clone();
     proposal.range = sequence.range.clone();
     proposal.sequence_members = sequence.sequence_members.clone();
@@ -1731,7 +1886,34 @@ fn ancestor_semantic(value: &str) -> AncestorSemantic {
     }
     if matches!(
         normalized.as_str(),
-        "漫画" | "manga" | "comic" | "comics" | "小说" | "轻小说" | "杂志" | "图集" | "画集"
+        "漫画"
+            | "manga"
+            | "comic"
+            | "comics"
+            | "小说"
+            | "轻小说"
+            | "杂志"
+            | "图集"
+            | "画集"
+            | "日漫"
+            | "国漫"
+            | "韩漫"
+            | "韓漫"
+            | "欧美"
+            | "分类"
+            | "分类目录"
+            | "书架"
+            | "書架"
+            | "downloads"
+            | "download"
+            | "全部"
+            | "全部文件"
+            | "根目录"
+            | "root"
+            | "夸克"
+            | "夸克网盘"
+            | "quark"
+            | "云盘"
     ) {
         return AncestorSemantic::Media;
     }
@@ -1963,6 +2145,20 @@ fn bilingual_numeric_support(value: &str, number: &str) -> bool {
     bilingual_numeric_spans(value, number).len() >= 2
 }
 
+fn sibling_has_continuation_marker(snapshot: &CatalogSnapshot) -> bool {
+    sibling_context(snapshot).iter().any(|sibling| {
+        let stem = strip_extension(&decode_html_entities(sibling));
+        let compact = stem.replace([' ', '_', '-'], "");
+        compact.contains('续')
+            || compact.contains('續')
+            || compact.contains('続')
+            || compact.contains("后篇")
+            || compact.contains("後編")
+            || compact.contains("前篇")
+            || compact.contains("前編")
+    })
+}
+
 fn adjust_sequence_from_context(
     sequence: &mut SequenceData,
     core: &str,
@@ -2000,6 +2196,33 @@ fn adjust_sequence_from_context(
                 "parenthetical-sibling-sequence",
             );
         }
+    }
+
+    // Plain numeric siblings are ambiguous in isolation, but a persisted
+    // sibling such as `10续`/`06+续` establishes a chapter stream for the
+    // whole directory. Promote the plain members to chapter rather than
+    // leaving one directory split between `issue` and `chapter` kinds.
+    if sequence.issue.is_some()
+        && sequence.chapter.is_none()
+        && pure_numeric_token(core).is_some()
+        && sibling_has_continuation_marker(snapshot)
+    {
+        let number = sequence.issue.take().unwrap_or_default();
+        sequence.kind = Some("chapter".into());
+        sequence.chapter = Some(number.clone());
+        sequence.sort_key = Some(chapter_order_key(&number, 0, None));
+        proposal.evidence.retain(|evidence| {
+            !(evidence.role == "issue"
+                && evidence.value == number
+                && evidence.rule == "numeric-sequence-marker")
+        });
+        push_evidence(
+            proposal,
+            "chapter",
+            &number,
+            "catalog-context",
+            "sibling-continuation-stream",
+        );
     }
 
     if sequence.weak_terminal_number {
@@ -2076,6 +2299,47 @@ fn adjust_sequence_from_context(
             "serial-or-sibling-numeric-context",
         );
     }
+}
+
+/// Apply the same leading-bracket lexical pass to an ancestor that is being
+/// considered as a work-title candidate.  A persisted directory name such as
+/// `[Vchan]Work` must not bypass the filename grammar and become one opaque
+/// title string.  Only local text is inspected here.
+fn normalize_ancestor_title_candidate(
+    value: &str,
+    index: usize,
+    proposal: &mut NameRoleProposal,
+) -> String {
+    let decoded = decode_html_entities(value);
+    let (groups, core) = extract_groups(&decoded);
+    if groups
+        .iter()
+        .any(|group| group.leading && group.delimiter == Delimiter::Square)
+    {
+        if let Some(group) = groups
+            .iter()
+            .find(|group| group.leading && group.delimiter == Delimiter::Square)
+        {
+            let evidence_start = proposal.evidence.len();
+            let attribution_start = proposal.attribution_candidates.len();
+            classify_group(group, proposal);
+            let source = format!("ancestor({index})");
+            for candidate in proposal
+                .attribution_candidates
+                .iter_mut()
+                .skip(attribution_start)
+            {
+                candidate.source = source.clone();
+            }
+            for evidence in proposal.evidence.iter_mut().skip(evidence_start) {
+                if evidence.source == "filename-bracket" {
+                    evidence.source = source.clone();
+                }
+            }
+        }
+        return clean_title_text(&core);
+    }
+    decoded.trim().to_owned()
 }
 
 fn choose_ancestor_title(core: &str, ancestors: &[String]) -> (Option<String>, Option<usize>) {
@@ -2293,6 +2557,16 @@ fn strip_extension(value: &str) -> String {
     }
 }
 
+fn catalog_basename(value: &str) -> String {
+    value
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
 /// Decode the small HTML entity vocabulary that commonly appears in catalog
 /// filenames before any structural tokenization takes place. Numeric entities
 /// are intentionally decoded here so `&#124;` cannot be mistaken for issue
@@ -2414,6 +2688,7 @@ fn is_leading_group_position(value: &str, start: usize) -> bool {
     (prefix.starts_with('(')
         && prefix.ends_with(')')
         && is_release_event(prefix.trim_matches(['(', ')'])))
+        || (prefix.starts_with('(') && prefix.ends_with(')'))
         || upper.starts_with("(C")
         || upper.starts_with("(COMITIA")
         || upper.starts_with("(COMIC1")
@@ -2591,7 +2866,25 @@ fn parse_range(raw: &str) -> Option<(String, String)> {
         .map(|(from, to)| (from.to_owned(), to.to_owned()))
 }
 
+fn sequence_axis(after: &str) -> Option<&'static str> {
+    let trimmed = after.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    if trimmed.starts_with('季') || lower.starts_with("season") {
+        return Some("season");
+    }
+    if trimmed.starts_with('话')
+        || trimmed.starts_with('話')
+        || trimmed.starts_with('回')
+        || lower.starts_with("chapter")
+        || lower.starts_with("episode")
+    {
+        return Some("chapter");
+    }
+    None
+}
+
 fn continuation_suffix(value: &str) -> Option<(&'static str, &'static str, i32)> {
+    let value = value.strip_prefix('+').unwrap_or(value).trim_start();
     for (suffix, relation, rank) in [
         ("续", "continuation", 1),
         ("續", "continuation", 1),
@@ -3187,6 +3480,41 @@ fn parenthetical_part(value: &str) -> Option<(i64, &'static str)> {
         "下" => Some((3, "back_part")),
         _ => None,
     }
+}
+
+fn contains_collection_marker(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    value.contains("全集")
+        || value.contains("全卷")
+        || value.contains("全巻")
+        || lower.contains("complete collection")
+}
+
+fn parenthetical_sequence_members(value: &str) -> Option<Vec<String>> {
+    let normalized = value
+        .trim()
+        .replace('＋', "+")
+        .replace('／', "/")
+        .replace('、', "+");
+    let parts = normalized
+        .split(['+', '/'])
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    if parts.len() < 2 || parts.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    let mut members = Vec::new();
+    for part in parts {
+        let member = match part {
+            "上" => "upper_part",
+            "下" => "lower_part",
+            _ => return None,
+        };
+        if !members.iter().any(|item| item == member) {
+            members.push(member.to_owned());
+        }
+    }
+    Some(members)
 }
 
 fn is_year(value: &str) -> bool {
@@ -4383,6 +4711,225 @@ mod tests {
     }
 
     #[test]
+    fn plus_continuation_is_a_chapter_and_never_a_title() {
+        let proposal = parse_catalog(
+            &CatalogSnapshot::with_context(
+                "06+续.zip",
+                vec!["作品名"],
+                vec!["05.zip", "06+续.zip", "07.zip", "10续.zip"],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+        assert_eq!(proposal.work_title.as_deref(), Some("作品名"));
+        assert_eq!(proposal.chapter.as_deref(), Some("6"));
+        assert_eq!(proposal.sequence_kind.as_deref(), Some("chapter"));
+        assert_eq!(proposal.chapter_relation.as_deref(), Some("continuation"));
+        assert_eq!(proposal.state, ParseState::Ready);
+
+        let plain = parse_catalog(
+            &CatalogSnapshot::with_context(
+                "06.zip",
+                vec!["作品名"],
+                vec!["05.zip", "06.zip", "06+续.zip", "07.zip"],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+        assert_eq!(plain.chapter.as_deref(), Some("6"));
+        assert_eq!(plain.sequence_kind.as_deref(), Some("chapter"));
+
+        let unresolved = parse_catalog(
+            &CatalogSnapshot::new("fixture/continuation-only", "06+续.zip", vec![]),
+            4,
+            "catalog-rules-v3",
+        );
+        assert_eq!(unresolved.work_title, None);
+        assert_eq!(unresolved.state, ParseState::Partial);
+    }
+
+    #[test]
+    fn ancestor_title_reuses_leading_attribution_grammar() {
+        let proposal = parse_catalog(
+            &CatalogSnapshot::new(
+                "fixture/ancestor-attribution",
+                "01.zip",
+                vec!["[Vchan]我的合租女室友是不是过于淫荡了？".into()],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+
+        assert_eq!(
+            proposal.work_title.as_deref(),
+            Some("我的合租女室友是不是过于淫荡了？")
+        );
+        assert!(proposal
+            .attribution_candidates
+            .iter()
+            .any(|candidate| candidate.name == "Vchan"));
+        assert_eq!(
+            proposal
+                .attribution_candidates
+                .iter()
+                .find(|candidate| candidate.name == "Vchan")
+                .map(|candidate| candidate.source.as_str()),
+            Some("ancestor(0)")
+        );
+        assert!(!proposal
+            .work_title
+            .as_deref()
+            .unwrap_or_default()
+            .contains("[Vchan]"));
+    }
+
+    #[test]
+    fn upper_lower_part_marker_is_sequence_evidence() {
+        let proposal = parse_catalog(
+            &CatalogSnapshot::with_context(
+                "05（上+下）.zip",
+                vec!["作品名"],
+                vec!["04（上+下）.zip", "05（上+下）.zip", "06+续.zip"],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+
+        assert_eq!(proposal.chapter.as_deref(), Some("5"));
+        assert_eq!(proposal.sequence_kind.as_deref(), Some("chapter"));
+        assert!(proposal
+            .sequence_members
+            .iter()
+            .any(|member| member == "upper_part"));
+        assert!(proposal
+            .sequence_members
+            .iter()
+            .any(|member| member == "lower_part"));
+        assert!(!proposal
+            .source_context_candidates
+            .iter()
+            .any(|candidate| candidate == "上+下"));
+    }
+
+    #[test]
+    fn complete_collection_markers_are_distinguished_from_end_hint() {
+        let collection = parse_catalog(
+            &CatalogSnapshot::new(
+                "fixture/complete-collection",
+                "富家女姐姐 1-137 全集.zip",
+                vec![],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+        assert_eq!(
+            collection.resource_completeness.as_deref(),
+            Some("complete")
+        );
+        assert!(collection.is_collection);
+
+        let composite = parse_catalog(
+            &CatalogSnapshot::new(
+                "fixture/complete-composite",
+                "洞玄尘心道归真01-07 [全集无修正].zip",
+                vec![],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+        assert_eq!(composite.resource_completeness.as_deref(), Some("complete"));
+        assert_eq!(composite.censorship.as_deref(), Some("uncensored"));
+        assert!(composite.is_collection);
+
+        let end_hint = parse_catalog(
+            &CatalogSnapshot::new("fixture/end-hint", "What Happened 1-10 [End].zip", vec![]),
+            4,
+            "catalog-rules-v3",
+        );
+        assert_eq!(end_hint.resource_completeness.as_deref(), Some("complete"));
+        assert!(!end_hint.is_collection);
+    }
+
+    #[test]
+    fn full_color_marker_sets_full_color_state() {
+        let proposal = parse_catalog(
+            &CatalogSnapshot::new("fixture/full-color", "色恋桜【フルカラー版】.zip", vec![]),
+            4,
+            "catalog-rules-v3",
+        );
+
+        assert_eq!(proposal.color_state.as_deref(), Some("full_color"));
+        assert!(!proposal
+            .source_context_candidates
+            .iter()
+            .any(|candidate| candidate == "フルカラー版"));
+    }
+
+    #[test]
+    fn full_catalog_path_is_not_retained_as_work_title() {
+        let proposal = parse_catalog(
+            &CatalogSnapshot::new(
+                "fixture/115",
+                "115:/日漫/[Alice Crazy] What Happened.zip",
+                vec!["日漫".into()],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+        assert!(!proposal
+            .work_title
+            .as_deref()
+            .unwrap_or_default()
+            .contains(".zip"));
+        assert!(!proposal
+            .work_title
+            .as_deref()
+            .unwrap_or_default()
+            .contains("115:"));
+    }
+
+    #[test]
+    fn context_prefix_does_not_block_nested_creator_grammar() {
+        let proposal = parse_catalog(
+            &CatalogSnapshot::new(
+                "fixture/event-prefix",
+                "(アズレン夢想) [CAT GARDEN (ねこてゐ)] 碧藍射爆 (アズールレーン).zip",
+                vec![],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+        assert!(proposal
+            .creators
+            .iter()
+            .any(|creator| creator.name == "CAT GARDEN" && creator.role == "circle"));
+        assert!(proposal
+            .creators
+            .iter()
+            .any(|creator| creator.name == "ねこてゐ" && creator.role == "artist"));
+        assert_eq!(proposal.work_title.as_deref(), Some("碧藍射爆"));
+    }
+
+    #[test]
+    fn season_and_chapter_ranges_are_typed_separately() {
+        let proposal = parse_catalog(
+            &CatalogSnapshot::new(
+                "fixture/multi-axis",
+                "[Alice Crazy] 一個變態的日常生活 第1-4季 第1-144話[完結].zip",
+                vec![],
+            ),
+            4,
+            "catalog-rules-v3",
+        );
+        assert_eq!(proposal.season_range.as_deref(), Some("1-4"));
+        assert_eq!(proposal.chapter_range.as_deref(), Some("1-144"));
+        assert!(proposal.is_collection);
+        assert_eq!(proposal.resource_completeness.as_deref(), Some("complete"));
+        assert_eq!(proposal.chapter, None);
+        assert_eq!(proposal.season, None);
+    }
+
+    #[test]
     fn rating_number_is_not_an_issue() {
         for filename in ["作品名 评分5.zip", "作品名 評価5.zip"] {
             let proposal = parse_catalog(
@@ -4413,8 +4960,19 @@ mod tests {
 
     #[test]
     fn golden_corpus_seed_matches_semantic_projections() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.trellis/tasks/08-23-m8-catalog-rules-v3-design/corpus/catalog-rules-v3-golden.jsonl");
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let candidates = [
+            manifest_dir.join(
+                "../../.trellis/tasks/08-23-m8-catalog-rules-v3-design/corpus/catalog-rules-v3-golden.jsonl",
+            ),
+            manifest_dir.join(
+                "../../.trellis/tasks/archive/2026-08/08-23-m8-catalog-rules-v3-design/corpus/catalog-rules-v3-golden.jsonl",
+            ),
+        ];
+        let path = candidates
+            .iter()
+            .find(|candidate| candidate.is_file())
+            .expect("golden corpus must be readable");
         let content = std::fs::read_to_string(path).expect("golden corpus must be readable");
         let mut failures = Vec::new();
         let mut count = 0;

@@ -11,6 +11,7 @@ import 'api/export.dart';
 import 'api/library.dart';
 import 'api/package.dart';
 import 'api/pdf.dart';
+import 'api/scraper.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
 import 'api/sync.dart';
@@ -19,6 +20,7 @@ import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
+import 'scrape_projection.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustLibApiImplPlatform({
@@ -77,6 +79,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookSourceDto dco_decode_box_autoadd_book_source_dto(dynamic raw);
 
   @protected
+  CatalogRevisionDto dco_decode_box_autoadd_catalog_revision_dto(dynamic raw);
+
+  @protected
   CropRect dco_decode_box_autoadd_crop_rect(dynamic raw);
 
   @protected
@@ -92,10 +97,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, String) dco_decode_box_autoadd_record_string_string(dynamic raw);
 
   @protected
+  ScrapeQueueDto dco_decode_box_autoadd_scrape_queue_dto(dynamic raw);
+
+  @protected
   SourceSnapshotDto dco_decode_box_autoadd_source_snapshot_dto(dynamic raw);
 
   @protected
   CacheSize dco_decode_cache_size(dynamic raw);
+
+  @protected
+  CatalogRevisionDto dco_decode_catalog_revision_dto(dynamic raw);
 
   @protected
   Cloud115CookieQrPayload dco_decode_cloud_115_cookie_qr_payload(dynamic raw);
@@ -196,6 +207,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<(String, PlatformInt64)> dco_decode_list_record_string_i_64(dynamic raw);
 
   @protected
+  List<ScrapeProposalDto> dco_decode_list_scrape_proposal_dto(dynamic raw);
+
+  @protected
+  List<ScrapeRunDto> dco_decode_list_scrape_run_dto(dynamic raw);
+
+  @protected
   List<SettingEntryDto> dco_decode_list_setting_entry_dto(dynamic raw);
 
   @protected
@@ -216,10 +233,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TagDto> dco_decode_list_tag_dto(dynamic raw);
 
   @protected
+  MaterializeResult dco_decode_materialize_result(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
   BookInfo? dco_decode_opt_box_autoadd_book_info(dynamic raw);
+
+  @protected
+  CatalogRevisionDto? dco_decode_opt_box_autoadd_catalog_revision_dto(
+    dynamic raw,
+  );
 
   @protected
   CropRect? dco_decode_opt_box_autoadd_crop_rect(dynamic raw);
@@ -234,6 +259,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, String)? dco_decode_opt_box_autoadd_record_string_string(
     dynamic raw,
   );
+
+  @protected
+  ScrapeQueueDto? dco_decode_opt_box_autoadd_scrape_queue_dto(dynamic raw);
 
   @protected
   SourceSnapshotDto? dco_decode_opt_box_autoadd_source_snapshot_dto(
@@ -260,6 +288,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) dco_decode_record_u_64_u_64(dynamic raw);
+
+  @protected
+  ScrapeProposalDto dco_decode_scrape_proposal_dto(dynamic raw);
+
+  @protected
+  ScrapeQueueDto dco_decode_scrape_queue_dto(dynamic raw);
+
+  @protected
+  ScrapeRunDto dco_decode_scrape_run_dto(dynamic raw);
 
   @protected
   SettingEntryDto dco_decode_setting_entry_dto(dynamic raw);
@@ -370,6 +407,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CatalogRevisionDto sse_decode_box_autoadd_catalog_revision_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CropRect sse_decode_box_autoadd_crop_rect(SseDeserializer deserializer);
 
   @protected
@@ -389,12 +431,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ScrapeQueueDto sse_decode_box_autoadd_scrape_queue_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SourceSnapshotDto sse_decode_box_autoadd_source_snapshot_dto(
     SseDeserializer deserializer,
   );
 
   @protected
   CacheSize sse_decode_cache_size(SseDeserializer deserializer);
+
+  @protected
+  CatalogRevisionDto sse_decode_catalog_revision_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   Cloud115CookieQrPayload sse_decode_cloud_115_cookie_qr_payload(
@@ -519,6 +571,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<ScrapeProposalDto> sse_decode_list_scrape_proposal_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ScrapeRunDto> sse_decode_list_scrape_run_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<SettingEntryDto> sse_decode_list_setting_entry_dto(
     SseDeserializer deserializer,
   );
@@ -547,10 +609,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TagDto> sse_decode_list_tag_dto(SseDeserializer deserializer);
 
   @protected
+  MaterializeResult sse_decode_materialize_result(SseDeserializer deserializer);
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
   BookInfo? sse_decode_opt_box_autoadd_book_info(SseDeserializer deserializer);
+
+  @protected
+  CatalogRevisionDto? sse_decode_opt_box_autoadd_catalog_revision_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   CropRect? sse_decode_opt_box_autoadd_crop_rect(SseDeserializer deserializer);
@@ -563,6 +633,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, String)? sse_decode_opt_box_autoadd_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ScrapeQueueDto? sse_decode_opt_box_autoadd_scrape_queue_dto(
     SseDeserializer deserializer,
   );
 
@@ -595,6 +670,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) sse_decode_record_u_64_u_64(SseDeserializer deserializer);
+
+  @protected
+  ScrapeProposalDto sse_decode_scrape_proposal_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ScrapeQueueDto sse_decode_scrape_queue_dto(SseDeserializer deserializer);
+
+  @protected
+  ScrapeRunDto sse_decode_scrape_run_dto(SseDeserializer deserializer);
 
   @protected
   SettingEntryDto sse_decode_setting_entry_dto(SseDeserializer deserializer);
@@ -729,6 +815,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_catalog_revision_dto(
+    CatalogRevisionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_crop_rect(
     CropRect self,
     SseSerializer serializer,
@@ -756,6 +848,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_scrape_queue_dto(
+    ScrapeQueueDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_source_snapshot_dto(
     SourceSnapshotDto self,
     SseSerializer serializer,
@@ -763,6 +861,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_cache_size(CacheSize self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_catalog_revision_dto(
+    CatalogRevisionDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_cloud_115_cookie_qr_payload(
@@ -927,6 +1031,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_scrape_proposal_dto(
+    List<ScrapeProposalDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_scrape_run_dto(
+    List<ScrapeRunDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_setting_entry_dto(
     List<SettingEntryDto> self,
     SseSerializer serializer,
@@ -960,11 +1076,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_tag_dto(List<TagDto> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_materialize_result(
+    MaterializeResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_book_info(
     BookInfo? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_catalog_revision_dto(
+    CatalogRevisionDto? self,
     SseSerializer serializer,
   );
 
@@ -986,6 +1114,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_record_string_string(
     (String, String)? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_scrape_queue_dto(
+    ScrapeQueueDto? self,
     SseSerializer serializer,
   );
 
@@ -1030,6 +1164,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     (BigInt, BigInt) self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_scrape_proposal_dto(
+    ScrapeProposalDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_scrape_queue_dto(
+    ScrapeQueueDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_scrape_run_dto(ScrapeRunDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_setting_entry_dto(

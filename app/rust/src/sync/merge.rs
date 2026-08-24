@@ -142,7 +142,11 @@ fn merge_metas(
     let l_obj = l.data.as_object().cloned().unwrap_or_default();
     let r_obj = r.data.as_object().cloned().unwrap_or_default();
 
-    let mut keys: Vec<&String> = b_obj.keys().chain(l_obj.keys()).chain(r_obj.keys()).collect();
+    let mut keys: Vec<&String> = b_obj
+        .keys()
+        .chain(l_obj.keys())
+        .chain(r_obj.keys())
+        .collect();
     keys.sort();
     keys.dedup();
 
@@ -323,7 +327,11 @@ pub fn merge_batch(
             merged.push(e);
         }
     }
-    MergeResult { merged, plan, counts }
+    MergeResult {
+        merged,
+        plan,
+        counts,
+    }
 }
 
 #[cfg(test)]
@@ -342,7 +350,9 @@ mod tests {
     #[test]
     fn unchanged_both_sides_yields_nothing() {
         let b = metas("k", 1, json!({"title": "A"}));
-        assert!(three_way(base::ENTITY_METAS, Some(&b), Some(&b), Some(&b)).0.is_none());
+        assert!(three_way(base::ENTITY_METAS, Some(&b), Some(&b), Some(&b))
+            .0
+            .is_none());
         assert!(three_way(base::ENTITY_METAS, None, None, None).0.is_none());
     }
 
@@ -365,7 +375,9 @@ mod tests {
         let b = metas("k", 10, json!({"read": false, "rating": 4}));
         let l = metas("k", 11, json!({"read": true, "rating": 4}));
         let r = metas("k", 12, json!({"read": false, "rating": 5}));
-        let merged = three_way(base::ENTITY_METAS, Some(&b), Some(&l), Some(&r)).0.unwrap();
+        let merged = three_way(base::ENTITY_METAS, Some(&b), Some(&l), Some(&r))
+            .0
+            .unwrap();
         assert_eq!(merged.data, json!({"read": true, "rating": 5}));
     }
 
@@ -374,10 +386,14 @@ mod tests {
         let b = metas("k", 10, json!({"title": "A"}));
         let l = metas("k", 11, json!({"title": "Local"}));
         let r = metas("k", 12, json!({"title": "Remote"}));
-        let merged = three_way(base::ENTITY_METAS, Some(&b), Some(&l), Some(&r)).0.unwrap();
+        let merged = three_way(base::ENTITY_METAS, Some(&b), Some(&l), Some(&r))
+            .0
+            .unwrap();
         assert_eq!(merged.data["title"], json!("Remote"));
         let l2 = metas("k", 12, json!({"title": "Local"}));
-        let merged2 = three_way(base::ENTITY_METAS, Some(&b), Some(&l2), Some(&r)).0.unwrap();
+        let merged2 = three_way(base::ENTITY_METAS, Some(&b), Some(&l2), Some(&r))
+            .0
+            .unwrap();
         assert_eq!(merged2.data["title"], json!("Local"));
     }
 
@@ -393,7 +409,9 @@ mod tests {
         let b = SyncEntry::live("日漫", 10, json!({"name": "日漫"}));
         let del = SyncEntry::tombstone("日漫", 11, json!({"name": "日漫"}));
         let upd = SyncEntry::live("日漫", 11, json!({"name": "日漫"}));
-        let m = three_way(base::ENTITY_TAGS, Some(&b), Some(&del), Some(&upd)).0.unwrap();
+        let m = three_way(base::ENTITY_TAGS, Some(&b), Some(&del), Some(&upd))
+            .0
+            .unwrap();
         assert!(m.deleted);
     }
 
@@ -402,17 +420,23 @@ mod tests {
         let b = SyncEntry::live("bk", 10, json!({"lastPage": 5}));
         let l = SyncEntry::live("bk", 11, json!({"lastPage": 20}));
         let r = SyncEntry::live("bk", 9, json!({"lastPage": 99}));
-        let m = three_way(base::ENTITY_RECORDS, Some(&b), Some(&l), Some(&r)).0.unwrap();
+        let m = three_way(base::ENTITY_RECORDS, Some(&b), Some(&l), Some(&r))
+            .0
+            .unwrap();
         assert_eq!(m.data["lastPage"], json!(20));
 
         let del = SyncEntry::tombstone("bk", 10, json!({"path": "/a.cbz"}));
         let upd = SyncEntry::live("bk", 12, json!({"lastPage": 30}));
-        let m2 = three_way(base::ENTITY_RECORDS, Some(&b), Some(&del), Some(&upd)).0.unwrap();
+        let m2 = three_way(base::ENTITY_RECORDS, Some(&b), Some(&del), Some(&upd))
+            .0
+            .unwrap();
         assert!(!m2.deleted);
         assert_eq!(m2.data["lastPage"], json!(30));
 
         let del2 = SyncEntry::tombstone("bk", 13, json!({"path": "/a.cbz"}));
-        let m3 = three_way(base::ENTITY_RECORDS, Some(&b), Some(&del), Some(&del2)).0.unwrap();
+        let m3 = three_way(base::ENTITY_RECORDS, Some(&b), Some(&del), Some(&del2))
+            .0
+            .unwrap();
         assert!(m3.deleted);
     }
 
@@ -421,18 +445,24 @@ mod tests {
         let b = SyncEntry::live("bk", 10, json!({"path": "/a.cbz", "title": "A"}));
         let l = SyncEntry::live("bk", 10, json!({"path": "/a.cbz", "title": "A"}));
         // remote 删除（缺席），本地未变 → 产出墓碑供本地删除
-        let m = three_way(base::ENTITY_RECORDS, Some(&b), Some(&l), None).0.unwrap();
+        let m = three_way(base::ENTITY_RECORDS, Some(&b), Some(&l), None)
+            .0
+            .unwrap();
         assert!(m.deleted);
         assert_eq!(m.data["path"], json!("/a.cbz"));
         // 远端已删且本地也已删 → 无动作
-        assert!(three_way(base::ENTITY_RECORDS, Some(&b), None, None).0.is_none());
+        assert!(three_way(base::ENTITY_RECORDS, Some(&b), None, None)
+            .0
+            .is_none());
     }
 
     #[test]
     fn local_deletion_pushes_tombstone_when_remote_live() {
         let b = SyncEntry::live("bk", 10, json!({"path": "/a.cbz"}));
         let r = SyncEntry::live("bk", 10, json!({"path": "/a.cbz"}));
-        let m = three_way(base::ENTITY_RECORDS, Some(&b), None, Some(&r)).0.unwrap();
+        let m = three_way(base::ENTITY_RECORDS, Some(&b), None, Some(&r))
+            .0
+            .unwrap();
         assert!(m.deleted);
     }
 
@@ -441,9 +471,13 @@ mod tests {
         let b = SyncEntry::live("idx", 10, json!({"name": "a.cbz", "size": 100}));
         let l = SyncEntry::live("idx", 11, json!({"name": "a.cbz", "size": 101}));
         let r = SyncEntry::live("idx", 9, json!({"name": "a.cbz", "size": 999}));
-        let m = three_way(base::ENTITY_LIBRARY_INDEX, Some(&b), Some(&l), Some(&r)).0.unwrap();
+        let m = three_way(base::ENTITY_LIBRARY_INDEX, Some(&b), Some(&l), Some(&r))
+            .0
+            .unwrap();
         assert_eq!(m.data["size"], json!(101));
-        let m2 = three_way(base::ENTITY_LIBRARY_INDEX, Some(&b), Some(&l), Some(&b)).0.unwrap();
+        let m2 = three_way(base::ENTITY_LIBRARY_INDEX, Some(&b), Some(&l), Some(&b))
+            .0
+            .unwrap();
         assert_eq!(m2.data["size"], json!(101));
     }
 
@@ -452,7 +486,9 @@ mod tests {
         let b = SyncEntry::live("themeMode", 10, json!({"value": "dark"}));
         let l = SyncEntry::live("themeMode", 11, json!({"value": "light"}));
         let r = SyncEntry::live("themeMode", 12, json!({"value": "dark"}));
-        let m = three_way(base::ENTITY_SETTINGS, Some(&b), Some(&l), Some(&r)).0.unwrap();
+        let m = three_way(base::ENTITY_SETTINGS, Some(&b), Some(&l), Some(&r))
+            .0
+            .unwrap();
         assert_eq!(m.data["value"], json!("dark"));
     }
 

@@ -88,32 +88,57 @@ impl CacheDir {
 /// 计算封面缓存的磁盘键。
 /// 格式: `{book_path_hash}_{page}_{width}_{height}_{crop_hash}.cover`
 /// 使用路径 hash 避免路径中的非法文件名字符。
-fn cover_cache_key(path: &str, page: u32, width: u32, height: u32, crop: Option<(f64, f64, f64, f64)>) -> String {
+fn cover_cache_key(
+    path: &str,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut hasher);
     let path_hash = hasher.finish();
-    let crop_str = crop.map(|(x, y, w, h)| format!("_{x:.3}_{y:.3}_{w:.3}_{h:.3}")).unwrap_or_default();
+    let crop_str = crop
+        .map(|(x, y, w, h)| format!("_{x:.3}_{y:.3}_{w:.3}_{h:.3}"))
+        .unwrap_or_default();
     format!("{path_hash:x}_{page}_{width}_{height}{crop_str}.cover")
 }
 
 /// 从磁盘读取封面缓存（若存在）。
 /// 返回完整的 RGBA 像素字节和宽高。
-pub fn cover_cache_read(path: &str, page: u32, width: u32, height: u32, crop: Option<(f64, f64, f64, f64)>) -> Option<(Vec<u8>, u32, u32)> {
+pub fn cover_cache_read(
+    path: &str,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+) -> Option<(Vec<u8>, u32, u32)> {
     let dir = CacheDir::Cover.path();
     let key = cover_cache_key(path, page, width, height, crop);
     let file_path = dir.join(key);
     let data = std::fs::read(&file_path).ok()?;
-    if data.len() < 8 { return None; }
+    if data.len() < 8 {
+        return None;
+    }
     let w = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let h = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
     let rgba = data[8..].to_vec();
-    if rgba.len() as u32 != w * h * 4 { return None; }
+    if rgba.len() as u32 != w * h * 4 {
+        return None;
+    }
     Some((rgba, w, h))
 }
 
 /// 将封面写入磁盘缓存。
-pub fn cover_cache_write(path: &str, page: u32, width: u32, height: u32, crop: Option<(f64, f64, f64, f64)>, rgba: &[u8]) -> Result<()> {
+pub fn cover_cache_write(
+    path: &str,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+    rgba: &[u8],
+) -> Result<()> {
     let dir = CacheDir::Cover.ensure()?;
     let key = cover_cache_key(path, page, width, height, crop);
     let file_path = dir.join(key);
@@ -171,31 +196,51 @@ fn remove_dir_contents(dir: &Path) -> Result<u64> {
 /// 清空 L2 页面缓存（page/）。
 pub fn clear_page_cache() -> Result<u64> {
     let dir = CacheDir::Page.path();
-    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+    if dir.exists() {
+        remove_dir_contents(&dir)
+    } else {
+        Ok(0)
+    }
 }
 
 /// 清空原始文件缓存（raw/）。
 pub fn clear_raw_cache() -> Result<u64> {
     let dir = CacheDir::Raw.path();
-    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+    if dir.exists() {
+        remove_dir_contents(&dir)
+    } else {
+        Ok(0)
+    }
 }
 
 /// 清空封面缓存（cover/）。
 pub fn clear_cover_cache() -> Result<u64> {
     let dir = CacheDir::Cover.path();
-    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+    if dir.exists() {
+        remove_dir_contents(&dir)
+    } else {
+        Ok(0)
+    }
 }
 
 /// 清空 AI 结果缓存（ai/）。
 pub fn clear_ai_cache() -> Result<u64> {
     let dir = CacheDir::Ai.path();
-    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+    if dir.exists() {
+        remove_dir_contents(&dir)
+    } else {
+        Ok(0)
+    }
 }
 
 /// 清空 AI 超分临时文件（temp/）。
 pub fn clear_temp_cache() -> Result<u64> {
     let dir = CacheDir::Temp.path();
-    if dir.exists() { remove_dir_contents(&dir) } else { Ok(0) }
+    if dir.exists() {
+        remove_dir_contents(&dir)
+    } else {
+        Ok(0)
+    }
 }
 
 // ====== 按书清理（清理失效漫画数据用） ======
@@ -280,7 +325,9 @@ fn clear_legacy_artifacts() -> Result<u64> {
         for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
             let meta = entry.metadata()?;
-            if !meta.is_dir() { continue; }
+            if !meta.is_dir() {
+                continue;
+            }
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_legacy_hash = name.len() == 16 && name.chars().all(|c| c.is_ascii_hexdigit());
             if is_legacy_hash {
@@ -422,7 +469,10 @@ pub fn migrate_cache_root(from: &str, to: &str, support_dir: &str) -> Result<u64
                 }
                 // 其他未知目录不迁移
             } else if meta.is_file() {
-                items.push(Item { name, is_dir: false });
+                items.push(Item {
+                    name,
+                    is_dir: false,
+                });
             }
         }
     }
@@ -539,7 +589,11 @@ pub fn delete_migrated_items(root: &str) -> Result<u64> {
             continue;
         }
         let meta = std::fs::metadata(&p)?;
-        freed += if meta.is_dir() { dir_size(&p) } else { meta.len() };
+        freed += if meta.is_dir() {
+            dir_size(&p)
+        } else {
+            meta.len()
+        };
         if meta.is_dir() {
             std::fs::remove_dir_all(&p)?;
         } else {
@@ -620,7 +674,10 @@ mod tests {
         assert_eq!(freed, 32);
         assert!(!dir_a.exists());
         assert!(dir_b.exists());
-        assert_eq!(delete_page_cache_for_ns("webdav|https://x|/n.cbz").unwrap(), 0);
+        assert_eq!(
+            delete_page_cache_for_ns("webdav|https://x|/n.cbz").unwrap(),
+            0
+        );
 
         // ---- raw/ ----
         let key_a = "https://host:443/dav/漫画.cbz";
@@ -706,18 +763,24 @@ mod tests {
         let support = base.join("sup");
         let _ = std::fs::create_dir_all(&a);
         let _ = std::fs::create_dir_all(&support);
-        assert!(
-            migrate_cache_root(a.to_str().unwrap(), a.to_str().unwrap(), support.to_str().unwrap())
-                .is_err()
-        );
-        assert!(
-            migrate_cache_root(base.to_str().unwrap(), a.to_str().unwrap(), support.to_str().unwrap())
-                .is_err()
-        );
-        assert!(
-            migrate_cache_root(a.to_str().unwrap(), base.to_str().unwrap(), support.to_str().unwrap())
-                .is_err()
-        );
+        assert!(migrate_cache_root(
+            a.to_str().unwrap(),
+            a.to_str().unwrap(),
+            support.to_str().unwrap()
+        )
+        .is_err());
+        assert!(migrate_cache_root(
+            base.to_str().unwrap(),
+            a.to_str().unwrap(),
+            support.to_str().unwrap()
+        )
+        .is_err());
+        assert!(migrate_cache_root(
+            a.to_str().unwrap(),
+            base.to_str().unwrap(),
+            support.to_str().unwrap()
+        )
+        .is_err());
         assert!(migrate_cache_root("C:\\", "D:\\tmp_x2", support.to_str().unwrap()).is_err());
         let _ = std::fs::remove_dir_all(&base);
     }

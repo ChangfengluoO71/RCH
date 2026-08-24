@@ -1,0 +1,3542 @@
+{
+  "content_reads": false,
+  "materialization": {
+    "book_tag_link_count_after": 2250,
+    "by_status": {
+      "skipped": 389
+    },
+    "canonical_meta_count_after": 397,
+    "eligible_count": 389,
+    "proposal_count": 389,
+    "results": [
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|04f42fcf9136e355e3d65bba1bf801807ad04a14d0d362cb1d3f335d31d89dba",
+        "book_key": "115|sync_62556ad8_1786286465729|e5xmtv4q91jdlzhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|1c753923d975c5f57962e1fd3769a5871c99f11688d939b77f17dc2b11f6c801",
+        "book_key": "115|sync_62556ad8_1786286465729|e5xmtv4q91jdozhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|680833f59bb53ec6474dad934b071a0679441e417f1012c3c5faecab590732ca",
+        "book_key": "115|sync_62556ad8_1786286465729|e5xmtv4q91jdwzhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|97550eab48270a15f3faa8a96001dd442d06542a5a85cf444aa1c53c3172bd6d",
+        "book_key": "115|sync_62556ad8_1786286465729|e5xmrpa46erm2zhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|cae4ed56b8b0d1f9e2c104c673a8f3b3fe69564db9554c0a9dc89c06f58aa4d4",
+        "book_key": "115|sync_62556ad8_1786286465729|e5xmrpavu76oszhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|4c752a9b3d3b35b9c7787e6e3b732cef70e09d480ee7f4c74180ac6cf3d27d18",
+        "book_key": "115|sync_62556ad8_1786286465729|e5xmrpgpf2qr9zhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|517236d4cba4bb1f0edf2287fc3837ee7537e9e526bb81b08e500d94c5c2fcef",
+        "book_key": "115|sync_62556ad8_1786286465729|e5xmrpt8g88h2zhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|e7d0dcf12d865e61f3291da33e29899b650ac2b9fc65880d4a85d4ec2eba2d45",
+        "book_key": "115|sync_62556ad8_1786286465729|e51368dgq1hi2zhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|f97852d6ad19f6904ce052e121067e0b82f2ae2086ca767310be6cd4f94cc771",
+        "book_key": "115|sync_62556ad8_1786286465729|e51368ff6r84azhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|110522afb5c017bbe5c788f860f48685a2092c5c6ba58acd9b949d19d86e8725",
+        "book_key": "115|sync_62556ad8_1786286465729|e51hiqcphpapyzhro",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|0d68ff6f1f75cf03c11835c64190071b52c83bb980ddc3297bdb67251b74f606",
+        "book_key": "115|sync_62556ad8_1786286465729|d1uemhdm225uqxy9f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|b40dc3ad64bae4f4541a09b21d5cdf9dfd7d3be243681226d948b504e03923f7",
+        "book_key": "115|sync_62556ad8_1786286465729|d1uemso8dsgtaxy9f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|e61fbb9416e80dd2ac9102e2c1c61960725e59046e0d112f4549470dbfb11abe",
+        "book_key": "115|sync_62556ad8_1786286465729|d1uem0bqtjkg7xy9f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|3163424543ff935193f5deb8be3d39be3c16723e72b99059bbb269ff9ab8cbe3",
+        "book_key": "115|sync_62556ad8_1786286465729|d1uem0bqtjkgixy9f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|98996e131e504d60a15c18ba0b1526cda28cadf48bdf31b160a86a04f5ecc635",
+        "book_key": "115|sync_62556ad8_1786286465729|d1uem0bqtjkgxxy9f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|ead37c059b66594cb2f9a29d51cdf6bec876e420a0b6eec8f9f59e513aeb5350",
+        "book_key": "115|sync_62556ad8_1786286465729|d1uem0bqtjkgyxy9f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|c9b5e76eaafcb6bef876049559f29b922ec2fc57c3c1566bfc6915e9f3ef14ba",
+        "book_key": "115|sync_62556ad8_1786286465729|csculeppc4d03dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|59c53756dc2bf4a71d337e05765d8c9fe601eefcc6c79659cb4de8cfbc8b39ae",
+        "book_key": "115|sync_62556ad8_1786286465729|d1jdnvm7f933nxy9f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|abb547b492a1f4caa3672603e4d03a4bf151513c627ef4623d60e94b5cb1cddf",
+        "book_key": "115|sync_62556ad8_1786286465729|cscdto0hthididbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|10ade1a5fbc8c74bc462bedc54afcea2b7a7df6a7eb08da28beb543e47643fae",
+        "book_key": "115|sync_62556ad8_1786286465729|csculam64n685dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|34910508469875ded4fe91db8a4acb6275265764cd1c9ca0f544110b57c8fc39",
+        "book_key": "115|sync_62556ad8_1786286465729|csculav9ef1p6dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|1400108deeedc221059636c91867999e7ac9d0ad832bb397d245c87366e614e4",
+        "book_key": "115|sync_62556ad8_1786286465729|cs6fo348unza4dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|588f08abbaf6ec09b7cbfe956a583f37d5bcd5d79aa4195f771dc4763094ed4d",
+        "book_key": "115|sync_62556ad8_1786286465729|cs6fo3dhbpkmodbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|a0e14bee2a0fc2cf663b3ea7769b3804240637fe84826426c011dd97b3a0a3bd",
+        "book_key": "115|sync_62556ad8_1786286465729|cs6ftyq4sodemdbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|2546e30c86b369e6db5b45b4ff0889b0ed4f1a4fa6676cfd91fdf18ae1879485",
+        "book_key": "115|sync_62556ad8_1786286465729|cs6jd0vkvr8t1dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|b1ee0127bf44753e8ad5d60a418a8e5575291f3e4a1b48cf919f33a02f55afef",
+        "book_key": "115|sync_62556ad8_1786286465729|bivurc32e063f840x",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|e1d508950174916b6f906de4ad1990e75173f14f39a2aa03cc53982d9b164b05",
+        "book_key": "115|sync_62556ad8_1786286465729|cs6f3t895ce74dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|aa0efc8a5c72f220c208d9c927aeae36911345b0bbd0c607db26e0db041ba769",
+        "book_key": "115|sync_62556ad8_1786286465729|cs6f3t895ce79dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|dcaed1290a7874ec9789fcdba240091403d99f765db666bac348a13ee3f57528",
+        "book_key": "115|sync_62556ad8_1786286465729|cs6f3t895ceo3dbor",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|0417e5a23670fd8c3a66ad7b961a3bbf51e4de21976003af4fc0dccf1b57dd0b",
+        "book_key": "115|sync_62556ad8_1786286465729|bin8frqc3e9qj840x",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|56e846b7a43ab2c9191b2dd1c27e4a4a6134054e3e1df24926f082fd25847f9f",
+        "book_key": "115|sync_62556ad8_1786286465729|bivu0g4q0tf85840x",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|6bcaf0bd9fbc49916c1af10ca8364f645873207c21e5f791cb05c9d57d46c6e9",
+        "book_key": "115|sync_62556ad8_1786286465729|bivu0glzwxdve840x",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|19b3fdd8087133a0be4aa835e89f653baa0195b1a64ea1ea6b7a4a8de0d45b9b",
+        "book_key": "115|sync_62556ad8_1786286465729|bivu0gxcb6037840x",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|127bfd91ae8271858c3f47b86bc68dcce75e5bba0367ed2fcdb5ff1e02848d97",
+        "book_key": "115|sync_62556ad8_1786286465729|akr1ausp1u0r9h4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|219a08abdeeb1e8f60fcb7e1c0d0ffb929676f7123b32a3a4eb1f75f47c3c765",
+        "book_key": "115|sync_62556ad8_1786286465729|akr1uywsl8ca5h4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|c99f730b322fc723f2136917026474fe66cf70ff7dffbe62f862dd6cc8b75128",
+        "book_key": "115|sync_62556ad8_1786286465729|akrv4fdu345q3h4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|1524601b5bb858af52d101eb92bbf738b147f794a05e2372ad8075bd76f47191",
+        "book_key": "115|sync_62556ad8_1786286465729|bin4q1ce78s9w840x",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|3a600917e2906c831272db723838d34feec1e1f2cf378bfbdcccea970b0a5409",
+        "book_key": "115|sync_62556ad8_1786286465729|ak8iq0dhn2ek4h4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|9e63696c7bb55f19d3e7445532f0361aca3a2bace5ddb8267bdc963392bf405b",
+        "book_key": "115|sync_62556ad8_1786286465729|akr1a5xkzekevh4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|d55bd1debadcce791bc30c5595eb51a0166259c26d3d95b8b329597cf2b5ed5e",
+        "book_key": "115|sync_62556ad8_1786286465729|akr1audk66nteh4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|a89839fbbf6cefa202a4dd99d44ab61ed86642cc38ef3275c9e8834a836addee",
+        "book_key": "quark|quark_1786277879032|ff81386717934805b3a60bc9858cb82e",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|6df075db7d08701ac8b9b16fe72f61377810aa0263125ff85912127951651f34",
+        "book_key": "115|sync_62556ad8_1786286465729|ak8iq012q87zbh4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|115|sync_62556ad8_1786286465729|2b46f324f85557ebaccd053f4fccde7f0f8bd20e232b85fdd2ded1e0974819b4",
+        "book_key": "115|sync_62556ad8_1786286465729|ak8iq09eqe6mth4ad",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|28953987dfe077c59789edcbba4db36ae139b0c382889fbec9976bb4b7236593",
+        "book_key": "quark|quark_1786277879032|f1fb2f59826247289caa2e12b10f5d4f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|5c35650dcc03e909f4df1f149105a3eee75457d88ab77fbeb2e1c5124c07aefd",
+        "book_key": "quark|quark_1786277879032|f879e1ec22aa457d9165ae4257e2ace8",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|9f106fe5087e4b85ae39416289ba70767fb321ac1d7a6d3ae61a3acc6816aa44",
+        "book_key": "quark|quark_1786277879032|ef803d4e8f274300bd0f7a30bd83a967",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|34b5786f16001a8055623b1bc545cd0f5557a835135c5b7953e048c5fff201b6",
+        "book_key": "quark|quark_1786277879032|f0803e2f3a4b4957bfc5843917653987",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|67f51345768a4304108b0d40a661568f890d62f38c7fb4bd3ab919f511b97cc8",
+        "book_key": "quark|quark_1786277879032|f11a6dfda067437cae68afaa8cf68000",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|100eab2db6cd31cc8ce8ef9f2e9852466ce482ae20b097255013e4a636cd1831",
+        "book_key": "quark|quark_1786277879032|e92603681d8c47f7ba74046bb49398c7",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|7e9e1b62a5ed24fbdd185e954de76f346125c63e261634b50d10ee7541e89db1",
+        "book_key": "quark|quark_1786277879032|ec7681e893c24a22af560f60aefff50e",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|23b4b75dc4e15fefd5983af015e67b5cfdbac10da2747bcc53845cc8ac7c5dca",
+        "book_key": "quark|quark_1786277879032|ecc6cc567c0e4e568d880005b86ed7ed",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|d6b2c287923f89ed7f625a0dec6fcafae9abc4f293bc3a26c520204aa5d768f4",
+        "book_key": "quark|quark_1786277879032|e4d0eb7d923146dba2fb6e81a687f2d0",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|a25f7d785bf511513ab9eb66a35520cc9a1176c8687d452256b485cd0af5c777",
+        "book_key": "quark|quark_1786277879032|e5241d75569d4518a9954673998a6ff3",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|75ab3e577082f344a4b32753f26bf00ce8b8afc5e0b3c3b1291b76a2913f47d5",
+        "book_key": "quark|quark_1786277879032|e61a8ca924984a92985c02f84550e2de",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|a72708e1b500321e08f7fd178c70889c6149f8da8e6b46e362bd8de9b1552506",
+        "book_key": "quark|quark_1786277879032|df23e35d1b9a49b4b4fc11b40e134e05",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|cbc98ac1b6f2551ebc5d4a7ff5a7a83f5c061d7091f4af83ad194cb53b0f406b",
+        "book_key": "quark|quark_1786277879032|e2469c1b1a1f458caabc6c73d232c1d4",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|1086bc9b48813f7e3341fc38faf9a54f804a88d6b4f6524fd74c4860da6e3dc8",
+        "book_key": "quark|quark_1786277879032|e2ae5b3586a8452e9b70624b0335e8e1",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|9c24cc8dd2c57edb5c80544db5db9819ebd9bd913fca63ddca391e9c42922241",
+        "book_key": "quark|quark_1786277879032|db3a6c4e5f8541dbad21c9e0e2eafd71",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|7a5f92ab00c4a35e2709cda701fd6bfbf0db54174b3cc3867ab87ef70438bb74",
+        "book_key": "quark|quark_1786277879032|dbb6568768704679a0295910ab9c57b3",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|3afe3815dcd0d888cfa9cd62da9241971b896f4efbfa79b08085aa89b5bcca90",
+        "book_key": "quark|quark_1786277879032|dd78b7358bc04408aa69b7b9a3aba690",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|f0d7850375591898b4e3ae26c3b7a1b956468d9207cbf6064968c79f20590530",
+        "book_key": "quark|quark_1786277879032|d658893326684b6fb5ffda776ca5d00d",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|862e76cdf6ff00ab1ec86d21a485029e92e20865c80f1bb7da2feedf3f32d307",
+        "book_key": "quark|quark_1786277879032|ceca3066bd3741e09518f7cc496734b1",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|df94a4e6809c22ec181d551050f66a029aa4b7afc2d1dc1251c862493b417ab8",
+        "book_key": "quark|quark_1786277879032|d1ee8b5a12cc4a2d8aac11289dfbdcfa",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|9d760786de56c6a4b1aaba79ca7c55b0b32892d86f18572b5fb3c31da3a0e481",
+        "book_key": "quark|quark_1786277879032|d6346c4ab2764b21aa1ce57c90ca9772",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|6e77046910484659414ff4f7b939d912f1ec814492254fd5e85e32a86606aff0",
+        "book_key": "quark|quark_1786277879032|cdd3157b7a314399a39e9fd08a9516ff",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|c42712461a6c8a84f9aedfbcf715c0c7db5656058e9f5a6ab3594fea2eb0ee3d",
+        "book_key": "quark|quark_1786277879032|cdd9d87c86ec4420b50161b3f304e288",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|238479e68a2dde439c5e7216a1a39c7ac534e9e2c45cda9c899d6aed3e78dfc9",
+        "book_key": "quark|quark_1786277879032|ce51bd042f2f4803809e1b721b7a4144",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|4ef38e5f526af7e248fbabb84fb674ea3ba4044df89ba932b3e59e4492f16541",
+        "book_key": "quark|quark_1786277879032|c680a216916d4ef88e1526e45ea49861",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|20e8981ff636628dc09875d83fa2718e401d1bcd534b196326f4c1fc9fb0a8e1",
+        "book_key": "quark|quark_1786277879032|cca37e21a76b4ba896b9b023c55befba",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|392ad7b66203bb3446607846664a5ee50187d512f8cf9d5f7c9c8ceb52f4abed",
+        "book_key": "quark|quark_1786277879032|cd4568a749864bbd92d48244376a0362",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|dea9199c8c68e4272d5fe7e349e47970b580cfd7047d843153860933f6f5ce2f",
+        "book_key": "quark|quark_1786277879032|bc13a0a4a6034469b7070e0ae1ef8ab0",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|8b85b1dce2e98801a3c2ddcee6a6157dff085dbe22bcf24d97d6275d92db6f2f",
+        "book_key": "quark|quark_1786277879032|c23e93f0620640b38a271a73cf937e35",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|23c8a0e3aa3f9a89f2a208687964ccab2a253b30b3b71af96b0f08bfb441cafa",
+        "book_key": "quark|quark_1786277879032|c26509cd717e4075a61765ca1c82843f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|0bae78af538316b86ace88f6f58083fa2d1dfcf37818ab8ea7bd453bb5fbf829",
+        "book_key": "quark|quark_1786277879032|b822908a14fc47f9b1a1f50cb71b76ce",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|b5cbafab2505a0e94cb4f940f9e1cc7fef72653026decc9c72e0c6fd607b7ec6",
+        "book_key": "quark|quark_1786277879032|baab3a48363d4abba56a0885409b917e",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|53cb5eb11e40e51ccebe25d2b14138dd63d5df9173862d717d7e8bc0ca7880cc",
+        "book_key": "quark|quark_1786277879032|b36b8771f00a434f98ed1bd1a7d455b8",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|ce68cbdcbe78dac3e1a9bd3cc7d70e6cd1c46f49a8c910095f5360814a3591ee",
+        "book_key": "quark|quark_1786277879032|b6864d9cbb32458496afac1408918da6",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|dc816442d723852e63522128f95a907b43906f857bb5a295e7fa5a41a54de881",
+        "book_key": "quark|quark_1786277879032|b73c558bab46475e9df860280acba864",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|08202f866ca62fd872b334d0a4743e62a0b887feb5d855ac52035007a1fed85e",
+        "book_key": "quark|quark_1786277879032|b27ff485134145a086853f0d76dba771",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|f675e12d283d63fbd8eb31fa9153448fde166ce505ff08ebc9956945fbe220cd",
+        "book_key": "quark|quark_1786277879032|b30c69484da44907b8b7adf8d110330d",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|0dd107e8f5957bd6b57f0aca9bfe061f70537d107f65531891dfa3956ebeb401",
+        "book_key": "quark|quark_1786277879032|b3134a65db0e4bd0a82237e4bd44d820",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|5671d301914cf943280b39b1ffe82471909926c441d0c504724a0daf1d70fa2e",
+        "book_key": "quark|quark_1786277879032|a9a0c0b989894b9d89d07384f8a3217e",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|ec9b06691465f4382c51f49b0de13a65ea7aca544efdbaa0882297058d518183",
+        "book_key": "quark|quark_1786277879032|ac94b0ed061a45b39057cae3ee4788a3",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|860e641b3ec454fd357aac1a6f8303f6b6215d6a88e764f9fb3c2ec0705d9171",
+        "book_key": "quark|quark_1786277879032|a2a2cfd7300f4fe08398661a40eafc39",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|2cc6e9e869e7c8977ea01d9317d73ce7ad33a420be747ecd07c13190384f2e3d",
+        "book_key": "quark|quark_1786277879032|a363a8cea3dd4e6cafb8b6a7d6d27521",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|ea9ded31428a8351b68bfbe983869f70ded63566cb5d7105c2e22877bc5e90a5",
+        "book_key": "quark|quark_1786277879032|9ca2a4a00aea4c81ab16aebc4f884649",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|bd03902084fbcb19658ed38afddb1680a50a9e103ebdd2b2eea9348a3d047720",
+        "book_key": "quark|quark_1786277879032|9fdeb7d926784e32bdb684763398f707",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|638bcd57c662f61c9e968a68b9ef8eefc7d9c5cddd648c134b285d3caa0e1c40",
+        "book_key": "quark|quark_1786277879032|986c9ab880f344568b51de827b77e654",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|d437016363f8c01dffd01551c86f89e08d59248164f7d3aaf462a8ee7ec69432",
+        "book_key": "quark|quark_1786277879032|9adea2c1d05747aabe64dddfaf06fc5e",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|8a33c95a6d25e74fcd7c805844adbd43de6481c6733e7a9169112013b22f9fa8",
+        "book_key": "quark|quark_1786277879032|8e20dcc2342549c2bcd798fca9725792",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|356fd660f9c007cfd6339b819e3b7d75c112815b0da4412296b1e5c4f1d1e270",
+        "book_key": "quark|quark_1786277879032|92624431f0494c34bdd6a7b4c8d4cebd",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|589d65906d87bef91d145cace9e539f929085886e830b0b856dfbf62cc67f61f",
+        "book_key": "quark|quark_1786277879032|950e663a354e4c51989e49e7ea95cdd0",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|64589295c79db50b168fca467aadf6e3fd8861410204de61fc88cc0424f1e0f2",
+        "book_key": "quark|quark_1786277879032|867891c881ed442d8cb6e066e2e294f2",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|dcb7c235d8f5a42c9170dba57464a164ec9217bb02dd9b01bce177d275eb4db6",
+        "book_key": "quark|quark_1786277879032|8ae6769d3ad043c3a84088884c754f1d",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|e86459684b02d5621ae955fd597e78399b64dc893b62d740375f032e05ace036",
+        "book_key": "quark|quark_1786277879032|8b9b6305594549e49849ad60ed052891",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|eb462cfbed3d88810234b3b05ef5d8b3a138ea5b58e0c2f638977ea7ab6fa219",
+        "book_key": "quark|quark_1786277879032|835ab0ad366945fd844f6ba813969442",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|4713bd1679b3f892f5e87a712decb1dc541bb51ac3a6cabc022be993b8be812e",
+        "book_key": "quark|quark_1786277879032|8522ce66cf90425da3c8b558bad0990d",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|ed52c6e9da2396f76ea0c4630e58324e0b92cd542bbedb1469b7458cc33509aa",
+        "book_key": "quark|quark_1786277879032|7671c8c209d443f8b66f62a6ed051822",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|cea0f033027913abee06cb8f4ddf3eb433f612ba4cea971d7d65d13e008ab34e",
+        "book_key": "quark|quark_1786277879032|7a11f9d4dc03487cb847436f9d903fbe",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|957cd0ccc66f0582ef29a28ac9d7edcc8ffa86f3eeab20892aaa47222e814668",
+        "book_key": "quark|quark_1786277879032|80a26eaebcff46ca8e297f27c94d2148",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|10719f47c2bb900b6554fef97e00e103832d8c47fddabffba624a824b22cd962",
+        "book_key": "quark|quark_1786277879032|622a271656f644209ce790e324a3dc4b",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|072a96561ff8a167ed8d43125ba8b24d336468a3868acd3f702ccf23a46efe4e",
+        "book_key": "quark|quark_1786277879032|649c443e548c49ea84548af9a75338ac",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|4944bc602b45f0e7704ee8250a4468290579dc3181f37e06c4e75a974e2ece2b",
+        "book_key": "quark|quark_1786277879032|64f24c6544bd4cecb08175ea27b0e361",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|f7b8d6fc884fdffa168f8a19fa0f007f482d3d0e7f00fda4c4d5d084c0f90bd2",
+        "book_key": "quark|quark_1786277879032|6141709edb9144a595c9b49bab4ce688",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|886b21a90139f83fbea4c1f5dcb06dc44f89907a9d59e4421d62e2d835eaf97d",
+        "book_key": "quark|quark_1786277879032|61d9202b1707469983898c0e317c9ce8",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|30d86e79f4088e1e76e18090de068fecd809b609ea430337518760292845f7ac",
+        "book_key": "quark|quark_1786277879032|56162d82beb24655a3de5120eb2f6ae5",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|cc5ef042f92ddd7cce039cb0090ed191eae73d938c436b568673882a952c6c99",
+        "book_key": "quark|quark_1786277879032|5778cfa2f712410d96e00fcb58905d49",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|1929e4c29ce579857acee9f06a3b01f5b0f8fb3806a5a712e8c4cfafbdedd31e",
+        "book_key": "quark|quark_1786277879032|5dbab0017bba41de98642d4bdff0770b",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|2fdd3528183550d37b9daeba8f44ac53c52d5bcfe515eebdb05a326a143153c1",
+        "book_key": "quark|quark_1786277879032|60462060431044fdb849bca396e9fb66",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|79b7b6e9e3c593196fc98b4fc9dea34562da44df1eea45ae1d8055cab2d285c2",
+        "book_key": "quark|quark_1786277879032|52364d4583a848ed83618bec1e418481",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|8136e0ecdacfe45ca7438bd3c4decded87d4a954dab967926df389332b609cdb",
+        "book_key": "quark|quark_1786277879032|5253d600c9d143eaabca82001a1bb3d4",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|7a7880455edd7f108b2c1437aea8ac06d41ca7b8b08b1fe20c4c8fef02a363fd",
+        "book_key": "quark|quark_1786277879032|5370bef7f0a54e8596624914dec5952a",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|4ed0fcb131e9180da2ff2bcb7fd456ad11cefd8b63da0566f9d5d5d107cdc8d7",
+        "book_key": "quark|quark_1786277879032|4e4765dcb2d84948b51dac05dca96c17",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|df8eeefb2d0f8555ab00af6ab0c4ea3c356fce660076a64aea4cd33183e1a35c",
+        "book_key": "quark|quark_1786277879032|4e6c1fa5126542ca962c83e32aed6319",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|fc4d04ea91e062f29ba56bd56f6f3a0276af468157147fa7c57e04239d7e86c4",
+        "book_key": "quark|quark_1786277879032|4f7a4fa25e804ba3a3616cb4fdb16c1d",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|757d2f42cccbec2d001400186aabb3c39bae8f1247b2f063999cc809b55302d5",
+        "book_key": "quark|quark_1786277879032|4969826367e74e4ebef23bee95d88de1",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|ab3c5a924bce7551de40310ffc5dfd032105eae32ef6e8b3983ea3f7ed5d4459",
+        "book_key": "quark|quark_1786277879032|4976c7669b944e2c930d74cfc18dcfa4",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|ca58f00e737ffb3639ccbd04e2eaef8fbd9ea0dd713485008a2515c91136915b",
+        "book_key": "quark|quark_1786277879032|4cfcbdd6025b4518bb5528881b67f29b",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|40ed36aa3ce8a0b85456c4e32ee35c695cf007e6e5fa704c7ce936edfa7ae23f",
+        "book_key": "quark|quark_1786277879032|41ca501222df45eb9fe98306ce326385",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|a87fc1c953c93f3e5d982442b2ebef0ff4238f2422ecfb988018f95459c44f30",
+        "book_key": "quark|quark_1786277879032|479b17bacc4c4f13953d46eef8a383c1",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|6bf02716e24518755eed4441fc39589f4841bd15a9aac29a328b7a603ea92ca9",
+        "book_key": "quark|quark_1786277879032|35eecc95a51d40fd9372c0e87175d51c",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|fc36141e159e9855d5ac6b89c792a5bf5168468a91b7950fdd4374e26ef2ec42",
+        "book_key": "quark|quark_1786277879032|3bc08b9cf3ce4712aca9f47cbf67be89",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|7fee1864a2996970f5e2ae797ae0097e0065378e4db5808c5cfa5a9b001cb23e",
+        "book_key": "quark|quark_1786277879032|3e6e6ea0c6534c8584de7635bddf9b35",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|989831ea1a85d0dd1ffe625b0c59248801d7aeef1c4494a22c0229d72ec32ca9",
+        "book_key": "quark|quark_1786277879032|2ec272b10d0e4407be7e8cc3d8bd4d13",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|f580d00723f1e0cb5451212f001bf4378b1e7f41752ca98029d262e32fc74143",
+        "book_key": "quark|quark_1786277879032|30108a462207453bada5ea0911979d7f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|9a5e0e8f5fb76d647baada927c892883692b84cd546e80f980c3d8af396b5a5d",
+        "book_key": "quark|quark_1786277879032|3114fd0021384da0aa2a22f35e9aac24",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|73de80dbf57c356d3bbb7bce46eda8b4cbc2f8fe46a350ee62c697b9a5d2e53a",
+        "book_key": "quark|quark_1786277879032|33375a57dfbf49a89d454989392f7f0c",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|912ecd9991fa60171a3ba282e857782589c8d2926d6d5ef97190f28c5eb3229f",
+        "book_key": "quark|quark_1786277879032|25868c6abae6457381aac59228eae7be",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|aea22f3de703d883b8f23b9eb871b19b0afc23f37757f752df1231606b2916d0",
+        "book_key": "quark|quark_1786277879032|29b080ad0ee14fab826be1ac67ef9a5e",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|4759c88edbf1e795b755bb4b9672182217a7983b332b474b6f26738961ae9b94",
+        "book_key": "quark|quark_1786277879032|2d607533353a4f06bbf26f25c9da0c21",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|375101594945235df8ed734000e43de8194cd8f792085ee19cbea170caca5906",
+        "book_key": "quark|quark_1786277879032|230a9719a6a2483b8653ffeb49c61d50",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|54957700d8e4c0c7ed936dd3d7be5821b47548a2ebc489a7881447a1cf1e774d",
+        "book_key": "quark|quark_1786277879032|24e764f32b5c4e3d9b378ba2df905007",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|55716f829cff33e5aa5baffc5a5c86eb02b250774e5d4241820c0810eb3df8ae",
+        "book_key": "quark|quark_1786277879032|13636e3f22074fc1908b0031e7c70e47",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|e5fe6afa33f3ce3eab414507e74eec371cbeab15d84a2d960f62a4ed69bdc8dd",
+        "book_key": "quark|quark_1786277879032|13cfa47d189141f2a586a07b6968c508",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|4d06322d3adf34443f4413a7ddca7065deb5c318c348264c2e31e478ec80147d",
+        "book_key": "quark|quark_1786277879032|21297b10f9004f9ba881ece2db9c79c3",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|3307f065515cc4002682e3e34f16656461060ef7e57b8749957be8de1b5d4cec",
+        "book_key": "quark|quark_1786277879032|0fb246bf19ff45d9a160bf8db1475bcc",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|203483be2a10ed4c9606353ee99b0c8345292588c948072bbd8838349de13f08",
+        "book_key": "quark|quark_1786277879032|10aab3ab97314d28b1898f076b756093",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|5ffebe2532dd573c1e9f7d57200ceb2f0743bacf74404118922056ef2cfc811f",
+        "book_key": "quark|quark_1786277879032|0c471f1349254285b295400eb27ad2e7",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|ac26965e43bda9091e63d87b8aafb65cf61d1005f1cd25875bacc07e564d0629",
+        "book_key": "quark|quark_1786277879032|0dc7683f575e43cc9eb5bf80741a4920",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|eed2fd1d41e8b225c41d3bc4001f6fff74993fbd1102918254920d2f05f3fada",
+        "book_key": "quark|quark_1786277879032|0e761fb849844b2f9abe6d531274b9c2",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|0389d14dfbfdffbf54db2fed7fa85436c7d327b932604d0e995911f869e383ad",
+        "book_key": "quark|quark_1786277879032|0a8faafc48d4410abdf4e4e940dc477a",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|3c906a953672d58bfb9fb99f7488085bf63ea0256830180ea4494c86a381c613",
+        "book_key": "quark|quark_1786277879032|0bca47dc9cb64d6b89937be00b104ede",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|dbbc827f3abb2b056e6f4117eaba33a5024444e208dfdee074ae36315c65d389",
+        "book_key": "quark|quark_1786277879032|0c22741901bb4fe59a8c77e9eff38bd9",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|b767933dce24b4963a71f99f4a65a74d8672cd3993518968cfc7be4507b38e90",
+        "book_key": "quark|quark_1786277879032|069a7ece50634ec9a8860d92389dea3b",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|b0c90557e4ad6dd0d14ac1cb729173a60f098b3bd458ec374ceba0a0b1f05dc0",
+        "book_key": "quark|quark_1786277879032|0a4c23b790c74c00aa0f9613f177112f",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|17d3457086b9e90a46acc54545c55d0eee97a955662f0a3571265e35dcd7ee23",
+        "book_key": "quark|quark_1786277879032|024e20ab8de14ab78f07bb53eab78024",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|71323fb316344cafe47a77702df9848d1912e6b6305d81f73ddb1214476645cc",
+        "book_key": "quark|quark_1786277879032|03e333c18fb44c33a89d0ab5daed5467",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|3fcf4000b9723619cbfe80469f70ff5156beaf41ad6acb2077a017c8516823fd",
+        "book_key": "quark|quark_1786277879032|05880d38d5ba4b62ba37fbcb9c8809c4",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|dc44226663b7a664467a401895bcc2b172dcc10853073dbf49eedff5784d0e5a",
+        "book_key": "local|local_1786276947374|f:/comic/日漫/[kakao] カカオ・アーリー・デイズ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|quark|quark_1786277879032|8def7a9653a978a45398cce5c863e9c0031cd92355071f5f7724e88cc1925073",
+        "book_key": "quark|quark_1786277879032|01b0a4dc3cfc4a70a6516a6cabd34cb1",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|497ef63bc658245bf7df0995a70258effca9108a27e99c39d61d7d8ee38523b5",
+        "book_key": "local|local_1786276947374|f:/comic/日漫/[inono] 姉を売った…｜被出賣的姊姊… [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ba5047380a9ab170b0d4df93ecdfcba6cc14172263c6b04bd9ecb51956ce9d29",
+        "book_key": "local|local_1786276947374|f:/comic/日漫/[GSUS] 舞台の裏側2 BEHIND THE STAGE…(推しの子)[効果+無字][無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|fa846fc27d850359e1069b329ab784d1573a98b4f9902e4ad5a9102b0cb28ccf",
+        "book_key": "local|local_1786276947374|f:/comic/日漫/[GSUS] 舞台の裏側1 BEHIND THE STAGE... (推しの子) [中国語] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2d7d588be48eb3a3b8690697b52d715948d164df3c3af271cccf088d94338e38",
+        "book_key": "local|local_1786276947374|f:/comic/日漫/[Dra5nize (鬼ヶ島えりゅ)] 古関ウイのむっつり座学 実践編 (ブルーアーカイブ)｜古关忧的闷骚讲座 实践篇 [欶澜汉化组] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9c341d67d449111330b209d51b61ce505b03aff09628059fe5d139a4f250e395",
+        "book_key": "local|local_1786276947374|f:/comic/日漫/[Bicolor (黒白音子)] いっぱいわけてね｜多給我一點哦 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|75b222a9c8109578a5f4c0554e67445208010544394cb98b95a1f88b0e54eda4",
+        "book_key": "local|local_1786276947374|f:/comic/日漫/[111当番 (1号)] ダウナーなデカ乳メイドさんはお仕置きご奉仕をおねだりする。〜本性は下品でドスケベすぎる積極的な召使い〜 [中国翻訳] [無修正] [D",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9e845909d9ed17f8c454234960aeb045b4195b9a8cff9115cd68012e1d42446f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\落难山村的少女 (exodus626)&nbsp;&nbsp;山村で困っている少女[AI Generated] 1-5合集",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e1316154a1aaec602948ab57fa5ee3dcb339787866a313242f91212f806aeb94",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\分身して鹿島とえっち (古月娜／古月）斗罗大陆",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b80ba57a6fe429abfd0614375e3aac9aee6843bc1edc66135b9d1caa3352eb84",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\分身して浜風と三穴えっち(古月娜／古月) 斗罗大陆",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8e618cbb5f57babe8c44628f0f9f28332d614971b8ffce145cf9932fd1a87bb6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[雲呑めお]ほろ宵いと夏のせい~sunset~(COMIC 快楽天 2025年11月号) [摆烂吃瓜汉化组] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|cce719676326df51d20a37635d0a739e910fbad1714b54fcb06cc6beb1425ce7",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[陸の孤島亭 (しゃよー)] 田舎にはこれくらいしか娯楽がない 総集編｜鄉下大概只有這種娛樂了 總集篇 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e3c97e31ee0670c6807c31d6a72a8c587d7dc3e2a066aa36dd98babb615249f8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[陸の孤島亭 (しゃよー)] 桜春女学院の男優2｜我在櫻春女學院的祕密身分 2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|840fdb183692c28735669a0f502bbdadbf88a56917ef427266009b0a2261e4d4",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[陰謀の帝国 (印度カリー)] 婚約者の妹は顔SSR、性格最悪地獄のエロダンス女。 [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|62481003b304e64faf924049989d98a79f797a7a3c75c6ea57fb3cb376ab636f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[鋼鉄しゃぼん玉 (玉ぼん)] 暴走!童貞霊! (COMIC 快楽天 2026年7月号) [摆烂吃瓜汉化] [無修正] [LKM渣嵌]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|0f2cd842bd31c3b3d618ab912b2fd2c1c1c2c5d57ac4d18a5822f7c1cf43e9f4",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[鋼鉄しゃぼん玉 (玉ぼん)] 大人になる夏 －おぼえたてHにドハマりする田舎おねショタ－｜成為大人之夏 [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e0a34bf54069bb38501e9cf38e308a6dd6aad8ecc21a71a0d0db80685b6a1c00",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[鋼鉄しゃぼん玉 (玉ぼん)] だだもれっ! [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1cf5fa33fecced93b4e69195c047f90971c7faa61653bd7f634772aeae8dbcfc",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[遠野えすけ] ちょろ・めす・でいず｜簡單‧雌墮‧時光 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|277a8bd1f80add02f3181e336f203b6db977176da5e1adc5753ffd32f080e72b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[达瓦里希] 秘密企划-出行 [中国語]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|3eacbcd6df2b89ec036b0adfaa787edb331d3b0b743bd7464fd6788b99c1b1f8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話 1~3[中国翻訳][無修正][DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|69c4382ea0c1501b180be3c9b382e1359cbab9bb54f08a551d582c07aec58014",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[西沢みずき] シコれすぎぃ！[中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|72228faccc0a6a4c8f91d1431a5503380ddb367ff885f4ad35fc9919102c41fd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[裏筋部屋 (裏筋侍)] 溺れる｜沉溺 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b2761eea7f7cbb2eb5c34b60279566532b8088393f474ecfd083ff536a1b71cf",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[蟻吉げん] 夫婦ですること (COMIC BAVEL 2025年5月号) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8b76a061b6b89c55916ea2fcd538207daacd3dd5873e6909f50b4a521ef94fa8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[蟻吉げん] マイガールフレンド (COMIC BAVEL 2024年12月号) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1b21e45ca7fc2082bf8ae957b00ac55add157d441eee376c0e730c77d68fa3c9",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[蟻吉げん] カップルチャンネル (COMIC BAVEL 2024年7月号) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|567548afbb50fe9a020ffadd9d276128c8d548fefe01cd8cd63cd25179d0bbe2",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[蛸田こぬ] とろけるまんなか｜融化內心 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9b9af155857ff29deb97831a5587c4f24eb3e60607256e3466a055b37315030c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[荒巻越前] 最後の夏の過ごし方 (WEEKLY快楽天 2025 No.16) [超勇漢化組x禁漫天堂] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9aefc554aef169bfb37ef19f9e2b2370d5deb6f1f3b2db728662aa45057fd608",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[荒巻越前] 性春は君のナカ 在妳體內綻放的性春♥  [无修正][单行本][绅士出版中文]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2690335a0516ff702901ed1014312f3c66cb024153e893beeea2a2f04bb9d085",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[茶の魔王 (煎茶柱、麥茶柱)]異世界100人斬り #01~07[中国翻訳][無修正][DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ce0c382c4ec9661f99d169d502fdc2bc2761197b551cf49fa1cdd678f9299483",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[花兄けい] むっつりぶるーむ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|511f5cce54ee9b53b7db751227fce74715620eb4d5193ba556230703da25273a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[花兄けい] すいーと·らいや一 (COMIC BAVEL 2025年5月号) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e6573ecfc152629feded5c3ac6f806cd39241286e966e916d7e20f8ed3f41b48",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[色孽神選] 时停小鬼大战雷电将军 [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a0894c732d3e077b052594267b53b3f70c586504248d597359ffc0e4ffaf5a30",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[色即絶句 (色)]「お嫁さん」にしやがれ! (ブルーアーカイブ)｜快把我变成新娘子吧!  [欶澜汉化组] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7083dc0c93549e289aa0d0c60e5143592a09faa77168a0207f4d4659749d4716",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[色即絶句 (色)] 「お嫁さん」にっしてくれ! (ブルーアーカイブ) [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1ac89d9625bb76465879ab528bbd814d12eeb144afb0ba93b6e6efa4bd72bc04",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[胃之上奇嘉郎] 奉仕委員のおしごと・ぷらす｜奉仕委員的強插性活・PLUS [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|02728e1f122a1b2fc38e816d7e54ef71aaa910c6e6bbc7f6c154a1a387374273",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[翁賀馬乃助] 叱って許して頭を撫でて〜爆乳清楚な介護士がおじさん大好きな理由〜｜责骂我原谅我 再来表扬我 [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5d347d9a0b1601fb95be5a12c3f7e831f0a97613d5d9ea904d510268f5b903b7",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[红姬] 世外最强全女宗门的覆灭1-9+番外",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4ce538ace9061179e8b92d9923aec731c381e1fd434d8b9f6fea7af566e1352f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[糖質過多ぱると (只野めざし)]夏+秋・田舎帰りのお手伝い｜夏、秋天回到老家後的幫忙工作 [中国翻訳][無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a3256b03711c8ee508836dd4d20fcd70a2e7ccba7f30afb9f5707eb32c0de5cc",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[糖質過多ぱると (只野めざし)] 田舎の子宝托卵相談所｜鄉下的求子托卵諮詢所 [中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ab18baf0ef73fed0e7858712e66e4068394597963e608118dec64e62ce5a67af",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[糖質過多ぱると (只野めざし)] 入院費の肩代わり [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4149c9ebf9ae4fd1310669adba391a4444dff806a3edeb7419967b088e125231",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[砂漠] セキレイちゃんと僕 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e5de0da510f53635ffa6fd02193427d77b715a2f5446e4d697be83947851d0d3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[真白しらこ] Better than fiction (彼女フェイス) [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d356c66a4a1cf92b087500f9586e50cb4948bd8c9b6c64abc7f597256e4c68f1",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[甘噛本舗(まんの)] 入り浸りギャルにま〇こ使わせて貰う話 01-4.5 [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9325d2b6023b9ea83b87cb744f93515eb029e5fcfa26281ed5a0b43693658491",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[甘噛本舗 (まんの)] 入り浸りギャルにま〇こ使わせて貰う話 4.5 [NikoNeko] [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1bbf9e6c2f8b59c1414707725c411832c4472145352fc6e3b646d5268416a11e",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[玉之けだま] 全部君のせいだ。総集編 EXTRA (C102) [eve重嵌] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|193fa6b91aaad9106e12f88901c3bd78efb2c1f544d5f4549c8ee3d7739297b3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[猫の幼虫観察会 (猫の幼虫)] 獅子の寝る間に... (アークナイツ)｜狮子的沉睡期间... [角都九阳个人汉化] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b2ddb03e33eac752ba2a3275d0d5a5fc83dc47b91ef4e0716a7633d25f524cd2",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[熱燗ROCK (あこ助)] 時間停止の力を手に入れた俺は奴らに復讐する｜時間停止 入手了這樣力量的我 開始進行復仇行動 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|3b6241df7e79b8e85f63504d319ca1269fdcc696172e03a4525ba77f6886d07d",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[焼肉食べたい (胡桃もか)] 後輩JKが義妹に!？ 生意気な妹に色々わからせてみた。[橘猫汉化组][唧唧复鸡鸡无修重嵌]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|32500f9c94997da3591fb60c94b6f0ddd90f7dfa4371079cfbc60211e13c117b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[無洗米] おち○ちんに負けてしまった女の子たち [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|cabf39e7e5b6213856d6848853bbf055ff3a7a51f3244abddf73fa12983a69b2",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[満開開花] お正月に実家に帰省すると、久しぶりにあった親〇の子がダウナー系ギャルになっていた。【お正月企画2026】 [無修正] [PepeRabi个人汉化]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|fa4e825b090bb0e6d0ac7def7af19754a50ca0204f65421f55da8470152242aa",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[水蓮の宿 (浅川)]夏のヤリなおし&#124;墜歡重拾之夏4~5 -夏と田舎と幼馴染の母-[中国語][無修正][鬼畜王汉化组、lawelss个人重嵌、eve重嵌]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|54fc6efb8ea281de91b976ca3c8fa62a328675e30139c1ab0dbe1b77f4dd3173",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[水蓮の宿 (浅川)] 夏のヤリなおし│墜歡重拾之夏1~3-田舎と離れと美人姉妹-  [中国翻訳][無修正][鬼畜王汉化组][lawelss个人重嵌]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|44f7ae77d666df2a954a2ced954e5d1d7cea05879add1daa09f43ea24a779425",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[毒猫ノイル] 後藤ひとりに悪いことをする話【前編】+【後編】 (ぼっち・ざ・ろっく!) [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5d3ab0bab9ce30be6ed20480e1060b756572d457f98d8a3e69a5df0f9fc14014",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[楝蛙] まさぐりあい [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|84b19aeb5799046498029099689beb5e88b7f863a1cf782ebed44099e2c0e383",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[桜湯ハル] はめろぐ トロ顔★5 喘ぎ声★5｜性愛日誌 恍惚顏★5 嬌喘聲★5 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6f4179f4370a13657b8528afe408f768cb9ecfa66b60bac8c788ee6902da9eda",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[桃汁庭園 (桃雲)] マモノノヘヤ 〜6年ぶりに再会したら引きこもりニートになっていた親友のお姉さんに迫られて精液を搾り取られる話〜 [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|c0b437838a9a767f09ecd112ee133f067263b61040a2cfae00840cdf0416d3cd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[柚十扇] いっぱいさわって｜盡情撫摸我 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a008aa323fdd356f7f48f86cbdd111dcddc281badf9563171e76f898862d6f33",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[林檎のなる木 (木瀬樹)] メルティングスノー -エピローグ- [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|f830bc8a6cc08394a819348dfc38f3315769780d5489b3cc3fcd2a5b71966182",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[松河] 貴方の専属ソープ嬢｜我獨占的專屬風俗娘 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|243168ad12ef56ff882822c80e39cf7844fc3cb7f3a52f32aa5ccd9879395cdd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[東山エイト] 旅先で家出少女を拾った [中文][無修正][DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b02680e83c11ae2ed7332f5f723ead17b3310833d143b4e12146c0a18a68cbc6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[朝野よみち] わがままぷらとにっく [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ab0b7db3d9074f7a64a468632ff3a16c5a078b73d6484932240957dd8805e5ba",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[春輝] お姉さんふぇち [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|0729be94e7888a44d89a62d2b01bbdcb17a6113fc95e8cc7712fe7d4325e5916",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[愚者愚者麿麿] 先輩、私じゃダメですか｜學長，難道我就不可以嗎 [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|c7ea8417d253fe89b6d9abd2a979f0648cdaeef320ec0f36ac1d1487d9ed9fa0",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[心友っ…！ (心友)] 蛇と蜘蛛｜蛇與蜘蛛 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2c26e94a131e35562e7db63beb30166d242a37283d10724e0b65f37cea1e25ef",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[強肉強食 (ジャギ岩)] 放蕩貴族は元王太子妃との孕ませ婚で忙しい [中国翻訳] [无修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|52f94d8a9924e963643ec833d638b31d2c538f5fc3f63d528aa648dd3077c9c2",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[弥美津峠(鳳まひろ)] 絶対に妊娠したい人妻の話｜絕對想懷孕的人妻 [中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|108d7e1895937900f1f042cb7fe1d83fdf3de1382705fb8770da86c94f397898",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[弥美津峠(鳳まひろ)] 母乳パイズリで搾精したい人妻の話｜人妻的母乳奶炮搾精 [中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|93cb3c614f36e2c30d7ca61b0eebfcb396a9bd63571fc00fd3dd1486de8ee1ee",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[弥美津峠 (鳳まひろ)] 妻のNGがなくなっていく 総集編｜妻子提升了愛愛技巧 總集篇 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|408f356a57c85324e7900e2a1692ec2237543b4d18411adbadcd64a420b85024",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[岩崎ユウキ] 閲覧注意 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7e882de53dddcebecedf9a66e5b030c28226a4d2cf8b74c536392341dce158fa",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[壞茸社(Chicke III、4why)] (FF45) 意外の初体験 (五等分の花嫁) [中国語] [eve修图移植] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|77b49196e809ef1931e4ca3127c0a118a3e1fc076570b168cd9d77ce8427e1af",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[壞茸社 (Chicke III、4why)] 1／5の恋愛感情 (五等分の花嫁) [中国語] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6656b7f10462003ab559a2c69d9cdb19a570bbcc7198f821224e5999c1a40432",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[坊橋夜泊] 藤の花が咲くまで｜直到紫藤花綻放之時 [中国語] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|71ada8f4b6838f2fd0d2b66e007ac64706c5c7ddec13a78e0cda871649d0dd9e",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[四水] 丰川祥子只是沉浸于还债（上）",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|f9303b74d96291002edc04e9986882dca2566ef50f16a903afa780eab77c1671",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[史鬼匠人] TS☆Revolution [篆儀通文書坊漢化] [轟媽去黑條版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1bbbf2bc468ffb41846a9ca00b1af04b4c4676606cd1664bf6704910fc76a0dd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[可座ミドリ]あなたにご奉仕するために (無修)",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6dea6e9f278bbe645835341c55ca398a30cd3f948c19339c9e738c65ee40827a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[加瀬大輝] 10歳年下のいとこちゃん m1-m50 [Uncenseored] [中国翻訳] [天帝哥個人漢化]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|cf68a6ae046dcf53e700a607b2c9ad6047fd306c11e9bf9761266ffcd82d1b55",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[出席番号26 (にろ)] 甘やかしメイトぴあ2 [靴下汉化组+AI蒙版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|61419f0a9e89f558bc2293503fd0d8408bf2531b7cac04f2a3fc8d8f66ec27dc",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[出席番号26 (にろ)] 甘やかしメイトぴあ [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6ecb82515bff61548ef655240e9ccc5726ce791d169a46e46aa5e9f6e0f29e32",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[出席番号26 (にろ)] 小悪魔娘のぷにぷにおすじに弄ばれたい[無修正] [中国翻訳]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|02c3c479209d291e1c19bdaf3d3f98bdb5a4e6af0a84fa3221b81a224249b7b5",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[出席番号26 (にろ)] 分身して鹿島とえっち (艦隊これくしょん -艦これ-) [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|cd7ccc298b607ad8630c4f8236c7db004bf06b73c4e6d42ae490cbac2fcfe7fb",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[出席番号26 (にろ)] 分身して浜風と三穴えっち (艦隊これくしょん -艦これ-) [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2f88797cc09b2341a771cf0744812aaa4a2acd8a5f99c5d270450198f854b7b6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[凸凹ハリケーン (あんざゆう)]異世界召甘 Ⅰ-Ⅵ+特典[中国翻訳][無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8e1296fc757f39a9403cc1fdadda5c4e28a064f27b61ceadd3618922aebca655",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[凸凹HURRICANE (あんざゆう)] 異世界召甘VII 前編 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|eb2a390042379add690bdb37b89459ee3e4f755de4d1813f432dc44077443358",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[凸凹HURRICANE (あんざゆう)] 人生負け組の俺が突然モテまくる話｜人生失敗組的我突然變得超受歡迎 [中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|558aeb941e0229f75ee7a1ad3ba75953174ac155d969bf2373838b12a6cdc64b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[凸凹HURRICANE (あんざゆう)] ヒミツノカンケイ｜祕密關係&nbsp;&nbsp;[中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|603fd01930204cc0e0100cd7c457c3282e48cb82892bf24bf0a54b7ac46b17cf",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[中文][exodus626] 山村で困っている少女-學院篇 │落難山村的少女-學院篇",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ed40607a324cc1566422e0d3ed1061efc7c9cfc745cbbe565d83195493c51fd0",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[不可不可 (関谷あさみ)] マヨナカ侵略者 系列 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6443988399e02d1d0b2d7c0589b765c097cf6d0351ab09931bb3a05dec5f2d32",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[不可不可 (関谷あさみ)] インスタントサッキュ 1-2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|21255fc863523b0f48d3e183a83a3f28e259794581f1d8598ffd6eb61761f6ed",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[三崎 (えこひいき)] 僕の彼女は、僕とはセックスしたくない｜我的女友不想和我做愛 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5e04f73036cc88b86c1a99338ccb1fca811f0c229d7b1dd9d6630b9f9eb10417",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ロッキー堂 (茜)] 地味目な黒髪エルフちゃんがえっちなマッサージ店で性感帯開発されちゃうお話 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5710abe610926823e540190eaf34b3ca06efaba529ee66cf0cf9b0ae8c7b08fe",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[リンゴヤ (あるぷ)] 真面目なキミにハマるカラダ丨一絲不苟的你與令人沉溺的身體 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|94eff543f0636b90fbc52613d27483484efee9a4597ea87e274f4ba680bbf6e3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[リンゴヤ (あるぷ)] オタク友達とのセックスは最高に気持ちいい｜我與宅宅朋友的極上性愛2 [中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|395acaa4469fc5f718f6be1298175efbe772812c06157dbfb2996301acd20852",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[リンゴヤ (あるぷ)] オタク友達とのセックスは最高に気持ちいい3｜我與宅宅朋友的極上性愛3 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b85c318a1f6e3d4b4ec6089504033e39e320f282615c1543a78ab1d8302c412e",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[リンゴヤ (あるぷ)] オタク友達とのセックスは最高に気持ちいい ‐side 三芳‐｜我與宅宅朋友的極上性愛 -side三芳- [中国翻訳] [無修正] [D",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5b25fa7145fa830e56075df7612fc7358b46ea6870f9e2992e3030ca082d9ec4",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[メツブシ] デコ×デコ｜玩美×玩媚 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9ed9a4d65366cb276d8cf18767c6cdc446c9464dc499b19a92c9f392c647b5fa",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[マッパなまった (マッパニナッタ)] 純愛NTR～ログインサボったら嫁が雌犬開発されてた～ (アズールレーン) [绅士仓库汉化, 未来可寄] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ded96259030ee13e5662a3a5ac0df6263dbee7cb7c6bc08a0911768b0a156c86",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ヘリを] 僕らは○○離れができない &#124; 我們倆已經無法遠離 [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8289e1b607b4796b216f9b65d61ca3da8b404154a57dca095ebcaac87d282c32",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ヘリを] 僕らがセフレじゃなくなる日｜我們不再是炮友的那天 [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|315c6cf8716a877f066ec8de1dec4fac8d35dec6a00955b8b2259d13f2858e89",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ヘリを] やみつきフェロモン [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|24a878c9e88343b374a59bf800a1ecaa79d3e385df840469d0d8c1163bcf812e",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ヘリを] となりのあやねさん 総集編+番外・例の部屋編 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1ce9c6b905a8ee81c181489b53ed1e85f1b1eb5b2f4887fb63a42a8633659f7e",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[フグタ家] オタクの僕が一軍ギャルと付き合えるまでの話2｜御宅的我與極品校花的交往之路2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2d919fc012781c713cfdf52ad272972456aca72c924c2ffce4786f4a49f07f96",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[フグタ家] オタクの僕が一軍ギャルと付き合えるまでの話 &#124; 御宅的我與極品校花的交往之路1 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ce16e3fb8d06460f92537ab7548c05b59de88d815bc77302b990aebb2bea9f1c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[フグタ家] ぼくの彼女 [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|acfce61876bfad7ab18d90fd45e44d8eda2959d19706ec7f03f84ee9add2e2b6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[フグタ家] ぼくの彼女 [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|479d30a90a07bd26b20b4b311f584f20954f2aac255640fea1b75efc93bd4cf3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[パイレーツキャット] 届いたのは人妻でした [裤袜填补] [古月汉化] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|17ecc2edce29329de28e57f857f4bf8a4756e37e5b3c1fe9ae55e5d416391257",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[パイレーツキャット] ハメゴト〜姉妹のひみつ〜 [中国翻訳] [无修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a68e0c11364caa05524292354d9a386482c1304fc5dcb919fce15322885202aa",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[トランポリンプリン (マッパニナッタ)] 良妻ちゃん ～湯けむり編～ 上｜賢妻 ～溫泉篇～ 上 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|facced49b2ca57602894aa3c8e807675f57a335d391091ecbd3ad65d162091d8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ダイナミックマム (おのでら、うに18)] 夏とおばさん 総集編｜夏天與年上的她 總集篇 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|109cedf4d3f96a55ad98871f907d9073d455322e603fc28d40d6eca5711af2a9",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ダイコテツ団 (92M)] ぼくのおねぇちゃん1-3 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|adc500bd257b97a535a3b5ac3b2adfd36cafdb8d98aae77eb99cb09083ebda1c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[スルメニウム (谷口大介)] 彼女の妹をセフレにした話｜我與女友的妹妹成為了炮友關係 [中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6a075a37f115d9801640a0cc655703604e2724f10dbb569720681ee6eea70390",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[スミヤ] 派遣のナカノさんは元AV女優 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|971226d6bf63d9dd0aba2e407f17dbba0ebc7d8fc3eaa0bb3cdf66f934c0d4a8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[スミヤ] ストレンジ (COMIC 快楽天 2026年1月号)｜似曾相识 [暴碧汉化组] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a31497679c88b1693916f0a2cc23008ea88fd186d953dd57aa149561c1800484",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[スピリタス太郎] 淡く、濃い、恋。｜淡泊、濃郁、戀。[無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a104654d1f17187cc87fa5835b3ab680c5544fbf72b88005d4d94853ab6775ef",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[シニストラ (江田)] 鈴木と佐藤 [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e47bc2d08457369333d910564e8680e8ccd6ae77810a3853f70817803f4ac32c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サムライ忍者GREENTEA] とらぶるなおっぱい -押しに弱いJK彼女さん- (To LOVEる -とらぶる-)｜惹麻煩的美胸~不善推辭的可愛女友~ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|edaf841ee48ea7e79f32edc351f60bc52a46af634c9f88d61023141f18a6caf9",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サゲジョー (sage・ジョー)] 窓の椿-保護者だったはずの私はいま隣の子とスケベに身体を重ね合っている- [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4a5fbdac4752704408f0dfbfef15e156dd532df38ba942f909dd15b18b4aeb6c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サゲジョー (sage・ジョー)] 日焼け跡の娘と夫婦になったその夜、義母もうっかり孕ませてしまう夏｜新婚之夜沉浸在母女丼的那年夏天 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4be1896ab30da13e515b569407188b4b15656bd272399e3216a6009950f48b7b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サゲジョー (sage・ジョー)] 弊社全員推しでエロ巨乳の先輩俺にだけあまあまエッチでメス快楽堕ち｜高人氣的巨乳公司前輩和我的甜蜜連結 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|42f0886791d879e4c974f4ad10fb06bbc51c9446f9d57ff0a3da7cc78b12cc3a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サゲジョー (sage・ジョー)] ワケアリ退魔師は転生サキュバスと死を賭けた恋をする｜有隱情的驅魔師與轉生魅魔的致命戀情 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|49443139770cfbc1928673cdef8dd1a455973b79147b4558c0be3ce20f3ee09a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サゲジョー (sage・ジョー)] オナホ販売員のお仕事は大変です！｜成人玩具銷售員的工作很辛苦！ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|bc0d81e2e1df47156a1fc9916299255f689b41db009026469b79a3aaeda8a542",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サゲジョー (sage・ジョー)] お隣さんは陰キャっぽいのに隠れビッチ &#124; 看似陰鬱的鄰居其實是輕佻女子[中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|eb2e44312066e99c66d442aef9de13d487269c178df46a7c63a97ddbc482c4a2",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[サゲジョー (sage・ジョー)] JK中退強がり社長が部下の父性に負け淫らに腰を振り寝取るまで｜不服輸的輟學社長主動向部屬示愛 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|69feac70824cb01334ebc45237d2a0432d970da446648a4f189a95b0a60e6d2b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ケレンメ] ポイズンアソート [DL版] [无修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|39dc06001f1767c507b324deb22fa40812ac7b05c4a78557a85dda61b1448841",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[カームホワイト(真白しらこ)] 梅雨、夏服、アパートにて [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|54d2680f26b2c1f3c196bb49d43aa22279bb74276e253a0d2bd999688b451793",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[カームホワイト(真白しらこ)] おしかけ彼女のおままごと [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ae6230781265f68cdde3cb3f3bf344e049ff455498c6ec3c583e2904f6682b0f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[カームホワイト(真白しらこ)] Sunshower [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d92c3130bf7bd1789ee0018783d1680a01d762d9de63423ce89aaa12fa078147",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[カームホワイト (真白しらこ)] 今日はイジワルする日 [幸德秋良与以北汉化] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8c6fda1c7cc083d8c974fdf5ea6d630d028040b4d52df0c3259b136fba19aa1f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[カームホワイト (真白しらこ)] はじらい罰ゲーム [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6fa16f48ff5243dbbec2cff4847a01964cd31448b1a3fa7f8dff83ddd76759d6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[オジョウ]侵略系彼女(無修正)",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|94dcbe7907e9b0084a09773589524c9a0b6621dfbd5875c7b278975ca3aa9a27",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[オジョウ] からめて蕩けて｜糾結蕩愛 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d51c824db5c12039022c1faf0d2f8fe7ea0bddc2ae2a9b002aeb352a3a1b72a3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[エアリーソックス (麻冬HEMP)] お義父さんやめて――｜請不要這樣 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|08c4450ed1c93590f9587055e92708ad89eafd5ce46716e309bbe971cc56242c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[インペリアルチキン (藤坂空樹)] おっパラダイスは診療中 [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|dd57b44ff5853283e27950361f2239d2037680de2fe9f0cafa27b1da6fc5ce66",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[インペリアルチキン (藤坂空樹)] OZ (新世紀エヴァンゲリオン)[无修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4fb574fb138822c69bc86a4b7b071ddcccbc7e399ca8c6cac380beb9e0a00d58",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[イトハナナ (イトハナ)] 美容師さんは僕指名？3｜美髮師的祕密服務3 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|967f4202755d2d49788584e9c8c25b735a0a05e282dbc1a33f12fa622a2a16e0",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[イトハナナ (イトハナ)] 美容師さんは僕指名？2｜美髮師的祕密服務2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|762b24a48a28082554727274cf71d4cee3f1d7f52e4bc6fa948eb19f28da5c83",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[イトハナナ (イトハナ)] 美容師さんは僕指名？ ｜ 美髮師的祕密服務 [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b38fbbed58ebb64ffe478e2ba7e9b34aa8b10d6675eb8cfc793626d3e59c7edd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[イトハナナ (イトハナ)] 美容師さんは僕指名？ 4｜美髮師的祕密服務4 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8fd11163db7c3a0105a66c83ca7f53d425a50227b3687b32e54f3e15177701c4",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[イトハナナ (イトハナ)] シークレットライナーSR2便～夜行バスの痴女～｜秘密特快車—SR2班次～夜行巴士的痴女～ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e8787b20a075dae5da647459e9638e8a532ca1cfa24316516831b9b718f67ca1",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[アヘ丸] バイトがんばるコスプレイヤーさん (その着せ替え人形は恋をする) [中国翻訳] [カラー化] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9d955031f1033ae6e5ce5daff38944db40ea60df9ed863123f55643fb33d7ad0",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[アクアドロップ (三上ミカ)] おとまりせっくす総集編 (下) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9b17539a52cc4a806f6d94e71ae144fdf92765ef9cf39902b52acc5274535c05",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[りょくりん] 姪っ子も妹も性欲が強すぎて膣内射精希望 ｜ 甥女跟妹妹性慾強到都希望被內射 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9dca36493b679e41772199e647ce5561b473d16e4e46998e2fb9e7455b2366b6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[よもぎ豆太郎] サブスクガール〜ワケあり美少女お貸しします〜【合冊版】 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|fd337f54b2b818feea61b81799303be18949158e4952686aa16d25bb2276c4d1",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ゆずや (ユズハ)] 無口な図書委員とセックス漬け。｜和內向的圖書委員、沉溺在性愛中。 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4b2ca4b3657a14dac32eb8bdf74152895f1d4b6f659284e1e29244012610e514",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ゆずや (ユズハ)] ぼくの下宿性活について2 ｜關於我的寄宿性生活2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|c21bb8b2b17396fa2894f74cfac02a2a657c309b43539d0ee58ad5f5494db650",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ゆずや (ユズハ)] ぼくの下宿性活について [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7a3c09669dfae6978d57dbac2b036b28e08cf0e2a9c24b035bcfd52fe34691c2",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[やまなし娘。(シツジ)] 娘が不在の間、娘の友達と中だしセックスしまくりました。1｜在無人打擾的時刻，與她的朋友共享禁忌時光。1 [中国翻訳] [無修正] [",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a62049859fb3e6a5d529eaee8dc47f17bd1dcf26b4bff57987a41725e16803b6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[やまなし娘 (しえん)] 家庭教師として居候したはずが、エロいギャル達とセックスばかりしています。1-3｜本來應該是來當家庭教師的卻整天和色情辣妹們愛愛 [全",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|9ad7aa36633308a7b444cd6559d52d7c2ed4b450f8cd745518c8b748c7090c09",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[むおとラボ (むおと)] デリヘル呼んだらサオリが来てそのままえっちするほん総集編 (ブルーアーカイブ)｜叫了外送妹來的卻是沙織於是便將計就計 總集篇 [中国",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|0786b1e3ce5abdfa890078d90b1d4f4691068a2de94bb21f1f5334e56f1309cd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[みずのウロ (ミズノズク)] 田舎妹と無知の誘惑2｜乡村妹妹与纯真的诱惑2 [欶澜汉化组] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|60b4d71b7aecded12c00ff7d5d70b2b650461880f25363f73074f6819d4086c9",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[みくろぺえじ (黒本君)] 幼馴染のHなお姉さんは好きですか？｜你喜歡青梅竹馬的色氣大姐姐嗎？ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|52cd6b27492ccd0d2fdb02e158202c44b59cb32de3fd1a2521b7df184e32410d",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[みくろぺえじ (黒本君)] ひかえめ彼女は拒めない｜矜持的她無法拒絕 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|f14a3fca1a4b61c18a2ea7b06f31163cc4279d6d325a2c57cca70d40c1dab12d",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[みくに瑞貴] 泉茉莉奈は発育が良すぎる (COMIC 快楽天ビースト 2025年8月号) [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|48bd863eb67726c4ae1c7fa8c3dc2d57bcb312c35f86915423718983ee64b3ff",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[まんま屋 (さめまんま)] まさかあの娘がコンナコト -テニス娘編-  [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|af38ea5a5d14993f9ff55dcc76b51101372a7a9f1972ff6eaf58e3516fde5cfb",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ほおぶくろっ! (ベコ太郎)] カノジョの発情スイッチ｜ 她的发情开关 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|63d2fcfb304486f48b704a1b5704d98370ceeef2dce74882e0c866f2e047ed14",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ほおぶくろっ! (ベコ太郎)] カノジョの発情スイッチ2丨她的发情开关 2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5fac10c1f3b45f7804be187f906bb2a798c6923135431c064efbd9cbaedf4829",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ぷぅのぷぅぷぅぷぅ (ぷぅ崎ぷぅ奈)]人付き合いが苦手な未亡人の雪女さんと呪いの指輪｜不擅交際的未亡人雪女與詛咒戒指 1-2[無修正][買動漫]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|92c1074279c65f494ec6f073d6aa2c82e78cac8dcde5aab8b4f1613551d612e9",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ぶぶづけ] 援交世代 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|891bc704865ba7c2af3893cb5848970c5048b9a1a22905b78c2960643ab599d5",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ねこはまんまがうつくしい (Hisasi)] モモちゃんと (ダンダダン) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|97ddee0899c5bedacb7b4eee435c190dd8b5725e97a29537b495d4e4e79d5375",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[なめこ汁 (なこ汁)] もちもち奈央ちゃんのあまあまえっちでとろとろになっちゃう話｜軟萌奈央醬的濕濕黏黏～甜蜜愛愛 [中文] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|66d02278cc756f90644c3bcb0c92d42a27f37ce7272952d97d9cd6df3ce0191f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ななお] Master Works -Ultimate Edition- [柜中人漢化] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|916d478ae5b00f3b9db5f009c3b00fd4b5e7963f9e4f42e44fc924cc64a613c0",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[どじろー]義姉ちゃん、オナホになってよ。前編(COMIC 快楽天 2025年12月号) [摆烂吃瓜汉化组] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2301dbff41f74f96d08e4972f8e3bbfa0e02c1a3ea027a40c4a68c104606f738",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[どうしょく (じゅらい)] 陰キャ君の母親は俺専用オナホ｜陰沉男的母親是我專用的飛機杯 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|f232688a8d0a2e27ff607d049e6e7bee1feb2e5c06285eefeb66f7b6825280d3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[どうしょく (うまくち醤油)] とある夏、姪とふたりきり。｜某個夏天，和姪女的兩人時光。 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|cdcabdab5e7366f8125b9503111730d2a830b8cd8cf1f433fa6d84f41aff9c6a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[でぃえすおー (ももこ)] ゼロ距離の放課後 [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4462dac23b419d0933dcad281d547ba67554370a71f6d125222e08b38d12756b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[でぃえすおー (ももこ)] ゼロ距離のまなざし [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2ae86138e35e558d03f158adba641fd55d6e00fe778624c32b263bd7aeae1d34",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[つかこ] ラッキードラゴン (COMIC 快楽天ビースト 2024年1月号) [中国翻訳] [DL版] [大鸟可不敢乱转汉化] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|3e66ddc25ec11b17a2a32dde100e7ab28fbbaceb930387c6fb8c02619b3245f8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[だにまるstudio (だにまる)] この恋に気づいてくれた｜这份感情终于为你所察觉 [DL版] [欶澜汉化组] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|fc0231c11237c68093be831eb24afae271c6339154b77cb4faa41bcceda18384",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[だにまる] もう一度、してみたい。｜再一次、重溫那份快感。 電子特裝版 [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|baf18afffef1e2aebf01f00cf27212100ccc2dc981f235719a856c3b917c700e",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ぞんだ] 犯してあげる♥｜我要侵犯你 淫蕩女幫你破處 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ceb2c3b5d2fe12f0f5520518dd8bdb07cea3490a680613d2015d5a21636e21f2",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[すぺ (なかに)] 兄のことが大好きな妹の話｜超喜歡哥哥的妹妹 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|23ef272f62cef3ca9a71f5482f0a34abfa61581ca58e3d742f5b02f590afe399",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[すのーりっち (いいだ豊雪)] かさねて 上 (Fate／stay night) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|92d7f5e38ae38b61221fad21889c96e4b53e7f1cef34871ce8699f886f93ef27",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[すこぶるやま (イトハナ)] 先輩!もっと俺にご褒美ください! [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1b4a47d0f8cff01f926df55b0c388a5ed6219018ea0781c1a30e6faa24cc3388",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[さいもん] 初恋時間。[無修正][Simon]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|1641bd483ffeb1b153647366e22fe8a2a2dbf7b4e5bad5ace0fb7d1e654b0959",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[こしの] 好いも甘いも君とだけ。 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|22c605d847cd02497f57fdcb4a5e2ff41800ae6b50233d18f2ce18fa0be0b350",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[ぐりちゃんとこのほん (軽部ぐり)] むかつく従妹のま〇こで童貞喪失する話。｜惱人的她奪走了我的初體驗 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|0fc443d353d666b1a5dc9e89751c566926d25eecc348d786c5deb49ed388f5b5",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[くわい屋 (万能)] メイドの射精管理2 (ブルーアーカイブ)｜女僕的榨精管理2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|07d78aa746e639df2892369652d829cdf64e7a490e01fa7ac9b3ca5b71aa76f4",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[くっきおーれ] 不器用に愛して｜愛上笨拙的你 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b7be2820fe6ec3196fb263c3269c388c8697e2bde419fc86571932c53ae246f6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きょくちょ局 (きょくちょ)] メイド教育。8 -没落貴族瑠璃川椿- 丨 女仆教育。8 -没落貴族瑠璃川椿- [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4ffa0fb9d18a153548290816bdcc04c308f56a31d75dc51907440c57427fc664",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きょくちょ局 (きょくちょ)] エルフ教育。 -亡国のミスト- 丨 精灵教育 - 亡国的蜜斯特 [中国語] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7934766c87f20595b12f5156a47c352c9a3164affdf7a34ef98b8a8a52a46071",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きょくちょ] 楓と鈴 (全) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|e1db45e3fb2b422c0ca6268b382a41a4c59c4b991223226bbc29fff4a240967d",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きのこむ神 (きのこむし)] 悪い先生には、お仕置きが必要ですね (ブルーアーカイブ)｜我要處罰不聽話的壞東西 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8209a542328396b6bd9f497b3a830cf0f1f884332d776496248e02637f1e1fc9",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きのこのみ (konomi)] 金髪ギャルの巨乳育成乳腺リフレ♡｜金髮辣妹的巨乳養成按摩 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|73cadb654df4dddc18d4bd0dd1ca1a7d4bea9261af03f6461fce620032949b8a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きのこのみ (konomi)] 人間になったボクとキミとの4年間｜成為人類的我與你的四年時光1 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|29f9beabe82a802b962f2a346295b593ff81711db89f180cf7bbec643a4e5427",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きのこのみ (konomi)] ギャルゆいなちゃんとえっち♡5 -片思いの彼女がボクに赤面!？- [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5fecf4432d4dcca849d782ab5001eb3407a87194f0fc74b9cd2cd37cf6a9140a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[きのこのみ (konomi)] TSあきら君の性生活総集編 (1-6)+7+8+9 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|f3facc7159cccf528de967b30136ced0d50be69aa9afb69680f6bf70d28baff8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[かみか堂 (銀曜ハル)] 早漏克服クリニック [Amerins漢化] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|0901e0b4f48bd7160cb2fc700069478ee9684021def5eebc918076bf36249d96",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[おかゆさん] ＃今までで一番良かったセックス｜＃至今為止感覺最棒的一次做愛 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6d78143e2262da50c986759f0e9c6250990d1d91a5ec06ce59e18c665cb11860",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[えーすけ] 愛しいキミを狂うほど…｜讓最深愛的你如痴如醉… [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|0f5302cd2b5a680de8744f993487f7aaf619756fff3eda7b06484a3d91af8e18",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[えーすけ] バ先の人妻を孕ませるまで[中文][無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5aecbadd82a264524d3a0d0cc513b1dc06f06917fa59ec27f396e800fd7eabea",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[えこひいき] 誰にも負けない私だけの王子様丨不輸給任何人只屬於我的王子 (COMIC X-EROS #112) [無修正][中国翻译]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|2af9b82b38260453a91dce58eeab9c6b106e010a7642deff202fa7e5ae8a5f67",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[えこひいき] 尻で女を見分ける俺は女上司の弱みを握る2 (COMIC X-EROS #127) [Amerins漢化] [無修正] [LKM渣嵌]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|017cbb1ee7d9b8f39e7ace63acbfe512106a2ba1e83f9cd5569ff766f3d2e45c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[えこひいき] 尻で女を見分ける俺は女上司の弱みを握る (COMIC X-EROS #110) [無修正] [中国翻訳]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|3de822c77b3257451f542a422568783e76a83305c81019f0b3b6cff36a21b921",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[うるりひ老師 (うるりひ)] 海瀬蒼羽はキミだけのモノになりたい♡｜海瀬蒼羽只想成為你的專屬 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a277fcfaa5701ccc621da0281e1c69a1ce3d0357d59f43bc9c314d7b57777ee0",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[あるぷ] ルーティーン（例行性行为）【1-4】",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|cefc74d81a748ef010d750fb8209a5a9ba0b1bf9db1ff337eb060493c1b4f2d7",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[あずみ京平]『好き』があふれる… [中文][無修正][DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|dff6ccd1d9e1cf27253f3ac62d3ab3e686f3a49e8a21a2af2f7b80fb8fc78c01",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[あずみ京平] 純愛ポルノ｜純愛情色 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|3cd2d7e8c284c22af4f3233f47cf59ecc771d1bcc6b03c788530d98b561f8ca6",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[あおやまきいろ。] あこがれこがれ｜焦躁的憧憬 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a5d0e1c1106e0451ad2f72e0770dd26b9953a37d584686012dfcc020f848b5c8",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[utu] 百夜のヒメゴト [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|16221c4f29ee763d272f8fbc6828fca1c11fc1dee5599a3f5fd1e3541030b062",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[saitom] いっしょにしよ [个人无修珍藏][篆儀通文書坊紳士倉庫聯合漢化][无修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|fdb34e2d0634f6521172c184d74b49882c757f201bc99a7cf56370855d553b2a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[poruna] 好きだから、しよ？ [中文][無修正][DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|8cbeb1cbccb9bdba720b97e9562cd9832e4b7f584f540c5b1a9f23e9d32965de",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[kakao] 独身ハンターの出逢いはエルフの森で♡ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|bdb3457478fb159b9fa1b81a068c4f65a16fa3c6c379e7b5d6ac9ab27b38ea81",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[kakao] 朝日奈さんは見てほしい (COMIC 快楽天ビースト 2025年11月号)｜朝日奈同學想被看見 [Amerins漢化] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a282ca634db0151ee459f23c55e84a454eb1e12e3f806e31145bb45ff3f75a33",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[kakao] エンジェリック・カズン (COMIC 快楽天ビースト 2025年3月号) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|203d6cc6d174a950b7b3ad84c5336c50dae90de85d37fe1b1e0a6cfd41df2b21",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[diletta (木村寧都)] 四畳半一間アパートで子持ちドスケベ隣人と汗だく濃厚なお付き合い [DL版] [中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d0756c756a90d8eb01ad4402ce020cc2602e1f7d30dd6cc3fd8b9f8ee8fa84c3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[diletta (Croriin)] また受難ですか！？ヤラれ属性ポルカちゃん [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|caaa3db35bb4b450162849c1d4b6adf438060de628c3b9e0b737dd5142c0a2cd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[been]The illusion of lies（1）[中国语][無修正][全彩]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|44df3eec6678b16fadee60e03af2d9b7fa3ff8f290a21aa0e9dae3e51af02005",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[been]As you wish[中国语][无修正][全彩]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|85a0ac336bfd7756456e535abf6c73fcef43980af23c2035f15daac2ec28d8be",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN：BU (富士やま)] 迷い猫 -Full Color Edition-｜迷途的貓 -Full Color Edition- [買動漫] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d65b580ff829d4f70e255699708f21f2a470507ce29daf0ead0bf35260beadc7",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN：BU (富士やま)] 色恋桜[フルカラー版] [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|826875e847bb16305c09c7a6cc5cc714773b0ea6cb2a61ef62a6b581815e2b37",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN：BU (富士やま)] 籠絡令嬢メイド堕ち｜貴族大小姐被迫成為女僕 [中文] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d7c2c32aafd1082010e900fb6fee7edbbb961306cf5f7711160aedd193e1b6cd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN：BU (富士やま)] 君が思うよりもっと[中国翻訳] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6b6f4a4987a4284294d3070c86c72684787e1d4cf193b8158da4202123374eb3",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN：BU (富士やま)] ゲーミング彼女 1+2 [中文]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|a6ff89472c499a00966f59984fe682e11416d9ab887a88fbca45bcb2da2ff758",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN：BU (富士やま)] なくしもの｜我所失去的 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|db0db49f415921b91cc4f1f4740331579522be6af0e12f48ebb3e28c6a29ac8f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN：BU (富士やま)] ないしょごと｜秘密情事 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7daf49c3f9b05f913d46936ee3ace3b229e132c1f51588f55fc876fd76b1a464",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TOZAN_BU (Fujiyama)(籠絡令嬢メイド堕ち续作）",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|59bad00a815d1c9385678acf88b0ec6d49d0c06d600a68fd009c8f08e2e815bf",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[TIKOSEWAD~~ (ちこせわと)] シロコテラーご褒美が欲しい (ブルーアーカイブ) [半山世德个人汉化] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|0c834065a44184064babd6a6dcb40ef74c193500f5f70f0988431f9b539abccd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[Sugar＊Berry＊Syrup (クロエ)] 新妻の秘め事～元彼の誘惑に堕ちていく体～ [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b02cea9f3b049fca9e30b361f501e4d1b0422e0ace31854df193a811ad6ac46d",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[Spyman001] (106p) 調月リオを借り出されちゃった",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|c34c7ac457234b5adbbb26860963216ef76c135fdc0babddb0120a43944f9a86",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[REDchicken] 山村貞子 無修 彩色",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|c708604e60dbe97d263a4f06f25cd9de9ea53ef9a099d40263c9fa7c2752c2eb",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[P：P (おりょう)] クラスの清楚な委員長とヤリ友になった話｜和清純班長變成了玩伴 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|f3e305559e49ec31d888995641ef75cdd8047ca815e8b574e73cf58f00c1bbb4",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[P：P (おりょう)] クラスの清楚な委員長とヤリ友になった話 2 [中国翻訳] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d2d0fbeebec87a51ef6e9b48e757d9311670a5a7f33efd5fe9f246882e5ade6c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[OrangeMaru (YD)] なごりゆき (アイドルマスター シャイニーカラーズ) [無邪気漢化組] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|3696e131cb7cab5623aae0f14e5860a73dfb4f92e127700c31042bec1a64ebfb",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[Nanae] 姉トモ レイナさん (COMIC 失楽天 2020年8月号) [中国翻訳] [無修正] [DL版]｜漢化組漢化組x我尻故我在＃45",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|62acca44b9b66d341b1a1237130252c14d026728689c45a3d0e4be6055844721",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[NANIMOSHINAI (笹森トモエ)] サキュバステードライフ 01~11+特典[中国翻訳][無修正][葱鱼个人汉化]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7b49ad53ac8578c4aebaf739476379a3cfa1195b6a54ed204d856b96300d0260",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[NANIMOSHINAI (笹森トモエ)] げーみんぐはーれむ総集編I｜遊戲娘後宮 總集篇I [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7419e3f56c5e28f4afb2a5ab45dedecd0b0a6eee81f09c63da65818f8f5ec637",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[MIGNON WORKS (mignon)] ぬぎおなか [Loody个人去码] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d5552d87681261ae7eb50a2fd5e2aa1a108b1fb3196d5a645cfcfe33c12aa462",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[MANA] NO.41 葉瞬光（絕區零） [中文] [無修正] [文本個人修正優化版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|5e81495bffd73fb0eedecfb6d8a150b6e077e9c26b78f971be55f3bce6821889",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[LAMINARIA (しおこんぶ)] 白山華凜のシドウ制度2 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7432abc2f46e938bc1856b0c3f493294c021063d0ca59f62054271bae24dd86e",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[LAMINARIA (しおこんぶ)] 白山華凜のシドウ制度1 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6f4001c2e4c565dd3dbe6cb3b562abec9cf5794e02e84dea91df709435e63ffd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[KAROMIX (karory)] 清楚ビッチな巫女先輩3 -ENDLESS HAREM- [绅士仓库汉化] [DL版] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|ae563fbc61d9336143ff14209db8936d110971613cea62d29fd2a65417ccd71c",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[KAROMIX (karory)] 清楚ビッチな巫女先輩2 [绅士仓库汉化] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|4a7b9b5913fc94f03dd6736b40cfd18313304106a298101d4c460d9b8996f0c7",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[KAROMIX (karory)] 清楚ビッチな巫女先輩1 [無邪気漢化組] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|36038e92dac8dec2d25b69017173921da82ad607f3aec8a0a8a6765e75867d64",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[French letter (藤崎ひかり)] ～シスタークレアと淫らな秘密と噂の催眠アプリ～ フルカラー総集編 (シスター・クレア) [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|d512c2c2e4ed19f2e277a0cff2e353f9256f0bea660b3f4a8232d12f444881fd",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[French letter (藤崎ひかり)] アイドル神絵師-快楽堕ちの記録- (しぐれうい)｜偶像神繪師的快樂墮落紀錄 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|06151f57ef27b0b314095413cce785160304cf833465e51d46124a5caa9d616a",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[Fatalpulse (朝凪)] 人生リサイクル｜人生RECYCLE [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|6dd3693c4dcb84ec4fdc02464386772f53077ac810ac747f69efbbc5363d2ef9",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[Cior (Ken-1)] 夏日 1-9 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|b287e52ce54f912f197d4a5857706102c9ef2c14b97821941077bc911bae939b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[COMEX (珍緑)]元魔法少女の引きこもり生活+元魔法少女の仕事話 青&amp;前日谈[中国翻訳][無修正][なつかわ風音联合汉化]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|104766e7fc470c82332474bce17ebd5509c103144dae45fd6699df699fefaf8b",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[COMEX (珍緑)] 元魔法少女の家族話 月 [中国語] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|7f3f686ac46a7f5bf0da6939f5ac358643d49d8a28a0d9084073687f09003935",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[Bicolor (黒白音子)] ヒミツの睡眠学習｜祕密的睡眠學習 [中国翻訳] [無修正] [DL版]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      },
+      {
+        "added_tags": [],
+        "asset_key": "asset|local|local_1786276947374|3522c0491184710673f820c40ad1acddebf629d220021c73f9baf4df1669ac1f",
+        "book_key": "local|local_1786276947374|F:\\comic\\日漫\\[Been] 恋人に知られちゃいけないこと 2 [中国语] [無修正]",
+        "changed_fields": [],
+        "skipped_fields": [],
+        "status": "skipped",
+        "sync_dirty": false
+      }
+    ],
+    "sync_dirty_count": 0,
+    "tag_count_after": 169
+  },
+  "offline": true,
+  "provider_requests": false,
+  "remote_book_source_io": false,
+  "run": {
+    "accounting_status": "pass",
+    "ambiguous": 0,
+    "asset_collision_count": 0,
+    "book_group_collision_count": 1,
+    "error": "",
+    "id": "scrape-1787486892504-offline-materialize-production-database",
+    "input_assets": 389,
+    "partial": 0,
+    "processed": 389,
+    "proposals_written": 389,
+    "ready": 389,
+    "rule_version": "catalog-rules-v3",
+    "status": "succeeded",
+    "total": 389,
+    "trigger": "offline-materialize-production-database",
+    "unique_assets": 389,
+    "unmatched": 0
+  },
+  "schema": "rch.catalog-materialize-dry-run/v1",
+  "sync_transport_invoked": false,
+  "target": "production-database"
+}

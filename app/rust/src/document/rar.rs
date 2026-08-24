@@ -37,8 +37,7 @@ impl RarBook {
         let mut raw_entries = Vec::new();
 
         loop {
-            let maybe_header = archive.read_header()
-                .context("读取 RAR 头部失败")?;
+            let maybe_header = archive.read_header().context("读取 RAR 头部失败")?;
             archive = match maybe_header {
                 Some(header) => {
                     if !header.entry().is_file() {

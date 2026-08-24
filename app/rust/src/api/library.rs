@@ -126,14 +126,26 @@ pub fn db_source_dir_entries(
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-fn cloud_has_credentials(r#type: &str, row: &(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)) -> bool {
+fn cloud_has_credentials(
+    r#type: &str,
+    row: &(
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+) -> bool {
     let (username, password, refresh_token, cookie, _client_secret) = row;
     match r#type {
         "webdav" | "sftp" => {
             username.as_deref().map(|u| !u.is_empty()).unwrap_or(false)
                 && password.as_deref().map(|p| !p.is_empty()).unwrap_or(false)
         }
-        "baidu" => refresh_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false),
+        "baidu" => refresh_token
+            .as_deref()
+            .map(|t| !t.is_empty())
+            .unwrap_or(false),
         "115" | "quark" => cookie.as_deref().map(|c| !c.is_empty()).unwrap_or(false),
         _ => false,
     }
@@ -167,10 +179,11 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
 
     // 离线索引计数（一次分组查询）
     let mut index_counts: HashMap<String, i64> = HashMap::new();
-    if let Ok(mut stmt) =
-        conn.prepare("SELECT source_id, COUNT(*) FROM library_index WHERE deleted = 0 GROUP BY source_id")
-    {
-        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT source_id, COUNT(*) FROM library_index WHERE deleted = 0 GROUP BY source_id",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        {
             for r in rows.flatten() {
                 index_counts.insert(r.0, r.1);
             }
@@ -187,10 +200,10 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
     let rows: Vec<_> = stmt
         .query_map([], |r| {
             Ok((
-                r.get::<_, String>(0)?,  // id
-                r.get::<_, String>(1)?,  // type
-                r.get::<_, String>(2)?,  // name
-                r.get::<_, String>(3)?,  // path
+                r.get::<_, String>(0)?,          // id
+                r.get::<_, String>(1)?,          // type
+                r.get::<_, String>(2)?,          // name
+                r.get::<_, String>(3)?,          // path
                 r.get::<_, Option<String>>(4)?,  // url
                 r.get::<_, Option<String>>(5)?,  // username
                 r.get::<_, Option<String>>(6)?,  // password
@@ -199,9 +212,9 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
                 r.get::<_, Option<String>>(9)?,  // cookie
                 r.get::<_, Option<String>>(10)?, // root_id
                 r.get::<_, Option<String>>(11)?, // client_id
-                r.get::<_, String>(12)?, // capability_label
-                r.get::<_, String>(13)?, // fingerprint
-                r.get::<_, i64>(14)?,   // remote_only
+                r.get::<_, String>(12)?,         // capability_label
+                r.get::<_, String>(13)?,         // fingerprint
+                r.get::<_, i64>(14)?,            // remote_only
                 r.get::<_, Option<String>>(15)?, // origin_device_id
             ))
         })
@@ -211,7 +224,11 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
 
     let mut devices: Vec<SourceTreeNodeDto> = Vec::new();
     let mut by_device: HashMap<String, usize> = HashMap::new();
-    let push = |devices: &mut Vec<SourceTreeNodeDto>, by_device: &mut HashMap<String, usize>, id: String, name: String| -> usize {
+    let push = |devices: &mut Vec<SourceTreeNodeDto>,
+                by_device: &mut HashMap<String, usize>,
+                id: String,
+                name: String|
+     -> usize {
         if let Some(&i) = by_device.get(&id) {
             return i;
         }
@@ -247,10 +264,16 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
         let is_remote = remote_only != 0;
         let has_credentials = cloud_has_credentials(
             &r#type,
-            &(username.clone(), password.clone(), refresh_token.clone(), cookie.clone(), client_secret.clone()),
+            &(
+                username.clone(),
+                password.clone(),
+                refresh_token.clone(),
+                cookie.clone(),
+                client_secret.clone(),
+            ),
         );
-        let has_local_resource = (r#type == "local" || r#type == "smb")
-            && std::path::Path::new(&path).exists();
+        let has_local_resource =
+            (r#type == "local" || r#type == "smb") && std::path::Path::new(&path).exists();
         let device_id = if is_remote {
             origin_device_id.clone().unwrap_or_else(|| own_id.clone())
         } else {
@@ -269,13 +292,8 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
         let count = index_counts.get(&id).copied().unwrap_or(0);
         let device_id_out = devices[idx].device_id.clone();
         let device_name_out = devices[idx].device_name.clone();
-        let status = source_status(
-            &r#type,
-            !is_remote,
-            has_local_resource,
-            has_credentials,
-        )
-        .to_string();
+        let status =
+            source_status(&r#type, !is_remote, has_local_resource, has_credentials).to_string();
         let requires_network = r#type != "local" && r#type != "smb" && has_credentials;
         devices[idx].sources.push(SourceAvailabilityDto {
             source_id: id,
@@ -304,6 +322,24 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
     Ok(devices)
 }
 
+fn normalized_library_path_sql(path_expr: &str) -> String {
+    format!(
+        "CASE
+            WHEN lower({path_expr}) LIKE '%.cbz' THEN substr({path_expr}, 1, length({path_expr}) - 4)
+            WHEN lower({path_expr}) LIKE '%.zip' THEN substr({path_expr}, 1, length({path_expr}) - 4)
+            WHEN lower({path_expr}) LIKE '%.cbr' THEN substr({path_expr}, 1, length({path_expr}) - 4)
+            WHEN lower({path_expr}) LIKE '%.rar' THEN substr({path_expr}, 1, length({path_expr}) - 4)
+            WHEN lower({path_expr}) LIKE '%.cb7' THEN substr({path_expr}, 1, length({path_expr}) - 4)
+            WHEN lower({path_expr}) LIKE '%.7z' THEN substr({path_expr}, 1, length({path_expr}) - 3)
+            WHEN lower({path_expr}) LIKE '%.cbt' THEN substr({path_expr}, 1, length({path_expr}) - 4)
+            WHEN lower({path_expr}) LIKE '%.tar' THEN substr({path_expr}, 1, length({path_expr}) - 4)
+            WHEN lower({path_expr}) LIKE '%.azw3' THEN substr({path_expr}, 1, length({path_expr}) - 5) || '.mobi'
+            WHEN lower({path_expr}) LIKE '%.azw' THEN substr({path_expr}, 1, length({path_expr}) - 4) || '.mobi'
+            ELSE {path_expr}
+         END"
+    )
+}
+
 fn build_book_query(
     source_id: Option<&str>,
     own_id: &str,
@@ -311,7 +347,9 @@ fn build_book_query(
     tags: &[String],
     include_remote: bool,
 ) -> String {
-    let mut sql = String::from(
+    let normalized_path = normalized_library_path_sql("li.path");
+    let book_key_expr = format!("(s.type || '|' || s.id || '|' || {normalized_path})");
+    let mut sql = format!(
         "SELECT li.id, s.id, s.name, s.type, li.path,
                 COALESCE(m.title, li.name),
                 s.remote_only, s.origin_device_id,
@@ -320,11 +358,11 @@ fn build_book_query(
                 (SELECT GROUP_CONCAT(t.name, ',') FROM book_tags bt
                  JOIN tags t ON t.id = bt.tag_id AND t.deleted = 0
                  WHERE bt.deleted = 0
-                   AND bt.book_key = (s.type || '|' || s.id || '|' || li.path))
+                   AND bt.book_key = {book_key_expr})
          FROM library_index li
          JOIN book_sources s ON s.id = li.source_id AND s.deleted = 0
-         LEFT JOIN book_metas m ON m.key = (s.type || '|' || s.id || '|' || li.path) AND m.deleted = 0
-         LEFT JOIN read_records r ON r.key = (s.type || '|' || s.id || '|' || li.path) AND r.deleted = 0
+         LEFT JOIN book_metas m ON m.key = {book_key_expr} AND m.deleted = 0
+         LEFT JOIN read_records r ON r.key = {book_key_expr} AND r.deleted = 0
          WHERE li.deleted = 0",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -348,11 +386,13 @@ fn build_book_query(
         sql.push_str(" AND s.remote_only = 0");
     }
     if !tags.is_empty() {
-        sql.push_str(" AND EXISTS (
+        sql.push_str(&format!(
+            " AND EXISTS (
             SELECT 1 FROM book_tags bt JOIN tags t ON t.id = bt.tag_id AND t.deleted = 0
             WHERE bt.deleted = 0
-              AND bt.book_key = (s.type || '|' || s.id || '|' || li.path)
-              AND t.name IN (");
+              AND bt.book_key = {book_key_expr}
+              AND t.name IN (",
+        ));
         for tag in tags {
             sql.push_str(&format!("?{}", params.len() + 1));
             params.push(Box::new(tag.clone()));

@@ -6,7 +6,11 @@
 
 ## Product outcome
 
-应用启动并完成数据库、目录树和同步配置加载后，系统自动运行一个协调周期：按既有策略处理同步，再针对本地 catalog 的新增/变化生成刮削 proposal；用户确认后才写入 canonical work，确认事务只标记 sync-dirty，下一次正常同步再负责传输。没有同步配置时，catalog-only 刮削仍然可以独立工作。
+> Addendum: the approved production path now includes safe-auto materialization
+> for `Ready` proposals with no conflicts; the original proposal-review wording
+> remains the fallback for partial, ambiguous or conflicted results.
+
+应用启动并完成数据库、目录树和同步配置加载后，系统自动运行一个协调周期：先生成本地/已保存快照，按既有策略处理同步，再针对 catalog 的新增/变化生成刮削 proposal；`Ready` 且无冲突的 proposal 自动安全写入空白 canonical 字段和命名空间标签，提交后再由协调器触发同步推送。其余结果保留给人工复核；没有同步配置时，catalog-only 刮削和本地写入仍然可以独立工作。
 
 ## Requirements
 
@@ -19,7 +23,7 @@
 ### R0-2 / Trigger and ordering
 
 - **单一调度器所有权**：当前 `SyncEngine` 已有启动、60 秒 Timer 和 2 秒防抖；接入协调器后不能并行保留第二套 Timer。协调器成为唯一触发所有者，`SyncEngine` 降为可调用的同步执行器/状态适配器，现有 UI `syncNow`、`setAutoSync` API 保持兼容。
-- 启动：数据库和 catalog 已加载后，先按现有设置安排同步；同步周期完成后只读取本地 SQLite 的 catalog revision delta 并安排刮削。
+- 启动：数据库和 catalog 已加载后，先生成本地/已保存快照，再按现有设置安排同步；同步周期完成后只读取本地 SQLite 的 catalog revision delta 并安排刮削。
 - catalog 变化：由已持久化的 catalog/index revision 触发 2 秒防抖；不得因为发现字段缺失而刷新远程书源。
 - 事件分类：catalog/index revision 只触发 `catalog_scrape`；canonical sync-dirty 只触发 `sync_transport`；proposal、candidate、evidence 和 Provider cache 的写入不得触发任一远程同步事件。
 - 同步完成：pull/apply 产生的本地 catalog 变化进入同一刮削队列；不得重复处理同一 `book_key + catalog_revision + rule_version`。
@@ -35,8 +39,8 @@
 
 ### R0-4 / Confirmation and sync
 
-- 自动刮削只生成或更新 working proposal，不自动确认、不静默覆写 canonical metadata。
-- `confirm_proposal` 完成本地 SQLite transaction 后返回，并发出 canonical-dirty 事件；它不 inline 调用 `sync_now`、sync actor 或 WebDAV。
+- 自动刮削只生成或更新 working proposal；只有 `Ready + conflicts=[]` 进入安全自动投影，不静默覆写人工 canonical metadata。
+- 安全投影完成本地 SQLite transaction 后返回，并发出 canonical-dirty 事件；它不 inline 调用 `sync_now`、sync actor 或 WebDAV，协调器在提交后另行调度同步。
 - 只有 confirmed canonical 数据和已有 sync-dirty 记录进入同步通道；scrape working state、候选、证据和 Provider cache 不进入同步快照。
 
 ### R0-5 / Failure and recovery
@@ -52,10 +56,62 @@
 - [ ] 同步完成后新增/变化 catalog 自动生成 proposal；没有 WebDAV 配置时 catalog-only 刮削仍可用。
 - [ ] `RemoteOnly` asset 的自动刮削期间，书源请求、`ByteSource::read_at`、HEAD/stat/PROPFIND、下载和封面读取均为 0；允许的 I/O 只有本地 SQLite、provider cache 和显式 Provider API。
 - [ ] Provider 失败不影响 proposal、阅读、书架和同步状态。
-- [ ] 确认 proposal 后只有本地 canonical transaction + sync-dirty，下一次正常同步才可能联网。
+- [ ] 自动投影/确认 proposal 后只有本地 canonical transaction + sync-dirty，提交后的独立同步阶段才可能联网。
 - [ ] 重启、重复 tick、同步与刮削交错、失败退避和取消均有可复现测试。
 
 ## Out of scope
+
+## Safe-auto materialization decision (APPROVED after asset normalization)
+
+The approval is active after the expanded 389-item real-library run passed
+physical asset identity, 115/Quark context normalization, parser safety gates,
+and run-accounting invariants. The offline parser boundary remains mandatory,
+and canonical auto-materialization is enabled only for `Ready` proposals with
+an empty conflict list.
+
+The coordinator may materialize eligible proposals through the local SQLite
+projection transaction, then schedule the existing sync lane after commit.
+Existing direct projection tests remain valid as local transaction tests, and
+the production scheduler uses the same eligibility gate.
+
+### Safe-auto policy
+
+The production default is now **safe-auto materialization**:
+
+- A proposal is eligible for automatic materialization only when `state = Ready`
+  and `conflicts` is empty.
+- `Partial`, `Ambiguous`, `Unmatched`, parser failures and any proposal with a
+  conflict remain working state and require review; they are never silently
+  written to canonical metadata.
+- Automatic materialization is a local SQLite transaction. It may update
+  `book_metas`, add namespaced resource/release tags and record provenance, then
+  emits `sync-dirty`. It must not call sync transport inline.
+- Existing manual metadata and manual tags are preserved. Auto-owned values may
+  be refreshed only when their provenance still points to the same rule version
+  and proposal revision.
+- `circle`, provider/source labels and release groups never populate the author
+  field. Only person creator roles (`artist`, `author`, `writer`) may project to
+  `book_metas.author`.
+- Proposal/job/evidence rows remain local working state and are excluded from
+  sync snapshots. Only the resulting canonical metadata and tags are syncable.
+
+The previous proposal-only requirement is superseded by this narrowly gated
+policy. Arbitrary auto-confirmation, overwrite of manual fields, online
+enrichment and remote book-source I/O remain out of scope.
+
+## Safe-auto acceptance criteria
+
+- A `Ready` proposal with no conflicts is materialized exactly once per proposal
+  revision, and repeated scheduler ticks are idempotent.
+- A `Ready` proposal with a manually edited title/author/tag is not overwritten;
+  the skipped field is recorded as a provenance decision.
+- A `Partial` or `Ambiguous` proposal creates no canonical metadata/tag write.
+- The materialization transaction succeeds while WebDAV, Quark, SFTP and other
+  remote book sources are unavailable.
+- After commit, the coordinator schedules the existing sync lane; the commit
+  path itself performs zero sync transport calls.
+
+## Existing non-goals retained
 
 - 远程书源目录刷新、预下载、远程文件内容解析和 OS 级后台服务。
 - 自动确认、自动重命名/移动文件、sidecar 写入。

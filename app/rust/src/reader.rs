@@ -71,14 +71,20 @@ pub struct Reader {
 impl Reader {
     /// `cache_ns`:该书在磁盘缓存中的命名空间(同一本书应稳定不变)。
     pub fn new(book: Box<dyn Document>, cache_ns: &str) -> Self {
-        let disk_dir = crate::cache::CacheDir::Page.ensure().ok().unwrap_or_else(|| {
-            // 兜底：直接构造路径
-            let p = crate::cache::cache_root().join("cache").join("page").join(stable_hash(cache_ns));
-            let _ = std::fs::create_dir_all(&p);
-            p
-        });
+        let disk_dir = crate::cache::CacheDir::Page
+            .ensure()
+            .ok()
+            .unwrap_or_else(|| {
+                // 兜底：直接构造路径
+                let p = crate::cache::cache_root()
+                    .join("cache")
+                    .join("page")
+                    .join(crate::cache::stable_hash(cache_ns));
+                let _ = std::fs::create_dir_all(&p);
+                p
+            });
 
-        let dir = disk_dir.join(stable_hash(cache_ns));
+        let dir = disk_dir.join(crate::cache::stable_hash(cache_ns));
         let _ = std::fs::create_dir_all(&dir);
         Reader {
             book,
@@ -170,12 +176,4 @@ impl Reader {
             });
         }
     }
-}
-
-/// 对缓存命名空间做稳定哈希,作为目录名。
-fn stable_hash(s: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut h);
-    format!("{:016x}", h.finish())
 }

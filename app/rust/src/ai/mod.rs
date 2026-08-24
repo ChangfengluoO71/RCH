@@ -27,7 +27,10 @@ fn exe_path() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("无法获取可执行文件路径")?;
     let exe_dir = exe.parent().context("无法获取可执行文件目录")?;
     for p in &[
-        exe_dir.join("data").join("ai").join("realesrgan-ncnn-vulkan.exe"),
+        exe_dir
+            .join("data")
+            .join("ai")
+            .join("realesrgan-ncnn-vulkan.exe"),
         exe_dir.join("ai").join("realesrgan-ncnn-vulkan.exe"),
     ] {
         if p.exists() {
@@ -272,8 +275,7 @@ pub fn super_resolve_batch(pages: &[Vec<u8>], scale: u32) -> Result<Vec<Vec<u8>>
         let out_file = out_dir.join(format!("{hash}.png"));
         if let Ok(img) = image::open(&out_file) {
             let mut buf = Vec::new();
-            let enc =
-                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, JPEG_QUALITY);
+            let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, JPEG_QUALITY);
             if img.write_with_encoder(enc).is_ok() {
                 let _ = write_cache_atomic(&dir, &cache_key(hash, scale), &buf);
                 results[*idx] = buf;

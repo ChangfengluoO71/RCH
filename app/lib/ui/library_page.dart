@@ -16,7 +16,7 @@ class LibraryPage extends StatefulWidget {
 
 class _LibraryPageState extends State<LibraryPage> {
   final TextEditingController _dirCtrl = TextEditingController(
-    text: r'C:\Users\cfl\Desktop\RCH\testdata',
+    text: r'D:\Projects\RCH-source\testdata',
   );
   List<DirEntry> _entries = [];
   String? _error;

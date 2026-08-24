@@ -100,10 +100,7 @@ pub fn plan_merge(
         let res = merge::merge_batch(entity, &b, &l, &r, with_plan);
         merged.insert(
             entity.to_string(),
-            res.merged
-                .into_iter()
-                .map(|e| (e.key.clone(), e))
-                .collect(),
+            res.merged.into_iter().map(|e| (e.key.clone(), e)).collect(),
         );
         plans.extend(res.plan);
         counts.local += res.counts.local;
@@ -131,13 +128,8 @@ fn build_remote_files(
     files
 }
 
-fn changed_counts(
-    merged: &HashMap<String, HashMap<String, SyncEntry>>,
-) -> HashMap<String, usize> {
-    merged
-        .iter()
-        .map(|(e, m)| (e.clone(), m.len()))
-        .collect()
+fn changed_counts(merged: &HashMap<String, HashMap<String, SyncEntry>>) -> HashMap<String, usize> {
+    merged.iter().map(|(e, m)| (e.clone(), m.len())).collect()
 }
 
 /// 一次同步的已就绪产物（DB 阶段输出，网络阶段消费）。
@@ -231,9 +223,18 @@ fn push_sync(
     prepared: &SyncPrepared,
     expected_rev: Option<i64>,
 ) -> Result<()> {
-    webdav::upload_state(client, dir, &prepared.manifest, &prepared.files, expected_rev)?;
+    webdav::upload_state(
+        client,
+        dir,
+        &prepared.manifest,
+        &prepared.files,
+        expected_rev,
+    )?;
     match webdav::read_manifest(client, dir)? {
-        Some(m) if m.revision == prepared.manifest.revision && m.library_id == prepared.manifest.library_id => {
+        Some(m)
+            if m.revision == prepared.manifest.revision
+                && m.library_id == prepared.manifest.library_id =>
+        {
             Ok(())
         }
         _ => bail!("远端状态已变化（revision 冲突），请重新合并后重试"),
@@ -331,7 +332,19 @@ fn record_outcome_history(
         }
         Err(e) => {
             let msg = format!("{e:#}");
-            let _ = history::record_on(conn, start, end, rev_before, rev_before, 0, 0, 0, 0, &msg, &[]);
+            let _ = history::record_on(
+                conn,
+                start,
+                end,
+                rev_before,
+                rev_before,
+                0,
+                0,
+                0,
+                0,
+                &msg,
+                &[],
+            );
             let _ = base::set_meta_on(conn, base::META_LAST_ERROR, &msg);
         }
     }
@@ -497,7 +510,13 @@ mod tests {
         conn
     }
 
-    fn insert_source(conn: &Connection, id: &str, r#type: &str, path: &str, url: Option<&str>) -> String {
+    fn insert_source(
+        conn: &Connection,
+        id: &str,
+        r#type: &str,
+        path: &str,
+        url: Option<&str>,
+    ) -> String {
         let fp = crate::db::compute_source_fingerprint(r#type, url, path, None);
         conn.execute(
             "INSERT INTO book_sources (id, type, name, path, url, fingerprint, updated_at, deleted)
@@ -522,7 +541,13 @@ mod tests {
     fn initial_push_uploads_local_as_revision_1() {
         // 编排核心（无 WebDAV 客户端）：直接测 plan_merge + build_remote_files
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
         conn.execute(
             "INSERT INTO book_metas (key, title, rotations, updated_at, deleted)
@@ -545,14 +570,24 @@ mod tests {
     #[test]
     fn pull_merges_remote_meta_and_applies() {
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
         // 远端有 meta（remote only）
         let remote = remote_files(
             base::ENTITY_METAS,
-            vec![SyncEntry::live(&key, 200, json!({
-                "path": "/books/a.cbz", "title": "远端标题", "author": "作者", "rotations": "{}"
-            }))],
+            vec![SyncEntry::live(
+                &key,
+                200,
+                json!({
+                    "path": "/books/a.cbz", "title": "远端标题", "author": "作者", "rotations": "{}"
+                }),
+            )],
         );
         let (merged, _, _) = plan_merge(&conn, Some(&remote), true).unwrap();
         apply::apply_merged(&conn, base::ENTITY_METAS, &merged[base::ENTITY_METAS], None).unwrap();
@@ -569,7 +604,13 @@ mod tests {
     #[test]
     fn remote_deletion_applies_locally() {
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
         conn.execute(
             "INSERT INTO book_metas (key, title, rotations, updated_at, deleted)
@@ -589,7 +630,11 @@ mod tests {
         assert!(metas[&key].deleted);
         apply::apply_merged(&conn, base::ENTITY_METAS, metas, None).unwrap();
         let cnt: i64 = conn
-            .query_row("SELECT COUNT(*) FROM book_metas WHERE key='webdav|s1|/books/a.cbz'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(cnt, 0);
     }
@@ -642,11 +687,15 @@ mod tests {
         let key = crate::sync::identity::book_id(&remote_fp, "/books/a.cbz");
         let remote = remote_files(
             base::ENTITY_LIBRARY_INDEX,
-            vec![SyncEntry::live(&key, 200, json!({
-                "name": "a.cbz", "path": "/books/a.cbz", "entryType": "file",
-                "size": null, "modifiedAt": null, "coverPath": null,
-                "hash": null, "parentId": null,
-            }))],
+            vec![SyncEntry::live(
+                &key,
+                200,
+                json!({
+                    "name": "a.cbz", "path": "/books/a.cbz", "entryType": "file",
+                    "size": null, "modifiedAt": null, "coverPath": null,
+                    "hash": null, "parentId": null,
+                }),
+            )],
         );
         let (merged, _, _) = plan_merge(&conn, Some(&remote), true).unwrap();
         apply::apply_merged(
@@ -661,9 +710,10 @@ mod tests {
         let pending = base::load_pending_on(&conn).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].entity_key, key);
-        assert!(snapshot::load_local_snapshots(&conn)
-            .unwrap()[base::ENTITY_LIBRARY_INDEX]
-            .contains_key(&key));
+        assert!(
+            snapshot::load_local_snapshots(&conn).unwrap()[base::ENTITY_LIBRARY_INDEX]
+                .contains_key(&key)
+        );
 
         // 建立 base（上次提交状态）后，三方 base/local/remote 一致 → 不产生伪墓碑
         snapshot::advance_base(&conn, 1, &snapshot::load_local_snapshots(&conn).unwrap()).unwrap();
@@ -693,21 +743,39 @@ mod tests {
     #[test]
     fn base_advance_records_revision_after_success() {
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
         let mut merged = HashMap::new();
         let mut metas = HashMap::new();
-        metas.insert(key.clone(), SyncEntry::live(&key, 1, json!({"path": "/books/a.cbz", "title": "A"})));
+        metas.insert(
+            key.clone(),
+            SyncEntry::live(&key, 1, json!({"path": "/books/a.cbz", "title": "A"})),
+        );
         merged.insert(base::ENTITY_METAS.into(), metas);
         snapshot::advance_base(&conn, 5, &merged).unwrap();
-        assert_eq!(base::get_meta_on(&conn, base::META_LAST_REVISION).as_deref(), Some("5"));
+        assert_eq!(
+            base::get_meta_on(&conn, base::META_LAST_REVISION).as_deref(),
+            Some("5")
+        );
         assert!(base::get_base_on(&conn, base::ENTITY_METAS, &key).is_some());
     }
 
     #[test]
     fn plan_merge_includes_library_index_local_only() {
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
         conn.execute(
             "INSERT INTO library_index (id, source_id, parent_id, name, path, entry_type, updated_at, deleted)
@@ -717,13 +785,22 @@ mod tests {
         .unwrap();
         let (merged, _, _) = plan_merge(&conn, None, true).unwrap();
         assert!(merged[base::ENTITY_LIBRARY_INDEX].contains_key(&key));
-        assert_eq!(merged[base::ENTITY_LIBRARY_INDEX][&key].data["entryType"], json!("file"));
+        assert_eq!(
+            merged[base::ENTITY_LIBRARY_INDEX][&key].data["entryType"],
+            json!("file")
+        );
     }
 
     #[test]
     fn library_index_apply_tombstone_soft_deletes() {
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
         conn.execute(
             "INSERT INTO library_index (id, source_id, name, path, entry_type, updated_at, deleted)
@@ -731,11 +808,8 @@ mod tests {
             rusqlite::params![key],
         )
         .unwrap();
-        let tomb = crate::sync::merge::SyncEntry::tombstone(
-            &key,
-            2,
-            json!({"path": "/books/a.cbz"}),
-        );
+        let tomb =
+            crate::sync::merge::SyncEntry::tombstone(&key, 2, json!({"path": "/books/a.cbz"}));
         let mut m = HashMap::new();
         m.insert(key.clone(), tomb);
         apply::apply_merged(&conn, base::ENTITY_LIBRARY_INDEX, &m, None).unwrap();
@@ -899,12 +973,16 @@ mod tests {
             "/books",
             None,
         );
-        let e = crate::sync::merge::SyncEntry::live(&fp, 100, json!({
-            "type": "webdav", "name": "远端NAS", "path": "/books",
-            "url": "https://dav.example.com/dav", "username": null, "port": null,
-            "note": "", "capabilityLabel": "webdav", "rootId": null, "clientId": null,
-            "remoteOnly": false, "originDeviceId": null,
-        }));
+        let e = crate::sync::merge::SyncEntry::live(
+            &fp,
+            100,
+            json!({
+                "type": "webdav", "name": "远端NAS", "path": "/books",
+                "url": "https://dav.example.com/dav", "username": null, "port": null,
+                "note": "", "capabilityLabel": "webdav", "rootId": null, "clientId": null,
+                "remoteOnly": false, "originDeviceId": null,
+            }),
+        );
         let mut m = HashMap::new();
         m.insert(fp.clone(), e);
         apply::apply_merged(&conn, base::ENTITY_SOURCES, &m, Some("dev-A")).unwrap();

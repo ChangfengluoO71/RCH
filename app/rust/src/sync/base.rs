@@ -85,11 +85,7 @@ pub fn upsert_base(row: &SyncBaseRow) -> Result<()> {
 }
 
 #[allow(dead_code)] // 保留：同步重置/清理维护 API（含测试覆盖）
-pub(crate) fn delete_base_on(
-    conn: &Connection,
-    entity_type: &str,
-    entity_key: &str,
-) -> Result<()> {
+pub(crate) fn delete_base_on(conn: &Connection, entity_type: &str, entity_key: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM sync_base WHERE entity_type = ?1 AND entity_key = ?2",
         params![entity_type, entity_key],
@@ -276,7 +272,11 @@ mod tests {
     #[test]
     fn entity_base_cleanup_is_scoped() {
         let conn = schema_conn();
-        for (et, k) in [(ENTITY_METAS, "a"), (ENTITY_METAS, "b"), (ENTITY_RECORDS, "c")] {
+        for (et, k) in [
+            (ENTITY_METAS, "a"),
+            (ENTITY_METAS, "b"),
+            (ENTITY_RECORDS, "c"),
+        ] {
             upsert_base_on(
                 &conn,
                 &SyncBaseRow {

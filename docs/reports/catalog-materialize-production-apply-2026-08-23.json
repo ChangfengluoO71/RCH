@@ -1,0 +1,47 @@
+{
+  "schema": "rch.catalog-materialize-production/v1",
+  "target": "production-database",
+  "database": "D:\\Documents\\RCH\\database.db",
+  "backup": {
+    "path": "D:\\Temp\\rch-production-backup-20260823-01\\database.db",
+    "sha256": "48824AA9CBC647B916C3891C9AC7521805F4526EAC8A270791C000083F67AC99"
+  },
+  "offline": true,
+  "remote_book_source_io": false,
+  "provider_requests": false,
+  "content_reads": false,
+  "sync_transport_invoked": false,
+  "scrape": {
+    "input_assets": 389,
+    "unique_assets": 389,
+    "proposals_written": 389,
+    "processed": 389,
+    "ready": 389,
+    "ambiguous": 0,
+    "partial": 0,
+    "unmatched": 0,
+    "asset_collision_count": 0,
+    "book_group_collision_count": 1,
+    "accounting_status": "pass"
+  },
+  "materialization": {
+    "proposal_count": 389,
+    "eligible_count": 389,
+    "by_status": {
+      "applied": 389
+    },
+    "sync_dirty_count": 388,
+    "canonical_meta_count_after": 397,
+    "tag_count_after": 169,
+    "book_tag_link_count_after": 2250
+  },
+  "idempotency_check": {
+    "report": "docs/reports/catalog-materialize-production-2026-08-23.json",
+    "same_proposal_count": 389,
+    "by_status": {
+      "skipped": 389
+    },
+    "additional_writes": 0
+  },
+  "next_step": "The Flutter AutomationCoordinator will perform the separate sync lane on its next enabled cycle; this local projection command intentionally never contacts a remote source or sync transport."
+}

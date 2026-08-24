@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod api;
 pub mod cache;
+pub mod catalog_context;
 pub mod db;
 pub mod decode;
 pub mod document;
@@ -8,6 +9,7 @@ pub mod downloader;
 mod frb_generated;
 pub mod rchpkg;
 pub mod reader;
+pub mod scrape_projection;
 pub mod scraper;
 pub mod source;
 pub mod sync;

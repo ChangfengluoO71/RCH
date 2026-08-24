@@ -151,7 +151,11 @@ impl QuarkClient {
         Ok(QuarkClient {
             client: http_client()?,
             cookie: Mutex::new(cookie.trim().to_string()),
-            root: if root.is_empty() { "0".to_string() } else { root.to_string() },
+            root: if root.is_empty() {
+                "0".to_string()
+            } else {
+                root.to_string()
+            },
             gate: RateGate::new(2.0),
             names: Mutex::new(HashMap::new()),
         })
@@ -270,8 +274,7 @@ impl QuarkClient {
                 ],
                 None,
             )?;
-            let parsed: SortResp =
-                serde_json::from_str(&body).context("解析夸克文件列表失败")?;
+            let parsed: SortResp = serde_json::from_str(&body).context("解析夸克文件列表失败")?;
             let n = parsed.data.list.len();
             {
                 let mut names = self.names.lock().unwrap();
@@ -309,8 +312,7 @@ impl QuarkClient {
             &[],
             Some(serde_json::json!({ "fids": [fid] })),
         )?;
-        let parsed: DownResp =
-            serde_json::from_str(&body).context("解析夸克下载直链失败")?;
+        let parsed: DownResp = serde_json::from_str(&body).context("解析夸克下载直链失败")?;
         let item = parsed
             .data
             .into_iter()
@@ -321,7 +323,10 @@ impl QuarkClient {
         }
         if let Some(name) = &item.file_name {
             if !name.is_empty() {
-                self.names.lock().unwrap().insert(fid.to_string(), name.clone());
+                self.names
+                    .lock()
+                    .unwrap()
+                    .insert(fid.to_string(), name.clone());
             }
         }
         Ok(DownloadInfo {
@@ -435,7 +440,11 @@ impl QuarkClient {
             .name
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(|| "file.cbz".to_string());
-        let name = name.rsplit(['/', '\\']).next().unwrap_or("file.cbz").to_string();
+        let name = name
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("file.cbz")
+            .to_string();
         let raw_dir = crate::cache::CacheDir::Raw
             .ensure()
             .context("创建 raw/ 缓存目录失败")?;
@@ -550,7 +559,9 @@ impl ByteSource for QuarkFile {
                 // 直链失效：清缓存重取一次。
                 *self.dlink.lock().unwrap() = None;
                 let url2 = self.get_dlink()?;
-                self.client.read_range_url(&url2, offset, buf).map_err(|_| e)
+                self.client
+                    .read_range_url(&url2, offset, buf)
+                    .map_err(|_| e)
             }
             Err(e) => Err(e),
         }
@@ -612,7 +623,10 @@ mod tests {
         }"#;
         let p: DownResp = serde_json::from_str(json).unwrap();
         assert_eq!(p.data.len(), 1);
-        assert_eq!(p.data[0].download_url, "https://quark-download.example.com/xxx?sign=1");
+        assert_eq!(
+            p.data[0].download_url,
+            "https://quark-download.example.com/xxx?sign=1"
+        );
         assert_eq!(p.data[0].file_name.as_deref(), Some("漫画.cbz"));
         assert_eq!(p.data[0].size, Some(12345));
     }

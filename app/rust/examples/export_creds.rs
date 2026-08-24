@@ -8,12 +8,9 @@ fn main() {
         std::process::exit(2);
     }
     rust_lib_app::db::open_at(&args[1]).expect("打开数据库失败");
-    let info = rust_lib_app::rchpkg::export_package_with_credentials_to_file(
-        &args[2],
-        false,
-        &args[3],
-    )
-    .expect("导出失败");
+    let info =
+        rust_lib_app::rchpkg::export_package_with_credentials_to_file(&args[2], false, &args[3])
+            .expect("导出失败");
     println!(
         "导出完成: sources={} metas={} tags={} records={} settings={}",
         info.sources, info.metas, info.tags, info.records, info.settings

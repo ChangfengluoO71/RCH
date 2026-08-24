@@ -89,10 +89,7 @@ pub fn rchpkg_export_with_credentials(
 /// 导出全量快照包到文件（手动"导出到文件"），**不推进**增量游标，
 /// 避免污染后续 push 的基线；`passphrase` 为空导出不含凭据的包，
 /// 非空附带 AES-256-GCM 加密凭据分块。
-pub fn rchpkg_export_snapshot(
-    path: String,
-    passphrase: String,
-) -> Result<SyncExportInfo, String> {
+pub fn rchpkg_export_snapshot(path: String, passphrase: String) -> Result<SyncExportInfo, String> {
     let info = rchpkg::export_snapshot_to_file(
         &path,
         if passphrase.is_empty() {
@@ -143,4 +140,3 @@ pub fn rchpkg_default_sync_dir(root: String) -> String {
         .to_string_lossy()
         .into_owned()
 }
-

@@ -5,7 +5,7 @@
 //! `reader::Reader` 的缓存 + 预取保证。
 
 use crate::reader::Reader;
-use crate::{document, decode, source::local, cache};
+use crate::{cache, decode, document, source::local};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -59,12 +59,12 @@ pub(crate) fn register_book(book: Box<dyn document::Document>, cache_ns: &str) -
         title: reader.title(),
         page_count: reader.page_count(),
     };
-    sessions()
-        .lock()
-        .unwrap()
-        .insert(handle, BookSession {
+    sessions().lock().unwrap().insert(
+        handle,
+        BookSession {
             reader: Arc::clone(&reader),
-        });
+        },
+    );
     reader.warm_up();
     info
 }
@@ -113,11 +113,16 @@ pub async fn book_cover(
     let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
     // 先查磁盘缓存
     if let Some((rgba, w, h)) = cache::cover_cache_read(&path, page, width, height, crop_tuple) {
-        return Ok(PageImage { rgba, width: w, height: h });
+        return Ok(PageImage {
+            rgba,
+            width: w,
+            height: h,
+        });
     }
     let path_for_closure = path.clone();
     let img = tokio::task::spawn_blocking(move || -> Result<decode::DecodedImage> {
-        let book: Box<dyn document::Document> = if std::path::Path::new(&path_for_closure).is_dir() {
+        let book: Box<dyn document::Document> = if std::path::Path::new(&path_for_closure).is_dir()
+        {
             document::open_folder_document(&path_for_closure)?
         } else {
             let src = local::LocalFile::open(&path_for_closure)?;

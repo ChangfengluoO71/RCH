@@ -5,8 +5,8 @@
 //!
 //! 元数据源优先级: ComicInfo.xml > metadata.json > 目录名
 
-use super::{Document, DocumentMeta};
 use super::comicinfo::read_comicinfo;
+use super::{Document, DocumentMeta};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -69,16 +69,22 @@ pub fn is_comic_folder(dir_path: &str) -> bool {
     if !p.is_dir() {
         return false;
     }
-    fs::read_dir(p).ok().map(|mut entries| {
-        entries.any(|e| {
-            e.ok().map(|entry| {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                !name.starts_with('.') && !name.starts_with("__MACOSX")
-                    && !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(true)
-                    && is_image_name(&name)
-            }).unwrap_or(false)
+    fs::read_dir(p)
+        .ok()
+        .map(|mut entries| {
+            entries.any(|e| {
+                e.ok()
+                    .map(|entry| {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        !name.starts_with('.')
+                            && !name.starts_with("__MACOSX")
+                            && !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(true)
+                            && is_image_name(&name)
+                    })
+                    .unwrap_or(false)
+            })
         })
-    }).unwrap_or(false)
+        .unwrap_or(false)
 }
 
 pub struct FolderBook {
@@ -196,7 +202,10 @@ mod tests {
 
         let book = FolderBook::open(&tmp.to_string_lossy()).unwrap();
         assert_eq!(book.page_count(), 3);
-        assert_eq!(book.metadata().title, tmp.file_name().unwrap().to_string_lossy());
+        assert_eq!(
+            book.metadata().title,
+            tmp.file_name().unwrap().to_string_lossy()
+        );
 
         // 自然排序: page1, page2, page10
         let b0 = book.page_bytes(0).unwrap();

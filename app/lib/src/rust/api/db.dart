@@ -135,6 +135,29 @@ Future<void> dbDeleteSetting({required String key}) =>
 Future<String?> dbGetSourceFingerprint({required String sourceId}) =>
     RustLib.instance.api.crateApiDbDbGetSourceFingerprint(sourceId: sourceId);
 
+Future<void> dbRecordCatalogRevision({
+  required String scope,
+  required String revision,
+  required String changedBookKeysJson,
+}) => RustLib.instance.api.crateApiDbDbRecordCatalogRevision(
+  scope: scope,
+  revision: revision,
+  changedBookKeysJson: changedBookKeysJson,
+);
+
+Future<CatalogRevisionDto?> dbGetCatalogRevision({required String scope}) =>
+    RustLib.instance.api.crateApiDbDbGetCatalogRevision(scope: scope);
+
+Future<String> dbBookKeyOf({
+  required String sourceType,
+  required String sourceId,
+  required String path,
+}) => RustLib.instance.api.crateApiDbDbBookKeyOf(
+  sourceType: sourceType,
+  sourceId: sourceId,
+  path: path,
+);
+
 /// 批量 upsert library_index 条目（单事务）。
 Future<void> dbUpsertLibraryIndexEntries({
   required List<LibraryIndexDto> entries,
@@ -455,6 +478,37 @@ class BookTagDto {
           runtimeType == other.runtimeType &&
           bookKey == other.bookKey &&
           tagId == other.tagId;
+}
+
+class CatalogRevisionDto {
+  final String scope;
+  final String revision;
+  final String changedBookKeysJson;
+  final PlatformInt64 updatedAt;
+
+  const CatalogRevisionDto({
+    required this.scope,
+    required this.revision,
+    required this.changedBookKeysJson,
+    required this.updatedAt,
+  });
+
+  @override
+  int get hashCode =>
+      scope.hashCode ^
+      revision.hashCode ^
+      changedBookKeysJson.hashCode ^
+      updatedAt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CatalogRevisionDto &&
+          runtimeType == other.runtimeType &&
+          scope == other.scope &&
+          revision == other.revision &&
+          changedBookKeysJson == other.changedBookKeysJson &&
+          updatedAt == other.updatedAt;
 }
 
 /// 设备注册表条目（幽灵书源来源展示）。

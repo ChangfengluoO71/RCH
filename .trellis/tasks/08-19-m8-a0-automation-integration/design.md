@@ -41,9 +41,12 @@ The catalog lane consumes only `CatalogSnapshot { book_key, filename, ancestor_d
 
 ```text
 startup after DB/catalog load
+  → generate local/persisted catalog snapshots (no remote source listing)
   → enqueue sync_transport if enabled/configured
-  → on sync completion, read local catalog revision delta
-  → enqueue catalog_scrape for each changed book_key
+  → after sync completion, rebuild only from local/persisted snapshots
+  → enqueue catalog_scrape for each current book_key/revision
+  → safe-auto materialize Ready + conflict-free proposals locally
+  → schedule sync_transport push after the local transaction commits
   → optionally enqueue provider_enrichment after local proposal
 
 catalog/index mutation
@@ -62,11 +65,17 @@ confirm_proposal
   → return; existing sync automation observes the change later
 ```
 
-The coordinator should serialize the first startup cycle as `sync → scrape` so imported catalog changes are covered. Once the sync cycle is complete, local scraping may run while a later provider job is pending. If sync is disabled or unconfigured, the scrape lane starts after local initialization without waiting.
+The coordinator serializes the first startup cycle as `snapshot → sync → scrape →
+materialize → push` so imported catalog changes are covered. The projection
+transaction has no transport capability; the push is a separate coordinator
+step. If sync is disabled or unconfigured, the local snapshot/scrape/materialize
+lane still completes without waiting or contacting a book source.
 
 ## 4. Queue, dedupe and persistence
 
-- Reuse `scrape_jobs` for per-book scrape/proposal work and add the minimal orchestration fields (`trigger`, `input_revision`, `next_run_at`, `attempt`, `last_error`) in its ordered migration; canonical M8-M2 migration remains separate from working-state migration.
+- Keep `scrape_jobs` as run summaries and use `scrape_queue` for durable per-book
+  work with (`trigger`, `input_revision`, `next_run_at`, `attempt`, `last_error`);
+  canonical M8-M2 migration remains separate from working-state migration.
 - Use a global sync job key and a per-book scrape key. A newer catalog revision supersedes an older queued job; a running job finishes against its captured snapshot and the newer revision is queued once.
 - Provider jobs are keyed by proposal revision + provider + query hash. Provider cache hits may complete without a network call.
 - Persist `degraded` as a terminal result for missing/ambiguous local fields; only operational failures enter retry.
@@ -96,5 +105,101 @@ The coordinator should serialize the first startup cycle as `sync → scrape` so
 - Cross-platform checks: Rust DB/API tests, Dart scheduler tests, `flutter analyze`, Windows end-to-end preview; Android must not block startup on optional Provider or sync failure.
 
 ## 8. Explicit non-goals
+
+## 9. Safe-auto materialization (APPROVED)
+
+The expanded 389-asset real-library run passed physical asset identity,
+source-context normalization, parser safety gates and run accounting. The
+offline boundary and the local projection transaction remain mandatory; the
+production coordinator may now materialize only eligible proposals.
+
+This is the active production policy. It does not add a network lane.
+
+The catalog parser remains proposal-only and unchanged. A new local projection
+stage may automatically materialize only proposals that are `Ready` and have no
+conflicts. This is not a new network lane: it runs inside the local automation
+coordinator after catalog scraping and before a separately scheduled sync push.
+
+```text
+catalog snapshot/revision
+  -> catalog scrape proposal
+  -> safe-auto eligibility check
+  -> local metadata/tag transaction
+  -> provenance + sync-dirty event
+  -> sync transport job
+```
+
+### 9.1 Canonical key and stale-input contract
+
+The Rust API must build `book_key` with the same normalized path rule as Dart
+`bookKeyOf`. Raw `library_index.path` remains available as the asset path, but it
+is not a second metadata identity. A materialization request carries the proposal
+`input_revision`; the transaction rejects stale input when the current indexed row
+no longer matches that revision and requeues the book instead.
+
+### 9.2 Projection contract
+
+The projection is owned by one Rust function and returns a typed result:
+
+```rust
+pub struct MaterializeResult {
+    pub book_key: String,
+    pub status: String, // applied | skipped | stale | rejected
+    pub changed_fields: Vec<String>,
+    pub added_tags: Vec<String>,
+    pub skipped_fields: Vec<String>,
+    pub sync_dirty: bool,
+}
+
+pub fn db_materialize_ready_proposal(
+    book_key: String,
+    expected_revision: String,
+) -> Result<MaterializeResult, String>;
+```
+
+The transaction may project `work_title` to `book_metas.title`, person creator
+roles to `book_metas.author`, and explicit series evidence to `series` when the
+field is empty or still auto-owned. Resource and release information is additive
+namespaced tags such as `resource:language:zh`,
+`resource:translation:translated`, `resource:edition:digital`,
+`resource:censorship:uncensored`, `release-group:<name>` and
+`sequence:chapter:<key>`. Manual tags are never removed by this stage.
+
+`circle`, provider/platform labels, unknown attribution candidates and unresolved
+parentheticals stay in proposal evidence or candidate tags; they do not become
+authors. `title_aliases`, publication title and uncertain source series remain
+proposal data until a canonical alias/series schema is approved.
+
+### 9.3 Provenance and idempotency
+
+Add a local materialization record keyed by `(book_key, proposal_revision)` with
+the rule version, applied fields, added tags, skipped manual fields and timestamp.
+The record prevents duplicate writes and tells later runs which values are
+auto-owned. Proposal writes must use an UPSERT that preserves materialization and
+review status; `INSERT OR REPLACE` is not allowed for these rows.
+
+### 9.4 Sync boundary
+
+`book_metas`, `tags` and `book_tags` continue to use the existing sync snapshot.
+`scrape_jobs`, `scrape_queue`, `scrape_proposals`, evidence and provenance remain
+local working state unless a later ADR explicitly promotes them. The transaction
+only emits a typed canonical-dirty event. The coordinator schedules the existing
+sync lane after commit; no sync actor, WebDAV request or remote source request is
+allowed on the transaction call stack.
+
+### 9.5 Eligibility and failure policy
+
+```text
+Ready + conflicts empty -> safe-auto materialize
+Ready + any conflict     -> review-required
+Partial/Ambiguous         -> review-required
+Unmatched/parser failure  -> degraded working proposal
+stale input               -> reject + enqueue current revision
+```
+
+All decisions are observable in the returned result and job history. A local
+SQLite error retries locally; it does not trigger a remote catalog refresh.
+
+## 10. Existing non-goals retained
 
 The coordinator is not a universal network client, not a remote crawler and not an auto-confirm engine. Any implementation that passes a remote source session or `ByteSource` into `CatalogScrapeLane` violates the architecture.

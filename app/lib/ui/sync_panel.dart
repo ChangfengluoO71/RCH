@@ -7,7 +7,7 @@
 // ignore_for_file: unused_element
 
 import 'package:app/src/rust/api/sync.dart' as syncapi;
-import 'package:app/store/sync_engine.dart';
+import 'package:app/store/automation_coordinator.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:flutter/material.dart';
 
@@ -61,7 +61,8 @@ class _SyncPanelState extends State<SyncPanel> {
       } else {
         final t = DateTime.fromMillisecondsSinceEpoch(st.lastSyncAt).toLocal();
         final s = t.toString();
-        _lastSyncText = '${s.substring(0, s.length > 19 ? 19 : s.length)}（v${st.revision}）';
+        _lastSyncText =
+            '${s.substring(0, s.length > 19 ? 19 : s.length)}（v${st.revision}）';
       }
       _history = await syncapi.syncHistoryRecent(limit: 8);
       _devices = await syncapi.syncDevicesList();
@@ -90,7 +91,8 @@ class _SyncPanelState extends State<SyncPanel> {
   }
 
   Future<void> _syncNow() async {
-    final m = await SyncEngine.instance.syncNow();
+    await AutomationCoordinator.instance.runCycle(trigger: 'manual-sync');
+    final m = AutomationCoordinator.instance.lastStatus;
     if (mounted) {
       setState(() {});
       await _refreshMeta();
@@ -98,26 +100,36 @@ class _SyncPanelState extends State<SyncPanel> {
     }
   }
 
-  Widget _configField(String label, TextEditingController ctrl,
-      {bool obscure = false, String hint = '', required void Function(String) onChanged}) {
+  Widget _configField(
+    String label,
+    TextEditingController ctrl, {
+    bool obscure = false,
+    String hint = '',
+    required void Function(String) onChanged,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: Row(children: [
-        SizedBox(width: 88, child: Text(label, style: const TextStyle(fontSize: 13))),
-        Expanded(
-          child: TextField(
-            controller: ctrl,
-            obscureText: obscure,
-            onChanged: onChanged,
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: hint,
-              border: const OutlineInputBorder(),
-            ),
-            style: const TextStyle(fontSize: 13),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 88,
+            child: Text(label, style: const TextStyle(fontSize: 13)),
           ),
-        ),
-      ]),
+          Expanded(
+            child: TextField(
+              controller: ctrl,
+              obscureText: obscure,
+              onChanged: onChanged,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: hint,
+                border: const OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -132,43 +144,65 @@ class _SyncPanelState extends State<SyncPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('同步', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const Text(
+          '同步',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
         const SizedBox(height: 4),
         const Text(
           '通过 WebDAV 同步文件夹进行多设备同步；浏览使用离线索引，凭据仅保存在本机。',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 8),
-        _configField('WebDAV 地址', _urlCtrl,
-            hint: 'https://dav.example.com/dav', onChanged: (_) => _saveWebdav()),
+        _configField(
+          'WebDAV 地址',
+          _urlCtrl,
+          hint: 'https://dav.example.com/dav',
+          onChanged: (_) => _saveWebdav(),
+        ),
         _configField('账号', _userCtrl, onChanged: (_) => _saveWebdav()),
-        _configField('密码', _passCtrl, obscure: true, onChanged: (_) => _saveWebdav()),
-        _configField('远程目录', _dirCtrl,
-            hint: 'RCH/sync（留空用默认）', onChanged: (_) => _saveWebdav()),
-        _configField('设备名称', _deviceNameCtrl,
-            hint: '我的 Windows（随同步传播）', onChanged: (_) => _saveDeviceName()),
+        _configField(
+          '密码',
+          _passCtrl,
+          obscure: true,
+          onChanged: (_) => _saveWebdav(),
+        ),
+        _configField(
+          '远程目录',
+          _dirCtrl,
+          hint: 'RCH/sync（留空用默认）',
+          onChanged: (_) => _saveWebdav(),
+        ),
+        _configField(
+          '设备名称',
+          _deviceNameCtrl,
+          hint: '我的 Windows（随同步传播）',
+          onChanged: (_) => _saveDeviceName(),
+        ),
         const SizedBox(height: 8),
-        Row(children: [
-          TextButton.icon(
-            onPressed: _testWebdav,
-            icon: const Icon(Icons.wifi_tethering, size: 18),
-            label: const Text('测试连接'),
-          ),
-          TextButton.icon(
-            onPressed: _syncNow,
-            icon: const Icon(Icons.sync, size: 18),
-            label: const Text('立即同步'),
-          ),
-          const Spacer(),
-          const Text('自动同步', style: TextStyle(fontSize: 12)),
-          Switch(
-            value: SyncEngine.instance.autoSync,
-            onChanged: (v) async {
-              await SyncEngine.instance.setAutoSync(v);
-              if (mounted) setState(() {});
-            },
-          ),
-        ]),
+        Row(
+          children: [
+            TextButton.icon(
+              onPressed: _testWebdav,
+              icon: const Icon(Icons.wifi_tethering, size: 18),
+              label: const Text('测试连接'),
+            ),
+            TextButton.icon(
+              onPressed: _syncNow,
+              icon: const Icon(Icons.sync, size: 18),
+              label: const Text('同步并生成 proposal'),
+            ),
+            const Spacer(),
+            const Text('自动同步', style: TextStyle(fontSize: 12)),
+            Switch(
+              value: AutomationCoordinator.instance.autoRun,
+              onChanged: (v) async {
+                await AutomationCoordinator.instance.setAutoRun(v);
+                if (mounted) setState(() {});
+              },
+            ),
+          ],
+        ),
         const Text(
           '同步间隔 60 秒；启动/回前台/本地变更（防抖 2 秒）自动触发；失败自动重试。',
           style: TextStyle(fontSize: 11, color: Colors.grey),
@@ -176,28 +210,44 @@ class _SyncPanelState extends State<SyncPanel> {
         const SizedBox(height: 8),
         Text('最后同步: $_lastSyncText', style: const TextStyle(fontSize: 12)),
         Text(
-          '状态: ${SyncEngine.instance.lastStatus}',
+          '自动流程状态：${AutomationCoordinator.instance.lastStatus}',
           style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
         ),
         const SizedBox(height: 12),
-        const Text('参与设备', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        const Text(
+          '参与设备',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
         if (_devices.isEmpty)
-          const Text('暂无', style: TextStyle(fontSize: 12, color: Colors.white38))
+          const Text(
+            '暂无',
+            style: TextStyle(fontSize: 12, color: Colors.white38),
+          )
         else
-          ..._devices.map((d) => Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  '${d.deviceName}（${d.platform}）· 最后同步 v${d.lastRevision}',
-                  style: const TextStyle(fontSize: 12),
-                ),
-              )),
+          ..._devices.map(
+            (d) => Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '${d.deviceName}（${d.platform}）· 最后同步 v${d.lastRevision}',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
         const SizedBox(height: 12),
-        const Text('同步历史', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        const Text(
+          '同步历史',
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
         if (_history.isEmpty)
-          const Text('暂无', style: TextStyle(fontSize: 12, color: Colors.white38))
+          const Text(
+            '暂无',
+            style: TextStyle(fontSize: 12, color: Colors.white38),
+          )
         else
           ..._history.map((h) {
-            final t = DateTime.fromMillisecondsSinceEpoch(h.startTime).toLocal();
+            final t = DateTime.fromMillisecondsSinceEpoch(
+              h.startTime,
+            ).toLocal();
             final s = t.toString();
             final time = s.substring(0, s.length > 19 ? 19 : s.length);
             final err = h.error.isEmpty ? '' : ' · 失败: ${h.error}';

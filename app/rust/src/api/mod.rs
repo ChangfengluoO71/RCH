@@ -6,6 +6,7 @@ pub mod export;
 pub mod library;
 pub mod package;
 pub mod pdf;
+pub mod scraper;
 pub mod simple;
 pub mod source;
 pub mod sync;

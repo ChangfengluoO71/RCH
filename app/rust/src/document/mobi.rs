@@ -28,9 +28,7 @@ impl MobiBook {
 
         if image_records.is_empty() {
             // 纯文字 MOBI: 尝试从 HTML 内容中解析图片引用 (data: URI)
-            anyhow::bail!(
-                "MOBI 中没有图片。标题: {title}。此 MOBI 可能是纯文字小说, 暂不支持。"
-            );
+            anyhow::bail!("MOBI 中没有图片。标题: {title}。此 MOBI 可能是纯文字小说, 暂不支持。");
         }
 
         let mut pages = Vec::with_capacity(image_records.len());

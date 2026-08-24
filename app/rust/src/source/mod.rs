@@ -8,9 +8,9 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-pub mod local;
 pub mod baidu;
 pub mod cloud115;
+pub mod local;
 pub mod quark;
 pub mod sftp;
 pub mod webdav;
@@ -153,10 +153,7 @@ impl<S: ByteSource> Seek for SourceReader<S> {
             SeekFrom::Current(p) => self.pos as i128 + p as i128,
         };
         if new < 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "seek 到负位置",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "seek 到负位置"));
         }
         self.pos = new as u64;
         Ok(self.pos)

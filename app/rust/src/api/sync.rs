@@ -61,7 +61,8 @@ fn outcome_to_dto(outcome: &sync::SyncOutcome) -> SyncOutcomeDto {
 pub fn sync_now(session: u64, dir: String, platform: String) -> Result<SyncOutcomeDto, String> {
     let client = source::get_session(session).map_err(|e| e.to_string())?;
     // P1-6：生产路径走锁外网络（网络阶段不持有 DB 锁）。
-    let outcome = sync::sync_with_webdav_global(&client, &dir, &platform).map_err(|e| e.to_string())?;
+    let outcome =
+        sync::sync_with_webdav_global(&client, &dir, &platform).map_err(|e| e.to_string())?;
     Ok(outcome_to_dto(&outcome))
 }
 
@@ -98,25 +99,20 @@ pub fn sync_status() -> Result<SyncStatusDto, String> {
 /// 记录最近一次同步错误（设置页展示）。
 pub fn sync_set_last_error(message: String) -> Result<(), String> {
     let conn = db::get().lock().unwrap();
-    sync::base::set_meta_on(&conn, sync::base::META_LAST_ERROR, &message)
-        .map_err(|e| e.to_string())
+    sync::base::set_meta_on(&conn, sync::base::META_LAST_ERROR, &message).map_err(|e| e.to_string())
 }
 
 /// 清除同步错误标记。
 pub fn sync_clear_last_error() -> Result<(), String> {
     let conn = db::get().lock().unwrap();
-    sync::base::set_meta_on(&conn, sync::base::META_LAST_ERROR, "")
-        .map_err(|e| e.to_string())
+    sync::base::set_meta_on(&conn, sync::base::META_LAST_ERROR, "").map_err(|e| e.to_string())
 }
 
 /// 供诊断/调试：各实体本地快照规模。
 pub fn sync_local_counts() -> Result<HashMap<String, i64>, String> {
     let conn = db::get().lock().unwrap();
     let snap = sync::snapshot::load_local_snapshots(&conn).map_err(|e| e.to_string())?;
-    Ok(snap
-        .into_iter()
-        .map(|(e, m)| (e, m.len() as i64))
-        .collect())
+    Ok(snap.into_iter().map(|(e, m)| (e, m.len() as i64)).collect())
 }
 
 /// 同步历史条目（可观测性）。

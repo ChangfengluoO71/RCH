@@ -56,10 +56,9 @@ impl SftpClient {
         let (conn, sftp, endpoint) = runtime.block_on(async move {
             let connect_fut = async {
                 let config = Arc::new(russh::client::Config::default());
-                let mut session =
-                    russh::client::connect(config, (host.as_str(), port), SshHandler)
-                        .await
-                        .map_err(|e| anyhow!("连接 SFTP 服务器失败: {e}"))?;
+                let mut session = russh::client::connect(config, (host.as_str(), port), SshHandler)
+                    .await
+                    .map_err(|e| anyhow!("连接 SFTP 服务器失败: {e}"))?;
                 let authed = session
                     .authenticate_password(user.as_str(), pass.as_str())
                     .await
@@ -79,9 +78,13 @@ impl SftpClient {
                     .await
                     .map_err(|e| anyhow!("初始化 SFTP 会话失败: {e}"))?;
                 sftp.set_timeout(10);
-                Ok::<(russh::client::Handle<SshHandler>, russh_sftp::client::SftpSession), anyhow::Error>(
-                    (session, sftp),
-                )
+                Ok::<
+                    (
+                        russh::client::Handle<SshHandler>,
+                        russh_sftp::client::SftpSession,
+                    ),
+                    anyhow::Error,
+                >((session, sftp))
             };
             let (conn, sftp) = tokio::time::timeout(Duration::from_secs(20), connect_fut)
                 .await
@@ -163,21 +166,19 @@ impl SftpClient {
         }
         let sftp = Arc::clone(&self.sftp);
         let path = path.to_string();
-        self.runtime
-            .block_on(async move {
-                let mut f = sftp
-                    .open(path)
-                    .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("SFTP 打开文件失败: {e}")))?;
-                f.seek(io::SeekFrom::Start(offset))
-                    .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("SFTP seek 失败: {e}")))?;
-                let n = f
-                    .read(buf)
-                    .await
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("SFTP 读取失败: {e}")))?;
-                Ok::<usize, io::Error>(n)
-            })
+        self.runtime.block_on(async move {
+            let mut f = sftp.open(path).await.map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("SFTP 打开文件失败: {e}"))
+            })?;
+            f.seek(io::SeekFrom::Start(offset)).await.map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("SFTP seek 失败: {e}"))
+            })?;
+            let n = f
+                .read(buf)
+                .await
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("SFTP 读取失败: {e}")))?;
+            Ok::<usize, io::Error>(n)
+        })
     }
 
     /// 整本下载到 raw/ 缓存目录（与 WebDAV 相同命名规则）。
@@ -202,8 +203,10 @@ impl SftpClient {
         if let Ok(meta) = std::fs::metadata(&file_path) {
             if meta.len() > 0 {
                 if let Some(p) = &progress {
-                    p.downloaded
-                        .store(p.total.load(std::sync::atomic::Ordering::SeqCst), std::sync::atomic::Ordering::SeqCst);
+                    p.downloaded.store(
+                        p.total.load(std::sync::atomic::Ordering::SeqCst),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
                 }
                 return Ok(file_path);
             }
@@ -224,8 +227,8 @@ impl SftpClient {
                     .open(path)
                     .await
                     .map_err(|e| anyhow!("SFTP 打开文件失败: {e}"))?;
-                let mut disk = std::fs::File::create(&file_path_for_write)
-                    .context("创建缓存文件失败")?;
+                let mut disk =
+                    std::fs::File::create(&file_path_for_write).context("创建缓存文件失败")?;
                 let mut buf = vec![0u8; 64 * 1024];
                 let mut written: u64 = 0;
                 loop {
@@ -236,11 +239,11 @@ impl SftpClient {
                     if n == 0 {
                         break;
                     }
-                    std::io::Write::write_all(&mut disk, &buf[..n])
-                        .context("写入缓存文件失败")?;
+                    std::io::Write::write_all(&mut disk, &buf[..n]).context("写入缓存文件失败")?;
                     written += n as u64;
                     if let Some(p) = &progress_clone {
-                        p.downloaded.store(written, std::sync::atomic::Ordering::SeqCst);
+                        p.downloaded
+                            .store(written, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
                 disk.flush().context("同步缓存文件失败")?;

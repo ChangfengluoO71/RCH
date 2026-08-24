@@ -109,11 +109,17 @@ mod tests {
         let names: Vec<String> = (0..zip.len())
             .map(|i| zip.by_index(i).unwrap().name().to_string())
             .collect();
-        assert_eq!(names, vec!["page1.jpg", "page2.jpg", "page10.jpg", "ComicInfo.xml"]);
+        assert_eq!(
+            names,
+            vec!["page1.jpg", "page2.jpg", "page10.jpg", "ComicInfo.xml"]
+        );
 
         // 内容可读回
         let mut first = String::new();
-        zip.by_name("page1.jpg").unwrap().read_to_string(&mut first).unwrap();
+        zip.by_name("page1.jpg")
+            .unwrap()
+            .read_to_string(&mut first)
+            .unwrap();
         assert_eq!(first, "one");
 
         let _ = fs::remove_dir_all(&tmp);

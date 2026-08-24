@@ -25,10 +25,13 @@ import 'package:url_launcher/url_launcher.dart';
 enum _FolderCoverKind {
   /// 普通文件夹：本地确认无漫画文件 → 无封面。
   plain,
+
   /// 本地无数据（仅网盘）：与漫画文件一致显示“未缓存”。
   uncached,
+
   /// 文件夹式漫画书（本地图片目录）：封面 = cover.jpg / 首页，点击进详情。
   book,
+
   /// 容器文件夹（内含漫画包）：封面 = 第一个漫画文件封面，点击下钻。
   container,
 }
@@ -39,6 +42,7 @@ class SourceBrowser extends StatefulWidget {
   final BookSource source;
   final String search;
   final Set<String> selectedTags;
+
   /// 作为独立路由推入时显示"返回"按钮（桌面端没有系统返回键）。
   final bool showBack;
 
@@ -74,13 +78,25 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 漫画文件夹检测结果：path → 封面形态（纯本地判定，不发网盘请求）。
   final Map<String, _FolderCoverKind> _folderKinds = {};
+
   /// 容器文件夹的第一个漫画文件路径（kind == container 时有效）。
   final Map<String, String> _folderFirstFile = {};
 
   /// 漫画文件扩展名（与列表过滤一致）。
   static const List<String> _comicExts = [
-    '.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar',
-    '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3',
+    '.cbz',
+    '.zip',
+    '.epub',
+    '.cb7',
+    '.7z',
+    '.cbt',
+    '.tar',
+    '.pdf',
+    '.cbr',
+    '.rar',
+    '.mobi',
+    '.azw',
+    '.azw3',
   ];
 
   static bool _isComicEntry(DirEntry e) =>
@@ -147,12 +163,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
       _session = widget.source.isWebDav
           ? await webdavSessionFor(widget.source)
           : widget.source.isSftp
-              ? await sftpSessionFor(widget.source)
-              : widget.source.isBaidu
-                  ? await baiduSessionFor(widget.source)
-                  : widget.source.isQuark
-                      ? await quarkSessionFor(widget.source)
-                      : await cloud115SessionFor(widget.source);
+          ? await sftpSessionFor(widget.source)
+          : widget.source.isBaidu
+          ? await baiduSessionFor(widget.source)
+          : widget.source.isQuark
+          ? await quarkSessionFor(widget.source)
+          : await cloud115SessionFor(widget.source);
     } catch (e) {
       if (mounted) setState(() => _error = '连接远程书源失败:$e');
     }
@@ -207,13 +223,15 @@ class _SourceBrowserState extends State<SourceBrowser> {
       setState(() {
         _path = path;
         _entries = entries
-            .map((e) => DirEntry(
-                  name: e.name,
-                  path: e.path,
-                  isDir: e.entryType == 'dir',
-                  size: BigInt.from(e.size ?? 0),
-                  mtime: e.modifiedAt ?? 0,
-                ))
+            .map(
+              (e) => DirEntry(
+                name: e.name,
+                path: e.path,
+                isDir: e.entryType == 'dir',
+                size: BigInt.from(e.size ?? 0),
+                mtime: e.modifiedAt ?? 0,
+              ),
+            )
             .where((e) => e.isDir || _isComicEntry(e))
             .toList();
       });
@@ -244,8 +262,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
         'webdav' => await webdavList(session: _session!, path: path),
         'sftp' => await sftpList(session: _session!, path: path),
         'baidu' => await baiduList(session: _session!, path: path),
-        '115' => await cloud115ListFor(widget.source,
-            session: _session!, path: path),
+        '115' => await cloud115ListFor(
+          widget.source,
+          session: _session!,
+          path: path,
+        ),
         'quark' => await quarkList(session: _session!, path: path),
         _ => await listLocalDir(path: path),
       };
@@ -253,11 +274,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
       // 远程：把本次列表响应写入本地快照（复用同一次请求，不新增网盘请求）
       if (!widget.source.isLocalFs) {
         final snap = list
-            .map((e) => FolderSnapshotEntry(
-                  name: e.name,
-                  path: e.path,
-                  isDir: e.isDir,
-                ))
+            .map(
+              (e) => FolderSnapshotEntry(
+                name: e.name,
+                path: e.path,
+                isDir: e.isDir,
+              ),
+            )
             .toList();
         FolderSnapshotStore.instance.put(widget.source, path, snap);
         // ADR-029 浏览即索引：看过的目录顺手写入离线索引（本地，零网络）
@@ -321,8 +344,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
         ? _firstComicFileOfSnapshot(snap)
         : _firstRecordedComicUnder(e.path);
     if (first == null) {
-      _folderKinds[e.path] =
-          snap != null ? _FolderCoverKind.plain : _FolderCoverKind.uncached;
+      _folderKinds[e.path] = snap != null
+          ? _FolderCoverKind.plain
+          : _FolderCoverKind.uncached;
       _folderFirstFile.remove(e.path);
     } else {
       _folderKinds[e.path] = _FolderCoverKind.container;
@@ -346,9 +370,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 从目录快照条目中按自然序找第一个漫画文件路径；无则 null。
   String? _firstComicFileOfSnapshot(List<FolderSnapshotEntry> list) {
     final comics = list
-        .where((e) =>
-            !e.isDir &&
-            _comicExts.any((ext) => e.name.toLowerCase().endsWith(ext)))
+        .where(
+          (e) =>
+              !e.isDir &&
+              _comicExts.any((ext) => e.name.toLowerCase().endsWith(ext)),
+        )
         .toList();
     if (comics.isEmpty) return null;
     comics.sort((a, b) => _naturalCompare(a.name, b.name));
@@ -359,10 +385,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
   String? _firstRecordedComicUnder(String dirPath) {
     final prefix = dirPath.endsWith('/') ? dirPath : '$dirPath/';
     final candidates = LibraryStore.instance.records.values
-        .where((r) =>
-            r.sourceType == widget.source.type &&
-            r.sourceId == widget.source.id &&
-            r.path.startsWith(prefix))
+        .where(
+          (r) =>
+              r.sourceType == widget.source.type &&
+              r.sourceId == widget.source.id &&
+              r.path.startsWith(prefix),
+        )
         .map((r) => r.path)
         .toList();
     if (candidates.isEmpty) return null;
@@ -410,9 +438,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          n == 0
-              ? '本地暂无浏览记录：在线浏览过的目录会自动积累离线索引'
-              : '已从本地浏览记录生成 $n 条离线索引（未联网）',
+          n == 0 ? '本地暂无浏览记录：在线浏览过的目录会自动积累离线索引' : '已从本地浏览记录生成 $n 条离线索引（未联网）',
         ),
       ),
     );
@@ -440,13 +466,14 @@ class _SourceBrowserState extends State<SourceBrowser> {
       _enterOffline();
       await LibraryCatalogStore.instance.loadTree();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已全量重建离线索引（联网）')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已全量重建离线索引（联网）')));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('重建索引失败: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('重建索引失败: $e')));
       }
     }
   }
@@ -467,9 +494,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
       });
       await _list(_path);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('refresh_token 已重新刷新并保存')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('refresh_token 已重新刷新并保存')));
     } catch (e) {
       if (mounted) setState(() => _error = '刷新 refresh_token 失败:$e');
       await _reauthorizeBaidu(e);
@@ -487,8 +514,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
     final secret = widget.source.clientSecret ?? '';
     if (appKey.isEmpty || secret.isEmpty) {
       if (mounted) {
-        setState(() =>
-            _error = '刷新 refresh_token 失败:$error\n（未配置 AppKey/SecretKey，请编辑书源填写）');
+        setState(
+          () => _error =
+              '刷新 refresh_token 失败:$error\n（未配置 AppKey/SecretKey，请编辑书源填写）',
+        );
       }
       return;
     }
@@ -502,45 +531,62 @@ class _SourceBrowserState extends State<SourceBrowser> {
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('百度网盘授权已失效'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('刷新失败：$error\n浏览器已打开百度授权页，登录并同意后把页面显示的授权码粘贴到这里。',
-              style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: () async {
-              try {
-                final url = await baiduAuthUrl(appKey: appKey);
-                await launchUrl(Uri.parse(url),
-                    mode: LaunchMode.externalApplication);
-              } catch (_) {}
-            },
-            icon: const Icon(Icons.open_in_browser, size: 18),
-            label: const Text('重新打开授权页面'),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: codeCtrl,
-            decoration: const InputDecoration(
-                labelText: '授权码', border: OutlineInputBorder(), isDense: true),
-          ),
-        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '刷新失败：$error\n浏览器已打开百度授权页，登录并同意后把页面显示的授权码粘贴到这里。',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: () async {
+                try {
+                  final url = await baiduAuthUrl(appKey: appKey);
+                  await launchUrl(
+                    Uri.parse(url),
+                    mode: LaunchMode.externalApplication,
+                  );
+                } catch (_) {}
+              },
+              icon: const Icon(Icons.open_in_browser, size: 18),
+              label: const Text('重新打开授权页面'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: codeCtrl,
+              decoration: const InputDecoration(
+                labelText: '授权码',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.of(c).pop(true),
-              child: const Text('提交授权码')),
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('提交授权码'),
+          ),
         ],
       ),
     );
     if (ok != true || codeCtrl.text.trim().isEmpty) return;
     try {
       final pair = await baiduExchangeCode(
-          appKey: appKey,
-          clientSecret: secret,
-          code: codeCtrl.text.trim());
+        appKey: appKey,
+        clientSecret: secret,
+        code: codeCtrl.text.trim(),
+      );
       widget.source.refreshToken = pair.refreshToken;
-      LibraryStore.instance
-          .updateSource(widget.source.id, refreshToken: pair.refreshToken);
+      LibraryStore.instance.updateSource(
+        widget.source.id,
+        refreshToken: pair.refreshToken,
+      );
       final s = await baiduRefreshTokenFor(widget.source);
       if (!mounted) return;
       setState(() {
@@ -609,9 +655,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
         setState(() => _showConvertProgress = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(_convertCancelled
-                ? '已取消转换（完成 $_convertDone/$_convertTotal 项）'
-                : 'CBZ 转换完成：$_convertDone/$_convertTotal 项'),
+            content: Text(
+              _convertCancelled
+                  ? '已取消转换（完成 $_convertDone/$_convertTotal 项）'
+                  : 'CBZ 转换完成：$_convertDone/$_convertTotal 项',
+            ),
           ),
         );
       }
@@ -622,42 +670,44 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 底部转换进度条（非模态，转换期间不阻塞浏览）。
   Widget _convertProgressBar() => Material(
-        color: Colors.black87,
-        elevation: 6,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-          child: Row(children: [
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '正在转 CBZ：$_convertDone/$_convertTotal（$_convertCurrent）',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  const SizedBox(height: 6),
-                  LinearProgressIndicator(
-                    value: _convertTotal == 0
-                        ? null
-                        : _convertDone / _convertTotal,
-                  ),
-                ],
-              ),
+    color: Colors.black87,
+    elevation: 6,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '正在转 CBZ：$_convertDone/$_convertTotal（$_convertCurrent）',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                LinearProgressIndicator(
+                  value: _convertTotal == 0
+                      ? null
+                      : _convertDone / _convertTotal,
+                ),
+              ],
             ),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              tooltip: '取消转换',
-              onPressed: () => setState(() {
-                _convertCancelled = true;
-                _showConvertProgress = false;
-              }),
-            ),
-          ]),
-        ),
-      );
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: '取消转换',
+            onPressed: () => setState(() {
+              _convertCancelled = true;
+              _showConvertProgress = false;
+            }),
+          ),
+        ],
+      ),
+    ),
+  );
 
   /// 已被同名 .cbz 取代的源条目（文件夹 / zip）不再显示，避免书架重复。
   bool _isConvertedOriginal(DirEntry e) {
@@ -708,7 +758,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
         final newKey = bookKeyOf(widget.source.type, widget.source.id, e.path);
         final legacyKey = '${widget.source.id}|${e.path}';
         final meta = store.metas[newKey] ?? store.metas[legacyKey];
-        return meta != null && widget.selectedTags.every((t) => meta.tags.contains(t) || meta.metaTags.contains(t));
+        final assigned = <String>{
+          ...?meta?.tags,
+          ...?meta?.metaTags,
+          ...store.tags.tagsForBook(newKey),
+        };
+        return widget.selectedTags.every(assigned.contains);
       });
     }
     return list.toList()..sort(_compareEntries);
@@ -750,8 +805,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
           'webdav' => await webdavList(session: _session!, path: p),
           'sftp' => await sftpList(session: _session!, path: p),
           'baidu' => await baiduList(session: _session!, path: p),
-          '115' => await cloud115ListFor(widget.source,
-              session: _session!, path: p),
+          '115' => await cloud115ListFor(
+            widget.source,
+            session: _session!,
+            path: p,
+          ),
           'quark' => await quarkList(session: _session!, path: p),
           _ => await listLocalDir(path: p),
         };
@@ -782,8 +840,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
   Future<void> _batchTagFromSelection() async {
     if (_selectedPaths.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('请先勾选漫画或文件夹')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('请先勾选漫画或文件夹')));
       }
       return;
     }
@@ -793,7 +852,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
     for (final p in _selectedPaths) {
       // 判断是文件夹还是漫画文件
       final isDir = _entries.any((e) => e.path == p && e.isDir);
-      if (isDir || (!_entries.any((e) => e.path == p) && p != widget.source.path)) {
+      if (isDir ||
+          (!_entries.any((e) => e.path == p) && p != widget.source.path)) {
         expanded.addAll(await _collectComicsRecursive(p));
       } else {
         expanded.add(p);
@@ -801,8 +861,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
     }
     if (expanded.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('所选路径下没有漫画文件')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('所选路径下没有漫画文件')));
       }
       return;
     }
@@ -829,7 +890,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   focusNode: fn,
                   autofocus: true,
                   decoration: const InputDecoration(
-                      hintText: '输入标签名', border: OutlineInputBorder()),
+                    hintText: '输入标签名',
+                    border: OutlineInputBorder(),
+                  ),
                   onSubmitted: (v) {
                     if (v.trim().isNotEmpty) Navigator.of(c).pop(v.trim());
                   },
@@ -843,21 +906,28 @@ class _SourceBrowserState extends State<SourceBrowser> {
                         padding: EdgeInsets.zero,
                         shrinkWrap: true,
                         children: opts
-                            .map((o) => ListTile(
-                                  dense: true,
-                                  leading: Icon(Icons.label,
-                                      size: 16,
-                                      color: metaSet.contains(o)
-                                          ? Colors.redAccent
-                                          : Colors.amber),
-                                  title: Text(o,
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          color: metaSet.contains(o)
-                                              ? Colors.redAccent
-                                              : null)),
-                                  onTap: () => fn(o),
-                                ))
+                            .map(
+                              (o) => ListTile(
+                                dense: true,
+                                leading: Icon(
+                                  Icons.label,
+                                  size: 16,
+                                  color: metaSet.contains(o)
+                                      ? Colors.redAccent
+                                      : Colors.amber,
+                                ),
+                                title: Text(
+                                  o,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: metaSet.contains(o)
+                                        ? Colors.redAccent
+                                        : null,
+                                  ),
+                                ),
+                                onTap: () => fn(o),
+                              ),
+                            )
                             .toList(),
                       ),
                     ),
@@ -868,13 +938,17 @@ class _SourceBrowserState extends State<SourceBrowser> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')),
+            TextButton(
+              onPressed: () => Navigator.of(c).pop(),
+              child: const Text('取消'),
+            ),
             FilledButton(
-                onPressed: () {
-                  final t = ctrl.text.trim();
-                  if (t.isNotEmpty) Navigator.of(c).pop(t);
-                },
-                child: const Text('确认')),
+              onPressed: () {
+                final t = ctrl.text.trim();
+                if (t.isNotEmpty) Navigator.of(c).pop(t);
+              },
+              child: const Text('确认'),
+            ),
           ],
         ),
       ),
@@ -895,104 +969,182 @@ class _SourceBrowserState extends State<SourceBrowser> {
       body: SafeArea(
         child: ListenableBuilder(
           listenable: LibraryStore.instance,
-          builder: (context, _) => Stack(children: [
-      Column(
-      children: [
-        Material(
-          color: Colors.black26,
-          child: ListTile(
-            dense: true,
-            leading: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (widget.showBack)
-                IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  tooltip: '返回书源列表',
-                  onPressed: () => Navigator.of(context).maybePop(),
-                ),
-              // 上级目录按钮始终存在：避免用户误把"返回书源"当成"上一级"
-              IconButton(
-                icon: const Icon(Icons.arrow_upward),
-                tooltip: '上级目录',
-                onPressed: _stack.isEmpty ? null : _goUp,
-              ),
-            ]),
-            title: _selectMode ? Text('已选 ${_selectedPaths.length} 项', maxLines: 1) : Text(_path, maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-              // 离线索引浏览 → 切回在线浏览（本地源同样适用）
-              if (_offlineMode)
-                IconButton(
-                  icon: const Icon(Icons.cloud_outlined),
-                  tooltip: '退出离线浏览（切换在线）',
-                  onPressed: _exitOffline,
-                ),
-              if (_selectMode) ...[
-                TextButton(onPressed: () => setState(() { _selectedPaths.clear(); }), child: const Text('取消全选')),
-                TextButton(onPressed: () => setState(() { for (var e in _filtered) { _selectedPaths.add(e.path); } }), child: const Text('全选')),
-                IconButton(icon: const Icon(Icons.label), tooltip: '批量打标签', onPressed: _batchTagFromSelection),
-                IconButton(icon: const Icon(Icons.close), tooltip: '退出选择', onPressed: () => setState(() { _selectedPaths.clear(); _selectMode = false; })),
-              ] else ...[
-                IconButton(
-                  icon: const Icon(Icons.checklist),
-                  tooltip: '进入选择模式',
-                  onPressed: () => setState(() => _selectMode = true),
-                ),
-              ],
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.sort),
-                tooltip: '更多',
-                initialValue: _sort,
-                onSelected: (v) {
-                  if (v == 'rebuild_full') {
-                    _rebuildIndexFull();
-                    return;
-                  }
-                  setState(() => _sort = v);
-                },
-                itemBuilder: (c) => [
-                  const PopupMenuItem(value: 'alpha', child: Text('按字母')),
-                  const PopupMenuItem(value: 'added', child: Text('按加入时间')),
-                  if (!widget.source.isLocalFs)
-                    const PopupMenuItem(
-                      value: 'rebuild_full',
-                      child: Text('全量重建索引（联网）'),
+          builder: (context, _) => Stack(
+            children: [
+              Column(
+                children: [
+                  Material(
+                    color: Colors.black26,
+                    child: ListTile(
+                      dense: true,
+                      leading: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.showBack)
+                            IconButton(
+                              icon: const Icon(Icons.arrow_back),
+                              tooltip: '返回书源列表',
+                              onPressed: () => Navigator.of(context).maybePop(),
+                            ),
+                          // 上级目录按钮始终存在：避免用户误把"返回书源"当成"上一级"
+                          IconButton(
+                            icon: const Icon(Icons.arrow_upward),
+                            tooltip: '上级目录',
+                            onPressed: _stack.isEmpty ? null : _goUp,
+                          ),
+                        ],
+                      ),
+                      title: _selectMode
+                          ? Text('已选 ${_selectedPaths.length} 项', maxLines: 1)
+                          : Text(
+                              _path,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 离线索引浏览 → 切回在线浏览（本地源同样适用）
+                          if (_offlineMode)
+                            IconButton(
+                              icon: const Icon(Icons.cloud_outlined),
+                              tooltip: '退出离线浏览（切换在线）',
+                              onPressed: _exitOffline,
+                            ),
+                          if (_selectMode) ...[
+                            TextButton(
+                              onPressed: () => setState(() {
+                                _selectedPaths.clear();
+                              }),
+                              child: const Text('取消全选'),
+                            ),
+                            TextButton(
+                              onPressed: () => setState(() {
+                                for (var e in _filtered) {
+                                  _selectedPaths.add(e.path);
+                                }
+                              }),
+                              child: const Text('全选'),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.label),
+                              tooltip: '批量打标签',
+                              onPressed: _batchTagFromSelection,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              tooltip: '退出选择',
+                              onPressed: () => setState(() {
+                                _selectedPaths.clear();
+                                _selectMode = false;
+                              }),
+                            ),
+                          ] else ...[
+                            IconButton(
+                              icon: const Icon(Icons.checklist),
+                              tooltip: '进入选择模式',
+                              onPressed: () =>
+                                  setState(() => _selectMode = true),
+                            ),
+                          ],
+                          PopupMenuButton<String>(
+                            icon: const Icon(Icons.sort),
+                            tooltip: '更多',
+                            initialValue: _sort,
+                            onSelected: (v) {
+                              if (v == 'rebuild_full') {
+                                _rebuildIndexFull();
+                                return;
+                              }
+                              setState(() => _sort = v);
+                            },
+                            itemBuilder: (c) => [
+                              const PopupMenuItem(
+                                value: 'alpha',
+                                child: Text('按字母'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'added',
+                                child: Text('按加入时间'),
+                              ),
+                              if (!widget.source.isLocalFs)
+                                const PopupMenuItem(
+                                  value: 'rebuild_full',
+                                  child: Text('全量重建索引（联网）'),
+                                ),
+                            ],
+                          ),
+                          if (!widget.source.isLocalFs)
+                            IconButton(
+                              icon: const Icon(Icons.auto_fix_high),
+                              tooltip: '生成离线索引（本地快照，不联网）',
+                              onPressed: _refreshIndex,
+                            ),
+                          if (widget.source.isBaidu)
+                            IconButton(
+                              icon: const Icon(Icons.vpn_key),
+                              tooltip: '重新连接并刷新 refresh_token',
+                              onPressed: _refreshingToken
+                                  ? null
+                                  : _refreshBaiduToken,
+                            ),
+                          IconButton(
+                            icon: Icon(
+                              _posterMode ? Icons.view_list : Icons.grid_view,
+                            ),
+                            tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙',
+                            onPressed: () =>
+                                setState(() => _posterMode = !_posterMode),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.refresh),
+                            tooltip: '刷新',
+                            onPressed: _refresh,
+                          ),
+                        ],
+                      ),
                     ),
+                  ),
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ),
+                  if (_offlineMode && !_loading && _error == null)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(12, 2, 12, 2),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '离线索引浏览（不连服务器）· 阅读时按本机资源/凭据判断',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.blueGrey,
+                          ),
+                        ),
+                      ),
+                    ),
+                  Expanded(
+                    child: _loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : _posterMode
+                        ? _gridView()
+                        : _listView(),
+                  ),
                 ],
               ),
-              if (!widget.source.isLocalFs)
-                IconButton(
-                  icon: const Icon(Icons.auto_fix_high),
-                  tooltip: '生成离线索引（本地快照，不联网）',
-                  onPressed: _refreshIndex,
+              if (_showConvertProgress)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: _convertProgressBar(),
                 ),
-              if (widget.source.isBaidu)
-                IconButton(
-                  icon: const Icon(Icons.vpn_key),
-                  tooltip: '重新连接并刷新 refresh_token',
-                  onPressed: _refreshingToken ? null : _refreshBaiduToken,
-                ),
-              IconButton(icon: Icon(_posterMode ? Icons.view_list : Icons.grid_view), tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙', onPressed: () => setState(() => _posterMode = !_posterMode)),
-              IconButton(icon: const Icon(Icons.refresh), tooltip: '刷新', onPressed: _refresh),
-            ]),
+            ],
           ),
-        ),
-        if (_error != null) Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
-        if (_offlineMode && !_loading && _error == null)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(12, 2, 12, 2),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '离线索引浏览（不连服务器）· 阅读时按本机资源/凭据判断',
-                style: TextStyle(fontSize: 11, color: Colors.blueGrey),
-              ),
-            ),
-          ),
-        Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : _posterMode ? _gridView() : _listView()),
-      ],
-    ),
-      if (_showConvertProgress)
-        Positioned(left: 0, right: 0, bottom: 0, child: _convertProgressBar()),
-        ]),
         ),
       ),
     );
@@ -1015,7 +1167,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
         final e = entries[i];
         // 目录：按封面形态区分卡片
         if (e.isDir) {
-          final kind = _folderKinds[e.path] ??
+          final kind =
+              _folderKinds[e.path] ??
               (widget.source.isLocalFs
                   ? _FolderCoverKind.plain
                   : _FolderCoverKind.uncached);
@@ -1029,37 +1182,98 @@ class _SourceBrowserState extends State<SourceBrowser> {
             onTap: _selectMode ? null : () => _openDir(e.path),
           );
           if (!_selectMode) return folderCard;
-          return Stack(children: [
-            folderCard,
-            Positioned(right: 6, top: 6, child: IgnorePointer(child: Container(
-              width: 22, height: 22,
-              decoration: BoxDecoration(color: sel ? Colors.blue : Colors.black45, shape: BoxShape.circle, border: Border.all(color: Colors.white38)),
-              child: sel ? const Icon(Icons.check, size: 16, color: Colors.white) : null,
-            ))),
-            Positioned.fill(child: Material(color: Colors.transparent, child: InkWell(
-              onTap: () => setState(() => sel ? _selectedPaths.remove(e.path) : _selectedPaths.add(e.path)),
-              onDoubleTap: () => _openDir(e.path),
-            ))),
-          ]);
+          return Stack(
+            children: [
+              folderCard,
+              Positioned(
+                right: 6,
+                top: 6,
+                child: IgnorePointer(
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: sel ? Colors.blue : Colors.black45,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white38),
+                    ),
+                    child: sel
+                        ? const Icon(Icons.check, size: 16, color: Colors.white)
+                        : null,
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => setState(
+                      () => sel
+                          ? _selectedPaths.remove(e.path)
+                          : _selectedPaths.add(e.path),
+                    ),
+                    onDoubleTap: () => _openDir(e.path),
+                  ),
+                ),
+              ),
+            ],
+          );
         }
         // 普通漫画文件
         final sel = _selectedPaths.contains(e.path);
         final card = ComicCard(
-          source: widget.source, path: e.path, title: e.name, subtitle: fmtSize(e.size),
-          onTap: _selectMode ? () {} : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BookDetailPage(source: widget.source, path: e.path, title: e.name))),
+          source: widget.source,
+          path: e.path,
+          title: e.name,
+          subtitle: fmtSize(e.size),
+          onTap: _selectMode
+              ? () {}
+              : () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => BookDetailPage(
+                      source: widget.source,
+                      path: e.path,
+                      title: e.name,
+                    ),
+                  ),
+                ),
         );
         if (!_selectMode) return card;
-        return Stack(children: [
-          card,
-          Positioned(right: 6, top: 6, child: IgnorePointer(child: Container(
-            width: 22, height: 22,
-            decoration: BoxDecoration(color: sel ? Colors.blue : Colors.black45, shape: BoxShape.circle, border: Border.all(color: Colors.white38)),
-            child: sel ? const Icon(Icons.check, size: 16, color: Colors.white) : null,
-          ))),
-          Positioned.fill(child: Material(color: Colors.transparent, child: InkWell(
-            onTap: () => setState(() => sel ? _selectedPaths.remove(e.path) : _selectedPaths.add(e.path)),
-          ))),
-        ]);
+        return Stack(
+          children: [
+            card,
+            Positioned(
+              right: 6,
+              top: 6,
+              child: IgnorePointer(
+                child: Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: sel ? Colors.blue : Colors.black45,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white38),
+                  ),
+                  child: sel
+                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      : null,
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => setState(
+                    () => sel
+                        ? _selectedPaths.remove(e.path)
+                        : _selectedPaths.add(e.path),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
       },
     );
   }
@@ -1076,23 +1290,53 @@ class _SourceBrowserState extends State<SourceBrowser> {
       onTap: _selectMode
           ? () {}
           : kind == _FolderCoverKind.book
-              ? () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => BookDetailPage(
-                      source: widget.source, path: e.path, title: e.name)))
-              : () => _openDir(e.path),
+          ? () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => BookDetailPage(
+                  source: widget.source,
+                  path: e.path,
+                  title: e.name,
+                ),
+              ),
+            )
+          : () => _openDir(e.path),
     );
     if (!_selectMode) return card;
-    return Stack(children: [
-      card,
-      Positioned(right: 6, top: 6, child: IgnorePointer(child: Container(
-        width: 22, height: 22,
-        decoration: BoxDecoration(color: sel ? Colors.blue : Colors.black45, shape: BoxShape.circle, border: Border.all(color: Colors.white38)),
-        child: sel ? const Icon(Icons.check, size: 16, color: Colors.white) : null,
-      ))),
-      Positioned.fill(child: Material(color: Colors.transparent, child: InkWell(
-        onTap: () => setState(() => sel ? _selectedPaths.remove(e.path) : _selectedPaths.add(e.path)),
-      ))),
-    ]);
+    return Stack(
+      children: [
+        card,
+        Positioned(
+          right: 6,
+          top: 6,
+          child: IgnorePointer(
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: sel ? Colors.blue : Colors.black45,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white38),
+              ),
+              child: sel
+                  ? const Icon(Icons.check, size: 16, color: Colors.white)
+                  : null,
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => setState(
+                () => sel
+                    ? _selectedPaths.remove(e.path)
+                    : _selectedPaths.add(e.path),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   /// WebDAV:列表(选择模式下有复选框)。
@@ -1105,19 +1349,61 @@ class _SourceBrowserState extends State<SourceBrowser> {
         final e = entries[i];
         final sel = _selectedPaths.contains(e.path);
         if (e.isDir) {
-          if (!_selectMode) return ListTile(leading: const Icon(Icons.folder, color: Colors.amber), title: Text(e.name), onTap: () => _openDir(e.path));
+          if (!_selectMode)
+            return ListTile(
+              leading: const Icon(Icons.folder, color: Colors.amber),
+              title: Text(e.name),
+              onTap: () => _openDir(e.path),
+            );
           return ListTile(
-            leading: Checkbox(value: sel, onChanged: (v) => setState(() => v == true ? _selectedPaths.add(e.path) : _selectedPaths.remove(e.path))),
+            leading: Checkbox(
+              value: sel,
+              onChanged: (v) => setState(
+                () => v == true
+                    ? _selectedPaths.add(e.path)
+                    : _selectedPaths.remove(e.path),
+              ),
+            ),
             title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: IconButton(icon: const Icon(Icons.arrow_forward_ios, size: 16), onPressed: () => _openDir(e.path)),
-            onTap: () => setState(() => sel ? _selectedPaths.remove(e.path) : _selectedPaths.add(e.path)),
+            trailing: IconButton(
+              icon: const Icon(Icons.arrow_forward_ios, size: 16),
+              onPressed: () => _openDir(e.path),
+            ),
+            onTap: () => setState(
+              () => sel
+                  ? _selectedPaths.remove(e.path)
+                  : _selectedPaths.add(e.path),
+            ),
           );
         }
         return ListTile(
-          leading: _selectMode ? Checkbox(value: sel, onChanged: (v) => setState(() => v == true ? _selectedPaths.add(e.path) : _selectedPaths.remove(e.path))) : Icon(Icons.menu_book),
+          leading: _selectMode
+              ? Checkbox(
+                  value: sel,
+                  onChanged: (v) => setState(
+                    () => v == true
+                        ? _selectedPaths.add(e.path)
+                        : _selectedPaths.remove(e.path),
+                  ),
+                )
+              : Icon(Icons.menu_book),
           title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(fmtSize(e.size)),
-          onTap: _selectMode ? () => setState(() => sel ? _selectedPaths.remove(e.path) : _selectedPaths.add(e.path)) : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => BookDetailPage(source: widget.source, path: e.path, title: e.name))),
+          onTap: _selectMode
+              ? () => setState(
+                  () => sel
+                      ? _selectedPaths.remove(e.path)
+                      : _selectedPaths.add(e.path),
+                )
+              : () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => BookDetailPage(
+                      source: widget.source,
+                      path: e.path,
+                      title: e.name,
+                    ),
+                  ),
+                ),
         );
       },
     );
@@ -1146,8 +1432,12 @@ class _FolderCard extends StatelessWidget {
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Text(name,
-                  maxLines: 2, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+              child: Text(
+                name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
             ),
           ],
         ),
@@ -1215,9 +1505,7 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: _buildCover(),
-            ),
+            Expanded(child: _buildCover()),
             Container(
               color: Colors.black45,
               padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),

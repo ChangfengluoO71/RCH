@@ -16,10 +16,10 @@
 //! 敏感凭据（password / refresh_token / client_secret / cookie）永不进入包内；
 //! sources 分块仅含非敏感字段，导入时目标端本地凭据不被覆盖。
 
-use std::io::{BufRead, Cursor, Read, Seek, Write};
-use std::path::Path;
 use std::collections::HashMap;
+use std::io::{BufRead, Cursor, Read, Seek, Write};
 use std::num::NonZeroU32;
+use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine as _;
@@ -171,7 +171,10 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> [u8; 32] {
     key
 }
 
-fn encrypt_credentials(passphrase: &str, entries: &[SourceCredentialEntry]) -> Result<EncryptedCredentialBundle> {
+fn encrypt_credentials(
+    passphrase: &str,
+    entries: &[SourceCredentialEntry],
+) -> Result<EncryptedCredentialBundle> {
     let rng = SystemRandom::new();
     let mut salt = [0u8; 16];
     rng.fill(&mut salt).map_err(|_| anyhow!("生成盐失败"))?;
@@ -180,7 +183,8 @@ fn encrypt_credentials(passphrase: &str, entries: &[SourceCredentialEntry]) -> R
             .map_err(|_| anyhow!("密钥初始化失败"))?,
     );
     let mut nonce_bytes = [0u8; 12];
-    rng.fill(&mut nonce_bytes).map_err(|_| anyhow!("生成 nonce 失败"))?;
+    rng.fill(&mut nonce_bytes)
+        .map_err(|_| anyhow!("生成 nonce 失败"))?;
     let nonce = Nonce::assume_unique_for_key(nonce_bytes);
     let plain = serde_json::to_vec(entries).context("凭据序列化失败")?;
     let mut in_out = plain.clone();
@@ -195,7 +199,10 @@ fn encrypt_credentials(passphrase: &str, entries: &[SourceCredentialEntry]) -> R
     })
 }
 
-fn decrypt_credentials(passphrase: &str, bundle: &EncryptedCredentialBundle) -> Result<Vec<SourceCredentialEntry>> {
+fn decrypt_credentials(
+    passphrase: &str,
+    bundle: &EncryptedCredentialBundle,
+) -> Result<Vec<SourceCredentialEntry>> {
     let salt = base64::engine::general_purpose::STANDARD
         .decode(&bundle.salt)
         .context("salt 解码失败")?;
@@ -435,7 +442,11 @@ pub fn decrypt_source_bundle(passphrase: &str, data: &str) -> Result<Vec<SourceC
 ///
 /// 跨设备匹配：书源按 fingerprint 与本地匹配，命中则 key 前缀重写；
 /// 未命中的 local/smb 书源创建幽灵条目（remote_only + origin_device_id）。
-pub fn merge_package<R: Read + Seek>(conn: &Connection, reader: R, force: bool) -> Result<MergeStats> {
+pub fn merge_package<R: Read + Seek>(
+    conn: &Connection,
+    reader: R,
+    force: bool,
+) -> Result<MergeStats> {
     let mut archive = ZipArchive::new(reader).context("无法打开 .rchpkg 包")?;
     let manifest: Manifest = read_json_entry(&mut archive, MANIFEST_PATH)?;
     if manifest.format != FORMAT {
@@ -668,7 +679,10 @@ pub fn import_package_with_credentials<R: Read + Seek>(
 }
 
 /// 从文件导入标准包（含加密凭据）。
-pub fn import_package_with_credentials_from_file(path: &str, passphrase: &str) -> Result<MergeStats> {
+pub fn import_package_with_credentials_from_file(
+    path: &str,
+    passphrase: &str,
+) -> Result<MergeStats> {
     let conn = db::get().lock().unwrap();
     let file = std::fs::File::open(path).with_context(|| format!("无法打开 {path}"))?;
     import_package_with_credentials(&conn, file, passphrase)
@@ -677,7 +691,10 @@ pub fn import_package_with_credentials_from_file(path: &str, passphrase: &str) -
 fn apply_tombstone_on(conn: &Connection, entity: &str, key: &str) -> Result<()> {
     match entity {
         "sources" => {
-            conn.execute("DELETE FROM source_alias WHERE source_id = ?1", params![key])?;
+            conn.execute(
+                "DELETE FROM source_alias WHERE source_id = ?1",
+                params![key],
+            )?;
             conn.execute("DELETE FROM book_sources WHERE id = ?1", params![key])?;
         }
         "library_index" => {
@@ -719,22 +736,46 @@ fn build_tombstones(
 ) -> Vec<db::TombstoneSyncRow> {
     let mut out = Vec::new();
     for r in tags.iter().filter(|r| r.deleted) {
-        out.push(db::TombstoneSyncRow { entity: "tags".into(), key: r.id.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow {
+            entity: "tags".into(),
+            key: r.id.clone(),
+            updated_at: r.updated_at,
+        });
     }
     for r in book_tags.iter().filter(|r| r.deleted) {
-        out.push(db::TombstoneSyncRow { entity: "book_tags".into(), key: format!("{}|{}", r.book_key, r.tag_id), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow {
+            entity: "book_tags".into(),
+            key: format!("{}|{}", r.book_key, r.tag_id),
+            updated_at: r.updated_at,
+        });
     }
     for r in metas.iter().filter(|r| r.deleted) {
-        out.push(db::TombstoneSyncRow { entity: "metas".into(), key: r.key.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow {
+            entity: "metas".into(),
+            key: r.key.clone(),
+            updated_at: r.updated_at,
+        });
     }
     for r in records.iter().filter(|r| r.deleted) {
-        out.push(db::TombstoneSyncRow { entity: "records".into(), key: r.key.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow {
+            entity: "records".into(),
+            key: r.key.clone(),
+            updated_at: r.updated_at,
+        });
     }
     for r in sources.iter().filter(|r| r.deleted) {
-        out.push(db::TombstoneSyncRow { entity: "sources".into(), key: r.id.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow {
+            entity: "sources".into(),
+            key: r.id.clone(),
+            updated_at: r.updated_at,
+        });
     }
     for r in settings.iter().filter(|r| r.deleted) {
-        out.push(db::TombstoneSyncRow { entity: "settings".into(), key: r.key.clone(), updated_at: r.updated_at });
+        out.push(db::TombstoneSyncRow {
+            entity: "settings".into(),
+            key: r.key.clone(),
+            updated_at: r.updated_at,
+        });
     }
     out
 }
@@ -769,7 +810,9 @@ fn read_json_entry<R: Read + Seek, T: serde::de::DeserializeOwned>(
     archive: &mut ZipArchive<R>,
     name: &str,
 ) -> Result<T> {
-    let mut file = archive.by_name(name).with_context(|| format!("包内缺少 {name}"))?;
+    let mut file = archive
+        .by_name(name)
+        .with_context(|| format!("包内缺少 {name}"))?;
     let value = serde_json::from_reader(&mut file).with_context(|| format!("解析 {name} 失败"))?;
     Ok(value)
 }
@@ -779,7 +822,9 @@ fn read_jsonl_entry<R: Read + Seek, T: serde::de::DeserializeOwned>(
     archive: &mut ZipArchive<R>,
     name: &str,
 ) -> Result<Vec<T>> {
-    let file = archive.by_name(name).with_context(|| format!("包内缺少 {name}"))?;
+    let file = archive
+        .by_name(name)
+        .with_context(|| format!("包内缺少 {name}"))?;
     let mut reader = std::io::BufReader::new(file);
     let mut out = Vec::new();
     let mut line = String::new();
@@ -967,8 +1012,13 @@ mod tests {
         }];
         write_json_entry(&mut zip, "chunks/sources.json", &vec![src], options).unwrap();
         write_json_entry(&mut zip, "chunks/metas.json", &metas, options).unwrap();
-        write_json_entry(&mut zip, "chunks/tags.json", &Vec::<db::TagSyncRow>::new(), options)
-            .unwrap();
+        write_json_entry(
+            &mut zip,
+            "chunks/tags.json",
+            &Vec::<db::TagSyncRow>::new(),
+            options,
+        )
+        .unwrap();
         write_json_entry(
             &mut zip,
             "chunks/book_tags.json",
@@ -1024,8 +1074,12 @@ mod tests {
     fn v2_round_trip_carries_library_index_and_snapshots() {
         let a = schema_conn();
         seed(&a);
-        let fp =
-            db::compute_source_fingerprint("webdav", Some("https://dav.example.com"), "/books", None);
+        let fp = db::compute_source_fingerprint(
+            "webdav",
+            Some("https://dav.example.com"),
+            "/books",
+            None,
+        );
         let li = db::LibraryIndexRow {
             id: db::library_index_id(&fp, "/books/a.cbz"),
             source_id: "s1".into(),
@@ -1111,8 +1165,12 @@ mod tests {
     fn library_index_tombstone_propagates() {
         let a = schema_conn();
         seed(&a);
-        let fp =
-            db::compute_source_fingerprint("webdav", Some("https://dav.example.com"), "/books", None);
+        let fp = db::compute_source_fingerprint(
+            "webdav",
+            Some("https://dav.example.com"),
+            "/books",
+            None,
+        );
         let li = db::LibraryIndexRow {
             id: db::library_index_id(&fp, "/books/a.cbz"),
             source_id: "s1".into(),
@@ -1163,7 +1221,9 @@ mod tests {
         .unwrap();
         import_package(&b, Cursor::new(bytes)).unwrap();
         let pw: String = b
-            .query_row("SELECT password FROM book_sources WHERE id='s1'", [], |r| r.get(0))
+            .query_row("SELECT password FROM book_sources WHERE id='s1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(pw, "local-pass");
     }
@@ -1314,7 +1374,9 @@ mod tests {
         seed(&b);
         merge_package(&b, Cursor::new(bytes), false).unwrap();
         let cnt: i64 = b
-            .query_row("SELECT COUNT(*) FROM tags WHERE id='日漫'", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM tags WHERE id='日漫'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(cnt, 0);
     }
@@ -1455,8 +1517,11 @@ mod tests {
             [],
         )
         .unwrap();
-        a.execute("UPDATE book_sources SET cookie = 'secret' WHERE id = 'q1'", [])
-            .unwrap();
+        a.execute(
+            "UPDATE book_sources SET cookie = 'secret' WHERE id = 'q1'",
+            [],
+        )
+        .unwrap();
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
         export_package_with_credentials(&a, &mut zip, false, "right-pass").unwrap();
         let bytes = zip.finish().unwrap().into_inner();

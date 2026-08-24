@@ -21,6 +21,11 @@ void main() {
     expect(normalizeComicPath('/a/b.pdf'), '/a/b.pdf');
   });
 
+  test('normalizeComicPath：路径分隔符和 Windows 盘符也归一化', () {
+    expect(normalizeComicPath(r'F:\comic\日漫\book.cbz'), 'f:/comic/日漫/book');
+    expect(normalizeComicPath(r'f:/comic/日漫/book.zip'), 'f:/comic/日漫/book');
+  });
+
   test('bookKeyOf：文件夹 / zip / cbz 视为同一本，不同书 key 不同', () {
     expect(
       bookKeyOf('local', 's1', '/x/a'),

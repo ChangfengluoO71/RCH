@@ -7,12 +7,12 @@ import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/api/pdf.dart';
 import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/ai_upscale_manager.dart';
+import 'package:app/store/automation_coordinator.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/storage_access.dart';
-import 'package:app/store/sync_engine.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
@@ -70,7 +70,7 @@ Future<void> main() async {
   // 备份/同步：加载配置并按需启动定时同步。
   await SyncManager.instance.init();
   // 自动同步引擎：防抖 + 定时 + 启动拉取（ADR-024）。
-  await SyncEngine.instance.init();
+  await AutomationCoordinator.instance.init();
 
   // 后台 AI 超分：加载持久化队列并续跑。
   await AiUpscaleManager.instance.init();

@@ -25,6 +25,7 @@ class SyncEngine {
   Timer? _poll;
   bool _syncing = false;
   bool _enabled = true;
+  bool _managedByCoordinator = false;
   int _retryCount = 0;
   DateTime? _rateLimitUntil;
   DateTime? _backoffUntil;
@@ -32,6 +33,7 @@ class SyncEngine {
 
   /// 自动触发最小间隔：防止本地变更防抖+轮询叠加高频请求。
   static const _minAutoInterval = Duration(seconds: 15);
+
   /// 失败指数退避上限。
   static const _maxBackoff = Duration(minutes: 15);
 
@@ -40,7 +42,8 @@ class SyncEngine {
   int lastAt = 0;
 
   /// 启动：读开关、注册变更监听与定时轮询；由 main 调用。
-  Future<void> init() async {
+  Future<void> init({bool managedByCoordinator = false}) async {
+    _managedByCoordinator = managedByCoordinator;
     try {
       final entries = await dbapi.dbLoadAllSettings();
       // 默认开启：设置缺失（首次安装）视为开启；显式 'false' 才关闭。
@@ -49,10 +52,17 @@ class SyncEngine {
     } catch (_) {
       _enabled = true; // 默认开启
     }
-    LibraryStore.instance.addListener(markDirty);
+    if (!managedByCoordinator) {
+      LibraryStore.instance.addListener(markDirty);
+    }
     _poll?.cancel();
+    _debounce?.cancel();
+    if (managedByCoordinator) return;
     // ADR-028 §12.6：轮询走轻量 revision 检查，远端未变化不触发全量同步。
-    _poll = Timer.periodic(const Duration(seconds: 60), (_) => _autoTrigger(quickPoll: true));
+    _poll = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => _autoTrigger(quickPoll: true),
+    );
     if (_enabled) await syncNow();
   }
 
@@ -65,12 +75,24 @@ class SyncEngine {
 
   /// 本地数据变化 → 防抖合并为一批。
   void markDirty() {
-    if (!_enabled || _syncing) return;
+    if (_managedByCoordinator || !_enabled || _syncing) return;
     _debounce?.cancel();
     _debounce = Timer(const Duration(seconds: 2), _autoTrigger);
   }
 
-  Future<void> _autoTrigger({bool fromBackoff = false, bool quickPoll = false}) async {
+  /// Coordinator entry point for the lightweight periodic revision check.
+  /// It is intentionally separate from [syncNow] so a timer does not perform
+  /// a full WebDAV sync when the remote revision is unchanged.
+  Future<void> triggerAutomatic({
+    bool quickPoll = false,
+    bool refreshCatalog = true,
+  }) => _autoTrigger(quickPoll: quickPoll, refreshCatalog: refreshCatalog);
+
+  Future<void> _autoTrigger({
+    bool fromBackoff = false,
+    bool quickPoll = false,
+    bool refreshCatalog = true,
+  }) async {
     if (!_enabled || _syncing) return;
     if (_inRateLimitCooldown()) return;
     // 失败退避期间，定时轮询/变更防抖都不得触发新一轮同步；
@@ -79,9 +101,11 @@ class SyncEngine {
     // 失败后重试节奏完全交给退避定时器（fromBackoff），轮询/防抖让位。
     if (!fromBackoff && _retryCount > 0) return;
     final last = _lastAttemptAt;
-    if (last != null && DateTime.now().difference(last) < _minAutoInterval) return;
+    if (last != null && DateTime.now().difference(last) < _minAutoInterval) {
+      return;
+    }
     if (quickPoll && await _remoteUnchanged()) return;
-    await syncNow();
+    await syncNow(refreshCatalog: refreshCatalog);
   }
 
   bool _inRateLimitCooldown() {
@@ -107,11 +131,15 @@ class SyncEngine {
         url: url,
         username: mgr.webdavUsername.trim(),
         password: mgr.webdavPassword,
-      ))
-          .id;
+      )).id;
       try {
-        final dir = mgr.webdavDir.trim().isEmpty ? 'RCH/sync' : mgr.webdavDir.trim();
-        final rev = await syncapi.syncRemoteRevision(session: session, dir: dir);
+        final dir = mgr.webdavDir.trim().isEmpty
+            ? 'RCH/sync'
+            : mgr.webdavDir.trim();
+        final rev = await syncapi.syncRemoteRevision(
+          session: session,
+          dir: dir,
+        );
         return rev == st.revision;
       } finally {
         await webdavDisconnect(id: session);
@@ -121,39 +149,48 @@ class SyncEngine {
     }
   }
 
+  /// Refresh local sources and persisted remote snapshots without opening a
+  /// sync transport. Automatic catalog scraping uses this phase separately.
+  Future<void> refreshCatalogIndexes() async {
+    for (final s in LibraryStore.instance.sources) {
+      try {
+        if (s.isLocalFs) {
+          await LibraryIndexService.instance.refreshSourceIndex(
+            source: s,
+            force: false,
+          );
+        } else {
+          await LibraryIndexService.buildIndexFromSnapshots(s);
+        }
+      } catch (e) {
+        debugPrint('[SyncEngine] source index refresh failed ${s.name}: $e');
+      }
+    }
+  }
+
   /// 立即同步（手动入口与自动共用）。
-  Future<String> syncNow() async {
+  Future<String> syncNow({bool refreshCatalog = true}) async {
     final mgr = SyncManager.instance;
     final url = mgr.webdavUrl.trim();
-    if (url.isEmpty) return '未配置 WebDAV 同步';
     if (_syncing) return '正在同步…';
     if (_inRateLimitCooldown()) return '服务器限流中，15 分钟后自动重试';
     _syncing = true;
     _lastAttemptAt = DateTime.now();
     BigInt? session;
     try {
-      // 同步前为本地书源生成/增量刷新 library_index（L2 目录索引随同步包走；
-      // 首次全量、之后按目录 mtime 增量；云端源由用户"重建离线索引"触发）。
-      for (final s in LibraryStore.instance.sources) {
-        try {
-          if (s.isLocalFs) {
-            await LibraryIndexService.instance.refreshSourceIndex(source: s, force: false);
-          } else {
-            // ADR-029：云端源同步前把本地浏览快照补进离线索引（零网络），
-            // 让"浏览/触及过"的书随同步传播到其他设备。
-            await LibraryIndexService.buildIndexFromSnapshots(s);
-          }
-        } catch (e) {
-          debugPrint('[SyncEngine] 书源索引刷新失败 ${s.name}: $e');
-        }
+      if (refreshCatalog) await refreshCatalogIndexes();
+      if (url.isEmpty) {
+        lastStatus = '未配置 WebDAV 同步';
+        return lastStatus;
       }
       session = (await webdavConnect(
         url: url,
         username: mgr.webdavUsername.trim(),
         password: mgr.webdavPassword,
-      ))
-          .id;
-      final dir = mgr.webdavDir.trim().isEmpty ? 'RCH/sync' : mgr.webdavDir.trim();
+      )).id;
+      final dir = mgr.webdavDir.trim().isEmpty
+          ? 'RCH/sync'
+          : mgr.webdavDir.trim();
       final out = await syncapi.syncNow(
         session: session,
         dir: dir,
@@ -172,13 +209,18 @@ class SyncEngine {
       // 但此时 _syncing=true，markDirty 直接忽略，不会造成循环触发）。
       // ADR-028 §12.5：apply 发生在 Rust 侧，Dart 内存态必须强制重载
       // （默认 load 有 _loaded 短路，直接调用不会刷新）。
-      await LibraryStore.instance.load(force: true);
+      // Sync has already committed the authoritative SQLite state. Reload
+      // memory without enqueueing a second full save; the coordinator owns
+      // the subsequent projection/push boundary.
+      await LibraryStore.instance.load(force: true, persist: false);
       await LibraryCatalogStore.instance.loadTree();
       return lastStatus;
     } catch (e) {
       lastStatus = '同步失败: $e';
       final msg = '$e';
-      if (msg.contains('503') || msg.contains('429') || msg.contains('Too many requests')) {
+      if (msg.contains('503') ||
+          msg.contains('429') ||
+          msg.contains('Too many requests')) {
         // 坚果云等限流：进入 15 分钟冷却，不短周期重试轰炸。
         _rateLimitUntil = DateTime.now().add(const Duration(minutes: 15));
         _retryCount = 0;
@@ -204,8 +246,9 @@ class SyncEngine {
     if (!_enabled) return;
     _retryCount++;
     final exp = (_retryCount - 1).clamp(0, 5).toInt();
-    final backoffMs =
-        (30000 * (1 << exp)).clamp(0, _maxBackoff.inMilliseconds).toInt();
+    final backoffMs = (30000 * (1 << exp))
+        .clamp(0, _maxBackoff.inMilliseconds)
+        .toInt();
     final delay = Duration(milliseconds: backoffMs);
     _backoffUntil = DateTime.now().add(delay);
     lastStatus = '同步失败，${delay.inSeconds} 秒后重试';

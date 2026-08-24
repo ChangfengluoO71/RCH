@@ -5,7 +5,7 @@
   "description": "Own one automatic sync-then-catalog-scrape lane while keeping sync transport, catalog scraping, and future provider traffic isolated.",
   "status": "in_progress",
   "dev_type": "feature",
-  "scope": "app/lib/store/sync_engine.dart, app/lib/store/automation_coordinator.dart, app/lib/ui/sync_panel.dart, app/lib/ui/scrape_panel.dart, app/rust/src/scraper.rs, app/rust/src/api/scraper.rs, app/rust/src/db/mod.rs",
+  "scope": "app/lib/store/library_index_service.dart, app/lib/store/sync_engine.dart, app/lib/store/automation_coordinator.dart, app/lib/ui/sync_panel.dart, app/lib/ui/scrape_panel.dart, app/rust/src/scraper.rs, app/rust/src/catalog_context.rs, app/rust/src/api/db.rs, app/rust/src/api/scraper.rs, app/rust/src/db/mod.rs, app/rust/src/scrape_projection.rs, app/rust/src/sync/snapshot.rs, app/rust/examples/catalog_dry_run.rs, app/rust/examples/catalog_materialize_dry_run.rs",
   "package": "app",
   "priority": "P0",
   "creator": "cfl",
@@ -29,7 +29,6 @@
     "app/rust/src/api/scraper.rs",
     "app/rust/src/db/mod.rs"
   ],
-  "notes": "Implementation checkpoint reached: catalog-only parser, persisted scrape jobs and proposals, FRB API, one automation coordinator, sync integration, and review panel are implemented. Awaiting manual validation with real catalog samples before refining rules or proceeding to provider or canonical materialization.",
+  "notes": "Catalog-rules-v3 offline parser, durable catalog queue, physical asset identity, persisted local/Quark/115 context normalization, run accounting, coordinator ordering, UI status and sync-boundary regression are implemented. Final semantic follow-up adds ancestor leading-attribution normalization, upper/lower chapter-part evidence, collection/completeness separation, and full-color state. Production safe-auto materialization is enabled for Ready proposals with empty conflicts; canonical writes remain local transactions and sync push remains a separate coordinator step. The isolated pass reports input_assets=389, unique_assets=389, proposals_written=389, asset_collision_count=0, accounting_status=pass; remote_book_source_io/provider_requests/content_reads are all false. The isolated materialization copy pass applied 389/389 proposals, created 397 canonical metadata rows, 169 tags and 2250 links, and invoked no sync transport. After a matching backup was created, the production database was materialized locally: 389/389 applied, 397 metadata rows, 169 tags and 2250 links; a rerun skipped all 389 rows, proving idempotency. Final exports: docs/reports/catalog-dry-run-2026-08-23-after-semantic-fixes.json, docs/reports/catalog-materialize-dry-run-2026-08-23.json and docs/reports/catalog-materialize-production-apply-2026-08-23.json.",
   "meta": {}
 }
-

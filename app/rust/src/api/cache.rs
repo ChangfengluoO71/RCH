@@ -94,9 +94,15 @@ pub fn set_cache_root_path(path: String) {
 /// 获取默认缓存根目录（APPDATA/RCH），不受自定义路径影响。
 pub fn default_cache_root_path() -> String {
     if let Some(appdata) = std::env::var_os("APPDATA") {
-        PathBuf::from(appdata).join("RCH").to_string_lossy().into_owned()
+        PathBuf::from(appdata)
+            .join("RCH")
+            .to_string_lossy()
+            .into_owned()
     } else {
-        std::env::temp_dir().join("RCH").to_string_lossy().into_owned()
+        std::env::temp_dir()
+            .join("RCH")
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -195,7 +201,9 @@ pub fn purge_stale_book_cache(
     root_id: Option<String>,
     cookie_mode: bool,
 ) -> Result<u64, String> {
-    use crate::cache::{delete_cover_cache_for_path, delete_page_cache_for_ns, delete_raw_cache_for_key};
+    use crate::cache::{
+        delete_cover_cache_for_path, delete_page_cache_for_ns, delete_raw_cache_for_key,
+    };
     if path.is_empty() {
         return Ok(0);
     }
@@ -204,7 +212,8 @@ pub fn purge_stale_book_cache(
     match source_type.as_str() {
         "local" => {
             // 本地书源只写 page/ 与 cover/，无 raw/。
-            freed += delete_page_cache_for_ns(&format!("local|{path}")).map_err(|e| e.to_string())?;
+            freed +=
+                delete_page_cache_for_ns(&format!("local|{path}")).map_err(|e| e.to_string())?;
             freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
         }
         "webdav" => {
@@ -212,8 +221,10 @@ pub fn purge_stale_book_cache(
                 Some(o) => o,
                 None => return Ok(0),
             };
-            freed += delete_page_cache_for_ns(&format!("webdav|{origin}|{path}")).map_err(|e| e.to_string())?;
-            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_page_cache_for_ns(&format!("webdav|{origin}|{path}"))
+                .map_err(|e| e.to_string())?;
+            freed +=
+                delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
             freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
         }
         "sftp" => {
@@ -221,40 +232,60 @@ pub fn purge_stale_book_cache(
                 Some(e) => e,
                 None => return Ok(0),
             };
-            freed += delete_page_cache_for_ns(&format!("sftp|{endpoint}|{path}")).map_err(|e| e.to_string())?;
-            freed += delete_raw_cache_for_key(&format!("{endpoint}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_page_cache_for_ns(&format!("sftp|{endpoint}|{path}"))
+                .map_err(|e| e.to_string())?;
+            freed += delete_raw_cache_for_key(&format!("{endpoint}{path}"))
+                .map_err(|e| e.to_string())?;
             freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
         }
         "baidu" => {
             // BaiduClient::new 中 root 为空时归一为 "/"，origin 必须一致才能命中缓存。
-            let root = if root_path.trim().is_empty() { "/".to_string() } else { root_path };
+            let root = if root_path.trim().is_empty() {
+                "/".to_string()
+            } else {
+                root_path
+            };
             let origin = format!("baidu:{}:{}", client_id.unwrap_or_default(), root);
-            freed += delete_page_cache_for_ns(&format!("baidu|{origin}|{path}")).map_err(|e| e.to_string())?;
-            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed += delete_page_cache_for_ns(&format!("baidu|{origin}|{path}"))
+                .map_err(|e| e.to_string())?;
+            freed +=
+                delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
             freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
         }
         "115" => {
             // Cloud115Client::new / Cloud115WebClient::new 中 root_id 为空时归一为 "0"。
             let root = root_id.unwrap_or_default();
-            let root = if root.trim().is_empty() { "0".to_string() } else { root };
+            let root = if root.trim().is_empty() {
+                "0".to_string()
+            } else {
+                root
+            };
             let origin = if cookie_mode {
                 format!("115web:{root}")
             } else {
                 format!("115:{}:{root}", client_id.unwrap_or_default())
             };
-            freed += delete_page_cache_for_ns(&format!("115|{origin}|{path}")).map_err(|e| e.to_string())?;
+            freed += delete_page_cache_for_ns(&format!("115|{origin}|{path}"))
+                .map_err(|e| e.to_string())?;
             // Cookie 模式 raw 键也以浏览路径（pick_code）为入参，同样可精确删除。
-            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed +=
+                delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
             freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
         }
         "quark" => {
             // QuarkClient::new 中 root 为空时归一为 "0"。
             let root = root_id.unwrap_or_default();
-            let root = if root.trim().is_empty() { "0".to_string() } else { root };
+            let root = if root.trim().is_empty() {
+                "0".to_string()
+            } else {
+                root
+            };
             let origin = format!("quark:{root}");
-            freed += delete_page_cache_for_ns(&format!("quark|{origin}|{path}")).map_err(|e| e.to_string())?;
+            freed += delete_page_cache_for_ns(&format!("quark|{origin}|{path}"))
+                .map_err(|e| e.to_string())?;
             // raw 键以素材 fid（浏览路径）为入参，可精确删除。
-            freed += delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
+            freed +=
+                delete_raw_cache_for_key(&format!("{origin}{path}")).map_err(|e| e.to_string())?;
             freed += delete_cover_cache_for_path(&path).map_err(|e| e.to_string())?;
         }
         _ => return Ok(0),

@@ -52,7 +52,8 @@ impl<S: ByteSource> EpubBook<S> {
             if let Some(href) = manifest.get(idref) {
                 let full = resolve_path(&opf_dir, href);
                 let lower = full.to_lowercase();
-                if lower.ends_with(".xhtml") || lower.ends_with(".html") || lower.ends_with(".htm") {
+                if lower.ends_with(".xhtml") || lower.ends_with(".html") || lower.ends_with(".htm")
+                {
                     if let Ok(html) = read_zip_entry(&mut zip, &full) {
                         if let Some(img_path) = extract_img_src(&html) {
                             // img src 相对于 HTML 文件所在目录，而不是 OPF 目录。
@@ -80,7 +81,10 @@ impl<S: ByteSource> EpubBook<S> {
             for i in 0..zip.len() {
                 if let Ok(f) = zip.by_index(i) {
                     let name = f.name().to_string();
-                    if is_image_ext(&name) && !name.contains("__MACOSX") && !name.ends_with(".DS_Store") {
+                    if is_image_ext(&name)
+                        && !name.contains("__MACOSX")
+                        && !name.ends_with(".DS_Store")
+                    {
                         all_images.push(name);
                     }
                 }
@@ -114,7 +118,11 @@ impl<S: ByteSource> EpubBook<S> {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
 
-        Ok(EpubBook { src, page_entries, title })
+        Ok(EpubBook {
+            src,
+            page_entries,
+            title,
+        })
     }
 }
 
@@ -181,9 +189,7 @@ fn index_for_name_ignore_case<R: Read + std::io::Seek>(
     None
 }
 
-fn find_opf_path<R: Read + std::io::Seek>(
-    zip: &mut zip::ZipArchive<R>,
-) -> Result<String> {
+fn find_opf_path<R: Read + std::io::Seek>(zip: &mut zip::ZipArchive<R>) -> Result<String> {
     let xml = read_zip_entry(zip, "META-INF/container.xml")
         .context("EPUB 缺少 META-INF/container.xml")?;
     let s = String::from_utf8_lossy(&xml);
@@ -299,8 +305,8 @@ fn read_zip_entry<R: Read + std::io::Seek>(
     zip: &mut zip::ZipArchive<R>,
     path: &str,
 ) -> Result<Vec<u8>> {
-    let idx = index_for_name_ignore_case(zip, path)
-        .with_context(|| format!("ZIP 中找不到: {path}"))?;
+    let idx =
+        index_for_name_ignore_case(zip, path).with_context(|| format!("ZIP 中找不到: {path}"))?;
     let mut f = zip.by_index(idx)?;
     let mut buf = Vec::with_capacity(f.size() as usize);
     f.read_to_end(&mut buf)?;

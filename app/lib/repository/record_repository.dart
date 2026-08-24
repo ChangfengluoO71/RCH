@@ -33,13 +33,15 @@ class RecordRepository {
     int? page,
   }) {
     final key = keyOf(source.type, source.id, path);
-    final r = records[key] ?? ReadRecord(
-      key: key,
-      sourceId: source.id,
-      sourceType: source.type,
-      path: path,
-      title: title,
-    );
+    final r =
+        records[key] ??
+        ReadRecord(
+          key: key,
+          sourceId: source.id,
+          sourceType: source.type,
+          path: path,
+          title: title,
+        );
     r.lastReadAt = DateTime.now().millisecondsSinceEpoch;
     if (page == null) {
       r.readCount++;
@@ -77,9 +79,10 @@ class RecordRepository {
       );
       if (src == null) {
         stale.add(r);
-      } else if (!src.isLocalFs && (remoteTombstones[src.id]?.contains(r.path) ?? false)) {
+      } else if (!src.isLocalFs &&
+          _matchesTombstone(r.path, remoteTombstones[src.id])) {
         stale.add(r);
-      } else if (src.isLocalFs && !File(r.path).existsSync()) {
+      } else if (src.isLocalFs && !_localAssetExists(r.path)) {
         stale.add(r);
       }
     }
@@ -87,6 +90,37 @@ class RecordRepository {
       records.remove(r.key);
     }
     return stale;
+  }
+
+  bool _matchesTombstone(String path, Set<String>? tombstones) {
+    if (tombstones == null || tombstones.isEmpty) return false;
+    final normalized = normalizeComicPath(path);
+    return tombstones.any(
+      (candidate) => normalizeComicPath(candidate) == normalized,
+    );
+  }
+
+  bool _localAssetExists(String path) {
+    if (File(path).existsSync() || Directory(path).existsSync()) return true;
+    // Archive aliases share a logical key, but the physical extension may be
+    // absent from an old read record. Check local candidates only; this path
+    // is never used for remote sources.
+    for (final ext in const [
+      '.cbz',
+      '.zip',
+      '.cbr',
+      '.rar',
+      '.cb7',
+      '.7z',
+      '.cbt',
+      '.tar',
+      '.pdf',
+      '.epub',
+      '.mobi',
+    ]) {
+      if (File('$path$ext').existsSync()) return true;
+    }
+    return false;
   }
 
   // ---- Queries ----
@@ -125,8 +159,29 @@ class RecordRepository {
   }
 
   Future<void> saveToSqlite() async {
-    for (final r in records.values) {
-      await dbUpsertRecord(record: ReadRecordDto(
+    // Persistence contains awaits; snapshot first so a read/open/delete
+    // event cannot structurally modify the live map during iteration.
+    final snapshot = records.values.toList(growable: false);
+    for (final r in snapshot) {
+      await dbUpsertRecord(
+        record: ReadRecordDto(
+          key: r.key,
+          sourceId: r.sourceId,
+          sourceType: r.sourceType,
+          path: r.path,
+          title: r.title,
+          lastPage: r.lastPage,
+          readCount: r.readCount,
+          lastReadAt: r.lastReadAt,
+        ),
+      );
+    }
+  }
+
+  /// 单条记录写入 SQLite（高频更新路径）。
+  Future<void> saveOneToSqlite(ReadRecord r) async {
+    await dbUpsertRecord(
+      record: ReadRecordDto(
         key: r.key,
         sourceId: r.sourceId,
         sourceType: r.sourceType,
@@ -135,22 +190,8 @@ class RecordRepository {
         lastPage: r.lastPage,
         readCount: r.readCount,
         lastReadAt: r.lastReadAt,
-      ));
-    }
-  }
-
-  /// 单条记录写入 SQLite（高频更新路径）。
-  Future<void> saveOneToSqlite(ReadRecord r) async {
-    await dbUpsertRecord(record: ReadRecordDto(
-      key: r.key,
-      sourceId: r.sourceId,
-      sourceType: r.sourceType,
-      path: r.path,
-      title: r.title,
-      lastPage: r.lastPage,
-      readCount: r.readCount,
-      lastReadAt: r.lastReadAt,
-    ));
+      ),
+    );
   }
 
   // ---- JSON ----
@@ -161,7 +202,13 @@ class RecordRepository {
 
   void loadFromJson(Map<String, dynamic> j) {
     records.clear();
-    records.addEntries((j['records'] as Map? ?? {}).entries.map((e) =>
-        MapEntry(e.key, ReadRecord.fromJson(Map<String, dynamic>.from(e.value)))));
+    records.addEntries(
+      (j['records'] as Map? ?? {}).entries.map(
+        (e) => MapEntry(
+          e.key,
+          ReadRecord.fromJson(Map<String, dynamic>.from(e.value)),
+        ),
+      ),
+    );
   }
 }

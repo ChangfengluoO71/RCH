@@ -106,12 +106,17 @@ pub struct DownloadProgress {
 
 impl DownloadProgress {
     pub fn new(total: u64) -> Self {
-        DownloadProgress { total: AtomicU64::new(total), downloaded: AtomicU64::new(0) }
+        DownloadProgress {
+            total: AtomicU64::new(total),
+            downloaded: AtomicU64::new(0),
+        }
     }
 
     pub fn fraction(&self) -> f64 {
         let t = self.total.load(Ordering::SeqCst);
-        if t == 0 { return 1.0; }
+        if t == 0 {
+            return 1.0;
+        }
         (self.downloaded.load(Ordering::SeqCst) as f64) / (t as f64)
     }
 }
@@ -127,7 +132,8 @@ pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
         format!("{:016x}", h.finish())
     };
     let file_path = crate::cache::CacheDir::Raw
-        .ensure().ok()?
+        .ensure()
+        .ok()?
         .join(&hash)
         .join(name);
     match std::fs::metadata(&file_path) {
@@ -213,11 +219,26 @@ impl WebDavClient {
                 _ => "",
             };
             if body.len() > 300 {
-                bail!("PROPFIND 失败:HTTP {} {}{}", status.as_u16(), hint, &body[..300]);
+                bail!(
+                    "PROPFIND 失败:HTTP {} {}{}",
+                    status.as_u16(),
+                    hint,
+                    &body[..300]
+                );
             } else if !body.is_empty() {
-                bail!("PROPFIND 失败:HTTP {} {}. 请检查地址是否包含完整的 WebDAV 路径(如 /dav)。{}", status.as_u16(), hint, body);
+                bail!(
+                    "PROPFIND 失败:HTTP {} {}. 请检查地址是否包含完整的 WebDAV 路径(如 /dav)。{}",
+                    status.as_u16(),
+                    hint,
+                    body
+                );
             } else {
-                bail!("PROPFIND 失败:HTTP {} {}. ({})", status.as_u16(), hint, self.url(path));
+                bail!(
+                    "PROPFIND 失败:HTTP {} {}. ({})",
+                    status.as_u16(),
+                    hint,
+                    self.url(path)
+                );
             }
         }
         resp.text().context("读取 PROPFIND 响应失败")
@@ -333,7 +354,11 @@ impl WebDavClient {
                 507 => "服务器存储空间不足",
                 _ => "",
             };
-            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            let snippet = if body.len() > 300 {
+                &body[..300]
+            } else {
+                &body
+            };
             bail!("上传失败:HTTP {} {}{}", status.as_u16(), hint, snippet);
         }
         Ok(())
@@ -356,7 +381,11 @@ impl WebDavClient {
                 404 => "文件不存在（可能尚未推送）",
                 _ => "",
             };
-            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            let snippet = if body.len() > 300 {
+                &body[..300]
+            } else {
+                &body
+            };
             bail!("下载失败:HTTP {} {}{}", status.as_u16(), hint, snippet);
         }
         Ok(resp.bytes().context("读取下载响应失败")?.to_vec())
@@ -373,7 +402,11 @@ impl WebDavClient {
         let status = resp.status();
         if !matches!(status.as_u16(), 201 | 405) {
             let body = resp.text().unwrap_or_default();
-            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            let snippet = if body.len() > 300 {
+                &body[..300]
+            } else {
+                &body
+            };
             bail!("创建目录失败:HTTP {} {}", status.as_u16(), snippet);
         }
         Ok(())
@@ -395,7 +428,11 @@ impl WebDavClient {
                 403 => "没有删除权限",
                 _ => "",
             };
-            let snippet = if body.len() > 300 { &body[..300] } else { &body };
+            let snippet = if body.len() > 300 {
+                &body[..300]
+            } else {
+                &body
+            };
             bail!("删除失败:HTTP {} {}{}", status.as_u16(), hint, snippet);
         }
         Ok(())
@@ -428,7 +465,11 @@ impl WebDavClient {
                 if !retry.status().is_success() {
                     let status = retry.status();
                     let body = retry.text().unwrap_or_default();
-                    let snippet = if body.len() > 300 { &body[..300] } else { &body };
+                    let snippet = if body.len() > 300 {
+                        &body[..300]
+                    } else {
+                        &body
+                    };
                     bail!(
                         "移动失败:HTTP {} {}{}",
                         status.as_u16(),
@@ -439,8 +480,17 @@ impl WebDavClient {
                 return Ok(());
             }
             let body = resp.text().unwrap_or_default();
-            let snippet = if body.len() > 300 { &body[..300] } else { &body };
-            bail!("移动失败:HTTP {} {}{}", status.as_u16(), if body.is_empty() { "" } else { " " }, snippet);
+            let snippet = if body.len() > 300 {
+                &body[..300]
+            } else {
+                &body
+            };
+            bail!(
+                "移动失败:HTTP {} {}{}",
+                status.as_u16(),
+                if body.is_empty() { "" } else { " " },
+                snippet
+            );
         }
         Ok(())
     }
@@ -467,7 +517,9 @@ impl WebDavClient {
     > {
         use std::hash::{Hash, Hasher};
 
-        let cache_dir = crate::cache::CacheDir::Raw.ensure().context("创建 raw/ 缓存目录失败")?;
+        let cache_dir = crate::cache::CacheDir::Raw
+            .ensure()
+            .context("创建 raw/ 缓存目录失败")?;
         let name = path.rsplit('/').next().unwrap_or("file.cbz");
         let hash = {
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -534,9 +586,7 @@ impl WebDavClient {
                 capability: self.capability.clone(),
             }),
             path.to_string(),
-            std::fs::metadata(&file_path)
-                .map(|m| m.len())
-                .unwrap_or(0),
+            std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0),
             f,
         ))
     }
@@ -553,7 +603,8 @@ impl WebDavClient {
     ) -> Result<PathBuf> {
         use std::hash::{Hash, Hasher};
 
-        let raw_dir = crate::cache::CacheDir::Raw.ensure()
+        let raw_dir = crate::cache::CacheDir::Raw
+            .ensure()
             .context("创建 raw/ 缓存目录失败")?;
 
         let name = path.rsplit('/').next().unwrap_or("file.cbz");
@@ -570,7 +621,8 @@ impl WebDavClient {
         if let Ok(meta) = std::fs::metadata(&file_path) {
             if meta.len() > 0 {
                 if let Some(p) = &progress {
-                    p.downloaded.store(p.total.load(Ordering::SeqCst), Ordering::SeqCst);
+                    p.downloaded
+                        .store(p.total.load(Ordering::SeqCst), Ordering::SeqCst);
                 }
                 return Ok(file_path);
             }
@@ -610,7 +662,9 @@ impl WebDavClient {
         let mut written: u64 = 0;
         loop {
             let n = resp.read(&mut buf).context("读取响应流失败")?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             disk.write_all(&buf[..n]).context("写入缓存文件失败")?;
             written += n as u64;
             if let Some(p) = &progress {
@@ -668,12 +722,27 @@ pub struct WebDavFile {
 
 impl WebDavFile {
     pub fn new(client: Arc<WebDavClient>, path: String, len: u64) -> Self {
-        WebDavFile { client, path, len, local_cache: None }
+        WebDavFile {
+            client,
+            path,
+            len,
+            local_cache: None,
+        }
     }
 
     /// 包装本地文件缓存(用于不支持 Range 的服务器回退)。
-    pub fn from_local(client: Arc<WebDavClient>, path: String, len: u64, cache_file: std::fs::File) -> Self {
-        WebDavFile { client, path, len, local_cache: Some(std::sync::Mutex::new(cache_file)) }
+    pub fn from_local(
+        client: Arc<WebDavClient>,
+        path: String,
+        len: u64,
+        cache_file: std::fs::File,
+    ) -> Self {
+        WebDavFile {
+            client,
+            path,
+            len,
+            local_cache: Some(std::sync::Mutex::new(cache_file)),
+        }
     }
 }
 
@@ -904,10 +973,7 @@ mod tests {
                 capability: ServerCapability::default(),
             };
             assert_eq!(c.url("/RCH/sync"), "https://example.com/RCH/sync");
-            assert_eq!(
-                c.url("/dav/RCH/sync"),
-                "https://example.com/dav/RCH/sync"
-            );
+            assert_eq!(c.url("/dav/RCH/sync"), "https://example.com/dav/RCH/sync");
         }
     }
 }

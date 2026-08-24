@@ -47,7 +47,14 @@ pub fn upsert_device(
     last_revision: i64,
 ) -> Result<()> {
     let conn = db::get().lock().unwrap();
-    upsert_device_on(&conn, device_id, device_name, platform, last_seen_at, last_revision)
+    upsert_device_on(
+        &conn,
+        device_id,
+        device_name,
+        platform,
+        last_seen_at,
+        last_revision,
+    )
 }
 
 #[derive(Debug, Clone)]

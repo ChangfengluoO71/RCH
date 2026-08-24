@@ -171,7 +171,8 @@ mod tests {
     #[test]
     fn bump_increments_revision_and_tracks_history() {
         let mut m = manifest_with(1);
-        m.files.insert("metas".into(), state_file_name("metas", 1, true));
+        m.files
+            .insert("metas".into(), state_file_name("metas", 1, true));
         let m2 = m.bump(
             HashMap::from([("metas".into(), state_file_name("metas", 2, true))]),
             None,
@@ -206,8 +207,10 @@ mod tests {
     #[test]
     fn push_preserves_unchanged_references() {
         let mut prev = manifest_with(21);
-        prev.files.insert("sources".into(), state_file_name("sources", 19, true));
-        prev.files.insert("metas".into(), state_file_name("metas", 21, true));
+        prev.files
+            .insert("sources".into(), state_file_name("sources", 19, true));
+        prev.files
+            .insert("metas".into(), state_file_name("metas", 21, true));
 
         // 本轮只改了 metas：sources 沿用旧引用，不产生新文件。
         let changed = HashMap::from([("metas".into(), state_file_name("metas", 22, true))]);

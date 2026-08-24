@@ -19,8 +19,19 @@ class LibraryIndexService {
 
   /// 与 SourceBrowser 一致的漫画扩展名清单。
   static const List<String> comicExts = [
-    '.cbz', '.zip', '.epub', '.cb7', '.7z', '.cbt', '.tar',
-    '.pdf', '.cbr', '.rar', '.mobi', '.azw', '.azw3',
+    '.cbz',
+    '.zip',
+    '.epub',
+    '.cb7',
+    '.7z',
+    '.cbt',
+    '.tar',
+    '.pdf',
+    '.cbr',
+    '.rar',
+    '.mobi',
+    '.azw',
+    '.azw3',
   ];
 
   static bool isComicPath(String path) {
@@ -35,7 +46,7 @@ class LibraryIndexService {
     while (s.endsWith('/') && s.length > 1) {
       s = s.substring(0, s.length - 1);
     }
-    if (s.length >= 2 && s.codeUnitAt(1) == 0x3A /* ':' */) {
+    if (s.length >= 2 && s.codeUnitAt(1) == 0x3A /* ':' */ ) {
       final first = s.substring(0, 1).toLowerCase();
       s = '$first${s.substring(1)}';
     }
@@ -44,20 +55,22 @@ class LibraryIndexService {
 
   /// 稳定条目 id：`sha256(fingerprint + "|" + normalizeIndexPath(path))`，
   /// 与 Rust `db::library_index_id` 一致。
-  static String libraryIndexId(String fingerprint, String path) =>
-      sha256
-          .convert(utf8.encode('$fingerprint|${normalizeIndexPath(path)}'))
-          .toString();
+  static String libraryIndexId(String fingerprint, String path) => sha256
+      .convert(utf8.encode('$fingerprint|${normalizeIndexPath(path)}'))
+      .toString();
 
   /// 目录变化指纹：按 path 排序聚合条目字段的 sha256（判断是否需要重新写入）。
   static String rootHashOf(List<frb.LibraryIndexDto> entries) {
-    final lines = entries
-        // 含条目 id：book_id 规范化规则变更（ADR-028 §12.4）后旧 id 不再匹配，
-        // rootHash 变化会触发一次重写，自动把旧 raw-path id 迁移为新 id。
-        .map((e) =>
-            '${e.id}|${e.path}|${e.entryType}|${e.name}|${e.size}|${e.modifiedAt}')
-        .toList()
-      ..sort();
+    final lines =
+        entries
+            // 含条目 id：book_id 规范化规则变更（ADR-028 §12.4）后旧 id 不再匹配，
+            // rootHash 变化会触发一次重写，自动把旧 raw-path id 迁移为新 id。
+            .map(
+              (e) =>
+                  '${e.id}|${e.path}|${e.entryType}|${e.name}|${e.size}|${e.modifiedAt}',
+            )
+            .toList()
+          ..sort();
     return sha256.convert(utf8.encode(lines.join('\n'))).toString();
   }
 
@@ -95,15 +108,17 @@ class LibraryIndexService {
       await frb.dbEnsureIndexEntries(
         sourceId: source.id,
         entries: entries
-            .map((e) => frb.IndexEntryInput(
-                  path: e.path,
-                  entryType: e.isDir ? 'dir' : 'file',
-                  name: e.name,
-                  size: null,
-                  modifiedAt: null,
-                  // ADR-029：显式父目录 = 浏览时的当前目录（扁平路径源关键）
-                  parentPath: path,
-                ))
+            .map(
+              (e) => frb.IndexEntryInput(
+                path: e.path,
+                entryType: e.isDir ? 'dir' : 'file',
+                name: e.name,
+                size: null,
+                modifiedAt: null,
+                // ADR-029：显式父目录 = 浏览时的当前目录（扁平路径源关键）
+                parentPath: path,
+              ),
+            )
             .toList(),
       );
     } catch (_) {}
@@ -118,10 +133,103 @@ class LibraryIndexService {
       await indexDirSnapshot(source, e.key, e.value);
       n += e.value.length;
     }
+    if (folders.isNotEmpty) {
+      final indexed = await frb.dbLoadLibraryIndexForSource(
+        sourceId: source.id,
+      );
+      final rootHash = rootHashOf(indexed);
+      final previous = await frb.dbGetSourceSnapshot(sourceId: source.id);
+      if (previous?.rootHash != rootHash ||
+          previous?.entryCount != indexed.length) {
+        await frb.dbSetSourceSnapshot(
+          sourceId: source.id,
+          lastScanTime: DateTime.now().millisecondsSinceEpoch,
+          entryCount: indexed.length,
+          rootHash: rootHash,
+        );
+      }
+    }
     return n;
   }
 
-  /// 条目元数据哈希（Phase 5.0）：sha256(path|name|type|size|mtime)，
+  /// Refresh local filesystem indexes and persisted remote snapshots. This is
+  /// the snapshot phase used by automatic scraping; it never lists a remote
+  /// source or creates a remote source session.
+  Future<({int sources, int changed, String revision, List<String> bookKeys})>
+  refreshCatalogSnapshots({
+    required List<BookSource> sources,
+    required String trigger,
+  }) async {
+    final changedKeys = <String>{};
+    final revisions = <String>[];
+    var changedSources = 0;
+    final sourceList = List<BookSource>.from(sources);
+    for (final source in sourceList) {
+      try {
+        final result = source.isLocalFs
+            ? await refreshSourceIndex(source: source, force: false)
+            : await _refreshPersistedRemoteSnapshot(source);
+        if (result.changed) changedSources++;
+        revisions.add('${source.id}:${result.revision}');
+        changedKeys.addAll(result.bookKeys);
+        await frb.dbRecordCatalogRevision(
+          scope: 'source:${source.id}',
+          revision: result.revision,
+          changedBookKeysJson: jsonEncode(result.bookKeys),
+        );
+      } catch (_) {
+        revisions.add('${source.id}:error');
+      }
+    }
+    revisions.sort();
+    final revision = sha256
+        .convert(utf8.encode(revisions.join('\n')))
+        .toString();
+    final allKeys = changedKeys.toList()..sort();
+    await frb.dbRecordCatalogRevision(
+      scope: 'global',
+      revision: revision,
+      changedBookKeysJson: jsonEncode(allKeys),
+    );
+    return (
+      sources: sourceList.length,
+      changed: changedSources,
+      revision: revision,
+      bookKeys: allKeys,
+    );
+  }
+
+  Future<
+    ({
+      int entries,
+      String message,
+      bool changed,
+      String revision,
+      List<String> bookKeys,
+    })
+  >
+  _refreshPersistedRemoteSnapshot(BookSource source) async {
+    final previous = await frb.dbGetSourceSnapshot(sourceId: source.id);
+    await buildIndexFromSnapshots(source);
+    final indexed = await frb.dbLoadLibraryIndexForSource(sourceId: source.id);
+    final revision = rootHashOf(indexed);
+    final changed =
+        previous?.rootHash != revision ||
+        previous?.entryCount != indexed.length;
+    final keys = indexed
+        .where((e) => e.entryType == 'file' && !e.deleted)
+        .map((e) => bookKeyOf(source.type, source.id, e.path))
+        .toList();
+    return (
+      entries: indexed.length,
+      message: changed ? '已从本地快照生成索引' : '目录无变化',
+      changed: changed,
+      revision: revision,
+      bookKeys: changed ? keys : const <String>[],
+    );
+  }
+
+  /// 条目元数据哈希（Phase 5.0）：sha256(path|name|type|size|mtime），
   /// 用于增量检测与"同 path 不同 metadata → LWW"判定；**不是漫画内容哈希**。
   static String entryHashOf({
     required String path,
@@ -129,11 +237,13 @@ class LibraryIndexService {
     required String entryType,
     int? size,
     int? modifiedAt,
-  }) =>
-      sha256
-          .convert(utf8.encode(
-              '${normalizeIndexPath(path)}|$name|$entryType|$size|$modifiedAt'))
-          .toString();
+  }) => sha256
+      .convert(
+        utf8.encode(
+          '${normalizeIndexPath(path)}|$name|$entryType|$size|$modifiedAt',
+        ),
+      )
+      .toString();
 
   /// 扫描本地/SMB 目录树 → 索引条目（根目录本身不入库）。
   ///
@@ -178,25 +288,27 @@ class LibraryIndexService {
         final dirStat = await dir.stat();
         final dirMtime = dirStat.modified.millisecondsSinceEpoch;
         final name = dirPath.split(Platform.pathSeparator).last;
-        entries.add(frb.LibraryIndexDto(
-          id: myId,
-          sourceId: sourceId,
-          parentId: parentId,
-          name: name,
-          path: dirPath,
-          entryType: 'dir',
-          size: null,
-          modifiedAt: dirMtime,
-          coverPath: null,
-          hash: entryHashOf(
-            path: dirPath,
+        entries.add(
+          frb.LibraryIndexDto(
+            id: myId,
+            sourceId: sourceId,
+            parentId: parentId,
             name: name,
+            path: dirPath,
             entryType: 'dir',
+            size: null,
             modifiedAt: dirMtime,
+            coverPath: null,
+            hash: entryHashOf(
+              path: dirPath,
+              name: name,
+              entryType: 'dir',
+              modifiedAt: dirMtime,
+            ),
+            updatedAt: now,
+            deleted: false,
           ),
-          updatedAt: now,
-          deleted: false,
-        ));
+        );
       }
       await for (final e in dir.list(followLinks: false)) {
         final path = e.path;
@@ -205,26 +317,28 @@ class LibraryIndexService {
           await walk(e, myId);
         } else if (e is File && isComicPath(path)) {
           final st = await e.stat();
-          entries.add(frb.LibraryIndexDto(
-            id: libraryIndexId(fingerprint, path),
-            sourceId: sourceId,
-            parentId: myId,
-            name: name,
-            path: path,
-            entryType: 'file',
-            size: st.size,
-            modifiedAt: st.modified.millisecondsSinceEpoch,
-            coverPath: null,
-            hash: entryHashOf(
-              path: path,
+          entries.add(
+            frb.LibraryIndexDto(
+              id: libraryIndexId(fingerprint, path),
+              sourceId: sourceId,
+              parentId: myId,
               name: name,
+              path: path,
               entryType: 'file',
               size: st.size,
               modifiedAt: st.modified.millisecondsSinceEpoch,
+              coverPath: null,
+              hash: entryHashOf(
+                path: path,
+                name: name,
+                entryType: 'file',
+                size: st.size,
+                modifiedAt: st.modified.millisecondsSinceEpoch,
+              ),
+              updatedAt: now,
+              deleted: false,
             ),
-            updatedAt: now,
-            deleted: false,
-          ));
+          );
         }
       }
     }
@@ -269,38 +383,42 @@ class LibraryIndexService {
         // id（无扩展名），只有 name 带扩展名；webdav/sftp/local 的 path 自带扩展名。
         final comicName = isComicPath(e.name);
         if (e.isDir) {
-          entries.add(frb.LibraryIndexDto(
-            id: id,
-            sourceId: source.id,
-            parentId: parentId,
-            name: e.name,
-            path: e.path,
-            entryType: 'dir',
-            size: null,
-            modifiedAt: null,
-            coverPath: null,
-            hash: entryHashOf(path: e.path, name: e.name, entryType: 'dir'),
-            updatedAt: now,
-            deleted: false,
-          ));
+          entries.add(
+            frb.LibraryIndexDto(
+              id: id,
+              sourceId: source.id,
+              parentId: parentId,
+              name: e.name,
+              path: e.path,
+              entryType: 'dir',
+              size: null,
+              modifiedAt: null,
+              coverPath: null,
+              hash: entryHashOf(path: e.path, name: e.name, entryType: 'dir'),
+              updatedAt: now,
+              deleted: false,
+            ),
+          );
           // 漫画包型目录（115 把 zip 漫画当文件夹）：收为条目即可（供离线识别与
           // 墓碑匹配），不递归进入内部（内部是图片，索引无意义且浪费网盘请求）。
           if (!comicName && !visited.contains(e.path)) queue.add(e.path);
         } else if (isComicPath(e.path) || comicName) {
-          entries.add(frb.LibraryIndexDto(
-            id: id,
-            sourceId: source.id,
-            parentId: parentId,
-            name: e.name,
-            path: e.path,
-            entryType: 'file',
-            size: null,
-            modifiedAt: null,
-            coverPath: null,
-            hash: entryHashOf(path: e.path, name: e.name, entryType: 'file'),
-            updatedAt: now,
-            deleted: false,
-          ));
+          entries.add(
+            frb.LibraryIndexDto(
+              id: id,
+              sourceId: source.id,
+              parentId: parentId,
+              name: e.name,
+              path: e.path,
+              entryType: 'file',
+              size: null,
+              modifiedAt: null,
+              coverPath: null,
+              hash: entryHashOf(path: e.path, name: e.name, entryType: 'file'),
+              updatedAt: now,
+              deleted: false,
+            ),
+          );
         }
       }
     }
@@ -312,22 +430,40 @@ class LibraryIndexService {
   /// - 本地/SMB：直接扫描文件树；
   /// - 云端：`listRemote` 提供目录列表（调用方按书源类型建会话）；
   /// - `force=false` 且 root_hash 未变 → 不写库直接返回"无变化"。
-  Future<({int entries, String message})> refreshSourceIndex({
+  Future<
+    ({
+      int entries,
+      String message,
+      bool changed,
+      String revision,
+      List<String> bookKeys,
+    })
+  >
+  refreshSourceIndex({
     required BookSource source,
     bool force = false,
     Future<List<FolderSnapshotEntry>> Function(String path)? listRemote,
   }) async {
     final fp = await frb.dbGetSourceFingerprint(sourceId: source.id);
     if (fp == null || fp.isEmpty) {
-      return (entries: 0, message: '书源缺少 fingerprint，无法建立索引');
+      return (
+        entries: 0,
+        message: '书源缺少 fingerprint，无法建立索引',
+        changed: false,
+        revision: 'missing-fingerprint',
+        bookKeys: <String>[],
+      );
     }
 
     final List<frb.LibraryIndexDto> entries;
     if (source.isLocalFs) {
-      final previous = await frb.dbLoadLibraryIndexForSource(sourceId: source.id);
+      final previous = await frb.dbLoadLibraryIndexForSource(
+        sourceId: source.id,
+      );
       // ADR-028 §12.4 迁移：旧 raw-path id 与新规范化 id 不一致 → 强制全量重扫，
       // 否则增量扫描会原样保留旧 id 子树，两端 book_id/parent_id 仍对不上。
-      final schemeChanged = previous.isNotEmpty &&
+      final schemeChanged =
+          previous.isNotEmpty &&
           previous.any((e) => e.id != libraryIndexId(fp, e.path));
       entries = await scanLocalSource(
         sourceId: source.id,
@@ -338,7 +474,13 @@ class LibraryIndexService {
       );
     } else {
       if (listRemote == null) {
-        return (entries: 0, message: '云端书源需要目录列表回调');
+        return (
+          entries: 0,
+          message: '云端书源需要目录列表回调',
+          changed: false,
+          revision: 'remote-refresh-not-allowed',
+          bookKeys: <String>[],
+        );
       }
       entries = await crawlRemoteSource(
         source: source,
@@ -355,17 +497,36 @@ class LibraryIndexService {
       // ADR-028 §12.5：rootHash 相同但 live 行数对不上（例如同步墓碑软删后）
       // 必须重写索引，否则本地索引永远停留在"已删除"状态。
       if (snap?.rootHash == rootHash && live == entries.length) {
-        return (entries: 0, message: '目录无变化');
+        return (
+          entries: 0,
+          message: '目录无变化',
+          changed: false,
+          revision: rootHash,
+          bookKeys: const <String>[],
+        );
       }
     }
 
-    await frb.dbReplaceSourceLibraryIndex(sourceId: source.id, entries: entries);
+    await frb.dbReplaceSourceLibraryIndex(
+      sourceId: source.id,
+      entries: entries,
+    );
     await frb.dbSetSourceSnapshot(
       sourceId: source.id,
       lastScanTime: DateTime.now().millisecondsSinceEpoch,
       entryCount: entries.length,
       rootHash: rootHash,
     );
-    return (entries: entries.length, message: '已索引 ${entries.length} 个条目');
+    final keys = entries
+        .where((e) => e.entryType == 'file' && !e.deleted)
+        .map((e) => bookKeyOf(source.type, source.id, e.path))
+        .toList();
+    return (
+      entries: entries.length,
+      message: '已索引 ${entries.length} 个条目',
+      changed: true,
+      revision: rootHash,
+      bookKeys: keys,
+    );
   }
 }

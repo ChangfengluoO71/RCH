@@ -1,13 +1,13 @@
 //! 远程书源 API(WebDAV / SFTP 会话与浏览)。
 
 use super::book::{register_book, BookInfo, CropRect, DirEntry, PageImage};
+use crate::cache;
 use crate::document;
 use crate::source::baidu::{self as baidu_source, BaiduClient};
 use crate::source::cloud115::{self as cloud115_source, Cloud115Client, Cloud115WebClient};
 use crate::source::quark::{self as quark_source, QuarkClient};
 use crate::source::sftp::{self as sftp_source, SftpClient};
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
-use crate::cache;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -155,7 +155,11 @@ pub struct WebDavSession {
 }
 
 /// 连接 WebDAV 服务器并自动探测能力,返回会话句柄与初始浏览路径。
-pub async fn webdav_connect(url: String, username: String, password: String) -> Result<WebDavSession> {
+pub async fn webdav_connect(
+    url: String,
+    username: String,
+    password: String,
+) -> Result<WebDavSession> {
     let (client, root, label) =
         tokio::task::spawn_blocking(move || -> Result<(WebDavClient, String, String)> {
             let (mut client, root) = WebDavClient::new(&url, &username, &password)?;
@@ -173,7 +177,11 @@ pub async fn webdav_connect(url: String, username: String, password: String) -> 
         .await??;
     let id = next_id();
     sessions().lock().unwrap().insert(id, Arc::new(client));
-    Ok(WebDavSession { id, root, capability_label: label })
+    Ok(WebDavSession {
+        id,
+        root,
+        capability_label: label,
+    })
 }
 
 /// 断开 WebDAV 会话。在 blocking 线程销毁客户端,避免异步上下文 drop 其内部 runtime。
@@ -447,10 +455,9 @@ pub async fn sftp_connect(
     username: String,
     password: String,
 ) -> Result<SftpSessionInfo> {
-    let client = tokio::task::spawn_blocking(move || {
-        SftpClient::connect(&host, port, &username, &password)
-    })
-    .await??;
+    let client =
+        tokio::task::spawn_blocking(move || SftpClient::connect(&host, port, &username, &password))
+            .await??;
     let id = next_id();
     sftp_sessions().lock().unwrap().insert(id, Arc::new(client));
     Ok(SftpSessionInfo {
@@ -490,11 +497,7 @@ pub async fn sftp_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
 
 /// 打开 SFTP 上的书籍，strategy 见 [`open_webdav_book`]。
 /// 整本下载优先（进度经 sftp_download_progress 轮询）；失败回退 SftpFile 流式。
-pub async fn open_sftp_book(
-    session: u64,
-    path: String,
-    strategy: String,
-) -> Result<BookInfo> {
+pub async fn open_sftp_book(session: u64, path: String, strategy: String) -> Result<BookInfo> {
     let client = get_sftp_session(session)?;
     let endpoint = client.endpoint().to_string();
     let cache_ns = format!("sftp|{}|{}", endpoint, path);
@@ -507,7 +510,10 @@ pub async fn open_sftp_book(
             tokio::task::spawn_blocking(move || client.file_size(&path)).await??
         };
         let p = Arc::new(DownloadProgress::new(file_size));
-        sftp_downloads().lock().unwrap().insert(session, Arc::clone(&p));
+        sftp_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&p));
         Some(p)
     } else {
         None
@@ -517,10 +523,11 @@ pub async fn open_sftp_book(
         let client = Arc::clone(&client);
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
-            let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
-                let src = crate::source::local::LocalFile::open(&local_path)?;
-                document::open_document(src, &path)
-            };
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    let src = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(src, &path)
+                };
             match strat {
                 OpenStrategy::Download => {
                     let local_path = client.download_to_raw_cache(&path, progress)?;
@@ -529,7 +536,8 @@ pub async fn open_sftp_book(
                 }
                 OpenStrategy::Stream => {
                     // 缓存优先：已有 raw/ 本地缓存直接本地打开，不联网
-                    if let Some(local_path) = sftp_source::raw_cache_path(client.endpoint(), &path) {
+                    if let Some(local_path) = sftp_source::raw_cache_path(client.endpoint(), &path)
+                    {
                         tracing::info!("SFTP 命中缓存，直接本地打开: {}", local_path.display());
                         open_local(local_path)
                     } else {
@@ -538,20 +546,18 @@ pub async fn open_sftp_book(
                         document::open_document(src, &path)
                     }
                 }
-                OpenStrategy::Auto => {
-                    match client.download_to_raw_cache(&path, progress) {
-                        Ok(local_path) => {
-                            tracing::info!("SFTP 整本已缓存: {}", local_path.display());
-                            open_local(local_path)
-                        }
-                        Err(e) => {
-                            tracing::warn!("SFTP 整本下载失败, 回退流式: {e}");
-                            let len = client.file_size(&path)?;
-                            let src = sftp_source::SftpFile::new(client, path.clone(), len);
-                            document::open_document(src, &path)
-                        }
+                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
+                    Ok(local_path) => {
+                        tracing::info!("SFTP 整本已缓存: {}", local_path.display());
+                        open_local(local_path)
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!("SFTP 整本下载失败, 回退流式: {e}");
+                        let len = client.file_size(&path)?;
+                        let src = sftp_source::SftpFile::new(client, path.clone(), len);
+                        document::open_document(src, &path)
+                    }
+                },
             }
         })
         .await??
@@ -816,18 +822,16 @@ pub async fn open_cloud115_cookie_book(
                         None => open_stream(Arc::clone(&client)),
                     }
                 }
-                OpenStrategy::Auto => {
-                    match client.download_to_raw_cache(&path, progress) {
-                        Ok(local_path) => {
-                            tracing::info!("115 整本已缓存: {}", local_path.display());
-                            open_local(local_path)
-                        }
-                        Err(e) => {
-                            tracing::warn!("115 整本下载失败，回退流式: {e}");
-                            open_stream(Arc::clone(&client))
-                        }
+                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
+                    Ok(local_path) => {
+                        tracing::info!("115 整本已缓存: {}", local_path.display());
+                        open_local(local_path)
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!("115 整本下载失败，回退流式: {e}");
+                        open_stream(Arc::clone(&client))
+                    }
+                },
             }
         })
         .await??
@@ -851,7 +855,12 @@ pub fn cloud115_cookie_download_progress(session: u64) -> f64 {
 
 /// 115 Cookie 书籍是否已有 raw/ 本地缓存。
 pub fn cloud115_cookie_has_raw_cache(session: u64, path: String) -> bool {
-    let client = match cloud115_cookie_sessions().lock().unwrap().get(&session).cloned() {
+    let client = match cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+    {
         Some(c) => c,
         None => return false,
     };
@@ -882,7 +891,11 @@ pub async fn cloud115_cookie_cover(
         if let Some((rgba, w, h)) =
             cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
         {
-            return Ok(PageImage { rgba, width: w, height: h });
+            return Ok(PageImage {
+                rgba,
+                width: w,
+                height: h,
+            });
         }
     }
     let origin_clone = origin.clone();
@@ -950,17 +963,19 @@ pub struct QuarkSessionInfo {
 
 /// 连接夸克网盘：`/config` + 根目录连通性测试，返回会话。
 pub async fn quark_connect(cookie: String, root_id: String) -> Result<QuarkSessionInfo> {
-    let (client, root) =
-        tokio::task::spawn_blocking(move || -> Result<(QuarkClient, String)> {
-            let client = QuarkClient::new(&cookie, &root_id)?;
-            client.check()?; // /config + 首屏 list
-            let root = client.root().to_string();
-            Ok((client, root))
-        })
-        .await??;
+    let (client, root) = tokio::task::spawn_blocking(move || -> Result<(QuarkClient, String)> {
+        let client = QuarkClient::new(&cookie, &root_id)?;
+        client.check()?; // /config + 首屏 list
+        let root = client.root().to_string();
+        Ok((client, root))
+    })
+    .await??;
     let id = next_id();
     let session_cookie = client.cookie();
-    quark_sessions().lock().unwrap().insert(id, Arc::new(client));
+    quark_sessions()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(client));
     Ok(QuarkSessionInfo {
         id,
         root,
@@ -994,11 +1009,7 @@ pub async fn quark_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
 }
 
 /// 打开夸克网盘上的书籍（path 为文件 fid，三态策略；格式探测走真实文件名）。
-pub async fn open_quark_book(
-    session: u64,
-    path: String,
-    strategy: String,
-) -> Result<BookInfo> {
+pub async fn open_quark_book(session: u64, path: String, strategy: String) -> Result<BookInfo> {
     let client = get_quark_session(session)?;
     let origin = client.origin();
     let cache_ns = format!("quark|{}|{}", origin, path);
@@ -1006,7 +1017,10 @@ pub async fn open_quark_book(
 
     let progress = if strat != OpenStrategy::Stream {
         let p = Arc::new(DownloadProgress::new(0)); // 直链不带大小，下载响应后更新
-        quark_downloads().lock().unwrap().insert(session, Arc::clone(&p));
+        quark_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&p));
         Some(p)
     } else {
         None
@@ -1016,15 +1030,16 @@ pub async fn open_quark_book(
         let client = Arc::clone(&client);
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
-            let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
-                // 缓存目录里的文件名即真实文件名（下载时按源文件名落盘）
-                let name = local_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "file.cbz".to_string());
-                let src = crate::source::local::LocalFile::open(&local_path)?;
-                document::open_document(src, &name)
-            };
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    // 缓存目录里的文件名即真实文件名（下载时按源文件名落盘）
+                    let name = local_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "file.cbz".to_string());
+                    let src = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(src, &name)
+                };
             let open_stream = |client: Arc<QuarkClient>| -> Result<Box<dyn document::Document>> {
                 let name = client.resolve_name(&path)?;
                 let info = client.downlink(&path)?;
@@ -1051,18 +1066,16 @@ pub async fn open_quark_book(
                         None => open_stream(Arc::clone(&client)),
                     }
                 }
-                OpenStrategy::Auto => {
-                    match client.download_to_raw_cache(&path, progress) {
-                        Ok(local_path) => {
-                            tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
-                            open_local(local_path)
-                        }
-                        Err(e) => {
-                            tracing::warn!("夸克网盘整本下载失败，回退流式: {e}");
-                            open_stream(Arc::clone(&client))
-                        }
+                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
+                    Ok(local_path) => {
+                        tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
+                        open_local(local_path)
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!("夸克网盘整本下载失败，回退流式: {e}");
+                        open_stream(Arc::clone(&client))
+                    }
+                },
             }
         })
         .await??
@@ -1112,7 +1125,11 @@ pub async fn quark_cover(
         if let Some((rgba, w, h)) =
             cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
         {
-            return Ok(PageImage { rgba, width: w, height: h });
+            return Ok(PageImage {
+                rgba,
+                width: w,
+                height: h,
+            });
         }
     }
     let origin_clone = origin.clone();
@@ -1178,12 +1195,18 @@ pub async fn webdav_cover(
     let origin = client.origin().to_string();
     let crop_tuple = crop.as_ref().map(|r| (r.x, r.y, r.w, r.h));
     // 先查磁盘缓存
-    let cache_lookup_path = webdav::raw_cache_path(&origin, &path)
-        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    let cache_lookup_path =
+        webdav::raw_cache_path(&origin, &path).or_else(|| Some(std::path::PathBuf::from(&path)));
     if let Some(ref lookup) = cache_lookup_path {
         let lookup_str = lookup.to_string_lossy();
-        if let Some((rgba, w, h)) = cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple) {
-            return Ok(PageImage { rgba, width: w, height: h });
+        if let Some((rgba, w, h)) =
+            cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
+        {
+            return Ok(PageImage {
+                rgba,
+                width: w,
+                height: h,
+            });
         }
     }
     let origin_clone = origin.clone();
@@ -1208,10 +1231,17 @@ pub async fn webdav_cover(
     })
     .await??;
     // 写入磁盘缓存
-    let cache_write_path = webdav::raw_cache_path(&origin, &path)
-        .or_else(|| Some(std::path::PathBuf::from(&path)));
+    let cache_write_path =
+        webdav::raw_cache_path(&origin, &path).or_else(|| Some(std::path::PathBuf::from(&path)));
     if let Some(ref wp) = cache_write_path {
-        let _ = cache::cover_cache_write(&wp.to_string_lossy(), page, width, height, crop_tuple, &img.rgba);
+        let _ = cache::cover_cache_write(
+            &wp.to_string_lossy(),
+            page,
+            width,
+            height,
+            crop_tuple,
+            &img.rgba,
+        );
     }
     Ok(PageImage {
         rgba: img.rgba,
@@ -1278,7 +1308,10 @@ pub async fn baidu_connect(
         })
         .await??;
     let id = next_id();
-    baidu_sessions().lock().unwrap().insert(id, Arc::new(client));
+    baidu_sessions()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(client));
     Ok(BaiduSessionInfo {
         id,
         root,
@@ -1312,11 +1345,7 @@ pub async fn baidu_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
 }
 
 /// 打开百度网盘上的书籍（三态策略，镜像 open_webdav_book）。
-pub async fn open_baidu_book(
-    session: u64,
-    path: String,
-    strategy: String,
-) -> Result<BookInfo> {
+pub async fn open_baidu_book(session: u64, path: String, strategy: String) -> Result<BookInfo> {
     let client = get_baidu_session(session)?;
     let origin = client.origin();
     let cache_ns = format!("baidu|{}|{}", origin, path);
@@ -1324,10 +1353,13 @@ pub async fn open_baidu_book(
 
     let progress = if strat != OpenStrategy::Stream {
         let (client, path) = (Arc::clone(&client), path.clone());
-        let size = tokio::task::spawn_blocking(move || client.dlink(&path).map(|(_, s)| s))
-            .await??;
+        let size =
+            tokio::task::spawn_blocking(move || client.dlink(&path).map(|(_, s)| s)).await??;
         let p = Arc::new(DownloadProgress::new(size));
-        baidu_downloads().lock().unwrap().insert(session, Arc::clone(&p));
+        baidu_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&p));
         Some(p)
     } else {
         None
@@ -1337,10 +1369,11 @@ pub async fn open_baidu_book(
         let client = Arc::clone(&client);
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
-            let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
-                let src = crate::source::local::LocalFile::open(&local_path)?;
-                document::open_document(src, &path)
-            };
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    let src = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(src, &path)
+                };
             let open_stream = |client: Arc<BaiduClient>| -> Result<Box<dyn document::Document>> {
                 let (link, size) = client.dlink(&path)?;
                 if client.probe_range(&link) {
@@ -1362,7 +1395,10 @@ pub async fn open_baidu_book(
                     // 缓存优先：已有 raw/ 本地缓存直接本地打开，不联网
                     match baidu_source::raw_cache_path(&client.origin(), &path) {
                         Some(local_path) => {
-                            tracing::info!("百度网盘命中缓存，直接本地打开: {}", local_path.display());
+                            tracing::info!(
+                                "百度网盘命中缓存，直接本地打开: {}",
+                                local_path.display()
+                            );
                             open_local(local_path)
                         }
                         None => open_stream(Arc::clone(&client)),
@@ -1427,7 +1463,11 @@ pub async fn baidu_cover(
         if let Some((rgba, w, h)) =
             cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
         {
-            return Ok(PageImage { rgba, width: w, height: h });
+            return Ok(PageImage {
+                rgba,
+                width: w,
+                height: h,
+            });
         }
     }
     let origin_clone = origin.clone();
@@ -1450,12 +1490,7 @@ pub async fn baidu_cover(
             let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
             return crate::decode::decode_cover(&bytes, width, height, crop);
         }
-        let src = baidu_source::BaiduFile::new(
-            client_clone,
-            path_clone.clone(),
-            size,
-            link,
-        );
+        let src = baidu_source::BaiduFile::new(client_clone, path_clone.clone(), size, link);
         let book = document::open_document(src, &path_clone)?;
         let bytes = book.page_bytes(page)?;
         let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
@@ -1528,8 +1563,8 @@ pub async fn cloud115_qr_poll(
     time: i64,
     sign: String,
 ) -> Result<Cloud115QrPollResult> {
-    let r = tokio::task::spawn_blocking(move || cloud115_source::qr_poll(&uid, time, &sign))
-        .await??;
+    let r =
+        tokio::task::spawn_blocking(move || cloud115_source::qr_poll(&uid, time, &sign)).await??;
     Ok(Cloud115QrPollResult {
         status: r.status,
         access_token: r.access_token,
@@ -1553,7 +1588,10 @@ pub async fn cloud115_connect(
         })
         .await??;
     let id = next_id();
-    cloud115_sessions().lock().unwrap().insert(id, Arc::new(client));
+    cloud115_sessions()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(client));
     Ok(Cloud115SessionInfo {
         id,
         root,
@@ -1587,11 +1625,7 @@ pub async fn cloud115_list(session: u64, path: String) -> Result<Vec<DirEntry>> 
 }
 
 /// 打开 115 上的书籍（path 为文件提取码，三态策略）。
-pub async fn open_cloud115_book(
-    session: u64,
-    path: String,
-    strategy: String,
-) -> Result<BookInfo> {
+pub async fn open_cloud115_book(session: u64, path: String, strategy: String) -> Result<BookInfo> {
     let client = get_cloud115_session(session)?;
     let origin = client.origin();
     let cache_ns = format!("115|{}|{}", origin, path);
@@ -1599,7 +1633,10 @@ pub async fn open_cloud115_book(
 
     let progress = if strat != OpenStrategy::Stream {
         let p = Arc::new(DownloadProgress::new(0)); // 115 直链不带大小，下载响应后更新
-        cloud115_downloads().lock().unwrap().insert(session, Arc::clone(&p));
+        cloud115_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&p));
         Some(p)
     } else {
         None
@@ -1609,10 +1646,11 @@ pub async fn open_cloud115_book(
         let client = Arc::clone(&client);
         let path = path.clone();
         tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
-            let open_local = |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
-                let src = crate::source::local::LocalFile::open(&local_path)?;
-                document::open_document(src, &path)
-            };
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    let src = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(src, &path)
+                };
             let open_stream = |client: Arc<Cloud115Client>| -> Result<Box<dyn document::Document>> {
                 let (url, _) = client.downurl(&path)?;
                 let size = client
@@ -1637,18 +1675,16 @@ pub async fn open_cloud115_book(
                         None => open_stream(Arc::clone(&client)),
                     }
                 }
-                OpenStrategy::Auto => {
-                    match client.download_to_raw_cache(&path, &path, progress) {
-                        Ok(local_path) => {
-                            tracing::info!("115 整本已缓存: {}", local_path.display());
-                            open_local(local_path)
-                        }
-                        Err(e) => {
-                            tracing::warn!("115 整本下载失败，回退流式: {e}");
-                            open_stream(Arc::clone(&client))
-                        }
+                OpenStrategy::Auto => match client.download_to_raw_cache(&path, &path, progress) {
+                    Ok(local_path) => {
+                        tracing::info!("115 整本已缓存: {}", local_path.display());
+                        open_local(local_path)
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!("115 整本下载失败，回退流式: {e}");
+                        open_stream(Arc::clone(&client))
+                    }
+                },
             }
         })
         .await??
@@ -1698,7 +1734,11 @@ pub async fn cloud115_cover(
         if let Some((rgba, w, h)) =
             cache::cover_cache_read(&lookup_str, page, width, height, crop_tuple)
         {
-            return Ok(PageImage { rgba, width: w, height: h });
+            return Ok(PageImage {
+                rgba,
+                width: w,
+                height: h,
+            });
         }
     }
     let origin_clone = origin.clone();
@@ -1725,8 +1765,7 @@ pub async fn cloud115_cover(
                 return crate::decode::decode_cover(&bytes, width, height, crop);
             }
         };
-        let src =
-            cloud115_source::Cloud115File::new(client_clone, path_clone.clone(), size, url);
+        let src = cloud115_source::Cloud115File::new(client_clone, path_clone.clone(), size, url);
         let book = document::open_document(src, &path_clone)?;
         let bytes = book.page_bytes(page)?;
         let crop = crop.map(|r| (r.x, r.y, r.w, r.h));

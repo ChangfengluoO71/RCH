@@ -55,10 +55,7 @@ mod tests {
             "/books",
             None,
         );
-        assert_eq!(
-            book_id(&fp, "/books/a.cbz"),
-            book_id(&fp, "/books/a.cbz")
-        );
+        assert_eq!(book_id(&fp, "/books/a.cbz"), book_id(&fp, "/books/a.cbz"));
         assert_ne!(book_id(&fp, "/books/a.cbz"), book_id(&fp, "/books/b.cbz"));
         let fp2 = db::compute_source_fingerprint(
             "webdav",

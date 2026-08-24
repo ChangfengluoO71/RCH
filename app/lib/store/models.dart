@@ -6,7 +6,8 @@ import 'package:flutter/services.dart';
 /// 书源:本地 / WebDAV / SMB / SFTP / 百度网盘 / 115 网盘 / 夸克网盘。
 class BookSource {
   final String id;
-  final String type; // 'local' | 'webdav' | 'smb' | 'sftp' | 'baidu' | '115' | 'quark'
+  final String
+  type; // 'local' | 'webdav' | 'smb' | 'sftp' | 'baidu' | '115' | 'quark'
   String name;
   String path; // local: 目录路径;webdav: 初始浏览路径
   String? url;
@@ -49,10 +50,13 @@ class BookSource {
   bool get isBaidu => type == 'baidu';
   bool get is115 => type == '115';
   bool get isQuark => type == 'quark';
+
   /// 幽灵书源：来自其他设备的本地书源，仅元数据、不可打开阅读。
   bool get isGhost => remoteOnly;
+
   /// 走本地文件系统链路的来源（本地目录 + SMB UNC）。
   bool get isLocalFs => type == 'local' || type == 'smb';
+
   /// 需要会话连接的远程来源（WebDAV / SFTP / 百度网盘 / 115 / 夸克网盘）。
   bool get needsSession =>
       type == 'webdav' ||
@@ -71,50 +75,52 @@ class BookSource {
     if (type == 'baidu') return (emoji: '\u{1F7E2}', label: '百度网盘');
     if (type == '115') return (emoji: '\u{1F7E1}', label: '115 网盘');
     if (type == 'quark') return (emoji: '\u{1F7E1}', label: '夸克网盘');
-    if (capabilityLabel == 'local') return (emoji: '\u{1F7E2}', label: 'WebDAV 高速');
-    if (capabilityLabel == 'webdav_range') return (emoji: '\u{1F7E1}', label: 'WebDAV 远程');
+    if (capabilityLabel == 'local')
+      return (emoji: '\u{1F7E2}', label: 'WebDAV 高速');
+    if (capabilityLabel == 'webdav_range')
+      return (emoji: '\u{1F7E1}', label: 'WebDAV 远程');
     return (emoji: '\u{1F534}', label: 'WebDAV 无Range');
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'type': type,
-        'name': name,
-        'path': path,
-        if (url != null) 'url': url,
-        if (username != null) 'username': username,
-        if (password != null) 'password': password,
-        if (port != null) 'port': port,
-        if (refreshToken != null) 'refreshToken': refreshToken,
-        if (clientId != null) 'clientId': clientId,
-        if (clientSecret != null) 'clientSecret': clientSecret,
-        if (rootId != null) 'rootId': rootId,
-        if (cookie != null) 'cookie': cookie,
-        'note': note,
-        if (capabilityLabel.isNotEmpty) 'capabilityLabel': capabilityLabel,
-        if (remoteOnly) 'remoteOnly': true,
-        if (originDeviceId != null) 'originDeviceId': originDeviceId,
-      };
+    'id': id,
+    'type': type,
+    'name': name,
+    'path': path,
+    if (url != null) 'url': url,
+    if (username != null) 'username': username,
+    if (password != null) 'password': password,
+    if (port != null) 'port': port,
+    if (refreshToken != null) 'refreshToken': refreshToken,
+    if (clientId != null) 'clientId': clientId,
+    if (clientSecret != null) 'clientSecret': clientSecret,
+    if (rootId != null) 'rootId': rootId,
+    if (cookie != null) 'cookie': cookie,
+    'note': note,
+    if (capabilityLabel.isNotEmpty) 'capabilityLabel': capabilityLabel,
+    if (remoteOnly) 'remoteOnly': true,
+    if (originDeviceId != null) 'originDeviceId': originDeviceId,
+  };
 
   factory BookSource.fromJson(Map<String, dynamic> j) => BookSource(
-        id: j['id'] as String,
-        type: j['type'] as String,
-        name: j['name'] as String,
-        path: j['path'] as String? ?? '/',
-        url: j['url'] as String?,
-        username: j['username'] as String?,
-        password: j['password'] as String?,
-        port: j['port'] as int?,
-        refreshToken: j['refreshToken'] as String?,
-        clientId: j['clientId'] as String?,
-        clientSecret: j['clientSecret'] as String?,
-        rootId: j['rootId'] as String?,
-        cookie: j['cookie'] as String?,
-        note: (j['note'] as String?) ?? '',
-        capabilityLabel: (j['capabilityLabel'] as String?) ?? '',
-        remoteOnly: j['remoteOnly'] as bool? ?? false,
-        originDeviceId: j['originDeviceId'] as String?,
-      );
+    id: j['id'] as String,
+    type: j['type'] as String,
+    name: j['name'] as String,
+    path: j['path'] as String? ?? '/',
+    url: j['url'] as String?,
+    username: j['username'] as String?,
+    password: j['password'] as String?,
+    port: j['port'] as int?,
+    refreshToken: j['refreshToken'] as String?,
+    clientId: j['clientId'] as String?,
+    clientSecret: j['clientSecret'] as String?,
+    rootId: j['rootId'] as String?,
+    cookie: j['cookie'] as String?,
+    note: (j['note'] as String?) ?? '',
+    capabilityLabel: (j['capabilityLabel'] as String?) ?? '',
+    remoteOnly: j['remoteOnly'] as bool? ?? false,
+    originDeviceId: j['originDeviceId'] as String?,
+  );
 }
 
 /// 阅读记录:最近/最多阅读、阅读进度。
@@ -140,26 +146,26 @@ class ReadRecord {
   });
 
   Map<String, dynamic> toJson() => {
-        'key': key,
-        'sourceId': sourceId,
-        'sourceType': sourceType,
-        'path': path,
-        'title': title,
-        'lastPage': lastPage,
-        'readCount': readCount,
-        'lastReadAt': lastReadAt,
-      };
+    'key': key,
+    'sourceId': sourceId,
+    'sourceType': sourceType,
+    'path': path,
+    'title': title,
+    'lastPage': lastPage,
+    'readCount': readCount,
+    'lastReadAt': lastReadAt,
+  };
 
   factory ReadRecord.fromJson(Map<String, dynamic> j) => ReadRecord(
-        key: j['key'] as String,
-        sourceId: j['sourceId'] as String,
-        sourceType: j['sourceType'] as String,
-        path: j['path'] as String,
-        title: j['title'] as String,
-        lastPage: j['lastPage'] as int? ?? 0,
-        readCount: j['readCount'] as int? ?? 0,
-        lastReadAt: j['lastReadAt'] as int? ?? 0,
-      );
+    key: j['key'] as String,
+    sourceId: j['sourceId'] as String,
+    sourceType: j['sourceType'] as String,
+    path: j['path'] as String,
+    title: j['title'] as String,
+    lastPage: j['lastPage'] as int? ?? 0,
+    readCount: j['readCount'] as int? ?? 0,
+    lastReadAt: j['lastReadAt'] as int? ?? 0,
+  );
 }
 
 /// 封面质量(影响扫描速度与清晰度)。
@@ -169,8 +175,10 @@ enum CoverQuality { low, medium, high }
 enum BookOpenStrategy {
   /// 自动（默认）：先整本下载到缓存，失败回退流式。
   auto('自动（先下载，失败转流式）'),
+
   /// 优先下载整本：有进度条、之后秒开。
   download('优先下载整本'),
+
   /// 直接流式：即点即读、不占缓存。
   stream('直接流式');
 
@@ -182,8 +190,10 @@ enum BookOpenStrategy {
 enum ReadMode {
   /// 日漫:从右到左翻页。
   manga('日漫'),
+
   /// 美漫:从左到右翻页。
   comic('美漫'),
+
   /// 条漫:垂直连续滚动。
   webtoon('条漫');
 
@@ -195,6 +205,7 @@ enum ReadMode {
 enum DualPageMode {
   /// 单页显示。
   off('关'),
+
   /// 固定双页拼接。
   force('开');
 
@@ -205,59 +216,60 @@ enum DualPageMode {
 extension CoverQualitySize on CoverQuality {
   /// 封面缩略图的目标 (宽,高) 像素。
   (int, int) get size => switch (this) {
-        CoverQuality.low => (170, 240),
-        CoverQuality.medium => (340, 480),
-        CoverQuality.high => (510, 720),
-      };
+    CoverQuality.low => (170, 240),
+    CoverQuality.medium => (340, 480),
+    CoverQuality.high => (510, 720),
+  };
 
   String get label => switch (this) {
-        CoverQuality.low => '低(最快)',
-        CoverQuality.medium => '中(默认)',
-        CoverQuality.high => '高(最清晰)',
-      };
+    CoverQuality.low => '低(最快)',
+    CoverQuality.medium => '中(默认)',
+    CoverQuality.high => '高(最清晰)',
+  };
 }
 
 /// 自定义键盘绑定(5 个动作,只存 keyId;键盘 only,不含鼠标组合键)。
 class KeyBinds {
-  int forward;   // 前进
-  int back;      // 后退
-  int zoomIn;    // 放大
-  int zoomOut;   // 缩小
+  int forward; // 前进
+  int back; // 后退
+  int zoomIn; // 放大
+  int zoomOut; // 缩小
   int zoomReset; // 缩放还原
 
-  KeyBinds({
-    int? forward,
-    int? back,
-    int? zoomIn,
-    int? zoomOut,
-    int? zoomReset,
-  })  : forward = forward ?? LogicalKeyboardKey.arrowRight.keyId,
-        back = back ?? LogicalKeyboardKey.arrowLeft.keyId,
-        zoomIn = zoomIn ?? LogicalKeyboardKey.equal.keyId,
-        zoomOut = zoomOut ?? LogicalKeyboardKey.minus.keyId,
-        zoomReset = zoomReset ?? LogicalKeyboardKey.digit0.keyId;
+  KeyBinds({int? forward, int? back, int? zoomIn, int? zoomOut, int? zoomReset})
+    : forward = forward ?? LogicalKeyboardKey.arrowRight.keyId,
+      back = back ?? LogicalKeyboardKey.arrowLeft.keyId,
+      zoomIn = zoomIn ?? LogicalKeyboardKey.equal.keyId,
+      zoomOut = zoomOut ?? LogicalKeyboardKey.minus.keyId,
+      zoomReset = zoomReset ?? LogicalKeyboardKey.digit0.keyId;
 
-  LogicalKeyboardKey get forwardKey => LogicalKeyboardKey.findKeyByKeyId(forward) ?? LogicalKeyboardKey.arrowRight;
-  LogicalKeyboardKey get backKey => LogicalKeyboardKey.findKeyByKeyId(back) ?? LogicalKeyboardKey.arrowLeft;
-  LogicalKeyboardKey get zoomInKey => LogicalKeyboardKey.findKeyByKeyId(zoomIn) ?? LogicalKeyboardKey.equal;
-  LogicalKeyboardKey get zoomOutKey => LogicalKeyboardKey.findKeyByKeyId(zoomOut) ?? LogicalKeyboardKey.minus;
-  LogicalKeyboardKey get zoomResetKey => LogicalKeyboardKey.findKeyByKeyId(zoomReset) ?? LogicalKeyboardKey.digit0;
+  LogicalKeyboardKey get forwardKey =>
+      LogicalKeyboardKey.findKeyByKeyId(forward) ??
+      LogicalKeyboardKey.arrowRight;
+  LogicalKeyboardKey get backKey =>
+      LogicalKeyboardKey.findKeyByKeyId(back) ?? LogicalKeyboardKey.arrowLeft;
+  LogicalKeyboardKey get zoomInKey =>
+      LogicalKeyboardKey.findKeyByKeyId(zoomIn) ?? LogicalKeyboardKey.equal;
+  LogicalKeyboardKey get zoomOutKey =>
+      LogicalKeyboardKey.findKeyByKeyId(zoomOut) ?? LogicalKeyboardKey.minus;
+  LogicalKeyboardKey get zoomResetKey =>
+      LogicalKeyboardKey.findKeyByKeyId(zoomReset) ?? LogicalKeyboardKey.digit0;
 
   Map<String, dynamic> toJson() => {
-        'forward': forward,
-        'back': back,
-        'zoomIn': zoomIn,
-        'zoomOut': zoomOut,
-        'zoomReset': zoomReset,
-      };
+    'forward': forward,
+    'back': back,
+    'zoomIn': zoomIn,
+    'zoomOut': zoomOut,
+    'zoomReset': zoomReset,
+  };
 
   factory KeyBinds.fromJson(Map<String, dynamic>? j) => KeyBinds(
-        forward: j?['forward'] as int?,
-        back: j?['back'] as int?,
-        zoomIn: j?['zoomIn'] as int?,
-        zoomOut: j?['zoomOut'] as int?,
-        zoomReset: j?['zoomReset'] as int?,
-      );
+    forward: j?['forward'] as int?,
+    back: j?['back'] as int?,
+    zoomIn: j?['zoomIn'] as int?,
+    zoomOut: j?['zoomOut'] as int?,
+    zoomReset: j?['zoomReset'] as int?,
+  );
 }
 
 /// 应用设置。
@@ -273,7 +285,8 @@ class AppSettings {
   String? cacheDir; // 自定义缓存目录（null = 默认）
   bool autoConvertCbz; // 刷新本地书源时自动将漫画文件夹/zip 转为 CBZ
   BookOpenStrategy bookOpenStrategy; // 远程书源打开策略（WebDAV/SFTP 共用）
-  String tabletLayout; // 'auto' | 'desktop' | 'mobile'：平板布局模式（auto=按宽度，desktop=桌面侧栏，mobile=手机底部导航）
+  String
+  tabletLayout; // 'auto' | 'desktop' | 'mobile'：平板布局模式（auto=按宽度，desktop=桌面侧栏，mobile=手机底部导航）
   String updateMirror; // GitHub 下载镜像前缀（''=官方直连；自定义镜像也存这里）
   String updateMirrorList; // 远程拉取的镜像列表 JSON（[{name,url}]），供自动更新
   int updateMirrorFetchedAt; // 镜像列表最后成功拉取时间（ms epoch，0=从未）
@@ -297,52 +310,52 @@ class AppSettings {
   }) : keys = keys ?? KeyBinds();
 
   Map<String, dynamic> toJson() => {
-        'coverQuality': coverQuality.name,
-        'themeMode': themeMode,
-        'readMode': readMode.name,
-        'invertTap': invertTap,
-        'dualPageMode': dualPageMode.name,
-        'dualPageGap': dualPageGap,
-        'skipFrontCover': skipFrontCover,
-        'keys': keys.toJson(),
-        if (cacheDir != null) 'cacheDir': cacheDir,
-        'autoConvertCbz': autoConvertCbz,
-        'bookOpenStrategy': bookOpenStrategy.name,
-        'tabletLayout': tabletLayout,
-        'updateMirror': updateMirror,
-        'updateMirrorList': updateMirrorList,
-        'updateMirrorFetchedAt': updateMirrorFetchedAt,
-      };
+    'coverQuality': coverQuality.name,
+    'themeMode': themeMode,
+    'readMode': readMode.name,
+    'invertTap': invertTap,
+    'dualPageMode': dualPageMode.name,
+    'dualPageGap': dualPageGap,
+    'skipFrontCover': skipFrontCover,
+    'keys': keys.toJson(),
+    if (cacheDir != null) 'cacheDir': cacheDir,
+    'autoConvertCbz': autoConvertCbz,
+    'bookOpenStrategy': bookOpenStrategy.name,
+    'tabletLayout': tabletLayout,
+    'updateMirror': updateMirror,
+    'updateMirrorList': updateMirrorList,
+    'updateMirrorFetchedAt': updateMirrorFetchedAt,
+  };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
-        coverQuality: CoverQuality.values.firstWhere(
-          (q) => q.name == j['coverQuality'],
-          orElse: () => CoverQuality.medium,
-        ),
-        themeMode: (j['themeMode'] as String?) ?? 'dark',
-        readMode: ReadMode.values.firstWhere(
-          (r) => r.name == j['readMode'],
-          orElse: () => ReadMode.manga,
-        ),
-        invertTap: (j['invertTap'] as bool?) ?? false,
-        dualPageMode: DualPageMode.values.firstWhere(
-          (d) => d.name == j['dualPageMode'],
-          orElse: () => DualPageMode.off,
-        ),
-        dualPageGap: (j['dualPageGap'] as int?) ?? 0,
-        skipFrontCover: (j['skipFrontCover'] as bool?) ?? true,
-        keys: KeyBinds.fromJson(_asStringMap(j['keys'])),
-        cacheDir: j['cacheDir'] as String?,
-        autoConvertCbz: (j['autoConvertCbz'] as bool?) ?? true,
-        bookOpenStrategy: BookOpenStrategy.values.firstWhere(
-          (s) => s.name == j['bookOpenStrategy'],
-          orElse: () => BookOpenStrategy.auto,
-        ),
-        tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
-        updateMirror: (j['updateMirror'] as String?) ?? '',
-        updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),
-        updateMirrorFetchedAt: (j['updateMirrorFetchedAt'] as int?) ?? 0,
-      );
+    coverQuality: CoverQuality.values.firstWhere(
+      (q) => q.name == j['coverQuality'],
+      orElse: () => CoverQuality.medium,
+    ),
+    themeMode: (j['themeMode'] as String?) ?? 'dark',
+    readMode: ReadMode.values.firstWhere(
+      (r) => r.name == j['readMode'],
+      orElse: () => ReadMode.manga,
+    ),
+    invertTap: (j['invertTap'] as bool?) ?? false,
+    dualPageMode: DualPageMode.values.firstWhere(
+      (d) => d.name == j['dualPageMode'],
+      orElse: () => DualPageMode.off,
+    ),
+    dualPageGap: (j['dualPageGap'] as int?) ?? 0,
+    skipFrontCover: (j['skipFrontCover'] as bool?) ?? true,
+    keys: KeyBinds.fromJson(_asStringMap(j['keys'])),
+    cacheDir: j['cacheDir'] as String?,
+    autoConvertCbz: (j['autoConvertCbz'] as bool?) ?? true,
+    bookOpenStrategy: BookOpenStrategy.values.firstWhere(
+      (s) => s.name == j['bookOpenStrategy'],
+      orElse: () => BookOpenStrategy.auto,
+    ),
+    tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
+    updateMirror: (j['updateMirror'] as String?) ?? '',
+    updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),
+    updateMirrorFetchedAt: (j['updateMirrorFetchedAt'] as int?) ?? 0,
+  );
 }
 
 /// 兼容 `updateMirrorList` 的两种存储形态：JSON 字符串或已解析的 List/Map。
@@ -377,12 +390,13 @@ class BookMeta {
   int coverPage;
   double? cropX, cropY, cropW, cropH; // 裁剪区域(相对 0-1),null=整页
   List<String> tags;
+
   /// 每页旋转: pageIndex -> 度数(0/90/180/270)。仅记录非 0 的页。
   Map<int, int> rotations;
   // 元数据标签(作者/类别/系列,智能扫描用)
-  String author;   // 作者
-  String genre;    // 类别
-  String series;   // 系列
+  String author; // 作者
+  String genre; // 类别
+  String series; // 系列
   String summary; // 简介
   String comment; // 感想
   String title; // 标题(默认原文件名)
@@ -404,48 +418,52 @@ class BookMeta {
     this.comment = '',
     this.title = '',
     this.chineseTitle = '',
-  })  : tags = tags ?? [],
-        rotations = rotations ?? {};
+  }) : tags = tags ?? [],
+       rotations = rotations ?? {};
 
   bool get hasCrop => cropX != null;
 
-  List<String> get metaTags => [if (author.isNotEmpty) author, if (genre.isNotEmpty) genre, if (series.isNotEmpty) series];
+  List<String> get metaTags => [
+    if (author.isNotEmpty) author,
+    if (genre.isNotEmpty) genre,
+    if (series.isNotEmpty) series,
+  ];
 
   Map<String, dynamic> toJson() => {
-        'key': key,
-        'coverPage': coverPage,
-        if (cropX != null) 'cropX': cropX,
-        if (cropY != null) 'cropY': cropY,
-        if (cropW != null) 'cropW': cropW,
-        if (cropH != null) 'cropH': cropH,
-        'tags': tags,
-        'author': author,
-        'genre': genre,
-        'series': series,
-        'title': title,
-        'chineseTitle': chineseTitle,
-        'summary': summary,
-        'comment': comment,
-        'rotations': rotations.map((k, v) => MapEntry('$k', v)),
-      };
+    'key': key,
+    'coverPage': coverPage,
+    if (cropX != null) 'cropX': cropX,
+    if (cropY != null) 'cropY': cropY,
+    if (cropW != null) 'cropW': cropW,
+    if (cropH != null) 'cropH': cropH,
+    'tags': tags,
+    'author': author,
+    'genre': genre,
+    'series': series,
+    'title': title,
+    'chineseTitle': chineseTitle,
+    'summary': summary,
+    'comment': comment,
+    'rotations': rotations.map((k, v) => MapEntry('$k', v)),
+  };
 
   factory BookMeta.fromJson(Map<String, dynamic> j) => BookMeta(
-        key: j['key'] as String,
-        coverPage: j['coverPage'] as int? ?? 0,
-        cropX: (j['cropX'] as num?)?.toDouble(),
-        cropY: (j['cropY'] as num?)?.toDouble(),
-        cropW: (j['cropW'] as num?)?.toDouble(),
-        cropH: (j['cropH'] as num?)?.toDouble(),
-        tags: (j['tags'] as List?)?.map((e) => '$e').toList() ?? [],
-        author: (j['author'] as String?) ?? '',
-        genre: (j['genre'] as String?) ?? '',
-        series: (j['series'] as String?) ?? '',
-        title: (j['title'] as String?) ?? '',
-        chineseTitle: (j['chineseTitle'] as String?) ?? '',
-        summary: (j['summary'] as String?) ?? '',
-        comment: (j['comment'] as String?) ?? '',
-        rotations: parseBookRotations(j['rotations']),
-      );
+    key: j['key'] as String,
+    coverPage: j['coverPage'] as int? ?? 0,
+    cropX: (j['cropX'] as num?)?.toDouble(),
+    cropY: (j['cropY'] as num?)?.toDouble(),
+    cropW: (j['cropW'] as num?)?.toDouble(),
+    cropH: (j['cropH'] as num?)?.toDouble(),
+    tags: (j['tags'] as List?)?.map((e) => '$e').toList() ?? [],
+    author: (j['author'] as String?) ?? '',
+    genre: (j['genre'] as String?) ?? '',
+    series: (j['series'] as String?) ?? '',
+    title: (j['title'] as String?) ?? '',
+    chineseTitle: (j['chineseTitle'] as String?) ?? '',
+    summary: (j['summary'] as String?) ?? '',
+    comment: (j['comment'] as String?) ?? '',
+    rotations: parseBookRotations(j['rotations']),
+  );
 }
 
 /// 解析每页旋转数据：兼容 JSON 对象（{"0":90}）或 JSON 字符串。
@@ -480,26 +498,60 @@ Map<int, int> parseBookRotations(dynamic raw) {
 /// - mobi/azw/azw3 归一到 .mobi。
 /// - 其余格式（epub/pdf 等）保持不变。
 String normalizeComicPath(String path) {
-  final lower = path.toLowerCase();
+  // Book identity is persisted and shared with Rust.  Normalize path spelling
+  // before applying archive aliases so legacy `F:\\...` and catalog `f:/...`
+  // entries cannot materialize as two metadata rows.
+  var normalized = path.trim().replaceAll('\\', '/');
+  while (normalized.endsWith('/') && normalized.length > 1) {
+    normalized = normalized.substring(0, normalized.length - 1);
+  }
+  if (normalized.length >= 2 && normalized.codeUnitAt(1) == 0x3A) {
+    normalized = '${normalized[0].toLowerCase()}${normalized.substring(1)}';
+  }
+  final lower = normalized.toLowerCase();
   for (final ext in const [
-    '.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar',
+    '.cbz',
+    '.zip',
+    '.cbr',
+    '.rar',
+    '.cb7',
+    '.7z',
+    '.cbt',
+    '.tar',
   ]) {
     if (lower.endsWith(ext)) {
-      return path.substring(0, path.length - ext.length);
+      return normalized.substring(0, normalized.length - ext.length);
     }
   }
   if (lower.endsWith('.azw3')) {
-    return '${path.substring(0, path.length - 5)}.mobi';
+    return '${normalized.substring(0, normalized.length - 5)}.mobi';
   }
   if (lower.endsWith('.azw')) {
-    return '${path.substring(0, path.length - 4)}.mobi';
+    return '${normalized.substring(0, normalized.length - 4)}.mobi';
   }
-  return path;
+  return normalized;
 }
 
 /// 书 key：type|sourceId|规范化路径。所有读取记录/元数据/标签关联统一走这里。
 String bookKeyOf(String sourceType, String sourceId, String path) =>
     '$sourceType|$sourceId|${normalizeComicPath(path)}';
+
+/// Normalize a persisted `book_key` while preserving any `|` characters that
+/// may legitimately occur in the path portion. Older tag links were written
+/// with the physical archive extension attached; repositories use the logical
+/// key produced by [bookKeyOf].
+String normalizePersistedBookKey(String key) {
+  final first = key.indexOf('|');
+  final second = first < 0 ? -1 : key.indexOf('|', first + 1);
+  if (first <= 0 || second <= first + 1 || second >= key.length - 1) {
+    return key;
+  }
+  return bookKeyOf(
+    key.substring(0, first),
+    key.substring(first + 1, second),
+    key.substring(second + 1),
+  );
+}
 
 // ============================================================
 // ADR-017: 标签独立建模 — Tag 实体 + BookTag 关联
@@ -515,7 +567,11 @@ class Tag {
   Tag({required this.id, required this.name, int? createdAt})
     : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch;
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'createdAt': createdAt};
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'createdAt': createdAt,
+  };
 
   factory Tag.fromJson(Map<String, dynamic> j) => Tag(
     id: j['id'] as String,
@@ -541,10 +597,8 @@ class BookTag {
 
   Map<String, dynamic> toJson() => {'bookKey': bookKey, 'tagId': tagId};
 
-  factory BookTag.fromJson(Map<String, dynamic> j) => BookTag(
-    bookKey: j['bookKey'] as String,
-    tagId: j['tagId'] as String,
-  );
+  factory BookTag.fromJson(Map<String, dynamic> j) =>
+      BookTag(bookKey: j['bookKey'] as String, tagId: j['tagId'] as String);
 }
 
 /// library.json 顶层包装（ADR-016/017），含版本号用于向后兼容数据迁移。
@@ -561,8 +615,8 @@ class LibraryData {
     Map<String, ReadRecord>? records,
     Map<String, BookMeta>? metas,
     AppSettings? settings,
-  })  : sources = sources ?? [],
-        records = records ?? {},
-        metas = metas ?? {},
-        settings = settings ?? AppSettings();
+  }) : sources = sources ?? [],
+       records = records ?? {},
+       metas = metas ?? {},
+       settings = settings ?? AppSettings();
 }

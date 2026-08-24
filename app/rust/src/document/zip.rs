@@ -105,8 +105,8 @@ impl<S: ByteSource> Document for ZipBook<S> {
 
 #[cfg(test)]
 mod tests {
-    use crate::document::open_document;
     use crate::decode;
+    use crate::document::open_document;
     use crate::source::ByteSource;
     use std::io::{self, Write};
 

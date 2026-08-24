@@ -25,10 +25,106 @@ class TagRepository extends ChangeNotifier {
 
   static final TagRepository instance = TagRepository._();
 
-  final Map<String, Tag> _tags = {};        // tagId → Tag
-  final Set<BookTag> _bookTags = {};        // BookTag 关联集合
+  final Map<String, Tag> _tags = {}; // tagId → Tag
+  final Set<BookTag> _bookTags = {}; // BookTag 关联集合
 
   bool _loaded = false;
+  int _revision = 0;
+
+  /// Monotonic projection revision used by UI projections to avoid rebuilding
+  /// tag-detail futures for unrelated Flutter frames.
+  int get revision => _revision;
+
+  @override
+  void notifyListeners() {
+    _revision++;
+    super.notifyListeners();
+  }
+
+  /// Whether a tag belongs in the user-facing tag manager. Generated resource
+  /// semantics remain stored and queryable for filtering, but are temporarily
+  /// hidden from the manager while metadata tags (author/genre/series) remain
+  /// visible. A same-named metadata value wins over the generated-name rule.
+  static bool isVisibleInTagManager(
+    String name, {
+    Set<String> metadataNames = const <String>{},
+  }) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || metadataNames.contains(trimmed)) return true;
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('resource:') ||
+        lower.startsWith('sequence:') ||
+        lower.startsWith('publication:') ||
+        lower.startsWith('release:') ||
+        lower.startsWith('release-group:') ||
+        lower.startsWith('release_group:') ||
+        lower.startsWith('provider:') ||
+        lower.startsWith('source:') ||
+        lower.startsWith('language:') ||
+        lower.startsWith('translation:') ||
+        lower.startsWith('translation-method:') ||
+        lower.startsWith('translation_method:') ||
+        lower.startsWith('edition:') ||
+        lower.startsWith('censorship:') ||
+        lower.startsWith('color:') ||
+        lower.startsWith('completeness:') ||
+        lower.startsWith('medium:') ||
+        lower.startsWith('scan:') ||
+        lower.startsWith('tag:') ||
+        lower.startsWith('汉化组：') ||
+        lower.startsWith('汉化组:')) {
+      return false;
+    }
+    return !_hiddenGeneratedTagNames.contains(lower);
+  }
+
+  static const Set<String> _hiddenGeneratedTagNames = <String>{
+    '中文',
+    '英文',
+    '日文',
+    '中文翻译',
+    '未翻译',
+    '机翻',
+    '人工翻译',
+    '无修正',
+    '有修正',
+    '彩漫',
+    '彩页',
+    '黑白漫',
+    '合集',
+    '未完结',
+    '数字版',
+    '实体版',
+    '全本扫描',
+    '无广告',
+    '单行本',
+    '连载',
+    // English/namespaced values can exist briefly before startup migration.
+    'translated',
+    'untranslated',
+    'machine',
+    'digital',
+    'dl',
+    'ebook',
+    'translation',
+    'chinese_translation',
+    'machine_translation',
+    'human_translation',
+    'unmodified',
+    'modified',
+    'full_scan',
+    'no_ads',
+    'monochrome',
+    'collection',
+    'completed',
+    'partial',
+    'uncensored',
+    'censored',
+    'full_color',
+    'color_pages',
+    'complete',
+    'incomplete',
+  };
 
   // ---- 加载 / 持久化 ----
 
@@ -49,13 +145,19 @@ class TagRepository extends ChangeNotifier {
       }
       final bookTagsJ = (j['book_tags'] as List?) ?? [];
       for (final bt in bookTagsJ) {
-        _bookTags.add(BookTag.fromJson(Map<String, dynamic>.from(bt)));
+        final parsed = BookTag.fromJson(Map<String, dynamic>.from(bt));
+        _bookTags.add(
+          BookTag(
+            bookKey: normalizePersistedBookKey(parsed.bookKey),
+            tagId: parsed.tagId,
+          ),
+        );
       }
 
       // 然后从 BookMeta 补充/纠正（metas 是 ground truth）
       final metas = (j['metas'] as Map<String, dynamic>?) ?? {};
       for (final entry in metas.entries) {
-        final bookKey = entry.key;
+        final bookKey = normalizePersistedBookKey(entry.key);
         final metaJ = Map<String, dynamic>.from(entry.value);
         // 普通标签
         final tags = (metaJ['tags'] as List?)?.map((e) => '$e').toList() ?? [];
@@ -78,27 +180,48 @@ class TagRepository extends ChangeNotifier {
   }
 
   Map<String, dynamic> toJson() => {
-    'tags': _tags.values.map((t) => t.toJson()).toList(),
-    'book_tags': _bookTags.map((bt) => bt.toJson()).toList(),
+    // JSON export is synchronous, but taking snapshots keeps the contract
+    // explicit and avoids exposing live collection iterators to encoders.
+    'tags': _tags.values
+        .toList(growable: false)
+        .map((t) => t.toJson())
+        .toList(),
+    'book_tags': _bookTags
+        .toList(growable: false)
+        .map((bt) => bt.toJson())
+        .toList(),
   };
 
   // ---- SQLite 加载 / 持久化（ADR-013） ----
 
   /// 从 SQLite 加载标签和关联。
-  Future<void> loadFromSqlite() async {
-    if (_loaded) return;
+  Future<void> loadFromSqlite({bool force = false}) async {
+    if (_loaded && !force) return;
+    if (force) {
+      _tags.clear();
+      _bookTags.clear();
+    }
     _loaded = true;
 
     // Tags
     final tagDtos = await dbLoadAllTags();
     for (final dto in tagDtos) {
-      _tags[dto.id] = Tag(id: dto.id, name: dto.name, createdAt: dto.createdAt.toInt());
+      _tags[dto.id] = Tag(
+        id: dto.id,
+        name: dto.name,
+        createdAt: dto.createdAt.toInt(),
+      );
     }
 
     // BookTags
     final btDtos = await dbLoadAllBookTags();
     for (final dto in btDtos) {
-      _bookTags.add(BookTag(bookKey: dto.bookKey, tagId: dto.tagId));
+      _bookTags.add(
+        BookTag(
+          bookKey: normalizePersistedBookKey(dto.bookKey),
+          tagId: dto.tagId,
+        ),
+      );
     }
 
     // 归一化：旧版 hash 算法残留的旧 ID 合并到新 DJB2 ID
@@ -107,10 +230,83 @@ class TagRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Rebuild the tag links that are derived from canonical metadata fields.
+  ///
+  /// The tag table is an independent projection, so loading `book_metas`
+  /// alone is not enough to make author/genre/series tags queryable. This
+  /// method is additive: manual/resource tags are preserved, while every
+  /// current metadata value gets a stable link under the normalized book key.
+  /// Newly created links are persisted when [persist] is true.
+  Future<void> syncMetadataLinks(
+    Iterable<BookMeta> metadata, {
+    bool persist = true,
+  }) async {
+    final rows = <({String bookKey, String tagName})>{};
+    for (final meta in metadata.toList(growable: false)) {
+      final bookKey = normalizePersistedBookKey(meta.key);
+      for (final tagName in meta.metaTags) {
+        final trimmed = tagName.trim();
+        if (trimmed.isNotEmpty) {
+          rows.add((bookKey: bookKey, tagName: trimmed));
+        }
+      }
+    }
+
+    var changed = false;
+    for (final row in rows) {
+      final tagId = ensure(row.tagName);
+      final added = _bookTags.add(BookTag(bookKey: row.bookKey, tagId: tagId));
+      changed = changed || added;
+      if (persist && added) {
+        await dbEnsureTag(name: row.tagName);
+        await dbLinkTag(bookKey: row.bookKey, tagName: row.tagName);
+      }
+    }
+    if (changed) notifyListeners();
+  }
+
+  /// 将旧版刮削标签迁移到面向用户的中文语义标签。
+  ///
+  /// 解析器的内部字段仍保存在 proposal/provenance 中；标签表只保留
+  /// 对用户有稳定含义的资源属性、合集状态和汉化组。迁移是幂等的，
+  /// 且逐条使用数据库的幂等 link/delete 接口，不触碰远程书源。
+  Future<void> normalizeGeneratedTags() async {
+    final moves = <({String oldName, String? newName})>[];
+    for (final tag in _tags.values.toList()) {
+      final mapped = _canonicalGeneratedTag(tag.name);
+      if (mapped == null || mapped == tag.name) continue;
+      moves.add((oldName: tag.name, newName: mapped.isEmpty ? null : mapped));
+    }
+    if (moves.isEmpty) return;
+
+    for (final move in moves) {
+      final oldId = _tagId(move.oldName);
+      final links = _bookTags.where((bt) => bt.tagId == oldId).toList();
+      if (move.newName != null && move.newName!.isNotEmpty) {
+        final newId = ensure(move.newName!);
+        for (final link in links) {
+          _bookTags.add(BookTag(bookKey: link.bookKey, tagId: newId));
+          await dbLinkTag(bookKey: link.bookKey, tagName: move.newName!);
+        }
+      }
+      _bookTags.removeWhere((bt) => bt.tagId == oldId);
+      _tags.remove(oldId);
+      await dbDeleteTag(name: move.oldName);
+    }
+    notifyListeners();
+  }
+
   /// 将当前标签数据写入 SQLite（增量 upsert）。
   Future<void> saveToSqlite() async {
+    // Every DB operation awaits. Snapshot all mutable collections first so
+    // catalog reloads or UI tag edits cannot invalidate an active iterator.
+    final tagSnapshot = _tags.values.toList(growable: false);
+    final bookTagSnapshot = _bookTags.toList(growable: false);
+    final tagNames = <String, String>{
+      for (final tag in tagSnapshot) tag.id: tag.name,
+    };
     // Tags
-    for (final t in _tags.values) {
+    for (final t in tagSnapshot) {
       await dbEnsureTag(name: t.name);
     }
     // BookTags：全量替换（简单但有效；数据量大后可优化为增量）
@@ -121,21 +317,27 @@ class TagRepository extends ChangeNotifier {
       existing.add('${dto.bookKey}\x00${dto.tagId}');
     }
     final current = <String>{};
-    for (final bt in _bookTags) {
+    for (final bt in bookTagSnapshot) {
       current.add('${bt.bookKey}\x00${bt.tagId}');
     }
     // 删除不再存在的
     for (final key in existing) {
       if (!current.contains(key)) {
         final parts = key.split('\x00');
-        await dbUnlinkTag(bookKey: parts[0], tagName: _tagNameById(parts[1]));
+        await dbUnlinkTag(
+          bookKey: parts[0],
+          tagName: tagNames[parts[1]] ?? parts[1],
+        );
       }
     }
     // 添加新的
     for (final key in current) {
       if (!existing.contains(key)) {
         final parts = key.split('\x00');
-        await dbLinkTag(bookKey: parts[0], tagName: _tagNameById(parts[1]));
+        await dbLinkTag(
+          bookKey: parts[0],
+          tagName: tagNames[parts[1]] ?? _tagNameById(parts[1]),
+        );
       }
     }
   }
@@ -145,7 +347,11 @@ class TagRepository extends ChangeNotifier {
   /// 与 [saveToSqlite] 的全量 diff 不同，这里不读全表，
   /// 只对目标书做幂等 upsert（`已读` 等关联在 recordRead 后立刻落盘）。
   Future<void> persistBookLinks(String bookKey) async {
-    for (final bt in _bookTags) {
+    bookKey = normalizePersistedBookKey(bookKey);
+    final links = _bookTags
+        .where((bt) => bt.bookKey == bookKey)
+        .toList(growable: false);
+    for (final bt in links) {
       if (bt.bookKey != bookKey) continue;
       final name = _tags[bt.tagId]?.name;
       if (name == null || name.isEmpty) continue;
@@ -183,6 +389,7 @@ class TagRepository extends ChangeNotifier {
   /// 将标签关联到一本书。
   void link(String bookKey, String tagName) {
     if (tagName.isEmpty) return;
+    bookKey = normalizePersistedBookKey(bookKey);
     final tagId = ensure(tagName);
     final bt = BookTag(bookKey: bookKey, tagId: tagId);
     if (!_bookTags.contains(bt)) {
@@ -193,6 +400,7 @@ class TagRepository extends ChangeNotifier {
 
   /// 将标签从一本书移除。
   void unlink(String bookKey, String tagName) {
+    bookKey = normalizePersistedBookKey(bookKey);
     final tagId = _tagId(tagName);
     _bookTags.removeWhere((bt) => bt.bookKey == bookKey && bt.tagId == tagId);
     notifyListeners();
@@ -208,6 +416,8 @@ class TagRepository extends ChangeNotifier {
 
   /// 将一本书的标签关联迁移到新 key（后缀别名归一化后用），合并去重。
   void remapBookKey(String oldKey, String newKey) {
+    oldKey = normalizePersistedBookKey(oldKey);
+    newKey = normalizePersistedBookKey(newKey);
     if (oldKey == newKey) return;
     final moving = _bookTags.where((bt) => bt.bookKey == oldKey).toList();
     if (moving.isEmpty) return;
@@ -220,6 +430,7 @@ class TagRepository extends ChangeNotifier {
 
   /// 设置一本书的标签集（全量替换）。
   void setBookTags(String bookKey, List<String> tagNames) {
+    bookKey = normalizePersistedBookKey(bookKey);
     // 移除旧关联
     _bookTags.removeWhere((bt) => bt.bookKey == bookKey);
     // 添加新关联
@@ -231,6 +442,7 @@ class TagRepository extends ChangeNotifier {
 
   /// 获取某本书的标签名列表。
   List<String> tagsForBook(String bookKey) {
+    bookKey = normalizePersistedBookKey(bookKey);
     return _bookTags
         .where((bt) => bt.bookKey == bookKey)
         .map((bt) => _tags[bt.tagId]?.name ?? bt.tagId)
@@ -280,10 +492,27 @@ class TagRepository extends ChangeNotifier {
     return map;
   }
 
+  /// Count read totals by tag in one pass over book-tag links. This avoids
+  /// repeatedly scanning all links once per record when the tag manager
+  /// rebuilds after a notification.
+  Map<String, int> readCountsByTag(Map<String, int> readCountsByBookKey) {
+    final map = <String, int>{};
+    for (final bt in _bookTags) {
+      final name = _tags[bt.tagId]?.name ?? bt.tagId;
+      if (name.isEmpty) continue;
+      final key = normalizePersistedBookKey(bt.bookKey);
+      map[name] = (map[name] ?? 0) + (readCountsByBookKey[key] ?? 0);
+    }
+    return map;
+  }
+
   /// 获取某标签下的所有 bookKey。
   List<String> bookKeysForTag(String tagName) {
     final id = _tagId(tagName);
-    return _bookTags.where((bt) => bt.tagId == id).map((bt) => bt.bookKey).toList();
+    return _bookTags
+        .where((bt) => bt.tagId == id)
+        .map((bt) => normalizePersistedBookKey(bt.bookKey))
+        .toList();
   }
 
   // ---- internal ----
@@ -292,7 +521,144 @@ class TagRepository extends ChangeNotifier {
   void _addTagAndLink(String name, String bookKey) {
     final tagId = _tagId(name);
     _tags.putIfAbsent(tagId, () => Tag(id: tagId, name: name));
-    _bookTags.add(BookTag(bookKey: bookKey, tagId: tagId));
+    _bookTags.add(
+      BookTag(bookKey: normalizePersistedBookKey(bookKey), tagId: tagId),
+    );
+  }
+
+  /// Returns null for a user/manual tag, an empty string for an obsolete
+  /// generated tag, or its canonical display name for a generated synonym.
+  static String? _canonicalGeneratedTag(String name) {
+    final trimmed = name.trim();
+    final lower = trimmed.toLowerCase();
+    final plain = switch (lower) {
+      'uncensored' || 'unmodified' => '无修正',
+      'censored' || 'modified' => '有修正',
+      'full_color' || 'full colour' || 'colorized' || 'colourized' => '彩漫',
+      'color_pages' || 'colored_pages' || 'colour_pages' => '彩页',
+      'complete' || 'completed' || 'collection' => '合集',
+      'incomplete' || 'partial' => '未完结',
+      'translated' || 'translation' || 'chinese_translation' => '中文翻译',
+      'machine' || 'mtl' || 'machine_translation' || 'ai_translation' => '机翻',
+      'human_translation' || 'manual_translation' => '人工翻译',
+      'digital' || 'dl' || 'ebook' => '数字版',
+      'full_scan' || 'cover_to_cover' => '全本扫描',
+      'no_ads' || 'clean' => '无广告',
+      'monochrome' || 'black_and_white' => '黑白漫',
+      _ => null,
+    };
+    if (plain != null) return plain;
+    final generated =
+        lower.startsWith('resource:') ||
+        lower.startsWith('sequence:') ||
+        lower.startsWith('publication:') ||
+        lower.startsWith('release:') ||
+        lower.startsWith('release-group:');
+    if (!generated) return null;
+
+    if (lower.startsWith('release-group:')) {
+      final group = trimmed.substring('release-group:'.length).trim();
+      return group.isEmpty ? '' : '汉化组：$group';
+    }
+
+    final parts = lower.split(':');
+    final value = parts.length > 1 ? parts.sublist(1).join(':') : '';
+    final normalized = value
+        .replaceAll('-', '_')
+        .replaceAll(' ', '_')
+        .replaceAll('/', '_');
+
+    String? canonical(String value) {
+      switch (value) {
+        case 'language:zh':
+        case 'language:cn':
+          return '中文';
+        case 'language:en':
+          return '英文';
+        case 'language:ja':
+        case 'language:jp':
+          return '日文';
+        case 'translation:translated':
+        case 'tag:translated':
+        case 'tag:translation':
+        case 'tag:chinese_translation':
+          return '中文翻译';
+        case 'translation:untranslated':
+        case 'tag:untranslated':
+          return '未翻译';
+        case 'translation-method:machine':
+        case 'translation_method:machine':
+        case 'tag:machine':
+        case 'tag:mtl':
+        case 'tag:machine_translation':
+        case 'tag:ai_translation':
+          return '机翻';
+        case 'translation-method:human':
+        case 'translation_method:human':
+        case 'tag:human_translation':
+          return '人工翻译';
+        case 'edition:digital':
+        case 'tag:digital':
+        case 'tag:dl':
+        case 'tag:ebook':
+          return '数字版';
+        case 'edition:print':
+          return '实体版';
+        case 'censorship:uncensored':
+        case 'tag:uncensored':
+        case 'tag:unmodified':
+          return '无修正';
+        case 'censorship:censored':
+        case 'tag:censored':
+        case 'tag:modified':
+          return '有修正';
+        case 'color:full_color':
+        case 'color:colorized':
+        case 'tag:full_color':
+        case 'tag:colorized':
+        case 'tag:color':
+          return '彩漫';
+        case 'color:color_pages':
+        case 'tag:color_pages':
+          return '彩页';
+        case 'tag:monochrome':
+        case 'tag:black_and_white':
+          return '黑白漫';
+        case 'completeness:complete':
+        case 'completeness:collection':
+        case 'tag:complete':
+        case 'tag:completed':
+        case 'tag:collection':
+          return '合集';
+        case 'completeness:incomplete':
+        case 'completeness:partial':
+        case 'tag:incomplete':
+        case 'tag:partial':
+          return '未完结';
+        case 'medium:tankoubon':
+        case 'medium:volume':
+        case 'tag:tankoubon':
+          return '单行本';
+        case 'medium:serial':
+        case 'tag:serial':
+          return '连载';
+        case 'scan:complete':
+        case 'scan:cover_to_cover':
+        case 'tag:full_scan':
+        case 'tag:cover_to_cover':
+          return '全本扫描';
+        case 'scan:no_ads':
+        case 'tag:no_ads':
+        case 'tag:clean':
+          return '无广告';
+        default:
+          return null;
+      }
+    }
+
+    // Explicitly recognized generated tags are mapped; all other generated
+    // namespaces are implementation details and should be removed.
+    return canonical(normalized) ?? '';
   }
 
   /// 迁移 / 加载后归一化：旧版 hash 算法残留的旧 ID 合并到新 DJB2 ID。
@@ -322,10 +688,18 @@ class TagRepository extends ChangeNotifier {
       if (existing != null && oldTag != null) {
         // 两个都存在：保留更早的 createdAt
         if (oldTag.createdAt < existing.createdAt) {
-          _tags[newId] = Tag(id: newId, name: existing.name, createdAt: oldTag.createdAt);
+          _tags[newId] = Tag(
+            id: newId,
+            name: existing.name,
+            createdAt: oldTag.createdAt,
+          );
         }
       } else if (oldTag != null) {
-        _tags[newId] = Tag(id: newId, name: oldTag.name, createdAt: oldTag.createdAt);
+        _tags[newId] = Tag(
+          id: newId,
+          name: oldTag.name,
+          createdAt: oldTag.createdAt,
+        );
       }
       // 迁移 BookTag 关联
       final affected = _bookTags.where((bt) => bt.tagId == oldId).toList();

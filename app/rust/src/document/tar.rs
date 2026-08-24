@@ -29,7 +29,9 @@ impl TarBook {
             let name = entry.path()?.to_string_lossy().to_string();
             if is_image_name(&name) {
                 let mut out = Vec::new();
-                entry.read_to_end(&mut out).context("读取 tar 条目数据失败")?;
+                entry
+                    .read_to_end(&mut out)
+                    .context("读取 tar 条目数据失败")?;
                 raw_entries.push((name, out));
             }
         }

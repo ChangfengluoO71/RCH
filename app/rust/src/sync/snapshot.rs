@@ -75,12 +75,7 @@ fn load_sources(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
         .collect::<Vec<_>>();
     Ok(rows
         .into_iter()
-        .map(|(fp, data, updated_at)| {
-            (
-                fp.clone(),
-                SyncEntry::live(&fp, updated_at, data),
-            )
-        })
+        .map(|(fp, data, updated_at)| (fp.clone(), SyncEntry::live(&fp, updated_at, data)))
         .collect())
 }
 
@@ -126,7 +121,10 @@ fn load_metas(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
                     obj.insert("path".into(), json!(path));
                 }
             }
-            out.insert(sync_key.clone(), SyncEntry::live(&sync_key, updated_at, data));
+            out.insert(
+                sync_key.clone(),
+                SyncEntry::live(&sync_key, updated_at, data),
+            );
         }
     }
     merge_pending_entries(conn, base::ENTITY_METAS, &mut out);
@@ -160,7 +158,10 @@ fn load_records(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
     let mut out = HashMap::new();
     for (key, data, updated_at) in rows {
         if let Some(sync_key) = local_book_key_to_sync(&key, &fp_by_id) {
-            out.insert(sync_key.clone(), SyncEntry::live(&sync_key, updated_at, data));
+            out.insert(
+                sync_key.clone(),
+                SyncEntry::live(&sync_key, updated_at, data),
+            );
         }
     }
     merge_pending_entries(conn, base::ENTITY_RECORDS, &mut out);
@@ -168,9 +169,8 @@ fn load_records(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
 }
 
 fn load_tags(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, created_at, updated_at FROM tags WHERE deleted = 0",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, created_at, updated_at FROM tags WHERE deleted = 0")?;
     let rows = stmt
         .query_map([], |r| {
             let id: String = r.get(0)?;
@@ -190,9 +190,8 @@ fn load_tags(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
 
 fn load_book_tags(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
     let fp_by_id = source_fp_map(conn);
-    let mut stmt = conn.prepare(
-        "SELECT book_key, tag_id, updated_at FROM book_tags WHERE deleted = 0",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT book_key, tag_id, updated_at FROM book_tags WHERE deleted = 0")?;
     let rows = stmt
         .query_map([], |r| {
             Ok((
@@ -247,7 +246,20 @@ fn load_library_index(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
         .collect::<Vec<_>>();
     let fp_by_id = source_fp_map(conn);
     let mut out = HashMap::new();
-    for (id, source_id, parent_id, name, path, entry_type, size, modified_at, cover_path, hash, updated_at) in rows {
+    for (
+        id,
+        source_id,
+        parent_id,
+        name,
+        path,
+        entry_type,
+        size,
+        modified_at,
+        cover_path,
+        hash,
+        updated_at,
+    ) in rows
+    {
         if let Some(fp) = fp_by_id.get(&source_id) {
             let sync_key = identity::book_id(fp, &path);
             // 兼容旧 id（若与现 fingerprint 不一致，以新计算为准）
@@ -276,9 +288,8 @@ fn load_library_index(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
 }
 
 fn load_settings(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
-    let mut stmt = conn.prepare(
-        "SELECT key, value, updated_at FROM app_settings WHERE deleted = 0",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT key, value, updated_at FROM app_settings WHERE deleted = 0")?;
     let rows = stmt
         .query_map([], |r| {
             Ok((
@@ -307,11 +318,7 @@ fn load_settings(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
 /// 三方合并要求 base / local / remote 三态一致：apply 不再静默跳过，
 /// resolve 失败的条目存于 sync_pending_apply 并参与快照，
 /// 使"本机无法托管该条目"不会被误判为"本机删除了该条目"（伪墓碑根因）。
-fn merge_pending_entries(
-    conn: &Connection,
-    entity: &str,
-    out: &mut HashMap<String, SyncEntry>,
-) {
+fn merge_pending_entries(conn: &Connection, entity: &str, out: &mut HashMap<String, SyncEntry>) {
     let Ok(pending) = base::load_pending_on(conn) else {
         return;
     };
@@ -429,7 +436,13 @@ mod tests {
         conn
     }
 
-    fn insert_source(conn: &Connection, id: &str, r#type: &str, path: &str, url: Option<&str>) -> String {
+    fn insert_source(
+        conn: &Connection,
+        id: &str,
+        r#type: &str,
+        path: &str,
+        url: Option<&str>,
+    ) -> String {
         let fp = db::compute_source_fingerprint(r#type, url, path, None);
         conn.execute(
             "INSERT INTO book_sources (id, type, name, path, url, fingerprint, updated_at, deleted)
@@ -443,7 +456,13 @@ mod tests {
     #[test]
     fn local_snapshot_maps_keys_to_sync_identity() {
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         conn.execute(
             "INSERT INTO book_metas (key, title, rotations, updated_at, deleted)
              VALUES ('webdav|s1|/books/a.cbz', 'A', '{}', 100, 0)",
@@ -479,16 +498,63 @@ mod tests {
     }
 
     #[test]
+    fn materialized_metadata_and_namespaced_tags_are_syncable() {
+        let conn = schema_conn();
+        let fp = insert_source(&conn, "s1", "local", "/books", None);
+        let key = "local|s1|/books/a";
+        conn.execute(
+            "INSERT INTO book_metas (key, title, author, rotations, updated_at, deleted)
+             VALUES (?1, 'Work', 'Artist', '{}', 100, 0)",
+            [key],
+        )
+        .unwrap();
+        let tag_id = db::tag_id("resource:language:zh");
+        conn.execute(
+            "INSERT INTO tags (id, name, created_at, updated_at, deleted)
+             VALUES (?1, 'resource:language:zh', 100, 100, 0)",
+            [&tag_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO book_tags (book_key, tag_id, updated_at, deleted)
+             VALUES (?1, ?2, 100, 0)",
+            params![key, tag_id],
+        )
+        .unwrap();
+
+        let snap = load_local_snapshots(&conn).unwrap();
+        let sync_key = identity::book_id(&fp, "/books/a");
+        assert_eq!(
+            snap[base::ENTITY_METAS][&sync_key].data["title"],
+            json!("Work")
+        );
+        let sync_tag = db::tag_id("resource:language:zh");
+        assert!(snap[base::ENTITY_TAGS].contains_key(&sync_tag));
+        assert!(snap[base::ENTITY_BOOK_TAGS].contains_key(&format!("{sync_key}|{sync_tag}")));
+        assert!(!snap.contains_key("scrape_proposals"));
+        assert!(!snap.contains_key("scrape_materializations"));
+    }
+
+    #[test]
     fn advance_base_keeps_unchanged_keys_and_tombstones() {
         let conn = schema_conn();
-        let fp = insert_source(&conn, "s1", "webdav", "/books", Some("https://dav.example.com/dav"));
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
         let key = identity::book_id(&fp, "/books/a.cbz");
         let mut merged = HashMap::new();
         let mut metas = HashMap::new();
         metas.insert(key.clone(), SyncEntry::live(&key, 1, json!({"title": "A"})));
         merged.insert(base::ENTITY_METAS.into(), metas);
         advance_base(&conn, 1, &merged).unwrap();
-        assert_eq!(base::get_meta_on(&conn, base::META_LAST_REVISION).as_deref(), Some("1"));
+        assert_eq!(
+            base::get_meta_on(&conn, base::META_LAST_REVISION).as_deref(),
+            Some("1")
+        );
         let b = base::get_base_on(&conn, base::ENTITY_METAS, &key).unwrap();
         assert_eq!(b.revision, 1);
         assert!(b.state_json.is_some());

@@ -112,7 +112,10 @@ pub struct DeviceDto {
 pub fn db_list_devices() -> Vec<DeviceDto> {
     db::list_devices()
         .into_iter()
-        .map(|d| DeviceDto { id: d.id, name: d.name })
+        .map(|d| DeviceDto {
+            id: d.id,
+            name: d.name,
+        })
         .collect()
 }
 
@@ -452,6 +455,40 @@ pub struct SourceSnapshotDto {
     pub root_hash: Option<String>,
 }
 
+pub struct CatalogRevisionDto {
+    pub scope: String,
+    pub revision: String,
+    pub changed_book_keys_json: String,
+    pub updated_at: i64,
+}
+
+pub fn db_record_catalog_revision(
+    scope: String,
+    revision: String,
+    changed_book_keys_json: String,
+) -> Result<(), String> {
+    db::upsert_catalog_revision(&db::CatalogRevisionRow {
+        scope,
+        revision,
+        changed_book_keys_json,
+        updated_at: db::now_ms(),
+    })
+    .map_err(|e| format!("{e}"))
+}
+
+pub fn db_get_catalog_revision(scope: String) -> Option<CatalogRevisionDto> {
+    db::load_catalog_revision(&scope).map(|row| CatalogRevisionDto {
+        scope: row.scope,
+        revision: row.revision,
+        changed_book_keys_json: row.changed_book_keys_json,
+        updated_at: row.updated_at,
+    })
+}
+
+pub fn db_book_key_of(source_type: String, source_id: String, path: String) -> String {
+    db::book_key_of(&source_type, &source_id, &path)
+}
+
 fn library_index_to_dto(r: db::LibraryIndexRow) -> LibraryIndexDto {
     LibraryIndexDto {
         id: r.id,
@@ -529,18 +566,25 @@ pub fn db_set_source_snapshot(
     entry_count: i64,
     root_hash: Option<String>,
 ) -> Result<(), String> {
-    db::set_source_snapshot(&source_id, last_scan_time, entry_count, root_hash.as_deref())
-        .map_err(|e| format!("{e}"))
+    db::set_source_snapshot(
+        &source_id,
+        last_scan_time,
+        entry_count,
+        root_hash.as_deref(),
+    )
+    .map_err(|e| format!("{e}"))
 }
 
 /// 读取书源目录快照。
 pub fn db_get_source_snapshot(source_id: String) -> Result<Option<SourceSnapshotDto>, String> {
-    Ok(db::get_source_snapshot(&source_id).map(|(t, c, h)| SourceSnapshotDto {
-        source_id,
-        last_scan_time: t,
-        entry_count: c,
-        root_hash: h,
-    }))
+    Ok(
+        db::get_source_snapshot(&source_id).map(|(t, c, h)| SourceSnapshotDto {
+            source_id,
+            last_scan_time: t,
+            entry_count: c,
+            root_hash: h,
+        }),
+    )
 }
 
 /// 读取某书源当前（未删除）索引条目，离线浏览查询入口。

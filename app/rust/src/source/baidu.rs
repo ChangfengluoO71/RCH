@@ -167,7 +167,11 @@ impl BaiduClient {
             secret: secret.to_string(),
             refresh_token: Mutex::new(refresh_token.to_string()),
             access: Mutex::new(None),
-            root: if root.is_empty() { "/".to_string() } else { root.to_string() },
+            root: if root.is_empty() {
+                "/".to_string()
+            } else {
+                root.to_string()
+            },
             gate: RateGate::new(5.0), // 百度接口有频率限制，5 r/s 保守节流
         })
     }
@@ -260,9 +264,7 @@ impl BaiduClient {
                 .header(USER_AGENT, BAIDU_UA)
                 .query(&[("access_token", &token)])
                 .query(params);
-            let resp = req
-                .send()
-                .context("百度 API 请求失败")?;
+            let resp = req.send().context("百度 API 请求失败")?;
             let status = resp.status();
             let body = resp.text().unwrap_or_default();
             if !status.is_success() {
@@ -356,10 +358,11 @@ impl BaiduClient {
             )?;
             check_errno(errno)?;
             let parsed: ListResp = serde_json::from_str(&body).context("解析文件列表失败")?;
-            if let Some(it) = parsed.list.iter().find(|it| {
-                it.path.trim_end_matches('/') == path
-                    || it.server_filename == name
-            }) {
+            if let Some(it) = parsed
+                .list
+                .iter()
+                .find(|it| it.path.trim_end_matches('/') == path || it.server_filename == name)
+            {
                 return Ok(it.fs_id);
             }
             let n = parsed.list.len();
@@ -390,7 +393,9 @@ impl BaiduClient {
             .into_iter()
             .find(|it| it.fs_id == fs_id)
             .ok_or_else(|| anyhow!("未取到文件元信息:{}", path))?;
-        let link = item.dlink.ok_or_else(|| anyhow!("文件无下载链接:{}", path))?;
+        let link = item
+            .dlink
+            .ok_or_else(|| anyhow!("文件无下载链接:{}", path))?;
         Ok((link, item.size.unwrap_or(0)))
     }
 
@@ -421,9 +426,9 @@ impl BaiduClient {
         if status == StatusCode::FORBIDDEN {
             // dlink 失效（过期）或 access_token 被轮换（31045）：强制刷新 token 后重取 dlink 再试一次
             self.access.lock().unwrap().take();
-            let (new_link, _) = self
-                .dlink(path)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("重取 dlink 失败:{e}")))?;
+            let (new_link, _) = self.dlink(path).map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("重取 dlink 失败:{e}"))
+            })?;
             resp = self
                 .dlink_get(&new_link, Some(&range))
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Range 请求失败:{e}")))?;
@@ -460,8 +465,7 @@ impl BaiduClient {
         if let Some(p) = raw_cache_path(&self.origin(), path) {
             if let Some(prog) = &progress {
                 if let Ok(meta) = std::fs::metadata(&p) {
-                    prog.downloaded
-                        .store(meta.len(), Ordering::SeqCst);
+                    prog.downloaded.store(meta.len(), Ordering::SeqCst);
                     prog.total.store(meta.len(), Ordering::SeqCst);
                 }
             }
@@ -586,7 +590,10 @@ impl ByteSource for BaiduFile {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         let dlink = self.get_dlink()?;
-        match self.client.read_range_with_dlink(&dlink, &self.path, offset, buf) {
+        match self
+            .client
+            .read_range_with_dlink(&dlink, &self.path, offset, buf)
+        {
             Ok(n) => Ok(n),
             Err(e) => {
                 // 403 已由 read_range_with_dlink 内部重取；其它错误视为 dlink 失效，清缓存再试一次
@@ -628,7 +635,9 @@ fn check_errno(errno: i64) -> Result<()> {
         31066 => bail!("请求过于频繁，请稍后再试"),
         31119 | 31329 => bail!("百度账号状态异常（风控），请检查账号"),
         -6 | 110 => bail!("登录状态失效，请重新授权"),
-        31045 => bail!("百度 access_token 验证未通过：token 可能已过期，或授权时未勾选网盘权限，请重新授权"),
+        31045 => bail!(
+            "百度 access_token 验证未通过：token 可能已过期，或授权时未勾选网盘权限，请重新授权"
+        ),
         _ => bail!("百度 API 错误码:{errno}"),
     }
 }
@@ -702,10 +711,7 @@ mod tests {
             .query_pairs()
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect();
-        assert_eq!(
-            pairs.iter().filter(|(k, _)| k == "access_token").count(),
-            1
-        );
+        assert_eq!(pairs.iter().filter(|(k, _)| k == "access_token").count(), 1);
         assert!(pairs.contains(&("access_token".to_string(), "new".to_string())));
     }
 

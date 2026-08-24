@@ -367,6 +367,96 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             updated_at INTEGER NOT NULL
         );
 
+        -- Catalog-only scraping jobs and durable proposals. These rows contain
+        -- catalog text and parser evidence only; they never contain file bytes.
+        CREATE TABLE IF NOT EXISTS scrape_jobs (
+            id TEXT PRIMARY KEY,
+            trigger TEXT NOT NULL,
+            status TEXT NOT NULL,
+            rule_version TEXT NOT NULL,
+            total INTEGER NOT NULL DEFAULT 0,
+            processed INTEGER NOT NULL DEFAULT 0,
+            ready INTEGER NOT NULL DEFAULT 0,
+            ambiguous INTEGER NOT NULL DEFAULT 0,
+            partial INTEGER NOT NULL DEFAULT 0,
+            unmatched INTEGER NOT NULL DEFAULT 0,
+            input_assets INTEGER NOT NULL DEFAULT 0,
+            unique_assets INTEGER NOT NULL DEFAULT 0,
+            proposals_written INTEGER NOT NULL DEFAULT 0,
+            asset_collision_count INTEGER NOT NULL DEFAULT 0,
+            book_group_collision_count INTEGER NOT NULL DEFAULT 0,
+            accounting_status TEXT NOT NULL DEFAULT 'pending',
+            error TEXT NOT NULL DEFAULT '',
+            requested_at INTEGER NOT NULL,
+            started_at INTEGER,
+            finished_at INTEGER,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS scrape_proposals (
+            asset_key TEXT PRIMARY KEY,
+            book_key TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            title TEXT,
+            authors_json TEXT NOT NULL DEFAULT '[]',
+            provider TEXT,
+            volume TEXT,
+            chapter TEXT,
+            state TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            conflicts_json TEXT NOT NULL DEFAULT '[]',
+            semantic_json TEXT NOT NULL DEFAULT '{}',
+            rule_version TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_scrape_proposals_state ON scrape_proposals(state, updated_at);
+
+        -- M8 automation working state. These rows contain catalog revisions,
+        -- per-book scheduling and local materialization provenance only; they
+        -- never contain comic bytes and are not sync entities.
+        CREATE TABLE IF NOT EXISTS catalog_revisions (
+            scope TEXT PRIMARY KEY,
+            revision TEXT NOT NULL,
+            changed_book_keys_json TEXT NOT NULL DEFAULT '[]',
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS scrape_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_key TEXT NOT NULL,
+            book_key TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            input_revision TEXT NOT NULL,
+            rule_version TEXT NOT NULL,
+            trigger TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 0,
+            next_run_at INTEGER NOT NULL,
+            last_error TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(asset_key, input_revision, rule_version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_scrape_queue_due
+            ON scrape_queue(status, next_run_at, updated_at);
+        CREATE TABLE IF NOT EXISTS scrape_materializations (
+            asset_key TEXT NOT NULL,
+            book_key TEXT NOT NULL,
+            proposal_revision TEXT NOT NULL,
+            rule_version TEXT NOT NULL,
+            status TEXT NOT NULL,
+            applied_fields_json TEXT NOT NULL DEFAULT '[]',
+            added_tags_json TEXT NOT NULL DEFAULT '[]',
+            skipped_fields_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT NOT NULL DEFAULT '',
+            applied_at INTEGER,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (asset_key, proposal_revision)
+        );
+        CREATE INDEX IF NOT EXISTS idx_scrape_materializations_status
+            ON scrape_materializations(status, updated_at);
+
         -- schema 版本
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
@@ -414,10 +504,22 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
     }
     // 旧库升级：book_sources 补网盘书源列（refresh_token / client_id / client_secret / root_id）。
     for (col, ddl) in [
-        ("refresh_token", "ALTER TABLE book_sources ADD COLUMN refresh_token TEXT"),
-        ("client_id", "ALTER TABLE book_sources ADD COLUMN client_id TEXT"),
-        ("client_secret", "ALTER TABLE book_sources ADD COLUMN client_secret TEXT"),
-        ("root_id", "ALTER TABLE book_sources ADD COLUMN root_id TEXT"),
+        (
+            "refresh_token",
+            "ALTER TABLE book_sources ADD COLUMN refresh_token TEXT",
+        ),
+        (
+            "client_id",
+            "ALTER TABLE book_sources ADD COLUMN client_id TEXT",
+        ),
+        (
+            "client_secret",
+            "ALTER TABLE book_sources ADD COLUMN client_secret TEXT",
+        ),
+        (
+            "root_id",
+            "ALTER TABLE book_sources ADD COLUMN root_id TEXT",
+        ),
         ("cookie", "ALTER TABLE book_sources ADD COLUMN cookie TEXT"),
     ] {
         if !src_cols.iter().any(|c| c == col) {
@@ -465,14 +567,68 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
         )?;
     }
     // Phase 5.0：library_index 增加 hash 列（条目元数据哈希，增量检测/同 path 判定用）。
+    ensure_columns(conn, "library_index", &[("hash", "hash TEXT")])?;
     ensure_columns(
         conn,
-        "library_index",
-        &[("hash", "hash TEXT")],
+        "scrape_proposals",
+        &[
+            ("asset_key", "asset_key TEXT NOT NULL DEFAULT ''"),
+            ("semantic_json", "semantic_json TEXT NOT NULL DEFAULT '{}'"),
+            ("input_revision", "input_revision TEXT NOT NULL DEFAULT ''"),
+            (
+                "materialization_status",
+                "materialization_status TEXT NOT NULL DEFAULT 'pending'",
+            ),
+            (
+                "materialization_error",
+                "materialization_error TEXT NOT NULL DEFAULT ''",
+            ),
+            ("materialized_at", "materialized_at INTEGER"),
+        ],
     )?;
+    ensure_columns(
+        conn,
+        "scrape_jobs",
+        &[
+            ("input_assets", "input_assets INTEGER NOT NULL DEFAULT 0"),
+            ("unique_assets", "unique_assets INTEGER NOT NULL DEFAULT 0"),
+            (
+                "proposals_written",
+                "proposals_written INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "asset_collision_count",
+                "asset_collision_count INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "book_group_collision_count",
+                "book_group_collision_count INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "accounting_status",
+                "accounting_status TEXT NOT NULL DEFAULT 'pending'",
+            ),
+        ],
+    )?;
+    ensure_columns(
+        conn,
+        "scrape_queue",
+        &[("asset_key", "asset_key TEXT NOT NULL DEFAULT ''")],
+    )?;
+    ensure_columns(
+        conn,
+        "scrape_materializations",
+        &[("asset_key", "asset_key TEXT NOT NULL DEFAULT ''")],
+    )?;
+    migrate_scrape_identity_tables(conn)?;
     // 同步索引依赖新列，必须在补列之后创建（老库先补列再建索引）。
     conn.execute_batch(
         "
+        CREATE INDEX IF NOT EXISTS idx_scrape_proposals_state ON scrape_proposals(state, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_scrape_queue_due
+            ON scrape_queue(status, next_run_at, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_scrape_materializations_status
+            ON scrape_materializations(status, updated_at);
         CREATE INDEX IF NOT EXISTS idx_sources_fingerprint ON book_sources(fingerprint);
         CREATE INDEX IF NOT EXISTS idx_metas_stable_id ON book_metas(stable_id);
         CREATE INDEX IF NOT EXISTS idx_records_stable_id ON read_records(stable_id);
@@ -484,6 +640,187 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
     // ADR-020：存量书源 fingerprint 回填（幂等；新库无 NULL 行，零成本）。
     backfill_source_fingerprints(conn)?;
     Ok(())
+}
+
+/// 将旧的 book_key 主键工作表迁移为物理 asset_key 主键工作表。
+///
+/// 旧版本把去扩展名的逻辑 book_key 当作 proposal/queue 唯一键，导致同一
+/// 目录下的 `.cbz` 与 `.zip` 覆盖彼此。迁移保留旧 book_key 作为逻辑键，
+/// 并用旧键回填 asset_key；新运行会用 library_index.id 生成真正的一文件一键。
+fn migrate_scrape_identity_tables(conn: &Connection) -> Result<()> {
+    let table_info = |table: &str| -> Result<Vec<(String, i64)>> {
+        Ok(conn
+            .prepare(&format!("PRAGMA table_info({table})"))?
+            .query_map([], |row| Ok((row.get(1)?, row.get(5)?)))
+            .and_then(|rows| rows.collect::<std::result::Result<Vec<_>, _>>())?)
+    };
+    let needs_primary_key_rebuild = |table: &str, pk: &str| -> Result<bool> {
+        let info = table_info(table)?;
+        Ok(!info
+            .iter()
+            .any(|(name, key)| name == "asset_key" && *key == 1)
+            || info.iter().any(|(name, key)| name == pk && *key == 1))
+    };
+    let has_unique_index = |table: &str, expected: &[&str]| -> Result<bool> {
+        let indexes = conn
+            .prepare(&format!("PRAGMA index_list({table})"))?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+            })
+            .and_then(|rows| rows.collect::<std::result::Result<Vec<_>, _>>())?;
+        for (name, unique) in indexes {
+            if unique == 0 {
+                continue;
+            }
+            let mut columns = conn
+                .prepare(&format!("PRAGMA index_info({name})"))?
+                .query_map([], |row| row.get::<_, String>(2))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            if columns.len() == expected.len()
+                && expected
+                    .iter()
+                    .all(|column| columns.contains(&column.to_string()))
+            {
+                columns.sort();
+                let mut expected_sorted = expected
+                    .iter()
+                    .map(|c| (*c).to_string())
+                    .collect::<Vec<_>>();
+                expected_sorted.sort();
+                if columns == expected_sorted {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    };
+
+    let rebuild_proposals = needs_primary_key_rebuild("scrape_proposals", "book_key")?;
+    let rebuild_queue = !has_unique_index(
+        "scrape_queue",
+        &["asset_key", "input_revision", "rule_version"],
+    )?;
+    let rebuild_materializations =
+        needs_primary_key_rebuild("scrape_materializations", "book_key")?;
+    if !rebuild_proposals && !rebuild_queue && !rebuild_materializations {
+        return Ok(());
+    }
+
+    let result = (|| -> Result<()> {
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        if rebuild_proposals {
+            conn.execute_batch(
+                "
+                DROP TABLE IF EXISTS scrape_proposals_v2;
+                CREATE TABLE scrape_proposals_v2 (
+                    asset_key TEXT PRIMARY KEY,
+                    book_key TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    title TEXT,
+                    authors_json TEXT NOT NULL DEFAULT '[]',
+                    provider TEXT,
+                    volume TEXT,
+                    chapter TEXT,
+                    state TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL DEFAULT '[]',
+                    conflicts_json TEXT NOT NULL DEFAULT '[]',
+                    semantic_json TEXT NOT NULL DEFAULT '{}',
+                    rule_version TEXT NOT NULL,
+                    input_revision TEXT NOT NULL DEFAULT '',
+                    materialization_status TEXT NOT NULL DEFAULT 'pending',
+                    materialization_error TEXT NOT NULL DEFAULT '',
+                    materialized_at INTEGER,
+                    updated_at INTEGER NOT NULL
+                );
+                INSERT INTO scrape_proposals_v2
+                    (asset_key, book_key, source_id, path, filename, title, authors_json,
+                     provider, volume, chapter, state, evidence_json, conflicts_json,
+                     semantic_json, rule_version, input_revision, materialization_status,
+                     materialization_error, materialized_at, updated_at)
+                SELECT CASE WHEN trim(asset_key) = '' THEN book_key ELSE asset_key END,
+                    book_key, source_id, path, filename, title, authors_json, provider,
+                    volume, chapter, state, evidence_json, conflicts_json, semantic_json,
+                    rule_version, input_revision, materialization_status,
+                    materialization_error, materialized_at, updated_at
+                FROM scrape_proposals;
+                DROP TABLE scrape_proposals;
+                ALTER TABLE scrape_proposals_v2 RENAME TO scrape_proposals;
+                ",
+            )?;
+        }
+        if rebuild_queue {
+            conn.execute_batch(
+                "
+                DROP TABLE IF EXISTS scrape_queue_v2;
+                CREATE TABLE scrape_queue_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    asset_key TEXT NOT NULL,
+                    book_key TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    input_revision TEXT NOT NULL,
+                    rule_version TEXT NOT NULL,
+                    trigger TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempt INTEGER NOT NULL DEFAULT 0,
+                    next_run_at INTEGER NOT NULL,
+                    last_error TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    UNIQUE(asset_key, input_revision, rule_version)
+                );
+                INSERT INTO scrape_queue_v2
+                    (id, asset_key, book_key, source_id, path, input_revision, rule_version,
+                     trigger, status, attempt, next_run_at, last_error, created_at, updated_at)
+                SELECT id, CASE WHEN trim(asset_key) = '' THEN book_key ELSE asset_key END,
+                    book_key, source_id, path, input_revision, rule_version, trigger, status,
+                    attempt, next_run_at, last_error, created_at, updated_at
+                FROM scrape_queue;
+                DROP TABLE scrape_queue;
+                ALTER TABLE scrape_queue_v2 RENAME TO scrape_queue;
+                ",
+            )?;
+        }
+        if rebuild_materializations {
+            conn.execute_batch(
+                "
+                DROP TABLE IF EXISTS scrape_materializations_v2;
+                CREATE TABLE scrape_materializations_v2 (
+                    asset_key TEXT NOT NULL,
+                    book_key TEXT NOT NULL,
+                    proposal_revision TEXT NOT NULL,
+                    rule_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    applied_fields_json TEXT NOT NULL DEFAULT '[]',
+                    added_tags_json TEXT NOT NULL DEFAULT '[]',
+                    skipped_fields_json TEXT NOT NULL DEFAULT '[]',
+                    error TEXT NOT NULL DEFAULT '',
+                    applied_at INTEGER,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (asset_key, proposal_revision)
+                );
+                INSERT INTO scrape_materializations_v2
+                    (asset_key, book_key, proposal_revision, rule_version, status,
+                     applied_fields_json, added_tags_json, skipped_fields_json, error,
+                     applied_at, updated_at)
+                SELECT CASE WHEN trim(asset_key) = '' THEN book_key ELSE asset_key END,
+                    book_key, proposal_revision, rule_version, status, applied_fields_json,
+                    added_tags_json, skipped_fields_json, error, applied_at, updated_at
+                FROM scrape_materializations;
+                DROP TABLE scrape_materializations;
+                ALTER TABLE scrape_materializations_v2 RENAME TO scrape_materializations;
+                ",
+            )?;
+        }
+        conn.execute_batch("COMMIT")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = conn.execute_batch("ROLLBACK");
+    }
+    result
 }
 
 /// 幂等补列：查询现有列名，缺失列执行 `ALTER TABLE ADD COLUMN`。
@@ -819,6 +1156,43 @@ fn normalize_path(p: &str) -> String {
     s
 }
 
+/// Normalize a comic asset path for metadata/tag identity. This mirrors Dart
+/// `normalizeComicPath`: archive aliases represent the same book, while EPUB,
+/// PDF and other non-archive extensions remain distinct.
+pub fn normalize_book_key_path(path: &str) -> String {
+    let normalized = normalize_path(path);
+    let lower = normalized.to_ascii_lowercase();
+    for ext in [
+        ".cbz", ".zip", ".cbr", ".rar", ".cb7", ".7z", ".cbt", ".tar",
+    ] {
+        if lower.ends_with(ext) {
+            return normalized[..normalized.len() - ext.len()].to_string();
+        }
+    }
+    if lower.ends_with(".azw3") {
+        return format!("{}.mobi", &normalized[..normalized.len() - 5]);
+    }
+    if lower.ends_with(".azw") {
+        return format!("{}.mobi", &normalized[..normalized.len() - 4]);
+    }
+    normalized
+}
+
+pub fn book_key_of(source_type: &str, source_id: &str, path: &str) -> String {
+    format!(
+        "{source_type}|{source_id}|{}",
+        normalize_book_key_path(path)
+    )
+}
+
+/// Stable physical identity for one persisted catalog asset. Unlike
+/// `book_key_of`, this key never removes archive extensions and is based on
+/// the catalog row id, so two real files that share a logical stem remain
+/// independently addressable.
+pub fn asset_key_of(source_type: &str, source_id: &str, library_index_id: &str) -> String {
+    format!("asset|{source_type}|{source_id}|{library_index_id}")
+}
+
 /// 规范化 URL endpoint：去 scheme、host 小写、路径去尾部斜杠并剥离 query/fragment
 /// （query/fragment 与资源身份无关，避免 URL 签名参数导致同源变不同源）。
 fn normalize_url_endpoint(url: &str) -> String {
@@ -868,7 +1242,10 @@ pub fn compute_source_fingerprint(
             normalize_url_endpoint(url.unwrap_or_default()),
             normalize_path(path),
         ),
-        "smb" => (normalize_path(path).trim_start_matches('/').to_string(), String::new()),
+        "smb" => (
+            normalize_path(path).trim_start_matches('/').to_string(),
+            String::new(),
+        ),
         "local" => (normalize_path(path), String::new()),
         "baidu" => (String::new(), normalize_path(path)),
         "115" | "quark" => (
@@ -895,13 +1272,7 @@ pub(crate) fn backfill_source_fingerprints(conn: &Connection) -> Result<()> {
              WHERE fingerprint IS NULL OR fingerprint = ''",
         )?
         .query_map([], |r| {
-            Ok((
-                r.get(0)?,
-                r.get(1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-            ))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?
         .filter_map(|r| r.ok())
         .collect();
@@ -979,10 +1350,202 @@ pub fn upsert_source(s: &BookSourceRow) -> Result<()> {
     upsert_source_on(&conn, s)
 }
 
+/// Remove all user-facing state for one logical book after its last physical
+/// catalog asset disappears. This is deliberately local and transactional;
+/// it does not inspect a source adapter or touch comic bytes.
+fn delete_book_data_on(conn: &Connection, book_key: &str) -> Result<()> {
+    let record_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM read_records WHERE key = ?1)",
+            params![book_key],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    conn.execute("DELETE FROM read_records WHERE key = ?1", params![book_key])?;
+    if record_exists {
+        upsert_tombstone_on(conn, "records", book_key)?;
+    }
+
+    let meta_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM book_metas WHERE key = ?1)",
+            params![book_key],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    conn.execute("DELETE FROM book_metas WHERE key = ?1", params![book_key])?;
+    if meta_exists {
+        upsert_tombstone_on(conn, "metas", book_key)?;
+    }
+
+    let tag_ids: Vec<String> = conn
+        .prepare("SELECT tag_id FROM book_tags WHERE book_key = ?1")?
+        .query_map(params![book_key], |r| r.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    conn.execute(
+        "DELETE FROM book_tags WHERE book_key = ?1",
+        params![book_key],
+    )?;
+    for tag_id in tag_ids {
+        upsert_tombstone_on(conn, "book_tags", &format!("{book_key}|{tag_id}"))?;
+        let still_used: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM book_tags WHERE tag_id = ?1 AND deleted = 0)",
+                params![tag_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+        if !still_used {
+            conn.execute("DELETE FROM tags WHERE id = ?1", params![tag_id])?;
+            upsert_tombstone_on(conn, "tags", &tag_id)?;
+        }
+    }
+
+    conn.execute(
+        "DELETE FROM ai_tasks WHERE book_key = ?1",
+        params![book_key],
+    )?;
+    Ok(())
+}
+
+/// Remove physical-asset scoped scrape state and, when no live alias remains,
+/// remove the logical metadata/read/tag state as well.
+pub(crate) fn cleanup_deleted_asset_on(
+    conn: &Connection,
+    source_type: &str,
+    source_id: &str,
+    index_id: &str,
+    path: &str,
+) -> Result<()> {
+    let asset_key = asset_key_of(source_type, source_id, index_id);
+    let book_key = book_key_of(source_type, source_id, path);
+    conn.execute(
+        "DELETE FROM scrape_proposals
+         WHERE asset_key = ?1 OR (book_key = ?2 AND source_id = ?3 AND path = ?4)",
+        params![asset_key, book_key, source_id, path],
+    )?;
+    conn.execute(
+        "DELETE FROM scrape_queue
+         WHERE asset_key = ?1 OR (book_key = ?2 AND source_id = ?3 AND path = ?4)",
+        params![asset_key, book_key, source_id, path],
+    )?;
+    conn.execute(
+        "DELETE FROM scrape_materializations
+         WHERE asset_key = ?1",
+        params![asset_key],
+    )?;
+
+    let live_alias: bool = conn
+        .prepare(
+            "SELECT path FROM library_index
+             WHERE source_id = ?1 AND deleted = 0
+               AND entry_type IN ('file', 'dir')",
+        )?
+        .query_map(params![source_id], |r| r.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .any(|candidate| book_key_of(source_type, source_id, &candidate) == book_key);
+    if !live_alias {
+        // A logical book may have both .zip and .cbz (or other archive)
+        // aliases. Keep materialization history while another alias is live;
+        // once the final alias disappears, clear the remaining legacy/history
+        // rows together with the canonical metadata and tags.
+        conn.execute(
+            "DELETE FROM scrape_materializations WHERE book_key = ?1",
+            params![book_key],
+        )?;
+        delete_book_data_on(conn, &book_key)?;
+    }
+    Ok(())
+}
+
+/// Resolve a library-index tombstone to its source type/path and run the
+/// asset cleanup. Kept behind the DB layer so sync and local catalog refresh
+/// use exactly the same deletion semantics.
+pub(crate) fn cleanup_deleted_index_entry_on(conn: &Connection, index_id: &str) -> Result<()> {
+    let row: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT li.source_id, s.type, li.path
+             FROM library_index li
+             JOIN book_sources s ON s.id = li.source_id
+             WHERE li.id = ?1",
+            params![index_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    if let Some((source_id, source_type, path)) = row {
+        cleanup_deleted_asset_on(conn, &source_type, &source_id, index_id, &path)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn delete_source_on(conn: &Connection, id: &str) -> Result<()> {
+    let source_type: Option<String> = conn
+        .query_row(
+            "SELECT type FROM book_sources WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(source_type) = source_type.as_deref() {
+        let prefix = format!("{source_type}|{id}|");
+        let mut keys = std::collections::HashSet::new();
+        for (table, key_column) in [
+            ("read_records", "key"),
+            ("book_metas", "key"),
+            ("book_tags", "book_key"),
+        ] {
+            let sql =
+                format!("SELECT DISTINCT {key_column} FROM {table} WHERE {key_column} LIKE ?1");
+            for key in conn
+                .prepare(&sql)?
+                .query_map(params![format!("{prefix}%")], |r| r.get::<_, String>(0))?
+                .filter_map(|r| r.ok())
+            {
+                keys.insert(key);
+            }
+        }
+        for key in keys {
+            delete_book_data_on(conn, &key)?;
+        }
+        conn.execute(
+            "DELETE FROM scrape_proposals WHERE source_id = ?1",
+            params![id],
+        )?;
+        conn.execute("DELETE FROM scrape_queue WHERE source_id = ?1", params![id])?;
+        conn.execute(
+            "DELETE FROM scrape_materializations WHERE book_key LIKE ?1",
+            params![format!("{prefix}%")],
+        )?;
+        conn.execute(
+            "DELETE FROM catalog_revisions WHERE scope = ?1",
+            params![format!("source:{id}")],
+        )?;
+    }
+
+    // Mark every index row deleted before cleanup so archive aliases cannot
+    // keep logical metadata alive while the source itself is being removed.
+    let index_ids: Vec<String> = conn
+        .prepare("SELECT id FROM library_index WHERE source_id = ?1")?
+        .query_map(params![id], |r| r.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    conn.execute(
+        "UPDATE library_index SET deleted = 1, updated_at = ?2 WHERE source_id = ?1",
+        params![id, now_ms()],
+    )?;
+    for index_id in &index_ids {
+        cleanup_deleted_index_entry_on(conn, index_id)?;
+    }
     conn.execute("DELETE FROM source_alias WHERE source_id = ?1", params![id])?;
-    conn.execute("DELETE FROM library_index WHERE source_id = ?1", params![id])?;
-    conn.execute("DELETE FROM source_snapshot WHERE source_id = ?1", params![id])?;
+    conn.execute(
+        "DELETE FROM library_index WHERE source_id = ?1",
+        params![id],
+    )?;
+    conn.execute(
+        "DELETE FROM source_snapshot WHERE source_id = ?1",
+        params![id],
+    )?;
     conn.execute("DELETE FROM book_sources WHERE id = ?1", params![id])?;
     upsert_tombstone_on(&conn, "sources", id)?;
     Ok(())
@@ -1128,6 +1691,34 @@ pub struct BookMetaRow {
     pub rotations: String,
 }
 
+pub(crate) fn load_meta_on(conn: &Connection, key: &str) -> Option<BookMetaRow> {
+    conn.query_row(
+        "SELECT key, cover_page, crop_x, crop_y, crop_w, crop_h,
+                author, genre, series, title, chinese_title, summary, comment, rotations
+         FROM book_metas WHERE key = ?1 AND deleted = 0",
+        params![key],
+        |row| {
+            Ok(BookMetaRow {
+                key: row.get(0)?,
+                cover_page: row.get(1)?,
+                crop_x: row.get(2)?,
+                crop_y: row.get(3)?,
+                crop_w: row.get(4)?,
+                crop_h: row.get(5)?,
+                author: row.get(6)?,
+                genre: row.get(7)?,
+                series: row.get(8)?,
+                title: row.get(9)?,
+                chinese_title: row.get(10)?,
+                summary: row.get(11)?,
+                comment: row.get(12)?,
+                rotations: row.get(13)?,
+            })
+        },
+    )
+    .ok()
+}
+
 pub fn load_all_metas() -> Vec<BookMetaRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
@@ -1161,7 +1752,7 @@ pub fn load_all_metas() -> Vec<BookMetaRow> {
     .collect()
 }
 
-fn upsert_meta_on(conn: &Connection, m: &BookMetaRow) -> Result<()> {
+pub(crate) fn upsert_meta_on(conn: &Connection, m: &BookMetaRow) -> Result<()> {
     conn.execute(
         "INSERT INTO book_metas
          (key, cover_page, crop_x, crop_y, crop_w, crop_h,
@@ -1172,7 +1763,8 @@ fn upsert_meta_on(conn: &Connection, m: &BookMetaRow) -> Result<()> {
             crop_w=excluded.crop_w, crop_h=excluded.crop_h, author=excluded.author,
             genre=excluded.genre, series=excluded.series, title=excluded.title,
             chinese_title=excluded.chinese_title, summary=excluded.summary,
-            comment=excluded.comment, rotations=excluded.rotations, updated_at=excluded.updated_at",
+            comment=excluded.comment, rotations=excluded.rotations, deleted=0,
+            updated_at=excluded.updated_at",
         params![
             m.key,
             m.cover_page,
@@ -1402,10 +1994,7 @@ pub fn rename_tag(old_name: &str, new_name: &str) -> Result<()> {
             params![new_id, old_id],
         )?;
         // 清理可能残留的旧关联
-        conn.execute(
-            "DELETE FROM book_tags WHERE tag_id = ?1",
-            params![old_id],
-        )?;
+        conn.execute("DELETE FROM book_tags WHERE tag_id = ?1", params![old_id])?;
         // 删除旧标签
         conn.execute("DELETE FROM tags WHERE id = ?1", params![old_id])?;
         upsert_tombstone_on(&conn, "tags", &old_id)?;
@@ -1546,9 +2135,7 @@ pub struct SettingEntry {
 
 pub fn load_all_settings() -> Vec<SettingEntry> {
     let conn = get().lock().unwrap();
-    let mut stmt = conn
-        .prepare("SELECT key, value FROM app_settings")
-        .unwrap();
+    let mut stmt = conn.prepare("SELECT key, value FROM app_settings").unwrap();
     stmt.query_map([], |row| {
         Ok(SettingEntry {
             key: row.get(0)?,
@@ -2195,7 +2782,14 @@ pub(crate) fn ensure_index_entry_on(
         return Ok(());
     }
     let root_norm = normalize_index_path(&root);
-    let root_id = library_index_id(&fp, if root_norm.is_empty() { "/" } else { &root_norm });
+    let root_id = library_index_id(
+        &fp,
+        if root_norm.is_empty() {
+            "/"
+        } else {
+            &root_norm
+        },
+    );
     let norm = normalize_index_path(path);
     if norm.is_empty() {
         return Ok(());
@@ -2215,15 +2809,7 @@ pub(crate) fn ensure_index_entry_on(
         }
     };
     if let Some(tp) = &target_parent {
-        ensure_parent_chain_on(
-            conn,
-            &fp,
-            &root_norm,
-            &root_id,
-            tp,
-            source_id,
-            now,
-        )?;
+        ensure_parent_chain_on(conn, &fp, &root_norm, &root_id, tp, source_id, now)?;
     }
 
     // 条目本身
@@ -2273,7 +2859,10 @@ pub(crate) fn merge_library_index_sync_on(
     )
 }
 
-pub(crate) fn load_library_index_for_sync_on(conn: &Connection, since: i64) -> Vec<LibraryIndexRow> {
+pub(crate) fn load_library_index_for_sync_on(
+    conn: &Connection,
+    since: i64,
+) -> Vec<LibraryIndexRow> {
     let mut stmt = conn
         .prepare(
             "SELECT id, source_id, parent_id, name, path, entry_type, size, modified_at, cover_path, hash, updated_at, deleted
@@ -2343,6 +2932,768 @@ pub fn load_library_index_for_source(source_id: &str) -> Vec<LibraryIndexRow> {
     load_library_index_for_source_on(&conn, source_id)
 }
 
+/// Load the complete offline catalog for catalog-only scraping. This function
+/// reads SQLite rows only; it never opens a source adapter or a file handle.
+pub fn load_all_library_index() -> Vec<LibraryIndexRow> {
+    let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, source_id, parent_id, name, path, entry_type, size, modified_at, cover_path, hash, updated_at, deleted
+             FROM library_index WHERE deleted = 0 ORDER BY source_id, path",
+        )
+        .unwrap();
+    stmt.query_map([], |row| {
+        Ok(LibraryIndexRow {
+            id: row.get(0)?,
+            source_id: row.get(1)?,
+            parent_id: row.get(2)?,
+            name: row.get(3)?,
+            path: row.get(4)?,
+            entry_type: row.get(5)?,
+            size: row.get(6)?,
+            modified_at: row.get(7)?,
+            cover_path: row.get(8)?,
+            hash: row.get(9)?,
+            updated_at: row.get(10)?,
+            deleted: row.get::<_, i64>(11)? != 0,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+/// Map source ids to their persisted source types for stable book keys.
+pub fn load_source_type_map() -> std::collections::HashMap<String, String> {
+    let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT id, type FROM book_sources WHERE deleted = 0")
+        .unwrap();
+    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct ScrapeJobRow {
+    pub id: String,
+    pub trigger: String,
+    pub status: String,
+    pub rule_version: String,
+    pub total: i64,
+    pub processed: i64,
+    pub ready: i64,
+    pub ambiguous: i64,
+    pub partial: i64,
+    pub unmatched: i64,
+    pub input_assets: i64,
+    pub unique_assets: i64,
+    pub proposals_written: i64,
+    pub asset_collision_count: i64,
+    pub book_group_collision_count: i64,
+    pub accounting_status: String,
+    pub error: String,
+    pub requested_at: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScrapeProposalRow {
+    pub asset_key: String,
+    pub book_key: String,
+    pub source_id: String,
+    pub path: String,
+    pub filename: String,
+    pub title: Option<String>,
+    pub authors_json: String,
+    pub provider: Option<String>,
+    pub volume: Option<String>,
+    pub chapter: Option<String>,
+    pub state: String,
+    pub evidence_json: String,
+    pub conflicts_json: String,
+    pub semantic_json: String,
+    pub rule_version: String,
+    pub input_revision: String,
+    pub materialization_status: String,
+    pub materialization_error: String,
+    pub materialized_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogRevisionRow {
+    pub scope: String,
+    pub revision: String,
+    pub changed_book_keys_json: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrapeQueueRow {
+    pub id: i64,
+    pub asset_key: String,
+    pub book_key: String,
+    pub source_id: String,
+    pub path: String,
+    pub input_revision: String,
+    pub rule_version: String,
+    pub trigger: String,
+    pub status: String,
+    pub attempt: i64,
+    pub next_run_at: i64,
+    pub last_error: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScrapeMaterializationRow {
+    pub asset_key: String,
+    pub book_key: String,
+    pub proposal_revision: String,
+    pub rule_version: String,
+    pub status: String,
+    pub applied_fields_json: String,
+    pub added_tags_json: String,
+    pub skipped_fields_json: String,
+    pub error: String,
+    pub applied_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+pub fn upsert_scrape_job(job: &ScrapeJobRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO scrape_jobs
+         (id, trigger, status, rule_version, total, processed, ready, ambiguous, partial, unmatched,
+          input_assets, unique_assets, proposals_written, asset_collision_count,
+          book_group_collision_count, accounting_status, error, requested_at, started_at,
+          finished_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                 ?17, ?18, ?19, ?20, ?21)",
+        params![
+            job.id,
+            job.trigger,
+            job.status,
+            job.rule_version,
+            job.total,
+            job.processed,
+            job.ready,
+            job.ambiguous,
+            job.partial,
+            job.unmatched,
+            job.input_assets,
+            job.unique_assets,
+            job.proposals_written,
+            job.asset_collision_count,
+            job.book_group_collision_count,
+            job.accounting_status,
+            job.error,
+            job.requested_at,
+            job.started_at,
+            job.finished_at,
+            job.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn upsert_scrape_proposals(rows: &[ScrapeProposalRow]) -> Result<()> {
+    let mut conn = get().lock().unwrap();
+    let tx = conn.transaction()?;
+    for row in rows {
+        tx.execute(
+            "INSERT INTO scrape_proposals
+             (asset_key, book_key, source_id, path, filename, title, authors_json, provider, volume, chapter, state,
+              evidence_json, conflicts_json, semantic_json, rule_version, input_revision,
+              materialization_status, materialization_error, materialized_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+             ON CONFLICT(asset_key) DO UPDATE SET
+                book_key = excluded.book_key,
+                source_id = excluded.source_id,
+                path = excluded.path,
+                filename = excluded.filename,
+                title = excluded.title,
+                authors_json = excluded.authors_json,
+                provider = excluded.provider,
+                volume = excluded.volume,
+                chapter = excluded.chapter,
+                state = excluded.state,
+                evidence_json = excluded.evidence_json,
+                conflicts_json = excluded.conflicts_json,
+                semantic_json = excluded.semantic_json,
+                rule_version = excluded.rule_version,
+                input_revision = excluded.input_revision,
+                materialization_status = CASE
+                    WHEN scrape_proposals.input_revision = excluded.input_revision
+                    THEN scrape_proposals.materialization_status
+                    ELSE 'pending'
+                END,
+                materialization_error = CASE
+                    WHEN scrape_proposals.input_revision = excluded.input_revision
+                    THEN scrape_proposals.materialization_error
+                    ELSE ''
+                END,
+                materialized_at = CASE
+                    WHEN scrape_proposals.input_revision = excluded.input_revision
+                    THEN scrape_proposals.materialized_at
+                    ELSE NULL
+                END,
+                updated_at = excluded.updated_at",
+            params![
+                row.asset_key,
+                row.book_key,
+                row.source_id,
+                row.path,
+                row.filename,
+                row.title,
+                row.authors_json,
+                row.provider,
+                row.volume,
+                row.chapter,
+                row.state,
+                row.evidence_json,
+                row.conflicts_json,
+                row.semantic_json,
+                row.rule_version,
+                row.input_revision,
+                row.materialization_status,
+                row.materialization_error,
+                row.materialized_at,
+                row.updated_at,
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Count persisted proposals for one physical-asset batch.  The caller uses
+/// this as the run accounting invariant; logical `book_key` grouping is not
+/// involved, so two archive formats cannot overwrite one another.
+pub fn count_scrape_proposals_for_assets(asset_keys: &[String]) -> Result<i64> {
+    if asset_keys.is_empty() {
+        return Ok(0);
+    }
+    let conn = get().lock().unwrap();
+    let placeholders = std::iter::repeat_n("?", asset_keys.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!("SELECT COUNT(*) FROM scrape_proposals WHERE asset_key IN ({placeholders})");
+    let refs: Vec<&dyn rusqlite::ToSql> = asset_keys
+        .iter()
+        .map(|value| value as &dyn rusqlite::ToSql)
+        .collect();
+    conn.query_row(&sql, refs.as_slice(), |row| row.get(0))
+        .map_err(Into::into)
+}
+
+pub fn load_scrape_jobs(limit: i64) -> Vec<ScrapeJobRow> {
+    let conn = get().lock().unwrap();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, trigger, status, rule_version, total, processed, ready, ambiguous, partial,
+                    unmatched, input_assets, unique_assets, proposals_written, asset_collision_count,
+                    book_group_collision_count, accounting_status, error, requested_at, started_at,
+                    finished_at, updated_at
+             FROM scrape_jobs ORDER BY requested_at DESC LIMIT ?1",
+        )
+        .unwrap();
+    stmt.query_map(params![limit.max(1)], |row| {
+        Ok(ScrapeJobRow {
+            id: row.get(0)?,
+            trigger: row.get(1)?,
+            status: row.get(2)?,
+            rule_version: row.get(3)?,
+            total: row.get(4)?,
+            processed: row.get(5)?,
+            ready: row.get(6)?,
+            ambiguous: row.get(7)?,
+            partial: row.get(8)?,
+            unmatched: row.get(9)?,
+            input_assets: row.get(10)?,
+            unique_assets: row.get(11)?,
+            proposals_written: row.get(12)?,
+            asset_collision_count: row.get(13)?,
+            book_group_collision_count: row.get(14)?,
+            accounting_status: row.get(15)?,
+            error: row.get(16)?,
+            requested_at: row.get(17)?,
+            started_at: row.get(18)?,
+            finished_at: row.get(19)?,
+            updated_at: row.get(20)?,
+        })
+    })
+    .unwrap()
+    .filter_map(|r| r.ok())
+    .collect()
+}
+
+pub fn load_scrape_proposals(limit: i64, state: Option<&str>) -> Vec<ScrapeProposalRow> {
+    let conn = get().lock().unwrap();
+    let (sql, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = match state {
+        Some(state) if !state.trim().is_empty() => (
+            "SELECT asset_key, book_key, source_id, path, filename, title, authors_json, provider, volume, chapter, state,
+                    evidence_json, conflicts_json, semantic_json, rule_version, input_revision,
+                    materialization_status, materialization_error, materialized_at, updated_at
+             FROM scrape_proposals WHERE state = ?1 ORDER BY updated_at DESC LIMIT ?2",
+            vec![Box::new(state.to_string()), Box::new(limit.max(1))],
+        ),
+        _ => (
+            "SELECT asset_key, book_key, source_id, path, filename, title, authors_json, provider, volume, chapter, state,
+                    evidence_json, conflicts_json, semantic_json, rule_version, input_revision,
+                    materialization_status, materialization_error, materialized_at, updated_at
+             FROM scrape_proposals ORDER BY updated_at DESC LIMIT ?1",
+            vec![Box::new(limit.max(1))],
+        ),
+    };
+    let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = conn
+        .prepare(sql)
+        .unwrap()
+        .query_map(refs.as_slice(), |row| {
+            Ok(ScrapeProposalRow {
+                asset_key: row.get(0)?,
+                book_key: row.get(1)?,
+                source_id: row.get(2)?,
+                path: row.get(3)?,
+                filename: row.get(4)?,
+                title: row.get(5)?,
+                authors_json: row.get(6)?,
+                provider: row.get(7)?,
+                volume: row.get(8)?,
+                chapter: row.get(9)?,
+                state: row.get(10)?,
+                evidence_json: row.get(11)?,
+                conflicts_json: row.get(12)?,
+                semantic_json: row.get(13)?,
+                rule_version: row.get(14)?,
+                input_revision: row.get(15)?,
+                materialization_status: row.get(16)?,
+                materialization_error: row.get(17)?,
+                materialized_at: row.get(18)?,
+                updated_at: row.get(19)?,
+            })
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    rows
+}
+
+pub(crate) fn load_scrape_proposal_on(
+    conn: &Connection,
+    asset_key: &str,
+) -> Option<ScrapeProposalRow> {
+    conn.query_row(
+        "SELECT asset_key, book_key, source_id, path, filename, title, authors_json, provider, volume,
+                chapter, state, evidence_json, conflicts_json, semantic_json, rule_version,
+                input_revision, materialization_status, materialization_error, materialized_at,
+                updated_at
+         FROM scrape_proposals WHERE asset_key = ?1",
+        params![asset_key],
+        |row| {
+            Ok(ScrapeProposalRow {
+                asset_key: row.get(0)?,
+                book_key: row.get(1)?,
+                source_id: row.get(2)?,
+                path: row.get(3)?,
+                filename: row.get(4)?,
+                title: row.get(5)?,
+                authors_json: row.get(6)?,
+                provider: row.get(7)?,
+                volume: row.get(8)?,
+                chapter: row.get(9)?,
+                state: row.get(10)?,
+                evidence_json: row.get(11)?,
+                conflicts_json: row.get(12)?,
+                semantic_json: row.get(13)?,
+                rule_version: row.get(14)?,
+                input_revision: row.get(15)?,
+                materialization_status: row.get(16)?,
+                materialization_error: row.get(17)?,
+                materialized_at: row.get(18)?,
+                updated_at: row.get(19)?,
+            })
+        },
+    )
+    .ok()
+}
+
+pub(crate) fn upsert_catalog_revision_on(
+    conn: &Connection,
+    row: &CatalogRevisionRow,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO catalog_revisions (scope, revision, changed_book_keys_json, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(scope) DO UPDATE SET
+            revision = excluded.revision,
+            changed_book_keys_json = excluded.changed_book_keys_json,
+            updated_at = excluded.updated_at",
+        params![
+            row.scope,
+            row.revision,
+            row.changed_book_keys_json,
+            row.updated_at
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn upsert_catalog_revision(row: &CatalogRevisionRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    upsert_catalog_revision_on(&conn, row)
+}
+
+pub(crate) fn load_catalog_revision_on(
+    conn: &Connection,
+    scope: &str,
+) -> Option<CatalogRevisionRow> {
+    conn.query_row(
+        "SELECT scope, revision, changed_book_keys_json, updated_at
+         FROM catalog_revisions WHERE scope = ?1",
+        params![scope],
+        |row| {
+            Ok(CatalogRevisionRow {
+                scope: row.get(0)?,
+                revision: row.get(1)?,
+                changed_book_keys_json: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        },
+    )
+    .ok()
+}
+
+pub fn load_catalog_revision(scope: &str) -> Option<CatalogRevisionRow> {
+    let conn = get().lock().unwrap();
+    load_catalog_revision_on(&conn, scope)
+}
+
+pub(crate) fn enqueue_scrape_queue_on(conn: &Connection, row: &ScrapeQueueRow) -> Result<()> {
+    conn.execute(
+        "UPDATE scrape_queue
+         SET status = 'superseded', updated_at = ?3
+         WHERE asset_key = ?1 AND rule_version = ?2
+           AND input_revision <> ?4
+           AND status IN ('queued', 'retry_wait')",
+        params![
+            row.asset_key,
+            row.rule_version,
+            row.updated_at,
+            row.input_revision
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO scrape_queue
+         (asset_key, book_key, source_id, path, input_revision, rule_version, trigger, status,
+          attempt, next_run_at, last_error, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(asset_key, input_revision, rule_version) DO UPDATE SET
+            book_key = excluded.book_key,
+            source_id = excluded.source_id,
+            path = excluded.path,
+            trigger = excluded.trigger,
+            status = CASE
+                WHEN scrape_queue.status IN ('succeeded', 'running')
+                THEN scrape_queue.status
+                ELSE excluded.status
+            END,
+            next_run_at = MIN(scrape_queue.next_run_at, excluded.next_run_at),
+            last_error = excluded.last_error,
+            updated_at = excluded.updated_at",
+        params![
+            row.asset_key,
+            row.book_key,
+            row.source_id,
+            row.path,
+            row.input_revision,
+            row.rule_version,
+            row.trigger,
+            row.status,
+            row.attempt,
+            row.next_run_at,
+            row.last_error,
+            row.created_at,
+            row.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn enqueue_scrape_queue(row: &ScrapeQueueRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    enqueue_scrape_queue_on(&conn, row)
+}
+
+pub(crate) fn claim_scrape_queue_for_on(
+    conn: &Connection,
+    asset_key: &str,
+    input_revision: &str,
+    rule_version: &str,
+    now: i64,
+) -> Result<Option<ScrapeQueueRow>> {
+    let row = conn
+        .query_row(
+            "SELECT id, asset_key, book_key, source_id, path, input_revision, rule_version, trigger,
+                    status, attempt, next_run_at, last_error, created_at, updated_at
+             FROM scrape_queue
+             WHERE asset_key = ?1 AND input_revision = ?2 AND rule_version = ?3
+               AND status IN ('queued', 'retry_wait') AND next_run_at <= ?4
+             LIMIT 1",
+            params![asset_key, input_revision, rule_version, now],
+            |row| {
+                Ok(ScrapeQueueRow {
+                    id: row.get(0)?,
+                    asset_key: row.get(1)?,
+                    book_key: row.get(2)?,
+                    source_id: row.get(3)?,
+                    path: row.get(4)?,
+                    input_revision: row.get(5)?,
+                    rule_version: row.get(6)?,
+                    trigger: row.get(7)?,
+                    status: row.get(8)?,
+                    attempt: row.get(9)?,
+                    next_run_at: row.get(10)?,
+                    last_error: row.get(11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            },
+        )
+        .optional()?;
+    let Some(mut row) = row else { return Ok(None) };
+    let updated_at = now_ms();
+    let changed = conn.execute(
+        "UPDATE scrape_queue
+         SET status = 'running', attempt = attempt + 1, updated_at = ?2
+         WHERE id = ?1 AND status IN ('queued', 'retry_wait')",
+        params![row.id, updated_at],
+    )?;
+    if changed == 0 {
+        return Ok(None);
+    }
+    row.status = "running".into();
+    row.attempt += 1;
+    row.updated_at = updated_at;
+    Ok(Some(row))
+}
+
+pub fn claim_scrape_queue_for(
+    asset_key: &str,
+    input_revision: &str,
+    rule_version: &str,
+    now: i64,
+) -> Result<Option<ScrapeQueueRow>> {
+    let conn = get().lock().unwrap();
+    claim_scrape_queue_for_on(&conn, asset_key, input_revision, rule_version, now)
+}
+
+pub(crate) fn claim_due_scrape_queue_on(
+    conn: &Connection,
+    now: i64,
+) -> Result<Option<ScrapeQueueRow>> {
+    let row = conn
+        .query_row(
+            "SELECT id, asset_key, book_key, source_id, path, input_revision, rule_version, trigger,
+                    status, attempt, next_run_at, last_error, created_at, updated_at
+             FROM scrape_queue
+             WHERE status IN ('queued', 'retry_wait') AND next_run_at <= ?1
+             ORDER BY next_run_at, id LIMIT 1",
+            params![now],
+            |row| {
+                Ok(ScrapeQueueRow {
+                    id: row.get(0)?,
+                    asset_key: row.get(1)?,
+                    book_key: row.get(2)?,
+                    source_id: row.get(3)?,
+                    path: row.get(4)?,
+                    input_revision: row.get(5)?,
+                    rule_version: row.get(6)?,
+                    trigger: row.get(7)?,
+                    status: row.get(8)?,
+                    attempt: row.get(9)?,
+                    next_run_at: row.get(10)?,
+                    last_error: row.get(11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            },
+        )
+        .optional()?;
+    let Some(mut row) = row else { return Ok(None) };
+    let updated_at = now_ms();
+    let changed = conn.execute(
+        "UPDATE scrape_queue
+         SET status = 'running', attempt = attempt + 1, updated_at = ?2
+         WHERE id = ?1 AND status IN ('queued', 'retry_wait')",
+        params![row.id, updated_at],
+    )?;
+    if changed == 0 {
+        return Ok(None);
+    }
+    row.status = "running".into();
+    row.attempt += 1;
+    row.updated_at = updated_at;
+    Ok(Some(row))
+}
+
+pub fn claim_due_scrape_queue(now: i64) -> Result<Option<ScrapeQueueRow>> {
+    let conn = get().lock().unwrap();
+    claim_due_scrape_queue_on(&conn, now)
+}
+
+pub(crate) fn finish_scrape_queue_on(
+    conn: &Connection,
+    id: i64,
+    status: &str,
+    last_error: Option<&str>,
+    next_run_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE scrape_queue
+         SET status = ?2, last_error = ?3, next_run_at = ?4, updated_at = ?5
+         WHERE id = ?1",
+        params![id, status, last_error, next_run_at, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn finish_scrape_queue(
+    id: i64,
+    status: &str,
+    last_error: Option<&str>,
+    next_run_at: i64,
+) -> Result<()> {
+    let conn = get().lock().unwrap();
+    finish_scrape_queue_on(&conn, id, status, last_error, next_run_at)
+}
+
+pub(crate) fn mark_scrape_queue_succeeded_on(
+    conn: &Connection,
+    asset_key: &str,
+    input_revision: &str,
+    rule_version: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE scrape_queue
+         SET status = 'succeeded', last_error = NULL, updated_at = ?4
+         WHERE asset_key = ?1 AND input_revision = ?2 AND rule_version = ?3
+           AND status IN ('queued', 'running', 'retry_wait')",
+        params![asset_key, input_revision, rule_version, now_ms()],
+    )?;
+    Ok(())
+}
+
+pub fn mark_scrape_queue_succeeded(
+    asset_key: &str,
+    input_revision: &str,
+    rule_version: &str,
+) -> Result<()> {
+    let conn = get().lock().unwrap();
+    mark_scrape_queue_succeeded_on(&conn, asset_key, input_revision, rule_version)
+}
+
+pub(crate) fn latest_scrape_queue_revision_on(
+    conn: &Connection,
+    asset_key: &str,
+    rule_version: &str,
+) -> Option<String> {
+    conn.query_row(
+        "SELECT input_revision
+         FROM scrape_queue
+         WHERE asset_key = ?1 AND rule_version = ?2
+           AND status <> 'superseded'
+         ORDER BY updated_at DESC, id DESC LIMIT 1",
+        params![asset_key, rule_version],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+pub(crate) fn upsert_scrape_materialization_on(
+    conn: &Connection,
+    row: &ScrapeMaterializationRow,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO scrape_materializations
+         (asset_key, book_key, proposal_revision, rule_version, status, applied_fields_json,
+          added_tags_json, skipped_fields_json, error, applied_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT(asset_key, proposal_revision) DO UPDATE SET
+            book_key = excluded.book_key,
+            rule_version = excluded.rule_version,
+            status = excluded.status,
+            applied_fields_json = excluded.applied_fields_json,
+            added_tags_json = excluded.added_tags_json,
+            skipped_fields_json = excluded.skipped_fields_json,
+            error = excluded.error,
+            applied_at = excluded.applied_at,
+            updated_at = excluded.updated_at",
+        params![
+            row.asset_key,
+            row.book_key,
+            row.proposal_revision,
+            row.rule_version,
+            row.status,
+            row.applied_fields_json,
+            row.added_tags_json,
+            row.skipped_fields_json,
+            row.error,
+            row.applied_at,
+            row.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn upsert_scrape_materialization(row: &ScrapeMaterializationRow) -> Result<()> {
+    let conn = get().lock().unwrap();
+    upsert_scrape_materialization_on(&conn, row)
+}
+
+pub(crate) fn load_scrape_materialization_on(
+    conn: &Connection,
+    asset_key: &str,
+    proposal_revision: &str,
+) -> Option<ScrapeMaterializationRow> {
+    conn.query_row(
+        "SELECT asset_key, book_key, proposal_revision, rule_version, status, applied_fields_json,
+                added_tags_json, skipped_fields_json, error, applied_at, updated_at
+         FROM scrape_materializations WHERE asset_key = ?1 AND proposal_revision = ?2",
+        params![asset_key, proposal_revision],
+        |row| {
+            Ok(ScrapeMaterializationRow {
+                asset_key: row.get(0)?,
+                book_key: row.get(1)?,
+                proposal_revision: row.get(2)?,
+                rule_version: row.get(3)?,
+                status: row.get(4)?,
+                applied_fields_json: row.get(5)?,
+                added_tags_json: row.get(6)?,
+                skipped_fields_json: row.get(7)?,
+                error: row.get(8)?,
+                applied_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        },
+    )
+    .ok()
+}
+
+pub fn load_scrape_materialization(
+    asset_key: &str,
+    proposal_revision: &str,
+) -> Option<ScrapeMaterializationRow> {
+    let conn = get().lock().unwrap();
+    load_scrape_materialization_on(&conn, asset_key, proposal_revision)
+}
+
 /// 某书源的**软删墓碑**路径列表（`deleted=1` 条目）。仅返回 path 字符串，
 /// 供"失效清理"判定远程文件已消失（ADR-021：整源重建时消失条目软删墓碑）。
 pub(crate) fn load_library_index_tombstones_for_source_on(
@@ -2388,6 +3739,7 @@ pub(crate) fn replace_library_index_for_source_on(
                 "UPDATE library_index SET deleted = 1, updated_at = ?2 WHERE id = ?1",
                 params![id, now],
             )?;
+            cleanup_deleted_index_entry_on(conn, &id)?;
         }
     }
     Ok(())
@@ -2625,7 +3977,9 @@ pub(crate) fn load_settings_for_sync_on(conn: &Connection, since: i64) -> Vec<Se
         .filter_map(|r| r.ok())
         .collect();
     // ADR-020：settings 白名单，剔除 sync_* 明文密钥与本地临时数据。
-    rows.into_iter().filter(|r| is_syncable_setting(&r.key)).collect()
+    rows.into_iter()
+        .filter(|r| is_syncable_setting(&r.key))
+        .collect()
 }
 
 pub fn load_settings_for_sync(since: i64) -> Vec<SettingSyncRow> {
@@ -2889,13 +4243,20 @@ fn existing_book_tag_updated_at(conn: &Connection, book_key: &str, tag_id: &str)
     .ok()
 }
 
-pub(crate) fn merge_source_sync_on(conn: &Connection, r: &SourceSyncRow, force: bool) -> Result<bool> {
+pub(crate) fn merge_source_sync_on(
+    conn: &Connection,
+    r: &SourceSyncRow,
+    force: bool,
+) -> Result<bool> {
     if r.deleted {
         let should = force
             || existing_updated_at(conn, "book_sources", "id", &r.id)
                 .map_or(false, |t| r.updated_at > t);
         if should {
-            conn.execute("DELETE FROM source_alias WHERE source_id = ?1", params![r.id])?;
+            conn.execute(
+                "DELETE FROM source_alias WHERE source_id = ?1",
+                params![r.id],
+            )?;
             conn.execute("DELETE FROM book_sources WHERE id = ?1", params![r.id])?;
             upsert_tombstone_on(conn, "sources", &r.id)?;
             return Ok(true);
@@ -2918,10 +4279,22 @@ pub fn merge_source_sync(r: &SourceSyncRow, force: bool) -> Result<bool> {
     merge_source_sync_on(&conn, r, force)
 }
 
-pub(crate) fn merge_record_sync_on(conn: &Connection, r: &RecordSyncRow, force: bool) -> Result<bool> {
-    merge_row_on(conn, "read_records", "key", "records", &r.key, r.updated_at, r.deleted, force, |c| {
-        apply_record_sync_on(c, r)
-    })
+pub(crate) fn merge_record_sync_on(
+    conn: &Connection,
+    r: &RecordSyncRow,
+    force: bool,
+) -> Result<bool> {
+    merge_row_on(
+        conn,
+        "read_records",
+        "key",
+        "records",
+        &r.key,
+        r.updated_at,
+        r.deleted,
+        force,
+        |c| apply_record_sync_on(c, r),
+    )
 }
 
 pub fn merge_record_sync(r: &RecordSyncRow, force: bool) -> Result<bool> {
@@ -2930,9 +4303,17 @@ pub fn merge_record_sync(r: &RecordSyncRow, force: bool) -> Result<bool> {
 }
 
 pub(crate) fn merge_meta_sync_on(conn: &Connection, r: &MetaSyncRow, force: bool) -> Result<bool> {
-    merge_row_on(conn, "book_metas", "key", "metas", &r.key, r.updated_at, r.deleted, force, |c| {
-        apply_meta_sync_on(c, r)
-    })
+    merge_row_on(
+        conn,
+        "book_metas",
+        "key",
+        "metas",
+        &r.key,
+        r.updated_at,
+        r.deleted,
+        force,
+        |c| apply_meta_sync_on(c, r),
+    )
 }
 
 pub fn merge_meta_sync(r: &MetaSyncRow, force: bool) -> Result<bool> {
@@ -2943,8 +4324,7 @@ pub fn merge_meta_sync(r: &MetaSyncRow, force: bool) -> Result<bool> {
 pub(crate) fn merge_tag_sync_on(conn: &Connection, r: &TagSyncRow, force: bool) -> Result<bool> {
     if r.deleted {
         let should = force
-            || existing_updated_at(conn, "tags", "id", &r.id)
-                .map_or(false, |t| r.updated_at > t);
+            || existing_updated_at(conn, "tags", "id", &r.id).map_or(false, |t| r.updated_at > t);
         if should {
             conn.execute("DELETE FROM book_tags WHERE tag_id = ?1", params![r.id])?;
             conn.execute("DELETE FROM tags WHERE id = ?1", params![r.id])?;
@@ -2953,8 +4333,8 @@ pub(crate) fn merge_tag_sync_on(conn: &Connection, r: &TagSyncRow, force: bool) 
         }
         return Ok(false);
     }
-    let should = force
-        || existing_updated_at(conn, "tags", "id", &r.id).map_or(true, |t| r.updated_at > t);
+    let should =
+        force || existing_updated_at(conn, "tags", "id", &r.id).map_or(true, |t| r.updated_at > t);
     if should {
         apply_tag_sync_on(conn, r)?;
         Ok(true)
@@ -3073,7 +4453,14 @@ pub fn register_cache(
         "INSERT OR REPLACE INTO cache_index
          (source_type, source_id, remote_path, local_path, file_size, downloaded_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![source_type, source_id, remote_path, local_path, file_size, now],
+        params![
+            source_type,
+            source_id,
+            remote_path,
+            local_path,
+            file_size,
+            now
+        ],
     )?;
     Ok(())
 }
@@ -3105,7 +4492,7 @@ pub fn total_cached_size() -> i64 {
 ///
 /// 简单可靠，消除跨语言 Hash 不一致问题。
 /// 标签名区分大小写显示，但 ID 统一用小写（方便去重）。
-fn tag_id(name: &str) -> String {
+pub(crate) fn tag_id(name: &str) -> String {
     name.trim().to_lowercase()
 }
 
@@ -3213,6 +4600,30 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
+    #[test]
+    fn book_key_normalization_matches_dart_archive_aliases() {
+        assert_eq!(
+            book_key_of("local", "s1", "/books/a.zip"),
+            "local|s1|/books/a"
+        );
+        assert_eq!(
+            book_key_of("local", "s1", "/books/a.cbz"),
+            "local|s1|/books/a"
+        );
+        assert_eq!(
+            book_key_of("local", "s1", "/books/a.azw3"),
+            "local|s1|/books/a.mobi"
+        );
+        assert_eq!(
+            book_key_of("local", "s1", "/books/a.epub"),
+            "local|s1|/books/a.epub"
+        );
+        assert_eq!(
+            book_key_of("local", "s1", r"F:\books\a.zip"),
+            "local|s1|f:/books/a"
+        );
+    }
+
     fn memory_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -3230,7 +4641,176 @@ mod tests {
             ",
         )
         .unwrap();
+        init_tables(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn init_tables_creates_scrape_storage() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+
+        for table in [
+            "scrape_jobs",
+            "scrape_proposals",
+            "catalog_revisions",
+            "scrape_queue",
+            "scrape_materializations",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "missing {table} table");
+        }
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(scrape_proposals)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .filter_map(|row| row.ok())
+            .collect();
+        assert!(columns.iter().any(|column| column == "semantic_json"));
+        assert!(columns.iter().any(|column| column == "input_revision"));
+        assert!(columns
+            .iter()
+            .any(|column| column == "materialization_status"));
+        assert!(columns.iter().any(|column| column == "asset_key"));
+        let asset_pk: i64 = conn
+            .query_row(
+                "SELECT pk FROM pragma_table_info('scrape_proposals') WHERE name = 'asset_key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(asset_pk, 1);
+        let job_columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(scrape_jobs)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .filter_map(|row| row.ok())
+            .collect();
+        for column in [
+            "input_assets",
+            "unique_assets",
+            "proposals_written",
+            "asset_collision_count",
+            "book_group_collision_count",
+            "accounting_status",
+        ] {
+            assert!(job_columns.iter().any(|candidate| candidate == column));
+        }
+    }
+
+    #[test]
+    fn scrape_queue_deduplicates_and_supersedes_old_revision() {
+        let conn = memory_conn();
+        let now = now_ms();
+        let make = |revision: &str| ScrapeQueueRow {
+            id: 0,
+            asset_key: "asset|local|s1|a".into(),
+            book_key: "local|s1|/books/a".into(),
+            source_id: "s1".into(),
+            path: "/books/a.zip".into(),
+            input_revision: revision.into(),
+            rule_version: "catalog-rules-v3".into(),
+            trigger: "test".into(),
+            status: "queued".into(),
+            attempt: 0,
+            next_run_at: now,
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        };
+        enqueue_scrape_queue_on(&conn, &make("r1")).unwrap();
+        enqueue_scrape_queue_on(&conn, &make("r1")).unwrap();
+        enqueue_scrape_queue_on(&conn, &make("r2")).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM scrape_queue", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        let old_status: String = conn
+            .query_row(
+                "SELECT status FROM scrape_queue WHERE input_revision = 'r1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_status, "superseded");
+    }
+
+    #[test]
+    fn asset_key_keeps_same_logical_book_formats_distinct() {
+        let book_zip = book_key_of("local", "s1", "/books/a.zip");
+        let book_cbz = book_key_of("local", "s1", "/books/a.cbz");
+        assert_eq!(book_zip, book_cbz);
+
+        let zip_asset = asset_key_of("local", "s1", "library-row-zip");
+        let cbz_asset = asset_key_of("local", "s1", "library-row-cbz");
+        assert_ne!(zip_asset, cbz_asset);
+        assert!(zip_asset.contains("library-row-zip"));
+        assert!(cbz_asset.contains("library-row-cbz"));
+    }
+
+    #[test]
+    fn legacy_scrape_identity_tables_migrate_book_key_to_asset_key() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE scrape_proposals (
+                book_key TEXT PRIMARY KEY, source_id TEXT NOT NULL, path TEXT NOT NULL,
+                filename TEXT NOT NULL, title TEXT, authors_json TEXT NOT NULL DEFAULT '[]',
+                provider TEXT, volume TEXT, chapter TEXT, state TEXT NOT NULL,
+                evidence_json TEXT NOT NULL DEFAULT '[]', conflicts_json TEXT NOT NULL DEFAULT '[]',
+                semantic_json TEXT NOT NULL DEFAULT '{}', rule_version TEXT NOT NULL,
+                input_revision TEXT NOT NULL DEFAULT '',
+                materialization_status TEXT NOT NULL DEFAULT 'pending',
+                materialization_error TEXT NOT NULL DEFAULT '', materialized_at INTEGER,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE scrape_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, book_key TEXT NOT NULL,
+                source_id TEXT NOT NULL, path TEXT NOT NULL, input_revision TEXT NOT NULL,
+                rule_version TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0, next_run_at INTEGER NOT NULL,
+                last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                UNIQUE(book_key, input_revision, rule_version)
+            );
+            CREATE TABLE scrape_materializations (
+                book_key TEXT NOT NULL, proposal_revision TEXT NOT NULL,
+                rule_version TEXT NOT NULL, status TEXT NOT NULL,
+                applied_fields_json TEXT NOT NULL DEFAULT '[]',
+                added_tags_json TEXT NOT NULL DEFAULT '[]',
+                skipped_fields_json TEXT NOT NULL DEFAULT '[]',
+                error TEXT NOT NULL DEFAULT '', applied_at INTEGER,
+                updated_at INTEGER NOT NULL, PRIMARY KEY(book_key, proposal_revision)
+            );
+            INSERT INTO scrape_proposals
+                (book_key, source_id, path, filename, state, rule_version, updated_at)
+            VALUES ('legacy|s|/a', 's', '/a.zip', 'a.zip', 'ready', 'v3', 1);",
+        )
+        .unwrap();
+        init_tables(&conn).unwrap();
+        let migrated: (String, String) = conn
+            .query_row(
+                "SELECT asset_key, book_key FROM scrape_proposals",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated, ("legacy|s|/a".into(), "legacy|s|/a".into()));
+        let proposal_pk: i64 = conn
+            .query_row(
+                "SELECT pk FROM pragma_table_info('scrape_proposals') WHERE name = 'asset_key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(proposal_pk, 1);
     }
 
     #[test]
@@ -3249,7 +4829,9 @@ mod tests {
 
         normalize_legacy_tag_ids(&conn).unwrap();
 
-        let id: String = conn.query_row("SELECT id FROM tags", [], |r| r.get(0)).unwrap();
+        let id: String = conn
+            .query_row("SELECT id FROM tags", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(id, "日漫");
         let links: i64 = conn
             .query_row(
@@ -3299,15 +4881,18 @@ mod tests {
         conn.execute("INSERT INTO book_metas (key) VALUES ('k1')", [])
             .unwrap();
         let rotations: String = conn
-            .query_row("SELECT rotations FROM book_metas WHERE key = 'k1'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT rotations FROM book_metas WHERE key = 'k1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(rotations, "{}");
     }
 
     #[test]
-    fn ai_tasks_sort_order_migration_reorder_and_ordering() -> Result<(), Box<dyn std::error::Error>> {
+    fn ai_tasks_sort_order_migration_reorder_and_ordering() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut conn = Connection::open_in_memory().unwrap();
         // 模拟旧库：ai_tasks 无 sort_order 列
         conn.execute_batch(
@@ -3343,7 +4928,9 @@ mod tests {
         )
         .unwrap();
         let so: i64 = conn
-            .query_row("SELECT sort_order FROM ai_tasks WHERE id = 'a'", [], |r| r.get(0))
+            .query_row("SELECT sort_order FROM ai_tasks WHERE id = 'a'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(so, 0);
 
@@ -3433,11 +5020,19 @@ mod tests {
         .unwrap();
         init_tables(&conn).unwrap();
         let c = table_cols(&conn, "book_sources");
-        for col in ["fingerprint", "remote_only", "origin_device_id", "updated_at", "deleted"] {
+        for col in [
+            "fingerprint",
+            "remote_only",
+            "origin_device_id",
+            "updated_at",
+            "deleted",
+        ] {
             assert!(c.contains(&col.to_string()), "缺列 {col}");
         }
         let name: String = conn
-            .query_row("SELECT name FROM book_sources WHERE id='s1'", [], |r| r.get(0))
+            .query_row("SELECT name FROM book_sources WHERE id='s1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(name, "书库");
     }
@@ -3494,7 +5089,10 @@ mod tests {
         let q1 = compute_source_fingerprint("115", None, "", Some("12345"));
         let q2 = compute_source_fingerprint("115", None, "", Some("12345 "));
         assert_eq!(q1, q2);
-        assert_ne!(q1, compute_source_fingerprint("115", None, "", Some("99999")));
+        assert_ne!(
+            q1,
+            compute_source_fingerprint("115", None, "", Some("99999"))
+        );
         // 不同源不同 fp
         assert_ne!(fp1, l1);
     }
@@ -3565,7 +5163,12 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        let expect = compute_source_fingerprint("webdav", Some("https://dav.example.com/dav"), "/books", None);
+        let expect = compute_source_fingerprint(
+            "webdav",
+            Some("https://dav.example.com/dav"),
+            "/books",
+            None,
+        );
         assert_eq!(fp, expect);
         assert!(!fp.is_empty());
         // 编辑后重新 upsert 身份不变
@@ -3600,11 +5203,20 @@ mod tests {
         // 再次 init_tables（幂等）触发回填
         init_tables(&conn).unwrap();
         let fp: String = conn
-            .query_row("SELECT fingerprint FROM book_sources WHERE id='s1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT fingerprint FROM book_sources WHERE id='s1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(
             fp,
-            compute_source_fingerprint("webdav", Some("https://dav.example.com/dav"), "/books", None)
+            compute_source_fingerprint(
+                "webdav",
+                Some("https://dav.example.com/dav"),
+                "/books",
+                None
+            )
         );
     }
 
@@ -3801,7 +5413,11 @@ mod tests {
         )
         .unwrap();
         let cnt: i64 = conn
-            .query_row("SELECT COUNT(*) FROM library_index WHERE source_id='s1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM library_index WHERE source_id='s1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(cnt, 3);
     }
@@ -3910,22 +5526,30 @@ mod tests {
 
         // 浏览 A（根下）：A.parent = root
         ensure_index_entry_on(
-            &conn, "q1", "fidA", "dir", "A", None, None, Some("root-fid"),
+            &conn,
+            "q1",
+            "fidA",
+            "dir",
+            "A",
+            None,
+            None,
+            Some("root-fid"),
         )
         .unwrap();
         // 浏览 B（A 下）：B.parent = A；父链补 A（已存在，不动）
-        ensure_index_entry_on(
-            &conn, "q1", "fidB", "dir", "B", None, None, Some("fidA"),
-        )
-        .unwrap();
+        ensure_index_entry_on(&conn, "q1", "fidB", "dir", "B", None, None, Some("fidA")).unwrap();
         // 浏览 C（B 下，含漫画）：C.parent = B；父链补 B（**不得重置为 root**）
-        ensure_index_entry_on(
-            &conn, "q1", "fidC", "dir", "C", None, None, Some("fidB"),
-        )
-        .unwrap();
+        ensure_index_entry_on(&conn, "q1", "fidC", "dir", "C", None, None, Some("fidB")).unwrap();
         // C 下打标签的书：file.parent = C；父链补 C（不得重置）
         ensure_index_entry_on(
-            &conn, "q1", "fileF", "file", "漫画", None, None, Some("fidC"),
+            &conn,
+            "q1",
+            "fileF",
+            "file",
+            "漫画",
+            None,
+            None,
+            Some("fidC"),
         )
         .unwrap();
 
@@ -3938,9 +5562,18 @@ mod tests {
             .unwrap()
         };
         assert_eq!(parent_of(&library_index_id(&fp, "fidA")), root_id);
-        assert_eq!(parent_of(&library_index_id(&fp, "fidB")), library_index_id(&fp, "fidA"));
-        assert_eq!(parent_of(&library_index_id(&fp, "fidC")), library_index_id(&fp, "fidB"));
-        assert_eq!(parent_of(&library_index_id(&fp, "fileF")), library_index_id(&fp, "fidC"));
+        assert_eq!(
+            parent_of(&library_index_id(&fp, "fidB")),
+            library_index_id(&fp, "fidA")
+        );
+        assert_eq!(
+            parent_of(&library_index_id(&fp, "fidC")),
+            library_index_id(&fp, "fidB")
+        );
+        assert_eq!(
+            parent_of(&library_index_id(&fp, "fileF")),
+            library_index_id(&fp, "fidC")
+        );
     }
 
     #[test]
@@ -3980,7 +5613,312 @@ mod tests {
         assert_eq!(deleted, 1);
         // 软删条目仍可被同步导出（增量含墓碑）
         let sync_rows = load_library_index_for_sync_on(&conn, 0);
-        assert!(sync_rows.iter().any(|r| r.id == library_index_id(&fp, "/b.cbz") && r.deleted));
+        assert!(sync_rows
+            .iter()
+            .any(|r| r.id == library_index_id(&fp, "/b.cbz") && r.deleted));
+    }
+
+    #[test]
+    fn deleted_last_asset_cleans_proposals_metadata_tags_and_ai_tasks() {
+        let conn = schema_conn();
+        let src = BookSourceRow {
+            id: "s1".into(),
+            r#type: "local".into(),
+            name: "Library".into(),
+            path: "D:/Comics".into(),
+            url: None,
+            username: None,
+            password: None,
+            port: None,
+            refresh_token: None,
+            client_id: None,
+            client_secret: None,
+            root_id: None,
+            cookie: None,
+            note: String::new(),
+            capability_label: "local".into(),
+            remote_only: false,
+            origin_device_id: None,
+        };
+        upsert_source_on(&conn, &src).unwrap();
+        let fp: String = conn
+            .query_row(
+                "SELECT fingerprint FROM book_sources WHERE id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mk = |path: &str, name: &str| LibraryIndexRow {
+            id: library_index_id(&fp, path),
+            source_id: "s1".into(),
+            parent_id: None,
+            name: name.into(),
+            path: path.into(),
+            entry_type: "file".into(),
+            size: None,
+            modified_at: None,
+            cover_path: None,
+            hash: None,
+            updated_at: 1,
+            deleted: false,
+        };
+        let logical = book_key_of("local", "s1", "/books/a.zip");
+        let zip = mk("/books/a.zip", "a.zip");
+        let cbz = mk("/books/a.cbz", "a.cbz");
+        replace_library_index_for_source_on(&conn, "s1", &[zip.clone(), cbz.clone()]).unwrap();
+
+        upsert_meta_on(
+            &conn,
+            &BookMetaRow {
+                key: logical.clone(),
+                cover_page: 0,
+                crop_x: None,
+                crop_y: None,
+                crop_w: None,
+                crop_h: None,
+                author: "Artist".into(),
+                genre: String::new(),
+                series: String::new(),
+                title: "A".into(),
+                chinese_title: String::new(),
+                summary: String::new(),
+                comment: String::new(),
+                rotations: "{}".into(),
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO read_records (key, source_id, source_type, path, title, updated_at)
+             VALUES (?1, 's1', 'local', '/books/a.zip', 'A', 1)",
+            params![logical],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tags (id, name, created_at) VALUES ('tag-a', '合集', 1)",
+            [],
+        )
+        .unwrap();
+        link_tag_on(&conn, &logical, "tag-a").unwrap();
+        for (index_id, path) in [(&zip.id, zip.path.as_str()), (&cbz.id, cbz.path.as_str())] {
+            let asset = asset_key_of("local", "s1", index_id);
+            conn.execute(
+                "INSERT INTO scrape_proposals (asset_key, book_key, source_id, path, filename, state, rule_version, updated_at)
+                 VALUES (?1, ?2, 's1', ?3, ?3, 'ready', 'v3', 1)",
+                params![asset, logical, path],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO scrape_queue (asset_key, book_key, source_id, path, input_revision, rule_version, trigger, status, next_run_at, created_at, updated_at)
+                 VALUES (?1, ?2, 's1', ?3, 'r1', 'v3', 'test', 'succeeded', 1, 1, 1)",
+                params![asset, logical, path],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO scrape_materializations
+                 (asset_key, book_key, proposal_revision, rule_version, status, updated_at)
+                 VALUES (?1, ?2, ?3, 'v3', 'applied', 1)",
+                params![asset, logical, format!("revision-{path}")],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO ai_tasks (id, book_key, source_type, source_id, path, title, created_at, updated_at)
+             VALUES ('ai-a', ?1, 'local', 's1', '/books/a.zip', 'A', 1, 1)",
+            params![logical],
+        )
+        .unwrap();
+
+        // Removing only one archive alias must preserve logical metadata/tags.
+        replace_library_index_for_source_on(&conn, "s1", &[cbz.clone()]).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM book_metas WHERE key=?1",
+                params![logical],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM scrape_proposals", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM scrape_materializations", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+
+        // Removing the last alias clears the logical state and both physical
+        // proposal/queue rows, while leaving only the index tombstones.
+        replace_library_index_for_source_on(&conn, "s1", &[]).unwrap();
+        for table in [
+            "book_metas",
+            "read_records",
+            "book_tags",
+            "ai_tasks",
+            "scrape_proposals",
+            "scrape_queue",
+            "scrape_materializations",
+        ] {
+            assert_eq!(
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0,
+                "{table} not cleaned",
+            );
+        }
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM tags WHERE id='tag-a'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn deleting_source_cleans_catalog_and_all_scrape_state() {
+        let conn = schema_conn();
+        let src = BookSourceRow {
+            id: "source-delete".into(),
+            r#type: "quark".into(),
+            name: "Quark".into(),
+            path: "root".into(),
+            url: Some("https://example.invalid".into()),
+            username: None,
+            password: None,
+            port: None,
+            refresh_token: None,
+            client_id: None,
+            client_secret: None,
+            root_id: Some("root".into()),
+            cookie: None,
+            note: String::new(),
+            capability_label: "quark".into(),
+            remote_only: false,
+            origin_device_id: None,
+        };
+        upsert_source_on(&conn, &src).unwrap();
+        let fp: String = conn
+            .query_row(
+                "SELECT fingerprint FROM book_sources WHERE id='source-delete'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let index = LibraryIndexRow {
+            id: library_index_id(&fp, "asset-fid"),
+            source_id: src.id.clone(),
+            parent_id: None,
+            name: "漫画.cbz".into(),
+            path: "asset-fid".into(),
+            entry_type: "file".into(),
+            size: None,
+            modified_at: None,
+            cover_path: None,
+            hash: None,
+            updated_at: 1,
+            deleted: false,
+        };
+        replace_library_index_for_source_on(&conn, &src.id, &[index.clone()]).unwrap();
+        let logical = book_key_of(&src.r#type, &src.id, "asset-fid");
+        let asset = asset_key_of(&src.r#type, &src.id, &index.id);
+        upsert_meta_on(
+            &conn,
+            &BookMetaRow {
+                key: logical.clone(),
+                cover_page: 0,
+                crop_x: None,
+                crop_y: None,
+                crop_w: None,
+                crop_h: None,
+                author: "Artist".into(),
+                genre: String::new(),
+                series: String::new(),
+                title: "漫画".into(),
+                chinese_title: String::new(),
+                summary: String::new(),
+                comment: String::new(),
+                rotations: "{}".into(),
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO read_records (key, source_id, source_type, path, title, updated_at)
+             VALUES (?1, ?2, ?3, 'asset-fid', '漫画', 1)",
+            params![logical, src.id, src.r#type],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tags (id, name, created_at) VALUES ('source-tag', '合集', 1)",
+            [],
+        )
+        .unwrap();
+        link_tag_on(&conn, &logical, "source-tag").unwrap();
+        conn.execute(
+            "INSERT INTO scrape_proposals
+             (asset_key, book_key, source_id, path, filename, state, rule_version, updated_at)
+             VALUES (?1, ?2, ?3, 'asset-fid', '漫画.cbz', 'ready', 'v3', 1)",
+            params![asset, logical, src.id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO scrape_queue
+             (asset_key, book_key, source_id, path, input_revision, rule_version, trigger,
+              status, next_run_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'asset-fid', 'r1', 'v3', 'test', 'succeeded', 1, 1, 1)",
+            params![asset, logical, src.id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO scrape_materializations
+             (asset_key, book_key, proposal_revision, rule_version, status, updated_at)
+             VALUES (?1, ?2, 'r1', 'v3', 'applied', 1)",
+            params![asset, logical],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ai_tasks
+             (id, book_key, source_type, source_id, path, title, created_at, updated_at)
+             VALUES ('source-ai', ?1, ?2, ?3, 'asset-fid', '漫画', 1, 1)",
+            params![logical, src.r#type, src.id],
+        )
+        .unwrap();
+
+        delete_source_on(&conn, &src.id).unwrap();
+        for table in [
+            "book_sources",
+            "library_index",
+            "book_metas",
+            "read_records",
+            "book_tags",
+            "tags",
+            "scrape_proposals",
+            "scrape_queue",
+            "scrape_materializations",
+            "ai_tasks",
+        ] {
+            assert_eq!(
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0,
+                "{table} not cleaned",
+            );
+        }
+        assert!(
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_tombstones WHERE entity='sources' AND key=?1)",
+                params![src.id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+                != 0
+        );
     }
 
     #[test]
@@ -3988,7 +5926,11 @@ mod tests {
         let conn = schema_conn();
         let fp = compute_source_fingerprint("local", None, "D:/Comics", None);
         let now = now_ms();
-        for (i, deleted, updated_at) in [(1, 0, now), (2, 1, now - 40 * 24 * 3600 * 1000), (3, 1, now)] {
+        for (i, deleted, updated_at) in [
+            (1, 0, now),
+            (2, 1, now - 40 * 24 * 3600 * 1000),
+            (3, 1, now),
+        ] {
             let path = format!("/g{i}.cbz");
             conn.execute(
                 "INSERT INTO library_index (id, source_id, name, path, entry_type, deleted, updated_at)
@@ -4034,8 +5976,11 @@ mod tests {
             origin_device_id: None,
         };
         upsert_source_on(&conn, &src).unwrap();
-        conn.execute("UPDATE book_sources SET fingerprint='fp1' WHERE id='s1'", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE book_sources SET fingerprint='fp1' WHERE id='s1'",
+            [],
+        )
+        .unwrap();
         upsert_source_on(&conn, &src).unwrap();
         let fp: Option<String> = conn
             .query_row(
@@ -4048,7 +5993,9 @@ mod tests {
         let expect = compute_source_fingerprint("local", None, "D:/Comics", None);
         assert_eq!(fp.as_deref(), Some(expect.as_str()));
         let cnt: i64 = conn
-            .query_row("SELECT COUNT(*) FROM book_sources WHERE id='s1'", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM book_sources WHERE id='s1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(cnt, 1);
 
@@ -4134,8 +6081,11 @@ mod tests {
         )
         .unwrap();
         link_tag_on(&conn, "k1", "t1").unwrap();
-        conn.execute("UPDATE book_tags SET deleted=1 WHERE book_key='k1' AND tag_id='t1'", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE book_tags SET deleted=1 WHERE book_key='k1' AND tag_id='t1'",
+            [],
+        )
+        .unwrap();
         assert!(load_all_book_tags_on(&conn).is_empty());
     }
 
@@ -4152,12 +6102,20 @@ mod tests {
         reset_all_read_counts_on(&conn).unwrap();
         // 存活记录次数归零
         let c1: i64 = conn
-            .query_row("SELECT read_count FROM read_records WHERE key='k1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT read_count FROM read_records WHERE key='k1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(c1, 0);
         // 软删记录不动（保留墓碑语义）
         let c2: i64 = conn
-            .query_row("SELECT read_count FROM read_records WHERE key='k2'", [], |r| r.get(0))
+            .query_row(
+                "SELECT read_count FROM read_records WHERE key='k2'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(c2, 9);
         // 行保留
@@ -4166,5 +6124,4 @@ mod tests {
             .unwrap();
         assert_eq!(n, 2);
     }
-
 }

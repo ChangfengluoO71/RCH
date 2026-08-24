@@ -217,8 +217,7 @@ pub fn qr_start(app_id: &str) -> Result<QrPayload> {
         .send()
         .context("请求 115 设备码失败")?;
     let status = resp.status();
-    let body: AuthResp<DeviceCodeData> =
-        resp.json().context("解析 115 设备码响应失败")?;
+    let body: AuthResp<DeviceCodeData> = resp.json().context("解析 115 设备码响应失败")?;
     if !status.is_success() || body.code != 0 {
         bail!("获取 115 二维码失败:{} {}", body.code, body.message);
     }
@@ -265,14 +264,11 @@ pub fn qr_poll(uid: &str, time: i64, sign: &str) -> Result<QrPollResult> {
         .form(&[("uid", uid.to_string()), ("code_verifier", verifier)])
         .send()
         .context("换取 115 token 失败")?;
-    let tbody: AuthResp<TokenData> =
-        token_resp.json().context("解析 token 响应失败")?;
+    let tbody: AuthResp<TokenData> = token_resp.json().context("解析 token 响应失败")?;
     if tbody.code != 0 {
         bail!("换取 token 失败:{} {}", tbody.code, tbody.message);
     }
-    let t = tbody
-        .data
-        .ok_or_else(|| anyhow!("token 响应缺少 data"))?;
+    let t = tbody.data.ok_or_else(|| anyhow!("token 响应缺少 data"))?;
     Ok(QrPollResult {
         status,
         access_token: Some(t.access_token),
@@ -297,7 +293,11 @@ impl Cloud115Client {
             app_id: app_id.to_string(),
             refresh_token: Mutex::new(refresh_token.to_string()),
             access: Mutex::new(None),
-            root_id: if root_id.is_empty() { "0".to_string() } else { root_id.to_string() },
+            root_id: if root_id.is_empty() {
+                "0".to_string()
+            } else {
+                root_id.to_string()
+            },
             gate: RateGate::new(1.5),
         })
     }
@@ -323,9 +323,7 @@ impl Cloud115Client {
         if body.code != 0 {
             bail!("刷新 token 失败:{} {}", body.code, body.message);
         }
-        let t = body
-            .data
-            .ok_or_else(|| anyhow!("刷新响应缺少 data"))?;
+        let t = body.data.ok_or_else(|| anyhow!("刷新响应缺少 data"))?;
         *self.refresh_token.lock().unwrap() = t.refresh_token.clone();
         *self.access.lock().unwrap() = Some(t.access_token.clone());
         Ok((t.access_token, t.refresh_token))
@@ -376,10 +374,12 @@ impl Cloud115Client {
             let parsed: serde_json::Value =
                 serde_json::from_str(&body).context("解析 115 API 响应失败")?;
             let code = parsed.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
-            let state = parsed.get("state").cloned().unwrap_or(serde_json::Value::Null);
-            let need_refresh = code == 99
-                || (40100..40200).contains(&code)
-                || (401000..402000).contains(&code);
+            let state = parsed
+                .get("state")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let need_refresh =
+                code == 99 || (40100..40200).contains(&code) || (401000..402000).contains(&code);
             if need_refresh && attempts == 0 {
                 attempts += 1;
                 self.access.lock().unwrap().take();
@@ -420,8 +420,7 @@ impl Cloud115Client {
                     ("show_dir", "1".to_string()),
                 ],
             )?;
-            let parsed: FilesResp =
-                serde_json::from_str(&body).context("解析 115 文件列表失败")?;
+            let parsed: FilesResp = serde_json::from_str(&body).context("解析 115 文件列表失败")?;
             if !parsed.state || parsed.code != 0 {
                 bail!("115 列目录失败:code={} {}", parsed.code, parsed.message);
             }
@@ -466,7 +465,9 @@ impl Cloud115Client {
         )?;
         let parsed: ApiResp<HashMap<String, DownUrlItem>> =
             serde_json::from_str(&body).context("解析 downurl 响应失败")?;
-        let map = parsed.data.ok_or_else(|| anyhow!("downurl 响应缺少 data"))?;
+        let map = parsed
+            .data
+            .ok_or_else(|| anyhow!("downurl 响应缺少 data"))?;
         let item = map
             .values()
             .next()
@@ -654,12 +655,7 @@ pub struct Cloud115File {
 }
 
 impl Cloud115File {
-    pub fn new(
-        client: Arc<Cloud115Client>,
-        pick_code: String,
-        len: u64,
-        url: String,
-    ) -> Self {
+    pub fn new(client: Arc<Cloud115Client>, pick_code: String, len: u64, url: String) -> Self {
         Cloud115File {
             client,
             pick_code,
@@ -693,9 +689,7 @@ impl ByteSource for Cloud115File {
             Err(e) => {
                 *self.url.lock().unwrap() = None;
                 let u2 = self.get_url()?;
-                self.client
-                    .read_range_url(&u2, offset, buf)
-                    .map_err(|_| e)
+                self.client.read_range_url(&u2, offset, buf).map_err(|_| e)
             }
         }
     }
@@ -737,7 +731,13 @@ pub struct WebQrPayload {
 /// 可用的扫码设备。Windows/Mac/Linux 客户端已下架不可用；
 /// 选不常用设备可避免挤掉网页端/App 的旧登录。
 pub const WEB_QR_APPS: &[&str] = &[
-    "web", "android", "ios", "tv", "alipaymini", "wechatmini", "qandroid",
+    "web",
+    "android",
+    "ios",
+    "tv",
+    "alipaymini",
+    "wechatmini",
+    "qandroid",
 ];
 
 /// 第一步：获取 115 网页登录二维码（无需 APP ID）。
@@ -836,16 +836,15 @@ const M115_N_HEX: &str = "8686980c0f5a24c4b9d43020cd2c22703ff3f450756529058b1cf8
 0a6f1eda4f7262f136420c07c331b871bf139f74f3010e3c4fe57df3afb71683";
 
 const M115_XOR_KEY_SEED: [u8; 144] = [
-    0xf0, 0xe5, 0x69, 0xae, 0xbf, 0xdc, 0xbf, 0x8a, 0x1a, 0x45, 0xe8, 0xbe, 0x7d, 0xa6, 0x73,
-    0xb8, 0xde, 0x8f, 0xe7, 0xc4, 0x45, 0xda, 0x86, 0xc4, 0x9b, 0x64, 0x8b, 0x14, 0x6a, 0xb4,
-    0xf1, 0xaa, 0x38, 0x01, 0x35, 0x9e, 0x26, 0x69, 0x2c, 0x86, 0x00, 0x6b, 0x4f, 0xa5, 0x36,
-    0x34, 0x62, 0xa6, 0x2a, 0x96, 0x68, 0x18, 0xf2, 0x4a, 0xfd, 0xbd, 0x6b, 0x97, 0x8f, 0x4d,
-    0x8f, 0x89, 0x13, 0xb7, 0x6c, 0x8e, 0x93, 0xed, 0x0e, 0x0d, 0x48, 0x3e, 0xd7, 0x2f, 0x88,
-    0xd8, 0xfe, 0xfe, 0x7e, 0x86, 0x50, 0x95, 0x4f, 0xd1, 0xeb, 0x83, 0x26, 0x34, 0xdb, 0x66,
-    0x7b, 0x9c, 0x7e, 0x9d, 0x7a, 0x81, 0x32, 0xea, 0xb6, 0x33, 0xde, 0x3a, 0xa9, 0x59, 0x34,
-    0x66, 0x3b, 0xaa, 0xba, 0x81, 0x60, 0x48, 0xb9, 0xd5, 0x81, 0x9c, 0xf8, 0x6c, 0x84, 0x77,
-    0xff, 0x54, 0x78, 0x26, 0x5f, 0xbe, 0xe8, 0x1e, 0x36, 0x9f, 0x34, 0x80, 0x5c, 0x45, 0x2c,
-    0x9b, 0x76, 0xd5, 0x1b, 0x8f, 0xcc, 0xc3, 0xb8, 0xf5,
+    0xf0, 0xe5, 0x69, 0xae, 0xbf, 0xdc, 0xbf, 0x8a, 0x1a, 0x45, 0xe8, 0xbe, 0x7d, 0xa6, 0x73, 0xb8,
+    0xde, 0x8f, 0xe7, 0xc4, 0x45, 0xda, 0x86, 0xc4, 0x9b, 0x64, 0x8b, 0x14, 0x6a, 0xb4, 0xf1, 0xaa,
+    0x38, 0x01, 0x35, 0x9e, 0x26, 0x69, 0x2c, 0x86, 0x00, 0x6b, 0x4f, 0xa5, 0x36, 0x34, 0x62, 0xa6,
+    0x2a, 0x96, 0x68, 0x18, 0xf2, 0x4a, 0xfd, 0xbd, 0x6b, 0x97, 0x8f, 0x4d, 0x8f, 0x89, 0x13, 0xb7,
+    0x6c, 0x8e, 0x93, 0xed, 0x0e, 0x0d, 0x48, 0x3e, 0xd7, 0x2f, 0x88, 0xd8, 0xfe, 0xfe, 0x7e, 0x86,
+    0x50, 0x95, 0x4f, 0xd1, 0xeb, 0x83, 0x26, 0x34, 0xdb, 0x66, 0x7b, 0x9c, 0x7e, 0x9d, 0x7a, 0x81,
+    0x32, 0xea, 0xb6, 0x33, 0xde, 0x3a, 0xa9, 0x59, 0x34, 0x66, 0x3b, 0xaa, 0xba, 0x81, 0x60, 0x48,
+    0xb9, 0xd5, 0x81, 0x9c, 0xf8, 0x6c, 0x84, 0x77, 0xff, 0x54, 0x78, 0x26, 0x5f, 0xbe, 0xe8, 0x1e,
+    0x36, 0x9f, 0x34, 0x80, 0x5c, 0x45, 0x2c, 0x9b, 0x76, 0xd5, 0x1b, 0x8f, 0xcc, 0xc3, 0xb8, 0xf5,
 ];
 
 const M115_XOR_CLIENT_KEY: [u8; 12] = [
@@ -1085,7 +1084,11 @@ impl Cloud115WebClient {
         Ok(Cloud115WebClient {
             client: http_client()?,
             cookie: Mutex::new(cookie.trim().to_string()),
-            root: if root.is_empty() { "0".to_string() } else { root.to_string() },
+            root: if root.is_empty() {
+                "0".to_string()
+            } else {
+                root.to_string()
+            },
             gate: RateGate::new(1.5),
             names: Mutex::new(HashMap::new()),
         })
@@ -1157,9 +1160,7 @@ impl Cloud115WebClient {
                 }
             };
             if status == 405 {
-                last_err = Some(anyhow!(
-                    "115 列表接口被风控拦截(HTTP 405)，已尝试备用接口"
-                ));
+                last_err = Some(anyhow!("115 列表接口被风控拦截(HTTP 405)，已尝试备用接口"));
                 continue;
             }
             if !(200..300).contains(&status) {
@@ -1262,7 +1263,10 @@ impl Cloud115WebClient {
         }
         let parsed: serde_json::Value =
             serde_json::from_str(&text).context("解析 115 直链响应失败")?;
-        let state = parsed.get("state").cloned().unwrap_or(serde_json::Value::Null);
+        let state = parsed
+            .get("state")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let state_ok = match state {
             serde_json::Value::Bool(b) => b,
             serde_json::Value::Number(n) => n.as_i64() == Some(1),
@@ -1284,16 +1288,15 @@ impl Cloud115WebClient {
             .get("data")
             .and_then(|d| d.as_str())
             .ok_or_else(|| anyhow!("115 直链响应缺少 data"))?;
-        let dec = m115_decode(data).with_context(|| {
-            format!(
-                "解密 115 直链响应失败，data 完整内容: {}",
-                data
-            )
-        })?;
+        let dec = m115_decode(data)
+            .with_context(|| format!("解密 115 直链响应失败，data 完整内容: {}", data))?;
         let decoded: serde_json::Value = serde_json::from_slice(&dec).with_context(|| {
             format!(
                 "解析 115 直链数据失败，解密结果前 96 字符: {}",
-                String::from_utf8_lossy(&dec).chars().take(96).collect::<String>()
+                String::from_utf8_lossy(&dec)
+                    .chars()
+                    .take(96)
+                    .collect::<String>()
             )
         })?;
         let obj = decoded
@@ -1312,7 +1315,10 @@ impl Cloud115WebClient {
         if url.is_empty() {
             bail!("115 未返回下载直链");
         }
-        let name = item.get("file_name").and_then(|v| v.as_str()).map(str::to_string);
+        let name = item
+            .get("file_name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let size = item
             .get("file_size")
             .and_then(|v| v.as_i64())
@@ -1521,12 +1527,7 @@ pub struct Cloud115WebFile {
 }
 
 impl Cloud115WebFile {
-    pub fn new(
-        client: Arc<Cloud115WebClient>,
-        pick_code: String,
-        len: u64,
-        url: String,
-    ) -> Self {
+    pub fn new(client: Arc<Cloud115WebClient>, pick_code: String, len: u64, url: String) -> Self {
         Cloud115WebFile {
             client,
             pick_code,
@@ -1595,9 +1596,7 @@ fn parse_115_time(t: &str) -> i64 {
     if b.len() < 16 || b[4] != b'-' || b[7] != b'-' || b[10] != b' ' || b[13] != b':' {
         return 0;
     }
-    let num2 = |i: usize| -> i64 {
-        (b[i] - b'0') as i64 * 10 + (b[i + 1] - b'0') as i64
-    };
+    let num2 = |i: usize| -> i64 { (b[i] - b'0') as i64 * 10 + (b[i + 1] - b'0') as i64 };
     let num4 = |i: usize| -> i64 {
         (b[i] - b'0') as i64 * 1000
             + (b[i + 1] - b'0') as i64 * 100
@@ -1639,9 +1638,11 @@ mod tests {
     fn verifier_length_and_charset() {
         let v = gen_code_verifier();
         assert!((43..=128).contains(&v.len()));
-        assert!(v
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~'));
+        assert!(v.chars().all(|c| c.is_ascii_alphanumeric()
+            || c == '-'
+            || c == '.'
+            || c == '_'
+            || c == '~'));
     }
 
     #[test]
@@ -1743,7 +1744,10 @@ mod tests {
             user_id_from_cookie("UID=1234567890_abc; CID=1; SEID=2"),
             Some("1234567890".to_string())
         );
-        assert_eq!(user_id_from_cookie("UID=9876543210; CID=1"), Some("9876543210".to_string()));
+        assert_eq!(
+            user_id_from_cookie("UID=9876543210; CID=1"),
+            Some("9876543210".to_string())
+        );
         assert_eq!(user_id_from_cookie("CID=1; SEID=2"), None);
         assert_eq!(user_id_from_cookie(""), None);
     }

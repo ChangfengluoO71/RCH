@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::source::webdav::WebDavClient;
 use crate::sync::actor::DeviceFile;
-use crate::sync::state::{self, Manifest, verify_manifest};
+use crate::sync::state::{self, verify_manifest, Manifest};
 
 fn is_not_found_err(e: &anyhow::Error) -> bool {
     let s = format!("{e:#}");
@@ -43,8 +43,7 @@ pub fn read_manifest(client: &WebDavClient, dir: &str) -> Result<Option<Manifest
     let path = join(dir, state::MANIFEST_FILE);
     match client.download_file(&path) {
         Ok(bytes) => {
-            let m: Manifest =
-                serde_json::from_slice(&bytes).context("解析远端 manifest 失败")?;
+            let m: Manifest = serde_json::from_slice(&bytes).context("解析远端 manifest 失败")?;
             verify_manifest(&m)?;
             Ok(Some(m))
         }
@@ -161,7 +160,10 @@ mod tests {
     #[test]
     fn join_normalizes_dir_slashes() {
         assert_eq!(join("RCH/sync", "manifest.json"), "RCH/sync/manifest.json");
-        assert_eq!(join("/RCH/sync/", "state/x.jsonl"), "RCH/sync/state/x.jsonl");
+        assert_eq!(
+            join("/RCH/sync/", "state/x.jsonl"),
+            "RCH/sync/state/x.jsonl"
+        );
         assert_eq!(join("", "manifest.json"), "manifest.json");
     }
 

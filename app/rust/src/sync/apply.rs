@@ -100,7 +100,20 @@ fn apply_sources(
                     type=?2, name=?3, path=?4, url=?5, username=?6, port=?7, note=?8,
                     capability_label=?9, root_id=?10, client_id=?11, updated_at=?12
                  WHERE id=?1",
-                params![existing_id, r#type, name, path, url, username, port, note, capability, root_id, client_id, e.updated_at],
+                params![
+                    existing_id,
+                    r#type,
+                    name,
+                    path,
+                    url,
+                    username,
+                    port,
+                    note,
+                    capability,
+                    root_id,
+                    client_id,
+                    e.updated_at
+                ],
             )?;
         } else {
             let id = format!("sync_{}_{}", &fp[..fp.len().min(8)], e.updated_at);
@@ -196,7 +209,10 @@ fn apply_records(
         let local_key = identity::local_book_key(&source_type, &source_id, path);
         if e.deleted {
             base::delete_pending_on(conn, base::ENTITY_RECORDS, book_id)?;
-            conn.execute("DELETE FROM read_records WHERE key = ?1", params![local_key])?;
+            conn.execute(
+                "DELETE FROM read_records WHERE key = ?1",
+                params![local_key],
+            )?;
             continue;
         }
         let d = &e.data;
@@ -239,7 +255,12 @@ fn apply_tags(conn: &Connection, entries: &HashMap<String, SyncEntry>) -> Result
             "INSERT INTO tags (id, name, created_at, updated_at, deleted)
              VALUES (?1, ?2, ?3, ?4, 0)
              ON CONFLICT(id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
-            params![id, name, e.data["createdAt"].as_i64().unwrap_or(e.updated_at), e.updated_at],
+            params![
+                id,
+                name,
+                e.data["createdAt"].as_i64().unwrap_or(e.updated_at),
+                e.updated_at
+            ],
         )?;
     }
     Ok(())
@@ -299,6 +320,7 @@ fn apply_library_index(
                 "UPDATE library_index SET deleted = 1, updated_at = ?2 WHERE id = ?1",
                 params![book_id, e.updated_at],
             )?;
+            db::cleanup_deleted_index_entry_on(conn, book_id)?;
             continue;
         }
         let Some((_st, source_id)) = sources.resolve(book_id, path) else {

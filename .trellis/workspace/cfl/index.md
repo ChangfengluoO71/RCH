@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
-- **Last Active**: 2026-08-23
+- **Total Sessions**: 11
+- **Last Active**: 2026-08-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~399 | Active |
+| `journal-1.md` | ~420 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-08-24 | M8 离线刮削自动化与标签投影修复 | `1265a28` | `master` |
 | 10 | 2026-08-23 | Freeze catalog-rules-v3 offline proposal baseline | `6ccc696` | `master` |
 | 9 | 2026-08-19 | Repository documentation reorganization | `7391607`, `76f0a7b` | `master` |
 | 8 | 2026-08-17 | 使用反馈修复：条漫页码 / 书源顶栏重叠 / PC 图标（v0.5.1） | `971af41` | `master` |

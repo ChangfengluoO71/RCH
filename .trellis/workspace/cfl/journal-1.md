@@ -397,3 +397,24 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Next Steps
 
 - Keep provider enrichment and canonical auto-materialization out of this baseline; continue only after manual proposal review.
+
+
+## Session 11: M8 离线刮削自动化与标签投影修复
+
+**Date**: 2026-08-24
+**Task**: M8 离线刮削自动化与标签投影修复
+**Branch**: `master`
+
+### Summary
+
+完成本地快照到离线刮削、Ready 提案自动物化、标签/元数据投影和路径别名合并；隐藏生成式资源标签，保留用户作者/系列命名；389 资产离线物化与幂等验证通过；Flutter 63 项、Rust 232 项通过。归档 M8-A0 自动化任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1265a28` | (see git log) |
+
+### Status
+
+[OK] **Completed**

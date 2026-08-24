@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:app/src/rust/api/db.dart';
 import 'package:app/store/library_index_service.dart';
+import 'package:app/store/folder_snapshot_store.dart';
+import 'package:app/store/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -85,11 +87,15 @@ void main() {
     final tmp = await Directory.systemTemp.createTemp('rch_li_test');
     addTearDown(() => tmp.delete(recursive: true));
     await File('${tmp.path}${Platform.pathSeparator}a.cbz').writeAsString('x');
-    await File('${tmp.path}${Platform.pathSeparator}readme.txt').writeAsString('x');
+    await File(
+      '${tmp.path}${Platform.pathSeparator}readme.txt',
+    ).writeAsString('x');
     final sub = Directory('${tmp.path}${Platform.pathSeparator}sub');
     await sub.create();
     await File('${sub.path}${Platform.pathSeparator}b.zip').writeAsString('x');
-    await File('${sub.path}${Platform.pathSeparator}notes.md').writeAsString('x');
+    await File(
+      '${sub.path}${Platform.pathSeparator}notes.md',
+    ).writeAsString('x');
 
     const fp = 'fp-local';
     final entries = await LibraryIndexService.scanLocalSource(
@@ -185,5 +191,50 @@ void main() {
     );
     expect(again.length, full.length);
     expect(again.map((e) => e.name), contains('a.cbz'));
+  });
+
+  test('115 crawl uses rootId as the effective catalog root', () async {
+    final source = BookSource(
+      id: '115-root-test',
+      type: '115',
+      name: '115',
+      path: 'old-root',
+      rootId: 'new-root',
+    );
+    final requested = <String>[];
+    final entries = await LibraryIndexService.crawlRemoteSource(
+      source: source,
+      fingerprint: 'fp-115-root',
+      listRemote: (path) async {
+        requested.add(path);
+        return const <FolderSnapshotEntry>[];
+      },
+      force: true,
+    );
+
+    expect(entries, isEmpty);
+    expect(requested, ['new-root']);
+  });
+
+  test('115 empty rootId resolves to the service root', () {
+    final source = BookSource(
+      id: '115-empty-root-test',
+      type: '115',
+      name: '115',
+      path: 'legacy-root',
+      rootId: '',
+    );
+    expect(source.effectiveRootPath, '0');
+  });
+
+  test('quark uses rootId as the effective catalog root', () {
+    final source = BookSource(
+      id: 'quark-root-test',
+      type: 'quark',
+      name: 'Quark',
+      path: 'legacy-root',
+      rootId: 'quark-root',
+    );
+    expect(source.effectiveRootPath, 'quark-root');
   });
 }

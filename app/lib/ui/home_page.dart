@@ -5,7 +5,6 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/repository/tag_repository.dart';
 import 'package:app/store/baidu_session.dart';
-import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/models.dart';
@@ -99,8 +98,9 @@ class _HomePageState extends State<HomePage> {
 
   void _onUpdateStatus() {
     final m = UpdateManager.instance;
-    if (m.status.value != UpdateStatus.updateAvailable || _updatePromptShown)
+    if (m.status.value != UpdateStatus.updateAvailable || _updatePromptShown) {
       return;
+    }
     _updatePromptShown = true;
     if (!mounted) return;
     final v = m.info?.version ?? '';
@@ -590,8 +590,7 @@ class _HomePageState extends State<HomePage> {
         name: '导入的漫画',
         path: booksPath,
       );
-      store.addSource(src);
-      LibraryCatalogStore.instance.loadTree();
+      await store.addSource(src);
     }
 
     if (!mounted) return;
@@ -1066,18 +1065,21 @@ class _HomePageState extends State<HomePage> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               final port = src.isSftp
                   ? int.tryParse(portCtrl.text.trim())
                   : null;
-              LibraryStore.instance.updateSource(
+              final isRootIdSource = src.is115 || src.isQuark;
+              final root = rootIdCtrl.text.trim();
+              final normalizedRoot = root.isEmpty ? '0' : root;
+              await LibraryStore.instance.updateSource(
                 src.id,
                 name: nameCtrl.text.trim(),
                 url: urlCtrl.text.trim(),
                 username: userCtrl.text.trim(),
                 password: passCtrl.text.trim(),
                 port: port,
-                path: pathCtrl.text.trim(),
+                path: isRootIdSource ? normalizedRoot : pathCtrl.text.trim(),
                 refreshToken: tokenCtrl.text.trim().isEmpty
                     ? null
                     : tokenCtrl.text.trim(),
@@ -1087,15 +1089,15 @@ class _HomePageState extends State<HomePage> {
                 clientSecret: secretCtrl.text.trim().isEmpty
                     ? null
                     : secretCtrl.text.trim(),
-                rootId: rootIdCtrl.text.trim().isEmpty
-                    ? null
-                    : rootIdCtrl.text.trim(),
+                rootId: isRootIdSource
+                    ? normalizedRoot
+                    : (root.isEmpty ? null : root),
                 cookie: cookieCtrl.text.trim().isEmpty
                     ? null
                     : cookieCtrl.text.trim(),
                 note: noteCtrl.text.trim(),
               );
-              LibraryCatalogStore.instance.loadTree();
+              if (!ctx.mounted) return;
               if (src.isQuark) clearQuarkSession(src.id);
               if (src.is115) clearCloud115Session(src.id);
               if (src.isBaidu) clearBaiduSession(src.id);
@@ -1174,9 +1176,10 @@ class _HomePageState extends State<HomePage> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               src.note = ctrl.text.trim();
-              LibraryStore.instance.updateSource(src.id, note: src.note);
+              await LibraryStore.instance.updateSource(src.id, note: src.note);
+              if (!ctx.mounted) return;
               Navigator.of(ctx).pop();
             },
             child: const Text('保存'),
@@ -1216,8 +1219,6 @@ class _HomePageState extends State<HomePage> {
     ).then((ok) async {
       if (ok == true) {
         await LibraryStore.instance.removeSourceWithCleanup(src.id);
-        // 设备→书源树同步刷新（否则删除要重启才生效）
-        LibraryCatalogStore.instance.loadTree();
         setState(() {});
       }
     });
@@ -1233,7 +1234,8 @@ class _HomePageState extends State<HomePage> {
     listenable: _tagManagerListenable,
     builder: (c, _) {
       final store = LibraryStore.instance;
-      final projectionKey = '${store.revision}:${TagRepository.instance.revision}';
+      final projectionKey =
+          '${store.revision}:${TagRepository.instance.revision}';
       if (_tagManagerProjectionKey != projectionKey) {
         _tagManagerProjectionKey = projectionKey;
         _cachedTagStats = store.tagStats();
@@ -1322,8 +1324,9 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               );
-              if (n != null && n.isNotEmpty)
+              if (n != null && n.isNotEmpty) {
                 LibraryStore.instance.renameTag(t.$1, n);
+              }
             } else if (act == 'delete') {
               final ok = await showDialog<bool>(
                 context: context,
@@ -1453,8 +1456,9 @@ class _HomePageState extends State<HomePage> {
           child: FutureBuilder<List<ReadRecord>>(
             future: listF,
             builder: (c, snap) {
-              if (!snap.hasData)
+              if (!snap.hasData) {
                 return const Center(child: CircularProgressIndicator());
+              }
               final list = snap.data!;
               return list.isEmpty
                   ? const Center(
@@ -1985,7 +1989,7 @@ class _AddDialogState extends State<AddSourceDialog> {
           username: _p.text.trim(),
           password: _s.text,
         );
-        LibraryStore.instance.addSource(
+        await LibraryStore.instance.addSource(
           BookSource(
             id: 'webdav_${DateTime.now().millisecondsSinceEpoch}',
             type: 'webdav',
@@ -2019,7 +2023,7 @@ class _AddDialogState extends State<AddSourceDialog> {
           username: _p.text.trim(),
           password: _s.text,
         );
-        LibraryStore.instance.addSource(
+        await LibraryStore.instance.addSource(
           BookSource(
             id: 'sftp_${DateTime.now().millisecondsSinceEpoch}',
             type: 'sftp',
@@ -2049,7 +2053,7 @@ class _AddDialogState extends State<AddSourceDialog> {
       });
       try {
         await listLocalDir(path: path); // 连通性测试（无权限/路径不存在会抛错）
-        LibraryStore.instance.addSource(
+        await LibraryStore.instance.addSource(
           BookSource(
             id: 'smb_${DateTime.now().millisecondsSinceEpoch}',
             type: 'smb',
@@ -2074,7 +2078,7 @@ class _AddDialogState extends State<AddSourceDialog> {
         _setError('请填写目录路径');
         return;
       }
-      LibraryStore.instance.addSource(
+      await LibraryStore.instance.addSource(
         BookSource(
           id: 'local_${DateTime.now().millisecondsSinceEpoch}',
           type: 'local',
@@ -2103,7 +2107,7 @@ class _AddDialogState extends State<AddSourceDialog> {
         clientSecret: _baiduSecret,
         root: _b.text.trim().isEmpty ? '/' : _b.text.trim(),
       );
-      LibraryStore.instance.addSource(
+      await LibraryStore.instance.addSource(
         BookSource(
           id: 'baidu_${DateTime.now().millisecondsSinceEpoch}',
           type: 'baidu',
@@ -2139,7 +2143,7 @@ class _AddDialogState extends State<AddSourceDialog> {
           cookie: cookie,
           rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
         );
-        LibraryStore.instance.addSource(
+        await LibraryStore.instance.addSource(
           BookSource(
             id: '115_${DateTime.now().millisecondsSinceEpoch}',
             type: '115',
@@ -2155,7 +2159,7 @@ class _AddDialogState extends State<AddSourceDialog> {
           appId: _appId,
           rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
         );
-        LibraryStore.instance.addSource(
+        await LibraryStore.instance.addSource(
           BookSource(
             id: '115_${DateTime.now().millisecondsSinceEpoch}',
             type: '115',
@@ -2190,7 +2194,7 @@ class _AddDialogState extends State<AddSourceDialog> {
         cookie: cookie,
         rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
       );
-      LibraryStore.instance.addSource(
+      await LibraryStore.instance.addSource(
         BookSource(
           id: 'quark_${DateTime.now().millisecondsSinceEpoch}',
           type: 'quark',
@@ -2261,11 +2265,12 @@ class _AddDialogState extends State<AddSourceDialog> {
         clientSecret: _baiduSecret,
         code: codeCtrl.text.trim(),
       );
-      if (mounted)
+      if (mounted) {
         setState(() {
           _token.text = pair.refreshToken;
           _e = null;
         });
+      }
     } catch (e) {
       if (mounted) _setError('授权失败:$e');
     }

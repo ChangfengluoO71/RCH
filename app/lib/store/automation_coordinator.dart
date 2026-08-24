@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:app/src/rust/api/db.dart' as dbapi;
 import 'package:app/src/rust/api/scraper.dart' as scraperapi;
 import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
@@ -19,6 +20,9 @@ class AutomationCoordinator {
 
   static const ruleVersion = 'catalog-rules-v3';
   static const ancestorDepth = 4;
+  static const generatedTagProjectionVersionKey =
+      'generated_tag_projection_version';
+  static const generatedTagProjectionVersion = 'v3';
   // Production safe-auto is enabled only for Ready, conflict-free proposals;
   // provider enrichment and remote book-source I/O remain separate lanes.
   static const automaticMaterializationEnabled = true;
@@ -41,6 +45,15 @@ class AutomationCoordinator {
 
   bool get autoRun => _enabled;
   bool get running => _running;
+
+  @visibleForTesting
+  static bool needsGeneratedTagProjectionMigration(
+    Iterable<dbapi.SettingEntryDto> settings,
+  ) => !settings.any(
+    (entry) =>
+        entry.key == generatedTagProjectionVersionKey &&
+        entry.value == generatedTagProjectionVersion,
+  );
 
   Future<void> init() async {
     if (_started) return;
@@ -193,14 +206,24 @@ class AutomationCoordinator {
   /// reloads its in-memory repositories after a committed batch.
   Future<_MaterializationSummary> _materializeReadyProposals() async {
     final summary = _MaterializationSummary();
+    final projectionMigration = needsGeneratedTagProjectionMigration(
+      await dbapi.dbLoadAllSettings(),
+    );
     final proposals = await scraperapi.dbLoadScrapeProposals(
       limit: 100000,
       state: 'ready',
     );
     for (final proposal in proposals) {
-      if (proposal.materializationStatus == 'applied' ||
-          proposal.inputRevision.trim().isEmpty ||
-          !_isEmptyJsonArray(proposal.conflictsJson)) {
+      // Do not use the persisted materialization status as a skip gate.
+      // Re-scraping can update semantic_json while retaining the same catalog
+      // input revision, and Rust's transaction is responsible for returning
+      // `skipped` when the canonical projection is already complete.  In
+      // particular, this lets an applied proposal repair a missing generated
+      // tag after a vocabulary/projection migration.
+      if (!shouldAttemptMaterialization(
+        inputRevision: proposal.inputRevision,
+        conflictsJson: proposal.conflictsJson,
+      )) {
         continue;
       }
       try {
@@ -226,6 +249,12 @@ class AutomationCoordinator {
         debugPrint('[AutomationCoordinator] materialization $error');
       }
     }
+    if (projectionMigration && summary.errors == 0) {
+      await dbapi.dbSaveSetting(
+        key: generatedTagProjectionVersionKey,
+        value: generatedTagProjectionVersion,
+      );
+    }
     lastAutoApplied = summary.applied;
     lastMaterializationSkipped = summary.skipped;
     lastMaterializationReview = summary.reviewRequired;
@@ -237,7 +266,16 @@ class AutomationCoordinator {
     return summary;
   }
 
-  bool _isEmptyJsonArray(String raw) {
+  @visibleForTesting
+  static bool shouldAttemptMaterialization({
+    required String inputRevision,
+    required String conflictsJson,
+  }) {
+    if (inputRevision.trim().isEmpty) return false;
+    return _isEmptyJsonArray(conflictsJson);
+  }
+
+  static bool _isEmptyJsonArray(String raw) {
     try {
       final value = jsonDecode(raw);
       return value is List && value.isEmpty;

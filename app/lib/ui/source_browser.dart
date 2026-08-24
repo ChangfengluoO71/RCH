@@ -59,7 +59,7 @@ class SourceBrowser extends StatefulWidget {
 }
 
 class _SourceBrowserState extends State<SourceBrowser> {
-  late String _path = widget.source.path;
+  late String _path = widget.source.effectiveRootPath;
   final List<String> _stack = [];
   List<DirEntry> _entries = [];
   bool _loading = false;
@@ -583,7 +583,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
         code: codeCtrl.text.trim(),
       );
       widget.source.refreshToken = pair.refreshToken;
-      LibraryStore.instance.updateSource(
+      await LibraryStore.instance.updateSource(
         widget.source.id,
         refreshToken: pair.refreshToken,
       );
@@ -853,7 +853,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
       // 判断是文件夹还是漫画文件
       final isDir = _entries.any((e) => e.path == p && e.isDir);
       if (isDir ||
-          (!_entries.any((e) => e.path == p) && p != widget.source.path)) {
+          (!_entries.any((e) => e.path == p) &&
+              p != widget.source.effectiveRootPath)) {
         expanded.addAll(await _collectComicsRecursive(p));
       } else {
         expanded.add(p);
@@ -1349,12 +1350,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
         final e = entries[i];
         final sel = _selectedPaths.contains(e.path);
         if (e.isDir) {
-          if (!_selectMode)
+          if (!_selectMode) {
             return ListTile(
               leading: const Icon(Icons.folder, color: Colors.amber),
               title: Text(e.name),
               onTap: () => _openDir(e.path),
             );
+          }
           return ListTile(
             leading: Checkbox(
               value: sel,

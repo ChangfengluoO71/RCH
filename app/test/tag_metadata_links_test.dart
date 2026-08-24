@@ -6,14 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('resource/generated tags are hidden from the tag manager only', () {
+  test('resource/generated tags follow the user-facing visibility policy', () {
+    expect(TagRepository.isVisibleInTagManager('Chinese'), isTrue);
+    expect(TagRepository.isVisibleInTagManager('高清'), isTrue);
+    expect(TagRepository.isVisibleInTagManager('无修正'), isTrue);
     expect(TagRepository.isVisibleInTagManager('中文翻译'), isFalse);
-    expect(TagRepository.isVisibleInTagManager('无修正'), isFalse);
     expect(TagRepository.isVisibleInTagManager('数字版'), isFalse);
-    expect(
-      TagRepository.isVisibleInTagManager('release-group:示例汉化组'),
-      isFalse,
-    );
+    expect(TagRepository.isVisibleInTagManager('release-group:示例汉化组'), isFalse);
     for (final internalName in const [
       'translation:translated',
       'edition:digital',
@@ -30,10 +29,7 @@ void main() {
     expect(TagRepository.isVisibleInTagManager('已读'), isTrue);
     expect(TagRepository.isVisibleInTagManager('作者甲'), isTrue);
     expect(
-      TagRepository.isVisibleInTagManager(
-        '合集',
-        metadataNames: const {'合集'},
-      ),
+      TagRepository.isVisibleInTagManager('合集', metadataNames: const {'合集'}),
       isTrue,
     );
   });
@@ -104,6 +100,31 @@ void main() {
       repo.link(meta.key, '已读');
       await tester.pump();
       expect(find.text('已读'), findsWidgets);
+    },
+  );
+  test(
+    'stale book cleanup prunes orphan tags but preserves shared tags',
+    () async {
+      final repo = TagRepository.instance;
+      const stale = r'local|tag-prune|stale.cbz';
+      const live = r'local|tag-prune|live.cbz';
+      const orphan = 'cleanup-only-tag';
+      const shared = 'cleanup-shared-tag';
+
+      repo.link(stale, orphan);
+      repo.link(stale, shared);
+      repo.link(live, shared);
+      addTearDown(() {
+        repo.removeBookTagsAndPrune(stale, persist: false);
+        repo.removeBookTagsAndPrune(live, persist: false);
+      });
+
+      await repo.removeBookTagsAndPrune(stale, persist: false);
+
+      expect(repo.tagsForBook(stale), isEmpty);
+      expect(repo.allNames(), isNot(contains(orphan)));
+      expect(repo.allNames(), contains(shared));
+      expect(repo.tagsForBook(live), contains(shared));
     },
   );
 }

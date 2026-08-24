@@ -51,6 +51,22 @@ class BookSource {
   bool get is115 => type == '115';
   bool get isQuark => type == 'quark';
 
+  /// Effective starting directory used by remote catalog/browser operations.
+  ///
+  /// 115 and Quark identify folders by a stable root id. Older persisted rows
+  /// may only have the legacy `path` value, so retain it as a migration
+  /// fallback; a completely empty root is the service root (`0`). Other source
+  /// types continue to use their configured path unchanged.
+  String get effectiveRootPath {
+    if (is115 || isQuark) {
+      final configured = rootId?.trim();
+      if (configured != null) return configured.isEmpty ? '0' : configured;
+      final legacy = path.trim();
+      return legacy.isEmpty ? '0' : legacy;
+    }
+    return path;
+  }
+
   /// 幽灵书源：来自其他设备的本地书源，仅元数据、不可打开阅读。
   bool get isGhost => remoteOnly;
 
@@ -75,10 +91,12 @@ class BookSource {
     if (type == 'baidu') return (emoji: '\u{1F7E2}', label: '百度网盘');
     if (type == '115') return (emoji: '\u{1F7E1}', label: '115 网盘');
     if (type == 'quark') return (emoji: '\u{1F7E1}', label: '夸克网盘');
-    if (capabilityLabel == 'local')
+    if (capabilityLabel == 'local') {
       return (emoji: '\u{1F7E2}', label: 'WebDAV 高速');
-    if (capabilityLabel == 'webdav_range')
+    }
+    if (capabilityLabel == 'webdav_range') {
       return (emoji: '\u{1F7E1}', label: 'WebDAV 远程');
+    }
     return (emoji: '\u{1F534}', label: 'WebDAV 无Range');
   }
 

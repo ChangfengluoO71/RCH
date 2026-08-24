@@ -41,9 +41,10 @@ class TagRepository extends ChangeNotifier {
     super.notifyListeners();
   }
 
-  /// Whether a tag belongs in the user-facing tag manager. Generated resource
-  /// semantics remain stored and queryable for filtering, but are temporarily
-  /// hidden from the manager while metadata tags (author/genre/series) remain
+  /// Whether a tag belongs in the user-facing tag manager. Resource semantics
+  /// with stable user value (for example `Chinese` and `无修正`) remain visible;
+  /// Obsolete delivery markers such as `数字版` stay hidden until the startup
+  /// migration removes them.  Stable quality semantics such as `高清` remain
   /// visible. A same-named metadata value wins over the generated-name rule.
   static bool isVisibleInTagManager(
     String name, {
@@ -86,7 +87,6 @@ class TagRepository extends ChangeNotifier {
     '未翻译',
     '机翻',
     '人工翻译',
-    '无修正',
     '有修正',
     '彩漫',
     '彩页',
@@ -270,7 +270,7 @@ class TagRepository extends ChangeNotifier {
   /// 解析器的内部字段仍保存在 proposal/provenance 中；标签表只保留
   /// 对用户有稳定含义的资源属性、合集状态和汉化组。迁移是幂等的，
   /// 且逐条使用数据库的幂等 link/delete 接口，不触碰远程书源。
-  Future<void> normalizeGeneratedTags() async {
+  Future<void> normalizeGeneratedTags({bool persist = true}) async {
     final moves = <({String oldName, String? newName})>[];
     for (final tag in _tags.values.toList()) {
       final mapped = _canonicalGeneratedTag(tag.name);
@@ -286,12 +286,14 @@ class TagRepository extends ChangeNotifier {
         final newId = ensure(move.newName!);
         for (final link in links) {
           _bookTags.add(BookTag(bookKey: link.bookKey, tagId: newId));
-          await dbLinkTag(bookKey: link.bookKey, tagName: move.newName!);
+          if (persist) {
+            await dbLinkTag(bookKey: link.bookKey, tagName: move.newName!);
+          }
         }
       }
       _bookTags.removeWhere((bt) => bt.tagId == oldId);
       _tags.remove(oldId);
-      await dbDeleteTag(name: move.oldName);
+      if (persist) await dbDeleteTag(name: move.oldName);
     }
     notifyListeners();
   }
@@ -440,6 +442,52 @@ class TagRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Remove all links for one stale book and delete tag entities that no longer
+  /// have any live book link. The DB delete is intentionally explicit: a later
+  /// full tag snapshot must not re-create an orphan tag with `dbEnsureTag`.
+  ///
+  /// [persist] is false only for in-memory/unit-test projections; production
+  /// cleanup keeps it true and the caller still persists the remaining links.
+  Future<void> removeBookTagsAndPrune(String bookKey, {bool persist = true}) =>
+      _removeLinksAndPrune(
+        (bt) => bt.bookKey == normalizePersistedBookKey(bookKey),
+        persist: persist,
+      );
+
+  /// Source deletion variant of [removeBookTagsAndPrune].
+  Future<void> removeBookTagsByPrefixAndPrune(
+    String prefix, {
+    bool persist = true,
+  }) => _removeLinksAndPrune(
+    (bt) => bt.bookKey.startsWith(prefix),
+    persist: persist,
+  );
+
+  Future<void> _removeLinksAndPrune(
+    bool Function(BookTag) matches, {
+    required bool persist,
+  }) async {
+    final removed = _bookTags.where(matches).toList();
+    if (removed.isEmpty) return;
+    final candidateIds = removed.map((bt) => bt.tagId).toSet();
+    _bookTags.removeWhere(matches);
+    final linkedIds = _bookTags.map((bt) => bt.tagId).toSet();
+    final orphanIds = candidateIds.difference(linkedIds);
+    final orphanNames = <String>[];
+    for (final id in orphanIds) {
+      final tag = _tags.remove(id);
+      if (tag != null && tag.name.trim().isNotEmpty) {
+        orphanNames.add(tag.name);
+      }
+    }
+    if (persist) {
+      for (final name in orphanNames) {
+        await dbDeleteTag(name: name);
+      }
+    }
+    notifyListeners();
+  }
+
   /// 获取某本书的标签名列表。
   List<String> tagsForBook(String bookKey) {
     bookKey = normalizePersistedBookKey(bookKey);
@@ -538,10 +586,16 @@ class TagRepository extends ChangeNotifier {
       'color_pages' || 'colored_pages' || 'colour_pages' => '彩页',
       'complete' || 'completed' || 'collection' => '合集',
       'incomplete' || 'partial' => '未完结',
-      'translated' || 'translation' || 'chinese_translation' => '中文翻译',
+      '中文' ||
+      '中文翻译' ||
+      'chinese' ||
+      'translated' ||
+      'translation' ||
+      'chinese_translation' => 'Chinese',
       'machine' || 'mtl' || 'machine_translation' || 'ai_translation' => '机翻',
       'human_translation' || 'manual_translation' => '人工翻译',
-      'digital' || 'dl' || 'ebook' => '数字版',
+      '数字版' || 'digital' || 'ebook' || 'electronic' => '',
+      'dl' || 'hd' || 'high_quality' || 'high_definition' => '高清',
       'full_scan' || 'cover_to_cover' => '全本扫描',
       'no_ads' || 'clean' => '无广告',
       'monochrome' || 'black_and_white' => '黑白漫',
@@ -553,7 +607,19 @@ class TagRepository extends ChangeNotifier {
         lower.startsWith('sequence:') ||
         lower.startsWith('publication:') ||
         lower.startsWith('release:') ||
-        lower.startsWith('release-group:');
+        lower.startsWith('release-group:') ||
+        lower.startsWith('release_group:') ||
+        lower.startsWith('language:') ||
+        lower.startsWith('translation:') ||
+        lower.startsWith('translation-method:') ||
+        lower.startsWith('translation_method:') ||
+        lower.startsWith('edition:') ||
+        lower.startsWith('censorship:') ||
+        lower.startsWith('color:') ||
+        lower.startsWith('completeness:') ||
+        lower.startsWith('medium:') ||
+        lower.startsWith('scan:') ||
+        lower.startsWith('tag:');
     if (!generated) return null;
 
     if (lower.startsWith('release-group:')) {
@@ -561,18 +627,12 @@ class TagRepository extends ChangeNotifier {
       return group.isEmpty ? '' : '汉化组：$group';
     }
 
-    final parts = lower.split(':');
-    final value = parts.length > 1 ? parts.sublist(1).join(':') : '';
-    final normalized = value
-        .replaceAll('-', '_')
-        .replaceAll(' ', '_')
-        .replaceAll('/', '_');
-
     String? canonical(String value) {
       switch (value) {
         case 'language:zh':
         case 'language:cn':
-          return '中文';
+        case 'language:chinese':
+          return 'Chinese';
         case 'language:en':
           return '英文';
         case 'language:ja':
@@ -582,7 +642,7 @@ class TagRepository extends ChangeNotifier {
         case 'tag:translated':
         case 'tag:translation':
         case 'tag:chinese_translation':
-          return '中文翻译';
+          return 'Chinese';
         case 'translation:untranslated':
         case 'tag:untranslated':
           return '未翻译';
@@ -598,10 +658,27 @@ class TagRepository extends ChangeNotifier {
         case 'tag:human_translation':
           return '人工翻译';
         case 'edition:digital':
+        case 'edition:dl':
+        case 'edition:ebook':
+        case 'edition:electronic':
         case 'tag:digital':
-        case 'tag:dl':
         case 'tag:ebook':
-          return '数字版';
+        case 'resource:edition:digital':
+        case 'resource:edition:dl':
+        case 'resource:edition:ebook':
+        case 'resource:edition:electronic':
+        case 'resource:tag:digital':
+        case 'resource:tag:ebook':
+          return '';
+        case 'tag:dl':
+        case 'tag:hd':
+        case 'tag:high_quality':
+        case 'tag:high_definition':
+        case 'resource:tag:dl':
+        case 'resource:tag:hd':
+        case 'resource:tag:high_quality':
+        case 'resource:tag:high_definition':
+          return '高清';
         case 'edition:print':
           return '实体版';
         case 'censorship:uncensored':
@@ -658,7 +735,7 @@ class TagRepository extends ChangeNotifier {
 
     // Explicitly recognized generated tags are mapped; all other generated
     // namespaces are implementation details and should be removed.
-    return canonical(normalized) ?? '';
+    return canonical(lower) ?? '';
   }
 
   /// 迁移 / 加载后归一化：旧版 hash 算法残留的旧 ID 合并到新 DJB2 ID。

@@ -16,7 +16,7 @@ Future<BigInt> quarkSessionFor(BookSource source) async {
   _quarkSessions[source.id] = s.id;
   if (s.cookie.isNotEmpty && s.cookie != source.cookie) {
     source.cookie = s.cookie;
-    LibraryStore.instance.updateSource(source.id, cookie: s.cookie);
+    await LibraryStore.instance.updateSource(source.id, cookie: s.cookie);
   }
   return s.id;
 }

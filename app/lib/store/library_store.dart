@@ -10,6 +10,7 @@ import '../repository/record_repository.dart';
 import '../repository/tag_repository.dart';
 import '../src/rust/api/cache.dart';
 import '../src/rust/api/db.dart';
+import 'library_catalog.dart';
 import 'library_index_service.dart';
 import 'models.dart';
 import 'remote_listing.dart';
@@ -26,6 +27,11 @@ import 'remote_listing.dart';
 class LibraryStore extends ChangeNotifier {
   LibraryStore._();
   static final LibraryStore instance = LibraryStore._();
+
+  @visibleForTesting
+  static bool isUsableRemoteRefreshRevision(String revision) =>
+      revision != 'missing-fingerprint' &&
+      revision != 'remote-refresh-not-allowed';
 
   // ---- 委托给 Repository（纯数据持有） ----
 
@@ -102,6 +108,10 @@ class LibraryStore extends ChangeNotifier {
       final f = await _file();
       if (await f.exists()) {
         await TagRepository.instance.load(f);
+        // Keep the JSON fallback on the same generated-tag migration path as
+        // SQLite installs so obsolete digital-version tags cannot survive a
+        // legacy-library load.
+        await TagRepository.instance.normalizeGeneratedTags(persist: false);
         final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
         _books.loadFromJson(j);
         _records.loadFromJson(j);
@@ -466,19 +476,24 @@ class LibraryStore extends ChangeNotifier {
 
   // ---- Source（委托给 BookRepository） ----
 
-  void addSource(BookSource s) {
+  Future<void> _persistSourceMutation() async {
+    await saveToDisk();
+    await LibraryCatalogStore.instance.loadTree();
+  }
+
+  Future<void> addSource(BookSource s) async {
     _books.addSource(s);
     notifyListeners();
-    saveToDisk();
+    await _persistSourceMutation();
   }
 
-  void removeSource(String id) {
+  Future<void> removeSource(String id) async {
     _books.removeSource(id);
     notifyListeners();
-    saveToDisk();
+    await _persistSourceMutation();
   }
 
-  void updateSource(
+  Future<void> updateSource(
     String id, {
     String? name,
     String? url,
@@ -492,7 +507,14 @@ class LibraryStore extends ChangeNotifier {
     String? rootId,
     String? cookie,
     String? note,
-  }) {
+  }) async {
+    final current = sourceById(id);
+    final isRootIdSource = current?.is115 == true || current?.isQuark == true;
+    final rootCandidate = rootId ?? path ?? current?.effectiveRootPath ?? '0';
+    final normalizedRoot = isRootIdSource
+        ? (rootCandidate.trim().isEmpty ? '0' : rootCandidate.trim())
+        : rootId;
+    final normalizedPath = isRootIdSource ? normalizedRoot : path;
     _books.updateSource(
       id,
       name: name,
@@ -500,11 +522,11 @@ class LibraryStore extends ChangeNotifier {
       username: username,
       password: password,
       port: port,
-      path: path,
+      path: normalizedPath,
       refreshToken: refreshToken,
       clientId: clientId,
       clientSecret: clientSecret,
-      rootId: rootId,
+      rootId: normalizedRoot,
       cookie: cookie,
       note: note,
     );
@@ -516,7 +538,7 @@ class LibraryStore extends ChangeNotifier {
       src.originDeviceId = null;
     }
     notifyListeners();
-    saveToDisk();
+    await _persistSourceMutation();
   }
 
   void updateSourceCapability(String id, String label) {
@@ -545,7 +567,7 @@ class LibraryStore extends ChangeNotifier {
       final prefix = '${src.type}|${src.id}|';
       _records.removeByPrefix(prefix);
       _books.metas.removeWhere((k, _) => k.startsWith(prefix));
-      TagRepository.instance.removeBookTagsByPrefix(prefix);
+      await TagRepository.instance.removeBookTagsByPrefixAndPrune(prefix);
       // SQLite 同步删除：saveToSqlite 只 upsert 不删行，漏删会让书源/记录重启后复活。
       await dbDeleteSource(id: id);
       await dbDeleteRecordsBySourcePrefix(prefix: prefix);
@@ -559,7 +581,7 @@ class LibraryStore extends ChangeNotifier {
           path: path,
           url: src?.url,
           port: src?.port,
-          rootPath: src?.path ?? '',
+          rootPath: src?.effectiveRootPath ?? '',
           clientId: src?.clientId,
           rootId: src?.rootId,
           cookieMode: (src?.cookie ?? '').isNotEmpty,
@@ -572,6 +594,7 @@ class LibraryStore extends ChangeNotifier {
     }
     notifyListeners();
     await saveToDisk();
+    await LibraryCatalogStore.instance.loadTree();
   }
 
   // ---- Record（委托给 RecordRepository） ----
@@ -720,14 +743,19 @@ class LibraryStore extends ChangeNotifier {
       ...staleMetas,
       ...deletedCatalogKeys,
     };
-    if (removedKeys.isEmpty) return (0, 0, 0, alignFailed);
+    if (removedKeys.isEmpty) {
+      if (alignRemote || tombstones.isNotEmpty) {
+        await LibraryCatalogStore.instance.loadTree();
+      }
+      return (0, 0, 0, alignFailed);
+    }
 
     // 内存清理：元数据 + 失效 key 上的标签关联
     for (final k in allMetaKeys) {
       _books.metas.remove(k);
     }
     for (final k in removedKeys) {
-      TagRepository.instance.setBookTags(k, const []);
+      await TagRepository.instance.removeBookTagsAndPrune(k);
     }
 
     // SQLite 清理：记录逐条删；失效记录对应的元数据逐条删；
@@ -788,7 +816,7 @@ class LibraryStore extends ChangeNotifier {
           path: target.$2,
           url: src.url,
           port: src.port,
-          rootPath: src.path,
+          rootPath: src.effectiveRootPath,
           clientId: src.clientId,
           rootId: src.rootId,
           cookieMode: (src.cookie ?? '').isNotEmpty,
@@ -810,6 +838,7 @@ class LibraryStore extends ChangeNotifier {
 
     notifyListeners();
     await saveToDisk();
+    await LibraryCatalogStore.instance.loadTree();
     return (
       staleRecords.length,
       allMetaKeys.length,
@@ -825,12 +854,12 @@ class LibraryStore extends ChangeNotifier {
     try {
       final session = await remoteSessionFor(s);
       if (session == null) return false;
-      await LibraryIndexService.instance.refreshSourceIndex(
+      final result = await LibraryIndexService.instance.refreshSourceIndex(
         source: s,
         force: true,
         listRemote: (p) => listRemoteDirFor(s, session: session, path: p),
       );
-      return true;
+      return isUsableRemoteRefreshRevision(result.revision);
     } catch (e) {
       debugPrint('[LibraryStore] 在线索引对齐失败 ${s.id}: $e');
       return false;
@@ -972,12 +1001,11 @@ class LibraryStore extends ChangeNotifier {
     final result = <String, String>{};
     for (final entry in counts.entries) {
       final c = entry.value;
-      result[entry.key] =
-          c.author >= c.genre && c.author >= c.series
-              ? '作者'
-              : c.genre >= c.series
-              ? '类别'
-              : '系列';
+      result[entry.key] = c.author >= c.genre && c.author >= c.series
+          ? '作者'
+          : c.genre >= c.series
+          ? '类别'
+          : '系列';
     }
     if (TagRepository.instance.bookKeysForTag('AI超分').isNotEmpty) {
       result['AI超分'] = 'AI超分';

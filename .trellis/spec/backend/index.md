@@ -28,6 +28,8 @@ This directory contains guidelines for backend development. Fill in each file wi
 
 ---
 
+| [Source Refresh and Stale-Data Cleanup](./source-refresh-cleanup.md) | Source CRUD completion, 115/Quark effective roots, and safe cleanup boundaries | Filled |
+
 ## How to Fill These Guidelines
 
 For each guideline file:

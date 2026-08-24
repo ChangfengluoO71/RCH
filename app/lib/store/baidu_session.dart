@@ -18,7 +18,10 @@ Future<BigInt> baiduSessionFor(BookSource source) async {
   _baiduSessions[source.id] = s.id;
   if (s.refreshToken.isNotEmpty && s.refreshToken != source.refreshToken) {
     source.refreshToken = s.refreshToken;
-    LibraryStore.instance.updateSource(source.id, refreshToken: s.refreshToken);
+    await LibraryStore.instance.updateSource(
+      source.id,
+      refreshToken: s.refreshToken,
+    );
   }
   return s.id;
 }

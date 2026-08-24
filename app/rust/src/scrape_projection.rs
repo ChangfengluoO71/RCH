@@ -60,8 +60,24 @@ pub(crate) fn materialize_ready_proposal_on(
 
     if proposal.materialization_status == "applied" && proposal.input_revision == expected_revision
     {
-        result.status = "skipped".into();
-        return Ok(result);
+        // Applied proposals from the pre-v2 projection may have no live
+        // resource tags anymore: the startup migration intentionally removes
+        // obsolete namespaced tags, but it cannot reconstruct their semantic
+        // values. Re-enter the normal local transaction when any current
+        // canonical resource tag is missing; otherwise preserve idempotence.
+        let semantic = serde_json::from_str::<Value>(&proposal.semantic_json).ok();
+        let target_book_key = canonical_book_key(&proposal.book_key);
+        let needs_reprojection = semantic
+            .as_ref()
+            .map(|value| {
+                let expected_tags = canonical_tag_names(value);
+                !canonical_tags_present(conn, &target_book_key, &expected_tags)
+            })
+            .unwrap_or(false);
+        if !needs_reprojection {
+            result.status = "skipped".into();
+            return Ok(result);
+        }
     }
 
     if proposal.state != "ready" {
@@ -220,6 +236,25 @@ fn canonical_book_key(key: &str) -> String {
     let Some(second_rel) = rest.find('|') else { return key.to_string() };
     let second = first + 1 + second_rel;
     db::book_key_of(&key[..first], &key[first + 1..second], &key[second + 1..])
+}
+
+fn canonical_tags_present(conn: &Connection, book_key: &str, expected: &[String]) -> bool {
+    expected.iter().all(|tag_name| {
+        conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM book_tags
+                JOIN tags ON tags.id = book_tags.tag_id
+                WHERE book_tags.book_key = ?1
+                  AND book_tags.deleted = 0
+                  AND tags.deleted = 0
+                  AND tags.name = ?2
+            )",
+            params![book_key, tag_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            != 0
+    })
 }
 
 fn load_and_migrate_meta_aliases(
@@ -399,17 +434,18 @@ fn canonical_tag_names(value: &Value) -> Vec<String> {
     let translation_state = normalized(semantic_string(value, "translation_state"));
     let language = normalized(semantic_string(value, "resource_language"));
     match translation_state.as_str() {
-        "zh_translated" => add("中文翻译"),
+        "zh_translated" => add("Chinese"),
         "translated" | "translation"
             if language == "zh" || language == "cn" || language == "chinese" =>
         {
-            add("中文翻译")
+            add("Chinese")
         }
         "translated" | "translation" => add("已翻译"),
         "untranslated" | "original" => add("未翻译"),
         _ if language == "zh" || language == "cn" || language == "chinese" => {
-            // A language marker alone is not enough to assert a translation;
-            // retain only an explicit Chinese translation state.
+            // The user-facing vocabulary intentionally merges a Chinese
+            // language marker and an explicit Chinese translation marker.
+            add("Chinese");
         }
         _ => {}
     }
@@ -420,8 +456,9 @@ fn canonical_tag_names(value: &Value) -> Vec<String> {
         _ => {}
     }
 
+    // A legacy proposal may still carry resource_edition=digital, but that
+    // value is obsolete and must never be projected into a user-facing tag.
     match normalized(semantic_string(value, "resource_edition")).as_str() {
-        "digital" | "dl" | "ebook" | "electronic" => add("数字版"),
         "print" | "paper" => add("实体版"),
         _ => {}
     }
@@ -481,10 +518,10 @@ fn canonical_tag_names(value: &Value) -> Vec<String> {
             "color_pages" | "colored_pages" | "colour_pages" => add("彩页"),
             "complete" | "completed" | "collection" | "全集" => add("合集"),
             "incomplete" | "partial" => add("未完结"),
-            "translated" | "translation" | "chinese_translation" => add("中文翻译"),
+            "translated" | "translation" | "chinese_translation" => add("Chinese"),
             "machine" | "mtl" | "machine_translation" | "ai_translation" => add("机翻"),
             "human_translation" | "manual_translation" => add("人工翻译"),
-            "digital" | "dl" | "ebook" => add("数字版"),
+            "high_quality" | "hd" | "high_definition" | "dl" => add("高清"),
             "full_scan" | "cover_to_cover" => add("全本扫描"),
             "no_ads" | "clean" => add("无广告"),
             "monochrome" | "black_and_white" => add("黑白漫"),
@@ -655,9 +692,9 @@ mod tests {
             .filter_map(|r| r.ok())
             .collect();
         assert!(tags.iter().all(|tag| !tag.contains("Circle")));
-        assert!(tags.iter().any(|tag| tag == "中文翻译"));
+        assert!(tags.iter().any(|tag| tag == "Chinese"));
         assert!(tags.iter().any(|tag| tag == "无修正"));
-        assert!(tags.iter().any(|tag| tag == "数字版"));
+        assert!(!tags.iter().any(|tag| tag == "数字版"));
         assert!(tags.iter().any(|tag| tag == "合集"));
         assert!(tags.iter().all(|tag| {
             !tag.starts_with("resource:")
@@ -682,20 +719,28 @@ mod tests {
             "publication_source": "COMIC X-EROS",
             "distribution_platform": "kakao",
             "release_groups": ["组A"],
-            "resource_tags": ["uncensored", "collection", "colorized", "unknown-tag"]
+            "resource_tags": ["uncensored", "collection", "colorized", "high_quality", "unknown-tag"]
         });
         let tags = canonical_tag_names(&semantic);
         let mut expected = vec![
-            "中文翻译".to_string(),
+            "Chinese".to_string(),
             "合集".to_string(),
             "无修正".to_string(),
             "机翻".to_string(),
-            "数字版".to_string(),
+            "高清".to_string(),
             "彩漫".to_string(),
             "汉化组：组A".to_string(),
         ];
         expected.sort();
         assert_eq!(tags, expected);
+    }
+
+    #[test]
+    fn language_marker_alone_projects_user_facing_chinese_tag() {
+        let semantic = serde_json::json!({
+            "resource_language": "zh"
+        });
+        assert_eq!(canonical_tag_names(&semantic), vec!["Chinese"]);
     }
 
     fn insert_proposal(conn: &Connection, row: &db::ScrapeProposalRow) {
@@ -827,6 +872,55 @@ mod tests {
         .unwrap();
         let stale = materialize_ready_proposal_on(&conn, "asset|local|s1|a", "r1").unwrap();
         assert_eq!(stale.status, "stale");
+    }
+
+    #[test]
+    fn applied_proposal_with_legacy_resource_projection_is_reconciled() {
+        let conn = fixture_conn();
+        let row = proposal("ready", "[]", "r1");
+        insert_proposal(&conn, &row);
+        let first = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(first.status, "applied");
+
+        // Simulate the historical projection that wrote internal namespaced
+        // tags to the materialization audit and was later removed by the
+        // startup cleanup migration.
+        conn.execute(
+            "UPDATE scrape_materializations
+             SET added_tags_json = ?1
+             WHERE asset_key = ?2 AND proposal_revision = ?3",
+            params![
+                r#"["resource:censorship:uncensored","resource:language:zh"]"#,
+                row.asset_key,
+                row.input_revision,
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM book_tags WHERE book_key = ?1",
+            params![row.book_key],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM tags WHERE name IN ('Chinese', '无修正')",
+            [],
+        )
+        .unwrap();
+
+        let reconciled = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(reconciled.status, "applied");
+        let tags: Vec<String> = conn
+            .prepare(
+                "SELECT tags.name FROM tags JOIN book_tags ON book_tags.tag_id = tags.id
+                 WHERE book_tags.book_key = ?1 ORDER BY tags.name",
+            )
+            .unwrap()
+            .query_map(params![row.book_key], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert!(tags.iter().any(|tag| tag == "Chinese"));
+        assert!(tags.iter().any(|tag| tag == "无修正"));
     }
 
     #[test]

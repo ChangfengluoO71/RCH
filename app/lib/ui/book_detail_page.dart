@@ -17,6 +17,7 @@ import 'package:app/ui/cover_editor_page.dart';
 import 'package:app/ui/opener.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 
 class BookDetailPage extends StatefulWidget {
   final BookSource source;
@@ -276,6 +277,28 @@ class _BookDetailPageState extends State<BookDetailPage> {
     setState(() {});
   }
 
+  /// Return the catalog's original entry name, without replacing it with the
+  /// user-facing or scraped title.  Paths are persisted with either slash
+  /// style depending on their source, so normalize both before taking the
+  /// final segment.
+  String _originalFilename() {
+    final raw = widget.path.trim();
+    if (raw.isEmpty) return widget.title.trim();
+    final normalized = raw.replaceAll('\\', '/');
+    final withoutTrailing = normalized.replaceFirst(RegExp(r'/+$'), '');
+    final segment = withoutTrailing.split('/').last.trim();
+    return segment.isEmpty ? widget.title.trim() : segment;
+  }
+
+  Future<void> _copyOriginalFilename(String filename) async {
+    if (filename.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: filename));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('原文件名已复制')));
+  }
+
   Widget _identifiedMetaLine(String label, String value) => Padding(
     padding: const EdgeInsets.only(bottom: 3),
     child: Row(
@@ -286,6 +309,30 @@ class _BookDetailPageState extends State<BookDetailPage> {
           child: Text('$label：', style: const TextStyle(color: Colors.white60)),
         ),
         Expanded(child: Text(value)),
+      ],
+    ),
+  );
+
+  Widget _originalFilenameLine(String filename) => Padding(
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(
+          width: 72,
+          child: Text('原文件名：', style: TextStyle(color: Colors.white60)),
+        ),
+        Expanded(child: SelectableText(filename)),
+        IconButton(
+          key: const Key('copy_original_filename'),
+          tooltip: '复制原文件名',
+          icon: const Icon(Icons.copy, size: 18),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          onPressed: filename.isEmpty
+              ? null
+              : () => _copyOriginalFilename(filename),
+        ),
       ],
     ),
   );
@@ -329,6 +376,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
         .bookKeysForTag('AI超分')
         .contains(bookKey);
     final identifiedTitle = _meta.title.isNotEmpty ? _meta.title : widget.title;
+    final originalFilename = _originalFilename();
     // Metadata fields are canonical projections as well as tag-manager
     // entries. Merge both sources so details remain readable even when an old
     // database has not yet rebuilt its derived tag links.
@@ -519,6 +567,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
             if (_meta.series.isNotEmpty)
               _identifiedMetaLine('系列', _meta.series),
             if (_meta.genre.isNotEmpty) _identifiedMetaLine('类别', _meta.genre),
+            if (originalFilename.isNotEmpty)
+              _originalFilenameLine(originalFilename),
             if (identifiedTags.isNotEmpty) ...[
               const SizedBox(height: 4),
               Wrap(

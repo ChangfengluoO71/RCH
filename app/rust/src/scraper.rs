@@ -1128,9 +1128,25 @@ fn classify_resource_label(value: &str, proposal: &mut NameRoleProposal) -> bool
         push_tag(proposal, "censored");
         matched = true;
     }
-    if contains_any(value, &["DL版", "DL版", "デジタル版"]) || lower == "digital" {
-        proposal.resource_edition = Some("digital".into());
-        push_tag(proposal, "digital");
+    // `DL` in manga release names is a local quality marker (download/high
+    // definition), not a publication-edition assertion.  Keep the useful
+    // quality evidence, but never materialize the old misleading
+    // `resource_edition=digital`/`digital` tag.  Explicit digital-version
+    // wording is consumed as ignorable release noise.
+    if lower == "dl"
+        || lower == "dl版"
+        || lower == "hd"
+        || value == "DL版"
+        || value == "高画質"
+        || value == "高清"
+    {
+        push_tag(proposal, "high_quality");
+        matched = true;
+    } else if matches!(
+        lower.as_str(),
+        "digital" | "ebook" | "electronic"
+    ) || matches!(value, "デジタル版" | "数字版" | "电子版" | "電子版")
+    {
         matched = true;
     }
     if lower == "raw" || value == "生肉" {
@@ -1218,6 +1234,14 @@ fn classify_resource_label(value: &str, proposal: &mut NameRoleProposal) -> bool
 
 fn classify_inline_resource_terms(value: &str, proposal: &mut NameRoleProposal) {
     let lower = value.to_ascii_lowercase();
+    if lower.contains("dl版")
+        || lower.contains(" hd")
+        || lower.starts_with("hd ")
+        || lower.contains("高画質")
+        || lower.contains("高清")
+    {
+        push_tag(proposal, "high_quality");
+    }
     if lower.contains(" raw ") || lower.ends_with(" raw") || value.contains("生肉") {
         proposal.source_medium = Some("raw".into());
         push_tag(proposal, "raw");
@@ -3079,6 +3103,8 @@ fn is_bilingual_metadata_text(value: &str) -> bool {
             lower.as_str(),
             "raw"
                 | "digital"
+                | "ebook"
+                | "electronic"
                 | "sample"
                 | "textless"
                 | "colorized"
@@ -3090,6 +3116,16 @@ fn is_bilingual_metadata_text(value: &str) -> bool {
                 | "mtl"
                 | "machine translation"
                 | "human translation"
+        )
+        || matches!(
+            value.trim(),
+            "DL版"
+                | "デジタル版"
+                | "数字版"
+                | "电子版"
+                | "電子版"
+                | "高画質"
+                | "高清"
         )
         || contains_any(
             value,
@@ -3209,6 +3245,9 @@ fn is_noise_label(value: &str) -> bool {
         "complete",
         "incomplete",
         "digital",
+        "ebook",
+        "electronic",
+        "数字版",
         "raw",
         "scan",
         "webrip",
@@ -3810,12 +3849,36 @@ mod tests {
         assert_eq!(json["resource_language"], "zh");
         assert_eq!(json["translation_state"], "translated");
         assert!(json["translation_method"].is_null());
-        assert_eq!(json["resource_edition"], "digital");
-        assert_eq!(json["edition"], "digital");
+        assert!(json["resource_edition"].is_null());
+        assert!(json["edition"].is_null());
         assert_eq!(json["censorship"], "uncensored");
         assert!(json["resource_tags"]
             .as_array()
-            .is_some_and(|tags| tags.iter().any(|tag| tag == "digital")));
+            .is_some_and(|tags| tags.iter().any(|tag| tag == "high_quality")));
+        assert!(json["resource_tags"]
+            .as_array()
+            .is_some_and(|tags| tags.iter().all(|tag| tag != "digital")));
+    }
+
+    #[test]
+    fn dl_is_high_quality_and_digital_version_markers_are_ignored() {
+        let dl = parse_catalog(
+            &CatalogSnapshot::new("fixture/dl", "作品名 [DL版].zip", vec![]),
+            3,
+            "catalog-rules-v3",
+        );
+        assert_eq!(dl.resource_edition, None);
+        assert!(dl.resource_tags.iter().any(|tag| tag == "high_quality"));
+        assert!(!dl.resource_tags.iter().any(|tag| tag == "digital"));
+
+        let digital = parse_catalog(
+            &CatalogSnapshot::new("fixture/digital", "作品名 [数字版].zip", vec![]),
+            3,
+            "catalog-rules-v3",
+        );
+        assert_eq!(digital.resource_edition, None);
+        assert!(!digital.resource_tags.iter().any(|tag| tag == "digital"));
+        assert!(!digital.resource_tags.iter().any(|tag| tag == "unknown-tag"));
     }
 
     #[test]

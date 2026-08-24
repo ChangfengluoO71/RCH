@@ -359,7 +359,8 @@ class LibraryIndexService {
     final now = DateTime.now().millisecondsSinceEpoch;
     final entries = <frb.LibraryIndexDto>[];
     final visited = <String>{};
-    final queue = <String>[source.path.isEmpty ? '/' : source.path];
+    final root = source.effectiveRootPath;
+    final queue = <String>[root.isEmpty ? '/' : root];
 
     while (queue.isNotEmpty) {
       final dirPath = queue.removeAt(0);

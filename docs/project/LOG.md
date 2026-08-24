@@ -955,3 +955,15 @@ SELECT ... FROM library_index WHERE source_id = ?1 AND deleted = 0   -- 只返�
 **验证**：`flutter analyze` 0 issue；Dart 57 测试过；本地 Android 构建因 Google Maven 不可达失败（CI 网络正常，走发布流程由 CI 构建验证）。
 
 **发布**：v0.5.3（补丁号递增）——pubspec `0.5.2+502 → 0.5.3+503`、notes、CHANGELOG、annotated tag、push tags 触发 CI 双端构建。
+
+---
+
+## 2026-08-24｜第45轮：离线刮削自动化、标签投影与书源清理发布 v0.5.4
+
+**发布内容**：
+
+- 离线 Catalog Snapshot → proposal → Ready 自动物化 → 标签/元数据 → 既有同步队列闭环；刮削器保持零内容读取、零远程书源 I/O。
+- 标签系统仅保留 `Chinese`、`无修正`、`高清` 等用户可理解的稳定资源标签；作者、系列等元数据同时在标签管理和漫画详情页展示。
+- 书源新增/编辑后即时刷新，115 根目录统一使用，远程删除对齐失败不触发误删，并清理失效漫画的记录、元数据、标签、AI 任务和缓存。
+
+**验证**：Flutter analyze、Flutter tests、Rust tests 全部通过；389 条真实 catalog proposal 保持一一对应；发布使用 `v0.5.4` annotated tag 触发 GitHub Actions 双端构建。

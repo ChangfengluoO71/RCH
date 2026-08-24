@@ -418,3 +418,25 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Status
 
 [OK] **Completed**
+
+
+## Session 12: v0.5.4 发布：离线刮削与书源清理
+
+**Date**: 2026-08-24
+**Task**: v0.5.4 发布：离线刮削与书源清理
+**Branch**: `master`
+
+### Summary
+
+完成离线刮削自动流程、Ready proposal 元数据/标签投影、标签词汇收敛、详情页原文件名复制、书源即时刷新、115 根目录一致性及远程删除清理；通过 Flutter analyze、72 个 Flutter 测试和 235 个 Rust 测试，准备推送 v0.5.4。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5c4eaab` | (see git log) |
+| `1912d50` | (see git log) |
+
+### Status
+
+[OK] **Completed**

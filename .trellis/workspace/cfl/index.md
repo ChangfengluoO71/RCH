@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-08-24
+- **Total Sessions**: 13
+- **Last Active**: 2026-08-25
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~442 | Active |
+| `journal-1.md` | ~479 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-08-25 | 文件夹批量标签修复与 v0.5.5 发布准备 | `63af629` | `master` |
 | 12 | 2026-08-24 | v0.5.4 发布：离线刮削与书源清理 | `5c4eaab`, `1912d50` | `master` |
 | 11 | 2026-08-24 | M8 离线刮削自动化与标签投影修复 | `1265a28` | `master` |
 | 10 | 2026-08-23 | Freeze catalog-rules-v3 offline proposal baseline | `6ccc696` | `master` |

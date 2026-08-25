@@ -440,3 +440,40 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: 文件夹批量标签修复与 v0.5.5 发布准备
+
+**Date**: 2026-08-25
+**Task**: 文件夹批量标签修复与 v0.5.5 发布准备
+**Branch**: `master`
+
+### Summary
+
+修复本地文件夹批量打标签目标类型丢失，并复用漫画文件夹检测结果，准备 v0.5.5 发布。
+
+### Main Changes
+
+- 修复文件夹批量打标签：目录目标保留 directory 类型并正确建索引
+- 复用可见目录检测结果，减少标签对话框打开前的重复文件系统探测
+- 补充跨层契约、回归测试与 v0.5.5 发布说明
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `63af629` | (see git log) |
+
+### Testing
+
+- [OK] flutter test：76 项通过
+- [OK] flutter analyze：No issues found
+- [OK] cargo test --lib document::folder::tests::is_comic_folder_works：通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 推送 master 与 v0.5.5 标签，确认 GitHub Actions 发布产物

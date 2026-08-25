@@ -3,6 +3,30 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 
+/// A concrete item selected for a batch tag operation.
+///
+/// Comic folders must keep their directory type when they are written to the
+/// offline index; using only a path would make them look like files there.
+class BatchTagTarget {
+  final String path;
+  final String entryType;
+
+  const BatchTagTarget._(this.path, this.entryType);
+
+  const BatchTagTarget.file(String path) : this._(path, 'file');
+
+  const BatchTagTarget.directory(String path) : this._(path, 'dir');
+
+  @override
+  bool operator ==(Object other) =>
+      other is BatchTagTarget &&
+      other.path == path &&
+      other.entryType == entryType;
+
+  @override
+  int get hashCode => Object.hash(path, entryType);
+}
+
 /// 书源:本地 / WebDAV / SMB / SFTP / 百度网盘 / 115 网盘 / 夸克网盘。
 class BookSource {
   final String id;

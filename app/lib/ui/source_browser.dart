@@ -20,6 +20,7 @@ import 'package:app/ui/common.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'batch_tagging.dart';
 
 /// 文件夹卡片封面形态（纯本地判定，不发网盘请求）。
 enum _FolderCoverKind {
@@ -78,6 +79,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 漫画文件夹检测结果：path → 封面形态（纯本地判定，不发网盘请求）。
   final Map<String, _FolderCoverKind> _folderKinds = {};
+
+  /// 复用列表预检测与批量标签展开之间的同一路径扫描结果。
+  final _comicFolderChecker = MemoizedBatchTagComicFolderChecker(
+    (path) => isComicFolder(dirPath: path),
+  );
 
   /// 容器文件夹的第一个漫画文件路径（kind == container 时有效）。
   final Map<String, String> _folderFirstFile = {};
@@ -251,6 +257,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   Future<void> _list(String path) async {
+    _comicFolderChecker.clear();
     setState(() {
       _loading = true;
       _error = null;
@@ -306,7 +313,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       for (final e in _entries) {
         if (!e.isDir) continue;
         try {
-          if (await isComicFolder(dirPath: e.path)) {
+          if (await _comicFolderChecker(e.path)) {
             _setFolderKind(e.path, _FolderCoverKind.book);
             continue;
           }
@@ -616,7 +623,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       for (final e in _entries) {
         final dirTarget = '${e.path}.cbz';
         if (e.isDir) {
-          if (!await isComicFolder(dirPath: e.path)) continue;
+          if (!await _comicFolderChecker(e.path)) continue;
           if (!File(dirTarget).existsSync()) {
             tasks.add(dirTarget);
             targets[dirTarget] = e.path;
@@ -794,46 +801,20 @@ class _SourceBrowserState extends State<SourceBrowser> {
   final Set<String> _selectedPaths = {};
   bool _selectMode = false; // true=复选框出现,点击勾选而非进详情
 
-  /// 递归收集目录及其子目录下所有漫画文件路径。
-  Future<List<String>> _collectComicsRecursive(String dirPath) async {
-    final result = <String>[];
-    final pending = <String>[dirPath];
-    while (pending.isNotEmpty) {
-      final p = pending.removeAt(0);
-      try {
-        final list = switch (widget.source.type) {
-          'webdav' => await webdavList(session: _session!, path: p),
-          'sftp' => await sftpList(session: _session!, path: p),
-          'baidu' => await baiduList(session: _session!, path: p),
-          '115' => await cloud115ListFor(
-            widget.source,
-            session: _session!,
-            path: p,
-          ),
-          'quark' => await quarkList(session: _session!, path: p),
-          _ => await listLocalDir(path: p),
-        };
-        for (final e in list) {
-          if (e.isDir) {
-            if (widget.source.isLocalFs) {
-              final isComic = await isComicFolder(dirPath: e.path);
-              if (isComic) {
-                result.add(e.path);
-              } else {
-                pending.add(e.path);
-              }
-            } else {
-              pending.add(e.path);
-            }
-          } else if (_isComicEntry(e)) {
-            result.add(e.path);
-          }
-        }
-      } catch (_) {
-        // 跳过无法访问的目录
-      }
-    }
-    return result;
+  /// Lists a directory for batch tag expansion using the active source.
+  Future<List<DirEntry>> _listForBatchTag(String path) async {
+    return switch (widget.source.type) {
+      'webdav' => await webdavList(session: _session!, path: path),
+      'sftp' => await sftpList(session: _session!, path: path),
+      'baidu' => await baiduList(session: _session!, path: path),
+      '115' => await cloud115ListFor(
+        widget.source,
+        session: _session!,
+        path: path,
+      ),
+      'quark' => await quarkList(session: _session!, path: path),
+      _ => await listLocalDir(path: path),
+    };
   }
 
   /// 批量标签操作:解析所有选中路径(含递归展开的文件夹),弹出标签对话框。
@@ -848,18 +829,15 @@ class _SourceBrowserState extends State<SourceBrowser> {
     }
     // 收集所有要打标签的漫画路径(文件夹递归展开)
     final store = LibraryStore.instance;
-    final expanded = <String>[];
-    for (final p in _selectedPaths) {
-      // 判断是文件夹还是漫画文件
-      final isDir = _entries.any((e) => e.path == p && e.isDir);
-      if (isDir ||
-          (!_entries.any((e) => e.path == p) &&
-              p != widget.source.effectiveRootPath)) {
-        expanded.addAll(await _collectComicsRecursive(p));
-      } else {
-        expanded.add(p);
-      }
-    }
+    final expanded = await collectBatchTagTargets(
+      selectedPaths: _selectedPaths,
+      currentEntries: _entries,
+      effectiveRootPath: widget.source.effectiveRootPath,
+      isLocalFs: widget.source.isLocalFs,
+      listDirectory: _listForBatchTag,
+      isComicFolder: _comicFolderChecker.call,
+      isComicEntry: _isComicEntry,
+    );
     if (expanded.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(

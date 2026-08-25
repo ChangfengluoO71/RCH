@@ -121,6 +121,27 @@ After implementation:
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
 
+### Batch Selection Target Checklist
+
+When a UI batch operation accepts both files and directories, do not pass only
+bare paths across the boundary. Define the target kind at the selection layer
+and carry it through the store and index layers.
+
+- [ ] Decide whether a selected directory is a container to recurse into or a
+      domain item in its own right before listing its children.
+- [ ] Preserve the target kind (`file` vs `dir`) in the shared request type.
+- [ ] Verify the store passes that kind to the persistence/index API instead of
+      relying on a file default.
+- [ ] Test file-only, directory-only, and mixed selections at the expansion
+      boundary.
+- [ ] Test the empty-result path and keep a visible diagnostic instead of
+      silently doing nothing.
+
+**Known project example**: A local image comic folder must produce one
+`BatchTagTarget.directory(folderPath)`. Recursing first filters out `.png`/
+`.jpg` children and produces an empty batch; passing the folder as a bare path
+also misclassifies it as a file in the offline index.
+
 ---
 
 ## Cross-Platform Template Consistency

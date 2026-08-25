@@ -1230,13 +1230,14 @@ class LibraryStore extends ChangeNotifier {
 
   List<String> get metaFields => ['author', 'genre', 'series', '已读'];
 
-  void batchTag(BookSource src, Iterable<String> paths, String tag) {
+  void batchTag(BookSource src, Iterable<BatchTagTarget> targets, String tag) {
     if (tag == '已读') {
-      for (final p in paths) {
+      for (final target in targets) {
+        final p = target.path;
         final key = bookKeyOf(src.type, src.id, p);
         TagRepository.instance.link(key, '已读');
         // ADR-029 触及即补：批量标签的书（含未读）自动入离线索引
-        LibraryIndexService.ensureIndexed(src, p);
+        LibraryIndexService.ensureIndexed(src, p, entryType: target.entryType);
       }
       notifyListeners();
       saveToDisk();
@@ -1258,10 +1259,16 @@ class LibraryStore extends ChangeNotifier {
         break;
       }
     }
-    for (final p in paths) {
+    for (final target in targets) {
+      final p = target.path;
       final m = metaOf(src, p);
       final key = bookKeyOf(src.type, src.id, p);
-      LibraryIndexService.ensureIndexed(src, p, name: m.title);
+      LibraryIndexService.ensureIndexed(
+        src,
+        p,
+        name: m.title,
+        entryType: target.entryType,
+      );
       if (existingField == null) {
         if (!m.tags.contains(tag)) {
           m.tags.add(tag);

@@ -967,3 +967,19 @@ SELECT ... FROM library_index WHERE source_id = ?1 AND deleted = 0   -- 只返�
 - 书源新增/编辑后即时刷新，115 根目录统一使用，远程删除对齐失败不触发误删，并清理失效漫画的记录、元数据、标签、AI 任务和缓存。
 
 **验证**：Flutter analyze、Flutter tests、Rust tests 全部通过；389 条真实 catalog proposal 保持一一对应；发布使用 `v0.5.4` annotated tag 触发 GitHub Actions 双端构建。
+
+---
+
+## 2026-08-25｜第46轮：文件夹批量标签修复与 v0.5.5 发布
+
+**现象**：文件可以批量打标签，但图片型漫画文件夹选择后展开为空；修复后标签弹窗又因重复目录扫描出现等待。
+
+**修改**：
+
+- 批量标签展开前识别选中的本地漫画文件夹自身，并以 `dir` 目标传入标签与离线索引链路；
+- 支持文件、文件夹和混合选择；
+- 列表预检测、自动转 CBZ 和批量标签展开复用同一路径的文件夹检测结果，减少重复扫描。
+
+**验证**：Flutter Analyze 无问题；Flutter 全量测试 76 项通过；Rust 文件夹识别测试通过。
+
+**发布**：`v0.5.5`（补丁号递增）——更新 pubspec、Release Notes、CHANGELOG、README，创建 annotated tag 并推送触发 GitHub Actions 双端构建。

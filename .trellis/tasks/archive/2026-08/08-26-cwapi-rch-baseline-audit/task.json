@@ -1,0 +1,29 @@
+{
+  "id": "08-26-cwapi-rch-baseline-audit",
+  "name": "08-26-cwapi-rch-baseline-audit",
+  "title": "CWapi RCH baseline audit",
+  "description": "Audit v0.5.5 task state and Flutter/Rust baseline without product-code changes",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-26",
+  "completedAt": "2026-08-26",
+  "branch": "audit/08-26-cwapi-rch-baseline",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "CWapi v1.6.1 baseline audit; no product source changes.",
+  "meta": {
+    "baseline_commit": "6d33ef11d7b8d4af492dcafab62befc6cd0587dc",
+    "cwapi_version": "1.6.1"
+  }
+}

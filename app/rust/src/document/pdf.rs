@@ -124,6 +124,41 @@ impl Document for PdfBook {
 mod tests {
     use super::*;
 
+    #[test]
+    fn pdfium_ffi_gate_serializes_concurrent_calls() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Barrier,
+        };
+        use std::time::Duration;
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+
+        for _ in 0..2 {
+            let active = Arc::clone(&active);
+            let max_active = Arc::clone(&max_active);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                with_pdfium_lock(|| {
+                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_active.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(40));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                });
+            }));
+        }
+
+        barrier.wait();
+        for handle in handles {
+            handle.join().expect("worker should not panic");
+        }
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
     /// 开发机存在 pdfium.dll（cwd 或 PDFIUM_DLL_PATH）时验证可被 pdfium-render 加载。
     #[test]
     fn pdfium_dll_loads_when_present() {

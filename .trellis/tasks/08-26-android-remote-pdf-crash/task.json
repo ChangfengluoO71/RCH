@@ -1,0 +1,30 @@
+{
+  "id": "android-remote-pdf-crash",
+  "name": "android-remote-pdf-crash",
+  "title": "Android 远程 PDF 阅读闪退调查与修复",
+  "description": "调查 Android 端阅读远程 PDF 文件时可能发生的闪退，先建立稳定复现、日志与调用链证据，再修复根因并回归远程/本地 PDF 阅读。",
+  "status": "planning",
+  "dev_type": "bugfix",
+  "scope": "android-reader",
+  "package": null,
+  "priority": "P1",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-26",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Created after M6 closeout. Do not reopen M6 for post-release Android defects.",
+  "meta": {
+    "priority": "P1",
+    "origin": "post_release_android_bug",
+    "reported_surface": "remote_pdf_reader"
+  }
+}

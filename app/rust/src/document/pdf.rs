@@ -6,9 +6,20 @@ use super::{Document, DocumentMeta};
 use crate::source::ByteSource;
 use anyhow::{Context, Result};
 use pdfium_render::prelude::*;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
+
+/// PDFium 本身不是可重入的。pdfium-render 0.9.3 虽暴露 Send + Sync，
+/// 但不会替调用方序列化 FFI，因此所有生产 PDFium 调用必须经过同一个进程级 gate。
+static PDFIUM_FFI_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_pdfium_lock<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = PDFIUM_FFI_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f()
+}
 
 /// pdfium 原生库目录（Android：由 Dart 侧传入 `ApplicationInfo.nativeLibraryDir`）。
 static NATIVE_LIB_DIR: OnceLock<String> = OnceLock::new();
@@ -57,7 +68,9 @@ fn get_pdfium() -> Result<&'static Pdfium> {
 }
 
 pub struct PdfBook {
-    doc: PdfDocument<'static>,
+    // Option 允许 Drop 在持有全局 PDFium gate 时显式析构 PdfDocument，
+    // 避免字段在锁释放后再次自动 drop。
+    doc: Option<PdfDocument<'static>>,
     title: String,
 }
 
@@ -68,25 +81,43 @@ impl PdfBook {
         src.read_exact_at(0, &mut data)
             .context("读取 PDF 文件失败")?;
 
-        let pdfium = get_pdfium()?;
-        // 懒加载：只解析文档与页数，页面按需渲染（page_bytes），
-        // 避免整本 PDF 在 open 阶段全量栅格化导致下载 100% 后长时间无响应。
-        let doc = pdfium
-            .load_pdf_from_byte_vec(data, None)
-            .context("加载 PDF 失败(可能是加密或损坏)")?;
-
         let title = std::path::Path::new(path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
 
-        Ok(PdfBook { doc, title })
+        with_pdfium_lock(|| {
+            let pdfium = get_pdfium()?;
+            // 懒加载：只解析文档与页数，页面按需渲染（page_bytes），
+            // 避免整本 PDF 在 open 阶段全量栅格化导致下载 100% 后长时间无响应。
+            let doc = pdfium
+                .load_pdf_from_byte_vec(data, None)
+                .context("加载 PDF 失败(可能是加密或损坏)")?;
+
+            Ok(PdfBook {
+                doc: Some(doc),
+                title,
+            })
+        })
+    }
+
+    fn doc(&self) -> &PdfDocument<'static> {
+        self.doc.as_ref().expect("PDF document already closed")
+    }
+}
+
+impl Drop for PdfBook {
+    fn drop(&mut self) {
+        if let Some(doc) = self.doc.take() {
+            // PdfDocument 的 Drop 会回到 PDFium；必须和打开、页访问、渲染使用同一把锁。
+            with_pdfium_lock(|| drop(doc));
+        }
     }
 }
 
 impl Document for PdfBook {
     fn page_count(&self) -> u32 {
-        self.doc.pages().len() as u32
+        with_pdfium_lock(|| self.doc().pages().len() as u32)
     }
 
     fn metadata(&self) -> DocumentMeta {
@@ -97,21 +128,26 @@ impl Document for PdfBook {
     }
 
     fn page_bytes(&self, index: u32) -> Result<Vec<u8>> {
-        let page = self
-            .doc
-            .pages()
-            .get(index as i32)
-            .with_context(|| format!("获取 PDF 第 {index} 页失败"))?;
-        let render_width: Pixels = 1600;
-        let h = page.height();
-        let w = page.width();
-        let height: Pixels = (h.value as f64 * 1600.0 / w.value as f64) as Pixels;
-        let bitmap = page
-            .render(render_width, height, None)
-            .with_context(|| format!("渲染 PDF 第 {index} 页失败"))?;
-        let img = bitmap
-            .as_image()
-            .with_context(|| format!("PDF 位图转图片失败: 第 {index} 页"))?;
+        // 将所有 PDFium 对象的访问和位图复制限制在同一临界区；
+        // DynamicImage 已拥有自己的像素数据，WebP 编码可以在锁外并行执行。
+        let img = with_pdfium_lock(|| -> Result<image::DynamicImage> {
+            let page = self
+                .doc()
+                .pages()
+                .get(index as i32)
+                .with_context(|| format!("获取 PDF 第 {index} 页失败"))?;
+            let render_width: Pixels = 1600;
+            let h = page.height();
+            let w = page.width();
+            let height: Pixels = (h.value as f64 * 1600.0 / w.value as f64) as Pixels;
+            let bitmap = page
+                .render(render_width, height, None)
+                .with_context(|| format!("渲染 PDF 第 {index} 页失败"))?;
+            bitmap
+                .as_image()
+                .with_context(|| format!("PDF 位图转图片失败: 第 {index} 页"))
+        })?;
+
         let mut buf = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
         img.write_to(&mut cursor, image::ImageFormat::WebP)

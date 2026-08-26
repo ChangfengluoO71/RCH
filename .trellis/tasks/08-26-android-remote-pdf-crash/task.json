@@ -3,7 +3,7 @@
   "name": "android-remote-pdf-crash",
   "title": "Android 远程 PDF 阅读闪退调查与修复",
   "description": "调查 Android 端阅读远程 PDF 文件时可能发生的闪退，先建立稳定复现、日志与调用链证据，再修复根因并回归远程/本地 PDF 阅读。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "bugfix",
   "scope": "android-reader",
   "package": null,
@@ -12,7 +12,7 @@
   "assignee": "cfl",
   "createdAt": "2026-08-26",
   "completedAt": null,
-  "branch": null,
+  "branch": "audit/08-26-trellis-state-reconciliation",
   "base_branch": "master",
   "worktree_path": null,
   "commit": null,
@@ -20,11 +20,18 @@
   "subtasks": [],
   "children": [],
   "parent": null,
-  "relatedFiles": [],
-  "notes": "Created after M6 closeout. Do not reopen M6 for post-release Android defects.",
+  "relatedFiles": [
+    "app/rust/src/document/pdf.rs",
+    "app/rust/src/reader.rs",
+    "app/rust/src/api/source.rs",
+    "app/lib/ui/reader_page.dart",
+    "app/rust/Cargo.toml"
+  ],
+  "notes": "Created after M6 closeout. Do not reopen M6 for post-release Android defects. Root-cause investigation entered 2026-08-26; no product fix committed yet.",
   "meta": {
     "priority": "P1",
     "origin": "post_release_android_bug",
-    "reported_surface": "remote_pdf_reader"
+    "reported_surface": "remote_pdf_reader",
+    "investigation_phase": "root_cause"
   }
 }

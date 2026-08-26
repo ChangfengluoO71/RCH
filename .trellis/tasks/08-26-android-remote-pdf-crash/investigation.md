@@ -4,7 +4,28 @@ Date: 2026-08-26
 
 ## Current status
 
-Task entered `in_progress`. No product-code fix has been committed.
+Task is `in_progress`. Root-cause gate has been crossed from crash evidence. No product-code fix has been committed yet. A RED regression guard has been staged first at `app/rust/tests/pdfium_dependency_safety.rs`; execution is still pending because the CWapi Slack transport stopped returning claim/response messages after the evidence review.
+
+## Reproduction evidence
+
+User reproduction:
+
+- Platform: Android.
+- Remote source: Baidu.
+- PDF page count: 4.
+- Failing run captured by `adb logcat` on 2026-08-26.
+
+Crash evidence from the supplied logcat:
+
+- Process: `com.rch.reader`.
+- Native crash: `Fatal signal 11 (SIGSEGV)`, `SEGV_MAPERR`, fault address `0x0`.
+- Crashing thread: `tokio-rt-worker`.
+- Native backtrace is inside bundled `libpdfium.so` and reaches `FPDF_LoadPage+116`.
+- Android records the exit as `APP CRASH(NATIVE)`, status/signal 11.
+- RSS around the crash is approximately 367 MB.
+- Low-memory killer logging around the same interval reports sufficient memory and does not select RCH for killing.
+
+This evidence rejects an OOM/LMKD explanation for the observed crash and directly matches concurrent Pdfium page access.
 
 ## Observed application data flow
 
@@ -14,56 +35,67 @@ Task entered `in_progress`. No product-code fix has been committed.
 4. `register_book()` wraps the PDF in the generic `Reader` and immediately calls `reader.warm_up()`.
 5. Generic `Reader::spawn_prefetch()` launches independent OS threads for neighbor pages. Flutter then also requests the current page and next two pages through `_ensure()`.
 6. For a cold multi-page PDF, several `PdfBook::page_bytes()` calls can therefore overlap across threads against the same `PdfDocument`.
+7. A 4-page PDF is sufficient for `warm_up()` at page 0 to schedule pages 1, 2, and 3 concurrently.
 
 ## Historical validation gap
 
 Android PDF support was accepted on 2026-08-08 using a one-page `dummy.pdf`. A one-page document does not exercise neighbor-page prefetch, so that acceptance did not cover concurrent rendering of a multi-page PDF.
 
-## H1 — primary root-cause hypothesis
+## H1 — confirmed primary root cause
 
-`pdfium-render 0.9.3` is unsound under concurrent use despite its default `thread_safe` feature. RCH uses exactly 0.9.3 with default features enabled. Upstream issue #262 demonstrates that 0.9.3/default-feature safe Rust can concurrently enter non-thread-safe Pdfium state and crash with SIGSEGV/SIGTRAP because the feature provides `Send + Sync` without actual FFI serialization. Upstream 0.9.4 release notes state that memory safety under `thread_safe` was improved.
+`pdfium-render 0.9.3` is unsound under concurrent use despite its default `thread_safe` feature. RCH uses exactly 0.9.3 with default features enabled. Upstream issue #262 demonstrates that the affected implementation allows safe Rust to concurrently enter non-thread-safe Pdfium state and crash with SIGSEGV/SIGTRAP because `Send + Sync` is exposed without actual FFI serialization.
 
-Why this maps to RCH:
+Why this maps to the observed crash:
 
 - RCH's `Document` contract requires `Send + Sync` and explicitly permits concurrent `page_bytes()` calls.
-- `Reader` actively spawns multiple threads around the current page.
-- `PdfBook` stores one shared `PdfDocument` and performs rendering inside `page_bytes()`.
-- The original Android acceptance used only one page, so it could not expose this race.
-- A real remote multi-page PDF on a cold cache naturally exercises several page renders immediately.
+- `Reader` actively spawns multiple page-prefetch threads.
+- `PdfBook` stores one shared `PdfDocument` and performs Pdfium page loading/rendering inside `page_bytes()`.
+- The user's real failing input is a four-page Baidu PDF, enough to trigger neighbor prefetch immediately.
+- The crash is on `tokio-rt-worker`, not a Dart exception path.
+- The native stack reaches `libpdfium.so` `FPDF_LoadPage`, exactly at the page-load boundary exercised concurrently.
+- The historical one-page Android acceptance could not exercise this race.
 
-Prediction if H1 is correct:
+The hypothesis is therefore accepted as the root cause for this defect.
 
-- Crash evidence should be native (SIGSEGV/SIGTRAP/abort) with frames in `libpdfium.so` / `librust_lib_app.so`, rather than a handled Dart/Rust `Result` error.
-- Multi-page cold-cache PDFs should reproduce more readily than a one-page PDF.
-- Reopening after page cache has already been populated may reproduce less readily because fewer Pdfium renders are required.
-- Local multi-page cold-cache PDFs may also be vulnerable even if the issue was first observed on remote files.
+## H2 — excluded for this crash
 
-## H2 — secondary hypothesis to exclude
+Android memory pressure from `PdfBook::open()` reading the entire PDF into a `Vec<u8>` remains an architectural risk for large PDFs, but it is not supported as the cause of this incident:
 
-Android memory pressure caused by `PdfBook::open()` reading the entire PDF into a `Vec<u8>` before loading it into Pdfium. This can be amplified for large remote PDFs, especially if the remote path holds additional buffers during download/range access.
+- the observed termination is SIGSEGV/null dereference in Pdfium rather than OOM/allocation failure;
+- Android records `APP CRASH(NATIVE)` signal 11;
+- LMKD reports sufficient memory around the crash and does not kill RCH.
 
-Prediction if H2 is correct:
+Whole-PDF buffering should be tracked separately if large-file memory behavior becomes a problem; it should not be mixed into this minimal crash fix.
 
-- `logcat` should show LMKD / OOM / allocation failure rather than a Pdfium data-race-style native fault.
-- Reproduction should correlate strongly with PDF byte size rather than page concurrency.
+## Remediation decision
 
-## Evidence required before fixing
+Preferred minimal remediation: upgrade `pdfium-render` from `0.9.3` to exact `0.9.4`.
 
-Capture one failing Android run with:
+Reasons:
 
-- source type (WebDAV / SFTP / Baidu / 115 / Quark),
-- open strategy (`auto`, `download`, or `stream`),
-- PDF size and page count,
-- device model / Android version,
-- `adb logcat` covering app launch through crash,
-- native tombstone/backtrace if emitted.
+- upstream 0.9.4 explicitly improves memory safety for `thread_safe` by sequencing Pdfium access behind a mutex;
+- 0.9.4 still maps `pdfium_latest` to `pdfium_7881`, matching RCH's existing Android `libpdfium.so` binary, so no native Pdfium ABI migration is required;
+- this fixes the unsafe FFI synchronization at the binding layer instead of weakening RCH's generic Reader prefetch or adding a partial application-level mutex;
+- no unrelated Reader or remote-source refactor is required.
 
-Then compare with at least one control:
+Fallback only if 0.9.4 fails compatibility/build verification: serialize all Pdfium operations at the RCH PDF adapter boundary and prove that the lock covers complete logical operations. Do not disable global Reader prefetch as the first fix.
 
-- same PDF opened locally or after full download, OR
-- a one-page PDF through the same remote source, OR
-- the same multi-page PDF on a warm page cache.
+## TDD / verification state
 
-## Decision gate
+RED guard staged first:
 
-Do not change `pdfium-render`, disable prefetch, or add a mutex until crash evidence discriminates H1 from H2. If native backtrace is consistent with H1, proceed to a failing concurrency regression test and evaluate the smallest correct remediation. If evidence is OOM/LMKD, return to the ByteSource/PDF-buffer lifetime path instead.
+- `app/rust/tests/pdfium_dependency_safety.rs`
+- expected to fail while `Cargo.lock` resolves `pdfium-render 0.9.3`;
+- expected to pass only after the dependency and lock file resolve `0.9.4`.
+
+Required before claiming the fix complete:
+
+1. Observe the regression guard fail on 0.9.3.
+2. Change `Cargo.toml` to exact `=0.9.4` and refresh `Cargo.lock`.
+3. Observe the same guard pass.
+4. Run Rust full tests / checks.
+5. Build Android successfully.
+6. Re-test the same Baidu four-page PDF on the same device/source and confirm no native crash.
+7. Run a local PDF regression and the relevant Baidu open strategy regression.
+
+The task remains `in_progress` until the same-device Baidu regression is confirmed.

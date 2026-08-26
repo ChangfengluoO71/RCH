@@ -1,0 +1,32 @@
+{
+  "id": "trellis-state-reconciliation",
+  "name": "trellis-state-reconciliation",
+  "title": "Trellis State Reconciliation",
+  "description": "Reconcile stale Trellis task state against repository implementation and release evidence.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-26",
+  "completedAt": "2026-08-26",
+  "branch": "audit/08-26-trellis-state-reconciliation",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "source_commit": "26c0ca150fcbfa1ea8f259beab52579d299aef51",
+    "cwapi": "v1.6.1",
+    "active_before": 26,
+    "active_after": 16,
+    "archived_count": 10
+  }
+}

@@ -15,7 +15,7 @@
   "branch": "audit/08-26-trellis-state-reconciliation",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "0c7e2ed874c5fddf24084a7f12ebd9e9bea2c17e",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -27,16 +27,18 @@
     "app/lib/ui/reader_page.dart",
     "app/rust/Cargo.toml"
   ],
-  "notes": "Created after M6 closeout; do not reopen M6 for post-release Android defects. Root cause confirmed as concurrent Pdfium access. Process-wide PDFium serialization fix committed and RED/GREEN verified; Rust full regression and Android arm64 Rust cross-build pass. Pending patched APK + same-device Baidu 4-page PDF regression before closure.",
+  "notes": "Same-device Android regression on the reporting PGFM10 device now passes for the original Baidu four-page PDF after the process-wide Pdfium gate, Reader L1 mutex lifetime fix, and WebP render-dimension cap. Non-PDF regression that exposed the transient Reader self-deadlock also passes on-device. Final product commit is 0c7e2ed874c5fddf24084a7f12ebd9e9bea2c17e. Keep task in_progress until the PRD-required local multi-page PDF smoke regression is confirmed; whole-PDF Vec<u8> buffering remains a separate architecture risk.",
   "meta": {
     "priority": "P1",
     "origin": "post_release_android_bug",
     "reported_surface": "remote_pdf_reader",
-    "investigation_phase": "remediation_verification",
-    "root_cause": "concurrent_pdfium_ffi_access",
-    "fix_commit": "4980f090a7b69ad7d68ee3e39596f5d10f595e9e",
+    "investigation_phase": "final_device_regression",
+    "root_cause": "concurrent_pdfium_ffi_access_and_webp_dimension_limit",
+    "fix_commit": "0c7e2ed874c5fddf24084a7f12ebd9e9bea2c17e",
     "verified_rust_host": true,
     "verified_android_arm64_rust": true,
-    "device_regression": "pending"
+    "device_regression": "baidu_four_page_pdf_passed_local_pdf_pending",
+    "non_pdf_reader_regression": "passed",
+    "pdf_webp_dimension_regression": "passed"
   }
 }

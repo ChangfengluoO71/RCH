@@ -6,8 +6,9 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-import urllib.request
 import zipfile
+
+import requests
 
 
 BASE_APK_URL = "https://github.com/ChangfengluoO71/RCH/releases/download/v0.5.5/app-arm64-v8a-release.apk"
@@ -69,13 +70,19 @@ def build_rust(root: Path, out_dir: Path) -> Path:
 
 
 def download_base_apk(path: Path) -> None:
-    request = urllib.request.Request(BASE_APK_URL, headers={"User-Agent": "RCH-hotfix-builder/1"})
-    with urllib.request.urlopen(request, timeout=120) as response, path.open("wb") as output:
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            output.write(chunk)
+    headers = {"User-Agent": "Mozilla/5.0 RCH-hotfix-builder/2"}
+    with requests.get(
+        BASE_APK_URL,
+        headers=headers,
+        stream=True,
+        timeout=(20, 60),
+        allow_redirects=True,
+    ) as response:
+        response.raise_for_status()
+        with path.open("wb") as output:
+            for chunk in response.iter_content(1024 * 1024):
+                if chunk:
+                    output.write(chunk)
     print(f"BASE_APK_SIZE={path.stat().st_size}", flush=True)
 
 

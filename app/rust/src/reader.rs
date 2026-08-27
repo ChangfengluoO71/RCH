@@ -277,7 +277,15 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let reader = Arc::new(Reader::new(Box::new(doc), &format!("reader-inflight-{nonce}")));
+        let disk_dir = std::env::temp_dir().join(format!("rch_reader_inflight_{nonce}"));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        let reader = Arc::new(Reader {
+            book: Box::new(doc),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+        });
 
         reader.warm_up();
         started_rx
@@ -306,5 +314,17 @@ mod tests {
             "foreground load duplicated page 1 while warm-up prefetch was already in flight"
         );
         assert_eq!(page1_calls.load(Ordering::SeqCst), 1);
+
+        let mut inflight = reader.inflight.lock().unwrap();
+        while !inflight.is_empty() {
+            let (guard, timeout) = reader
+                .inflight_done
+                .wait_timeout(inflight, Duration::from_secs(2))
+                .unwrap();
+            inflight = guard;
+            assert!(!timeout.timed_out(), "background prefetch should finish");
+        }
+        drop(inflight);
+        let _ = std::fs::remove_dir_all(disk_dir);
     }
 }

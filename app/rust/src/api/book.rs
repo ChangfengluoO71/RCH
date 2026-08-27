@@ -176,11 +176,11 @@ pub async fn list_local_dir(path: String) -> Result<Vec<DirEntry>> {
 /// 检测目录是否为漫画文件夹（包含至少一张图片文件）。
 /// 用于浏览页判断：是漫画文件夹 → 显示为海报卡片；否则 → 显示为普通文件夹。
 pub fn is_comic_folder(dir_path: String) -> bool {
-    crate::document::folder::is_comic_folder(dir_path)
+    crate::document::folder::is_comic_folder(&dir_path)
 }
 
 /// 获取漫画文件夹的显式封面路径（cover.jpg / cover.png 等）。
 /// 无显式封面时返回空字符串。
 pub fn folder_cover_path(dir_path: String) -> String {
-    crate::document::folder::FolderBook::cover_path(dir_path).unwrap_or_default()
+    crate::document::folder::FolderBook::cover_path(&dir_path).unwrap_or_default()
 }

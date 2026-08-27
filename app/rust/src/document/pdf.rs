@@ -22,6 +22,31 @@ fn with_pdfium_lock<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
+const PDF_RENDER_TARGET_WIDTH: f64 = 1600.0;
+const WEBP_MAX_DIMENSION: f64 = 16383.0;
+
+fn fit_webp_render_dimensions(page_width: f64, page_height: f64) -> (Pixels, Pixels) {
+    if !page_width.is_finite()
+        || !page_height.is_finite()
+        || page_width <= 0.0
+        || page_height <= 0.0
+    {
+        return (1, 1);
+    }
+
+    let scale = (PDF_RENDER_TARGET_WIDTH / page_width)
+        .min(WEBP_MAX_DIMENSION / page_width)
+        .min(WEBP_MAX_DIMENSION / page_height);
+
+    let width = (page_width * scale)
+        .round()
+        .clamp(1.0, WEBP_MAX_DIMENSION) as Pixels;
+    let height = (page_height * scale)
+        .round()
+        .clamp(1.0, WEBP_MAX_DIMENSION) as Pixels;
+    (width, height)
+}
+
 /// pdfium 原生库目录（Android：由 Dart 侧传入 `ApplicationInfo.nativeLibraryDir`）。
 static NATIVE_LIB_DIR: OnceLock<String> = OnceLock::new();
 
@@ -174,15 +199,16 @@ impl Document for PdfBook {
                 .get(index as i32)
                 .with_context(|| format!("获取 PDF 第 {index} 页失败"))?;
             pdf_diag(format!("pdf load_page OK index={index}"));
-            let render_width: Pixels = 1600;
             let h = page.height();
             let w = page.width();
-            let height: Pixels = (h.value as f64 * 1600.0 / w.value as f64) as Pixels;
+            let (render_width, render_height) =
+                fit_webp_render_dimensions(w.value as f64, h.value as f64);
             pdf_diag(format!(
-                "pdf render START index={index} width=1600 height={height}"
+                "pdf render START index={index} width={render_width} height={render_height} source_width={} source_height={}",
+                w.value, h.value
             ));
             let bitmap = page
-                .render(render_width, height, None)
+                .render(render_width, render_height, None)
                 .with_context(|| format!("渲染 PDF 第 {index} 页失败"))?;
             pdf_diag(format!("pdf render OK index={index}"));
             let image = bitmap
@@ -243,6 +269,28 @@ mod tests {
             handle.join().expect("worker should not panic");
         }
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn webp_render_dimensions_keep_normal_pages_at_target_width() {
+        assert_eq!(fit_webp_render_dimensions(1000.0, 1500.0), (1600, 2400));
+    }
+
+    #[test]
+    fn webp_render_dimensions_cap_ultra_tall_pages() {
+        for source_height in [16826.0, 18864.0, 20066.0, 25672.0] {
+            let (width, height) = fit_webp_render_dimensions(1600.0, source_height);
+            assert!(width <= 1600, "width={width}");
+            assert!(height <= WEBP_MAX_DIMENSION as Pixels, "height={height}");
+
+            let source_ratio = source_height / 1600.0;
+            let rendered_ratio = height as f64 / width as f64;
+            let relative_error = ((rendered_ratio - source_ratio) / source_ratio).abs();
+            assert!(
+                relative_error < 0.002,
+                "ratio drift too large: source={source_ratio} rendered={rendered_ratio}"
+            );
+        }
     }
 
     /// 开发机存在 pdfium.dll（cwd 或 PDFIUM_DLL_PATH）时验证可被 pdfium-render 加载。

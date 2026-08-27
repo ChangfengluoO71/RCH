@@ -110,7 +110,10 @@ impl Reader {
     /// 获取一页:先 L1 内存,未命中则等待/认领唯一一次实际生成;完成后触发周边预取。
     pub fn get_page(self: &Arc<Self>, index: u32) -> Result<Arc<Vec<u8>>> {
         pdf_diag(format!("reader get_page request index={index}"));
-        if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+        // 明确限制 cache guard 的生命周期；Rust 的 if-let scrutinee 临时值可能活到整个
+        // if 语句结束，若在命中分支内直接 spawn_prefetch() 会再次锁 cache 并自锁。
+        let cached = { self.cache.lock().unwrap().get(&index) };
+        if let Some(bytes) = cached {
             pdf_diag(format!(
                 "reader get_page L1_HIT index={index} bytes={}",
                 bytes.len()

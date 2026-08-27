@@ -177,3 +177,91 @@ impl Reader {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::DocumentMeta;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Condvar,
+    };
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct BlockingDoc {
+        page1_calls: Arc<AtomicUsize>,
+        page1_started: mpsc::Sender<()>,
+        release_page1: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl Document for BlockingDoc {
+        fn page_count(&self) -> u32 {
+            4
+        }
+
+        fn metadata(&self) -> DocumentMeta {
+            DocumentMeta {
+                title: "blocking-test".to_string(),
+                ..Default::default()
+            }
+        }
+
+        fn page_bytes(&self, index: u32) -> Result<Vec<u8>> {
+            if index == 1 {
+                self.page1_calls.fetch_add(1, Ordering::SeqCst);
+                let _ = self.page1_started.send(());
+                let (lock, cv) = &*self.release_page1;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = cv.wait(released).unwrap();
+                }
+            }
+            Ok(vec![index as u8])
+        }
+    }
+
+    #[test]
+    fn foreground_does_not_duplicate_an_inflight_prefetch() {
+        let page1_calls = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = mpsc::channel();
+        let release_page1 = Arc::new((Mutex::new(false), Condvar::new()));
+        let doc = BlockingDoc {
+            page1_calls: Arc::clone(&page1_calls),
+            page1_started: started_tx,
+            release_page1: Arc::clone(&release_page1),
+        };
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let reader = Arc::new(Reader::new(Box::new(doc), &format!("reader-inflight-{nonce}")));
+
+        reader.warm_up();
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("warm-up should start page 1 prefetch");
+
+        let foreground = {
+            let reader = Arc::clone(&reader);
+            std::thread::spawn(move || reader.get_page(1))
+        };
+
+        let duplicate_started = started_rx.recv_timeout(Duration::from_millis(150)).is_ok();
+        {
+            let (lock, cv) = &*release_page1;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+
+        let bytes = foreground
+            .join()
+            .expect("foreground worker should not panic")
+            .expect("foreground page load should succeed");
+        assert_eq!(&*bytes, &[1]);
+        assert!(
+            !duplicate_started,
+            "foreground load duplicated page 1 while warm-up prefetch was already in flight"
+        );
+        assert_eq!(page1_calls.load(Ordering::SeqCst), 1);
+    }
+}

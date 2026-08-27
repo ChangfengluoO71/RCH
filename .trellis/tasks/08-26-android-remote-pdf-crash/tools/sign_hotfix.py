@@ -4,7 +4,6 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
-import tempfile
 
 
 def load_properties(path: Path) -> dict[str, str]:
@@ -53,44 +52,50 @@ def main() -> int:
     store_file = (args.key_properties.parent / props["storeFile"]).resolve()
     build_tools = newest_build_tools(args.sdk)
     args.output_apk.parent.mkdir(parents=True, exist_ok=True)
+    aligned = args.output_apk.with_name(f"{args.output_apk.stem}.aligned.apk")
+    if aligned.exists():
+        aligned.unlink()
 
-    with tempfile.TemporaryDirectory(prefix="rch-hotfix-sign-") as tmp:
-        aligned = Path(tmp) / "aligned.apk"
-        subprocess.run(
-            [str(build_tools / "zipalign.exe"), "-P", "16", "-f", "4", str(args.input_apk), str(aligned)],
-            check=True,
-        )
+    subprocess.run(
+        [str(build_tools / "zipalign.exe"), "-P", "16", "-f", "4", str(args.input_apk), str(aligned)],
+        check=True,
+    )
 
-        env = os.environ.copy()
-        env["RCH_KS_PASS"] = props["storePassword"]
-        env["RCH_KEY_PASS"] = props["keyPassword"]
-        subprocess.run(
-            [
-                "cmd.exe",
-                "/d",
-                "/c",
-                str(build_tools / "apksigner.bat"),
-                "sign",
-                "--ks",
-                str(store_file),
-                "--ks-key-alias",
-                props["keyAlias"],
-                "--ks-pass",
-                "env:RCH_KS_PASS",
-                "--key-pass",
-                "env:RCH_KEY_PASS",
-                "--out",
-                str(args.output_apk),
-                str(aligned),
-            ],
-            check=True,
-            env=env,
-        )
-        subprocess.run(
-            ["cmd.exe", "/d", "/c", str(build_tools / "apksigner.bat"), "verify", "--verbose", str(args.output_apk)],
-            check=True,
-            env=env,
-        )
+    env = os.environ.copy()
+    env["RCH_KS_PASS"] = props["storePassword"]
+    env["RCH_KEY_PASS"] = props["keyPassword"]
+    subprocess.run(
+        [
+            "cmd.exe",
+            "/d",
+            "/c",
+            str(build_tools / "apksigner.bat"),
+            "sign",
+            "--ks",
+            str(store_file),
+            "--ks-key-alias",
+            props["keyAlias"],
+            "--ks-pass",
+            "env:RCH_KS_PASS",
+            "--key-pass",
+            "env:RCH_KEY_PASS",
+            "--out",
+            str(args.output_apk),
+            str(aligned),
+        ],
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        ["cmd.exe", "/d", "/c", str(build_tools / "apksigner.bat"), "verify", "--verbose", str(args.output_apk)],
+        check=True,
+        env=env,
+    )
+
+    try:
+        aligned.unlink()
+    except OSError:
+        pass
 
     print(args.output_apk.resolve())
     return 0

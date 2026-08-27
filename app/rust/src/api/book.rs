@@ -51,6 +51,8 @@ pub struct CropRect {
 }
 
 /// 注册一本书为阅读会话,返回句柄信息(供本地 / WebDAV 等来源复用)。
+/// 首个可见页由 Dart 发起 `book_page()`；该前台页完成后 Reader 再围绕真实页码预取，
+/// 避免注册阶段固定从第 0 页抢跑后台任务，挤占 PDF 等重渲染格式的首屏请求。
 pub(crate) fn register_book(book: Box<dyn document::Document>, cache_ns: &str) -> BookInfo {
     let reader = Arc::new(Reader::new(book, cache_ns));
     let handle = next_id();
@@ -65,11 +67,10 @@ pub(crate) fn register_book(book: Box<dyn document::Document>, cache_ns: &str) -
             reader: Arc::clone(&reader),
         },
     );
-    reader.warm_up();
     info
 }
 
-/// 打开本地书籍(ZIP/CBZ/EPUB),返回会话句柄与信息;并预取开头若干页。
+/// 打开本地书籍(ZIP/CBZ/EPUB),返回会话句柄与信息。
 /// 若 path 为目录,则走 Folder 格式(枚举目录下图片)。
 pub async fn open_local_book(path: String) -> Result<BookInfo> {
     let book = tokio::task::spawn_blocking({
@@ -175,11 +176,11 @@ pub async fn list_local_dir(path: String) -> Result<Vec<DirEntry>> {
 /// 检测目录是否为漫画文件夹（包含至少一张图片文件）。
 /// 用于浏览页判断：是漫画文件夹 → 显示为海报卡片；否则 → 显示为普通文件夹。
 pub fn is_comic_folder(dir_path: String) -> bool {
-    crate::document::folder::is_comic_folder(&dir_path)
+    crate::document::folder::is_comic_folder(dir_path)
 }
 
 /// 获取漫画文件夹的显式封面路径（cover.jpg / cover.png 等）。
 /// 无显式封面时返回空字符串。
 pub fn folder_cover_path(dir_path: String) -> String {
-    crate::document::folder::FolderBook::cover_path(&dir_path).unwrap_or_default()
+    crate::document::folder::FolderBook::cover_path(dir_path).unwrap_or_default()
 }

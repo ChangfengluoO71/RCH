@@ -13,6 +13,7 @@ import requests
 
 BASE_APK_URL = "https://github.com/ChangfengluoO71/RCH/releases/download/v0.5.5/app-arm64-v8a-release.apk"
 TARGET = "aarch64-linux-android"
+EXPECTED_BASE_APK_SIZE = 42_235_635
 
 
 def load_vs_environment(temp_dir: Path) -> dict[str, str]:
@@ -70,20 +71,40 @@ def build_rust(root: Path, out_dir: Path) -> Path:
 
 
 def download_base_apk(path: Path) -> None:
-    headers = {"User-Agent": "Mozilla/5.0 RCH-hotfix-builder/2"}
-    with requests.get(
-        BASE_APK_URL,
-        headers=headers,
-        stream=True,
-        timeout=(20, 60),
-        allow_redirects=True,
-    ) as response:
-        response.raise_for_status()
-        with path.open("wb") as output:
-            for chunk in response.iter_content(1024 * 1024):
-                if chunk:
-                    output.write(chunk)
-    print(f"BASE_APK_SIZE={path.stat().st_size}", flush=True)
+    headers = {"User-Agent": "Mozilla/5.0 RCH-hotfix-builder/3"}
+    last_error: Exception | None = None
+    for attempt in range(1, 6):
+        try:
+            if path.exists():
+                path.unlink()
+            print(f"BASE_APK_DOWNLOAD_ATTEMPT={attempt}", flush=True)
+            with requests.get(
+                BASE_APK_URL,
+                headers=headers,
+                stream=True,
+                timeout=(20, 60),
+                allow_redirects=True,
+            ) as response:
+                response.raise_for_status()
+                with path.open("wb") as output:
+                    for chunk in response.iter_content(1024 * 1024):
+                        if chunk:
+                            output.write(chunk)
+            size = path.stat().st_size
+            print(f"BASE_APK_SIZE={size}", flush=True)
+            if size != EXPECTED_BASE_APK_SIZE:
+                raise RuntimeError(
+                    f"unexpected base APK size: {size} != {EXPECTED_BASE_APK_SIZE}"
+                )
+            return
+        except Exception as exc:
+            last_error = exc
+            print(f"BASE_APK_DOWNLOAD_ERR attempt={attempt} err={exc}", flush=True)
+            if path.exists():
+                path.unlink()
+            if attempt < 5:
+                time.sleep(attempt * 2)
+    raise RuntimeError("failed to download v0.5.5 arm64 base APK after 5 attempts") from last_error
 
 
 def patch_apk(base_apk: Path, rust_so: Path, unsigned_apk: Path) -> None:
@@ -113,11 +134,12 @@ def main() -> int:
     out_dir = root / ".cwapi-hotfix"
     out_dir.mkdir(exist_ok=True)
     base_apk = out_dir / "app-arm64-v8a-v0.5.5.apk"
-    unsigned_apk = out_dir / "RCH-a8952ad0-unsigned.apk"
-    signed_apk = out_dir / "RCH-a8952ad0-signed.apk"
+    unsigned_apk = out_dir / "RCH-pdf-diag-unsigned.apk"
+    signed_apk = out_dir / "RCH-pdf-diag-signed.apk"
 
-    rust_so = build_rust(root, out_dir)
+    # Network first: do not spend ~1-2 minutes compiling if GitHub download is unavailable.
     download_base_apk(base_apk)
+    rust_so = build_rust(root, out_dir)
     patch_apk(base_apk, rust_so, unsigned_apk)
 
     signer = Path(__file__).with_name("sign_hotfix.py")

@@ -7,7 +7,7 @@ use crate::document::Document;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// L1 内存缓存容量(原始页字节)。
 const CACHE_CAP: usize = 24;
@@ -62,8 +62,10 @@ impl Lru {
 pub struct Reader {
     book: Box<dyn Document>, // page_bytes 为 &self,可并发调用,无需锁
     cache: Mutex<Lru>,
-    /// 正在后台预取的页(去重)。
-    prefetching: Mutex<HashSet<u32>>,
+    /// 所有正在生成的页。前台读取与后台预取共享，避免同一页重复解码/渲染。
+    inflight: Mutex<HashSet<u32>>,
+    /// 某页生成完成（成功或失败）后唤醒等待该页的前台读取。
+    inflight_done: Condvar,
     /// 该书的磁盘缓存目录(原始页字节)。
     disk_dir: PathBuf,
 }
@@ -89,7 +91,8 @@ impl Reader {
         Reader {
             book,
             cache: Mutex::new(Lru::new(CACHE_CAP)),
-            prefetching: Mutex::new(HashSet::new()),
+            inflight: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
             disk_dir: dir,
         }
     }
@@ -102,25 +105,78 @@ impl Reader {
         self.book.metadata().title
     }
 
-    /// 获取一页:先 L1 内存,未命中走 read_page(L2 磁盘 / 下载);随后触发周边预取。
+    /// 获取一页:先 L1 内存,未命中则等待/认领唯一一次实际生成;完成后触发周边预取。
     pub fn get_page(self: &Arc<Self>, index: u32) -> Result<Arc<Vec<u8>>> {
-        // 查 L1:锁的 guard 限于此块内,避免后续 spawn_prefetch 再加锁造成死锁。
-        let cached = { self.cache.lock().unwrap().get(&index) };
-        if let Some(bytes) = cached {
+        if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
             self.spawn_prefetch(index);
             return Ok(bytes);
         }
-        let bytes = self.read_page(index)?;
-        {
-            self.cache.lock().unwrap().insert(index, bytes.clone());
-        }
+
+        let bytes = self.load_or_wait(index)?;
         self.spawn_prefetch(index);
         Ok(bytes)
     }
 
     /// 打开书后立即预取开头若干页。
+    ///
+    /// 保留给显式 warm-up 场景；前台 get_page 与这些预取会共享 inflight，不会重复生成同一页。
     pub fn warm_up(self: &Arc<Self>) {
         self.spawn_prefetch(0);
+    }
+
+    /// 前台读取：若同页已有后台/前台生成任务则等待；否则成为唯一生成者。
+    fn load_or_wait(&self, index: u32) -> Result<Arc<Vec<u8>>> {
+        loop {
+            // 所有涉及 inflight + cache 的嵌套加锁统一使用 inflight -> cache 顺序。
+            let mut inflight = self.inflight.lock().unwrap();
+            while inflight.contains(&index) {
+                inflight = self.inflight_done.wait(inflight).unwrap();
+            }
+
+            // 生成者完成后缓存可能已经可用；在认领前必须二次检查，避免完成/认领竞态。
+            if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+                return Ok(bytes);
+            }
+
+            inflight.insert(index);
+            drop(inflight);
+            return self.load_claimed(index);
+        }
+    }
+
+    /// 后台预取尝试认领一页；已缓存或已在生成时不再额外启动线程。
+    fn try_claim_prefetch(&self, index: u32) -> bool {
+        let mut inflight = self.inflight.lock().unwrap();
+        if inflight.contains(&index) || self.cache.lock().unwrap().contains(&index) {
+            return false;
+        }
+        inflight.insert(index);
+        true
+    }
+
+    /// 已认领页的唯一实际读取路径。无论成功、失败还是 panic 都释放 inflight 并唤醒等待者。
+    fn load_claimed(&self, index: u32) -> Result<Arc<Vec<u8>>> {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.read_page(index)));
+
+        match outcome {
+            Ok(result) => {
+                let mut inflight = self.inflight.lock().unwrap();
+                if let Ok(bytes) = &result {
+                    self.cache.lock().unwrap().insert(index, Arc::clone(bytes));
+                }
+                inflight.remove(&index);
+                self.inflight_done.notify_all();
+                drop(inflight);
+                result
+            }
+            Err(payload) => {
+                let mut inflight = self.inflight.lock().unwrap_or_else(|p| p.into_inner());
+                inflight.remove(&index);
+                self.inflight_done.notify_all();
+                drop(inflight);
+                std::panic::resume_unwind(payload);
+            }
+        }
     }
 
     /// 读一页:L2 磁盘命中则直接用,否则从书源下载并写盘。
@@ -133,15 +189,6 @@ impl Reader {
         Ok(Arc::new(bytes))
     }
 
-    fn read_and_cache(&self, index: u32) -> Result<()> {
-        if self.cache.lock().unwrap().contains(&index) {
-            return Ok(());
-        }
-        let bytes = self.read_page(index)?;
-        self.cache.lock().unwrap().insert(index, bytes);
-        Ok(())
-    }
-
     fn disk_get(&self, index: u32) -> Option<Vec<u8>> {
         std::fs::read(self.disk_dir.join(format!("{index}.bin"))).ok()
     }
@@ -150,7 +197,8 @@ impl Reader {
         let _ = std::fs::write(self.disk_dir.join(format!("{index}.bin")), data);
     }
 
-    /// 后台并行预取 index 前后各 PREFETCH_RADIUS 页(去重、跳过已缓存)。
+    /// 后台并行预取 index 前后各 PREFETCH_RADIUS 页。
+    /// 同页前台/后台共用 inflight claim，因此每页最多存在一个实际生成者。
     fn spawn_prefetch(self: &Arc<Self>, index: u32) {
         let count = self.page_count() as i64;
         for off in -PREFETCH_RADIUS..=PREFETCH_RADIUS {
@@ -162,17 +210,12 @@ impl Reader {
                 continue;
             }
             let t = t as u32;
-            if self.cache.lock().unwrap().contains(&t) {
-                continue;
-            }
-            // 已在预取中则跳过(insert 返回 false 表示已存在)。
-            if !self.prefetching.lock().unwrap().insert(t) {
+            if !self.try_claim_prefetch(t) {
                 continue;
             }
             let me = Arc::clone(self);
             std::thread::spawn(move || {
-                let _ = me.read_and_cache(t);
-                me.prefetching.lock().unwrap().remove(&t);
+                let _ = me.load_claimed(t);
             });
         }
     }

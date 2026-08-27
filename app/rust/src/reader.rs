@@ -3,6 +3,7 @@
 //! L1(内存 LRU)管"翻页零等待";L2(磁盘)管"重复阅读秒开"——
 //! 读过的页字节写盘,下次打开同一本书(尤其 WebDAV)无需重新下载。
 
+use crate::diag::pdf_diag;
 use crate::document::Document;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -88,6 +89,7 @@ impl Reader {
 
         let dir = disk_dir.join(crate::cache::stable_hash(cache_ns));
         let _ = std::fs::create_dir_all(&dir);
+        pdf_diag(format!("reader new cache_dir={}", dir.display()));
         Reader {
             book,
             cache: Mutex::new(Lru::new(CACHE_CAP)),
@@ -107,12 +109,22 @@ impl Reader {
 
     /// 获取一页:先 L1 内存,未命中则等待/认领唯一一次实际生成;完成后触发周边预取。
     pub fn get_page(self: &Arc<Self>, index: u32) -> Result<Arc<Vec<u8>>> {
+        pdf_diag(format!("reader get_page request index={index}"));
         if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+            pdf_diag(format!(
+                "reader get_page L1_HIT index={index} bytes={}",
+                bytes.len()
+            ));
             self.spawn_prefetch(index);
             return Ok(bytes);
         }
+        pdf_diag(format!("reader get_page L1_MISS index={index}"));
 
         let bytes = self.load_or_wait(index)?;
+        pdf_diag(format!(
+            "reader get_page complete index={index} bytes={}",
+            bytes.len()
+        ));
         self.spawn_prefetch(index);
         Ok(bytes)
     }
@@ -121,6 +133,7 @@ impl Reader {
     ///
     /// 保留给显式 warm-up 场景；前台 get_page 与这些预取会共享 inflight，不会重复生成同一页。
     pub fn warm_up(self: &Arc<Self>) {
+        pdf_diag("reader warm_up center=0");
         self.spawn_prefetch(0);
     }
 
@@ -130,15 +143,22 @@ impl Reader {
             // 所有涉及 inflight + cache 的嵌套加锁统一使用 inflight -> cache 顺序。
             let mut inflight = self.inflight.lock().unwrap();
             while inflight.contains(&index) {
+                pdf_diag(format!("reader inflight WAIT index={index}"));
                 inflight = self.inflight_done.wait(inflight).unwrap();
+                pdf_diag(format!("reader inflight WAKE index={index}"));
             }
 
             // 生成者完成后缓存可能已经可用；在认领前必须二次检查，避免完成/认领竞态。
             if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+                pdf_diag(format!(
+                    "reader post_wait L1_HIT index={index} bytes={}",
+                    bytes.len()
+                ));
                 return Ok(bytes);
             }
 
             inflight.insert(index);
+            pdf_diag(format!("reader foreground CLAIM index={index}"));
             drop(inflight);
             return self.load_claimed(index);
         }
@@ -151,18 +171,29 @@ impl Reader {
             return false;
         }
         inflight.insert(index);
+        pdf_diag(format!("reader prefetch CLAIM index={index}"));
         true
     }
 
     /// 已认领页的唯一实际读取路径。无论成功、失败还是 panic 都释放 inflight 并唤醒等待者。
     fn load_claimed(&self, index: u32) -> Result<Arc<Vec<u8>>> {
+        pdf_diag(format!("reader load_claimed ENTER index={index}"));
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.read_page(index)));
 
         match outcome {
             Ok(result) => {
                 let mut inflight = self.inflight.lock().unwrap();
-                if let Ok(bytes) = &result {
-                    self.cache.lock().unwrap().insert(index, Arc::clone(bytes));
+                match &result {
+                    Ok(bytes) => {
+                        pdf_diag(format!(
+                            "reader load_claimed OK index={index} bytes={}",
+                            bytes.len()
+                        ));
+                        self.cache.lock().unwrap().insert(index, Arc::clone(bytes));
+                    }
+                    Err(err) => {
+                        pdf_diag(format!("reader load_claimed ERR index={index} err={err:#}"));
+                    }
                 }
                 inflight.remove(&index);
                 self.inflight_done.notify_all();
@@ -170,6 +201,7 @@ impl Reader {
                 result
             }
             Err(payload) => {
+                pdf_diag(format!("reader load_claimed PANIC index={index}"));
                 let mut inflight = self.inflight.lock().unwrap_or_else(|p| p.into_inner());
                 inflight.remove(&index);
                 self.inflight_done.notify_all();
@@ -182,9 +214,30 @@ impl Reader {
     /// 读一页:L2 磁盘命中则直接用,否则从书源下载并写盘。
     fn read_page(&self, index: u32) -> Result<Arc<Vec<u8>>> {
         if let Some(bytes) = self.disk_get(index) {
+            pdf_diag(format!(
+                "reader L2_HIT index={index} bytes={} path={}",
+                bytes.len(),
+                self.disk_dir.join(format!("{index}.bin")).display()
+            ));
             return Ok(Arc::new(bytes));
         }
-        let bytes = self.book.page_bytes(index)?;
+        pdf_diag(format!("reader L2_MISS index={index}"));
+        pdf_diag(format!("reader document.page_bytes ENTER index={index}"));
+        let bytes = match self.book.page_bytes(index) {
+            Ok(bytes) => {
+                pdf_diag(format!(
+                    "reader document.page_bytes OK index={index} bytes={}",
+                    bytes.len()
+                ));
+                bytes
+            }
+            Err(err) => {
+                pdf_diag(format!(
+                    "reader document.page_bytes ERR index={index} err={err:#}"
+                ));
+                return Err(err);
+            }
+        };
         self.disk_put(index, &bytes);
         Ok(Arc::new(bytes))
     }
@@ -194,13 +247,27 @@ impl Reader {
     }
 
     fn disk_put(&self, index: u32, data: &[u8]) {
-        let _ = std::fs::write(self.disk_dir.join(format!("{index}.bin")), data);
+        let path = self.disk_dir.join(format!("{index}.bin"));
+        match std::fs::write(&path, data) {
+            Ok(()) => pdf_diag(format!(
+                "reader L2_WRITE_OK index={index} bytes={} path={}",
+                data.len(),
+                path.display()
+            )),
+            Err(err) => pdf_diag(format!(
+                "reader L2_WRITE_ERR index={index} path={} err={err}",
+                path.display()
+            )),
+        }
     }
 
     /// 后台并行预取 index 前后各 PREFETCH_RADIUS 页。
     /// 同页前台/后台共用 inflight claim，因此每页最多存在一个实际生成者。
     fn spawn_prefetch(self: &Arc<Self>, index: u32) {
         let count = self.page_count() as i64;
+        pdf_diag(format!(
+            "reader spawn_prefetch center={index} page_count={count}"
+        ));
         for off in -PREFETCH_RADIUS..=PREFETCH_RADIUS {
             if off == 0 {
                 continue;

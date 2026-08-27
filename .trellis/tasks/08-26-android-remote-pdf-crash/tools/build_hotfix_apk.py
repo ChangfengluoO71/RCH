@@ -14,6 +14,7 @@ import requests
 BASE_APK_URL = "https://github.com/ChangfengluoO71/RCH/releases/download/v0.5.5/app-arm64-v8a-release.apk"
 TARGET = "aarch64-linux-android"
 EXPECTED_BASE_APK_SIZE = 42_235_635
+RANGE_CHUNK = 1024 * 1024
 
 
 def load_vs_environment(temp_dir: Path) -> dict[str, str]:
@@ -70,41 +71,59 @@ def build_rust(root: Path, out_dir: Path) -> Path:
     return so
 
 
-def download_base_apk(path: Path) -> None:
-    headers = {"User-Agent": "Mozilla/5.0 RCH-hotfix-builder/3"}
+def fetch_range(start: int, end: int) -> bytes:
+    expected = end - start + 1
     last_error: Exception | None = None
     for attempt in range(1, 6):
         try:
-            if path.exists():
-                path.unlink()
-            print(f"BASE_APK_DOWNLOAD_ATTEMPT={attempt}", flush=True)
-            with requests.get(
+            headers = {
+                "User-Agent": "Mozilla/5.0 RCH-hotfix-builder/4",
+                "Range": f"bytes={start}-{end}",
+            }
+            response = requests.get(
                 BASE_APK_URL,
                 headers=headers,
-                stream=True,
-                timeout=(20, 60),
+                timeout=(20, 40),
                 allow_redirects=True,
-            ) as response:
-                response.raise_for_status()
-                with path.open("wb") as output:
-                    for chunk in response.iter_content(1024 * 1024):
-                        if chunk:
-                            output.write(chunk)
-            size = path.stat().st_size
-            print(f"BASE_APK_SIZE={size}", flush=True)
-            if size != EXPECTED_BASE_APK_SIZE:
-                raise RuntimeError(
-                    f"unexpected base APK size: {size} != {EXPECTED_BASE_APK_SIZE}"
-                )
-            return
+            )
+            response.raise_for_status()
+            data = response.content
+            if response.status_code != 206:
+                raise RuntimeError(f"range request returned HTTP {response.status_code}")
+            if len(data) != expected:
+                raise RuntimeError(f"range length {len(data)} != {expected}")
+            return data
         except Exception as exc:
             last_error = exc
-            print(f"BASE_APK_DOWNLOAD_ERR attempt={attempt} err={exc}", flush=True)
-            if path.exists():
-                path.unlink()
+            print(
+                f"BASE_APK_RANGE_ERR start={start} end={end} attempt={attempt} err={exc}",
+                flush=True,
+            )
             if attempt < 5:
-                time.sleep(attempt * 2)
-    raise RuntimeError("failed to download v0.5.5 arm64 base APK after 5 attempts") from last_error
+                time.sleep(attempt)
+    raise RuntimeError(f"failed range {start}-{end}") from last_error
+
+
+def download_base_apk(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+    with path.open("wb") as output:
+        start = 0
+        part = 0
+        while start < EXPECTED_BASE_APK_SIZE:
+            end = min(start + RANGE_CHUNK - 1, EXPECTED_BASE_APK_SIZE - 1)
+            data = fetch_range(start, end)
+            output.write(data)
+            output.flush()
+            part += 1
+            print(f"BASE_APK_RANGE_OK part={part} end={end}", flush=True)
+            start = end + 1
+    size = path.stat().st_size
+    print(f"BASE_APK_SIZE={size}", flush=True)
+    if size != EXPECTED_BASE_APK_SIZE:
+        raise RuntimeError(f"unexpected base APK size: {size}")
+    if not zipfile.is_zipfile(path):
+        raise RuntimeError("downloaded base APK is not a valid ZIP/APK")
 
 
 def patch_apk(base_apk: Path, rust_so: Path, unsigned_apk: Path) -> None:

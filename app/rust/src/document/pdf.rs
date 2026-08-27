@@ -38,12 +38,8 @@ fn fit_webp_render_dimensions(page_width: f64, page_height: f64) -> (Pixels, Pix
         .min(WEBP_MAX_DIMENSION / page_width)
         .min(WEBP_MAX_DIMENSION / page_height);
 
-    let width = (page_width * scale)
-        .round()
-        .clamp(1.0, WEBP_MAX_DIMENSION) as Pixels;
-    let height = (page_height * scale)
-        .round()
-        .clamp(1.0, WEBP_MAX_DIMENSION) as Pixels;
+    let width = (page_width * scale).round().clamp(1.0, WEBP_MAX_DIMENSION) as Pixels;
+    let height = (page_height * scale).round().clamp(1.0, WEBP_MAX_DIMENSION) as Pixels;
     (width, height)
 }
 
@@ -224,10 +220,7 @@ impl Document for PdfBook {
         pdf_diag(format!("pdf webp START index={index}"));
         img.write_to(&mut cursor, image::ImageFormat::WebP)
             .with_context(|| format!("编码 PDF 第 {index} 页为 WebP 失败"))?;
-        pdf_diag(format!(
-            "pdf webp OK index={index} bytes={}",
-            buf.len()
-        ));
+        pdf_diag(format!("pdf webp OK index={index} bytes={}", buf.len()));
         Ok(buf)
     }
 }

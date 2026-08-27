@@ -47,8 +47,21 @@ Result reported by user: **PASS — PDF正常了**.
 
 This closes the original same-device remote-PDF failure surface: no persistent spinner was reported and the PDF was readable again after the WebP dimension cap.
 
-## Remaining Trellis closure gate
+### Local multi-page PDF smoke
 
-The task remains `in_progress` only because the PRD explicitly requires a local multi-page PDF smoke regression before archival. Once that local PDF smoke is confirmed, the task can be marked complete/archived.
+User then opened a local multi-page PDF on the same fixed Android build, paged through it, exited, and reopened it.
 
-Whole-PDF buffering into a `Vec<u8>` remains a separate architecture/memory-risk item and is not part of this incident's root cause or minimal fix.
+Result reported by user: **PASS — 本地PDF正常**.
+
+This satisfies the final PRD-required local PDF regression gate.
+
+## Closure
+
+All incident-specific device gates are now satisfied:
+
+- non-PDF Reader regression: PASS;
+- original Baidu four-page PDF on reporting device/source: PASS;
+- local multi-page PDF smoke: PASS;
+- final Rust tests/checks and Android arm64 build/signing verification: PASS.
+
+The task is ready for Trellis archival. Whole-PDF buffering into a `Vec<u8>` remains a separate architecture/memory-risk item and is not part of this incident's root cause or minimal fix.

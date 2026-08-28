@@ -4,7 +4,6 @@ pub mod cache;
 pub mod catalog_context;
 pub mod db;
 pub mod decode;
-pub(crate) mod diag;
 pub mod document;
 pub mod downloader;
 mod frb_generated;

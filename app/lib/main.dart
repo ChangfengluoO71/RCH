@@ -60,25 +60,31 @@ Future<void> main() async {
     }
   }
 
-  // 加载数据（优先 SQLite，fallback JSON）
-  await LibraryStore.instance.load();
-  // 加载远程目录快照（文件夹封面全本地判定用，跨重启保留）
-  await FolderSnapshotStore.instance.load();
-  // 资料库目录树（设备 → 书源 → 可用性；Phase 6.1）
-  await LibraryCatalogStore.instance.loadTree();
-
-  // 备份/同步：加载配置并按需启动定时同步。
-  await SyncManager.instance.init();
-  // 自动同步引擎：防抖 + 定时 + 启动拉取（ADR-024）。
-  await AutomationCoordinator.instance.init();
-
-  // 后台 AI 超分：加载持久化队列并续跑。
-  await AiUpscaleManager.instance.init();
+  // 首帧只等待首页真正依赖的数据。启动时不再为了 JSON 备份阻塞 800ms 防抖保存。
+  await LibraryStore.instance.load(persist: false);
 
   // 检测未完成的根目录迁移（源根上的 migration.partial 标记）。
   final root = await cacheRootPath();
   final pending = await pendingMigration(root: root);
   runApp(RchApp(startupPending: pending));
+
+  // 非关键初始化放到首帧之后：保留原有自动同步/刮削与 AI 续跑语义，
+  // 但不再让目录快照、资料库树、同步配置和自动流程阻塞用户进入首页。
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeAfterFirstFrame());
+  });
+}
+
+Future<void> _initializeAfterFirstFrame() async {
+  // 保留启动时刷新 JSON 备份的语义，但不等待它再启动其他后台服务。
+  unawaited(LibraryStore.instance.saveToDisk());
+
+  // 本地只读/轻量状态先恢复，再启动可能涉及同步与刮削的较重流程。
+  await FolderSnapshotStore.instance.load();
+  await LibraryCatalogStore.instance.loadTree();
+  await SyncManager.instance.init();
+  await AiUpscaleManager.instance.init();
+  await AutomationCoordinator.instance.init();
 }
 
 /// 移动端（Android）拒绝 Windows 风格绝对路径（盘符 / UNC）作为缓存根。

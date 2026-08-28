@@ -125,7 +125,23 @@ jobs:
           ver="${{ github.ref_name }}"
           ver="${ver#v}"
           IFS='.' read -r maj min pat <<< "$ver"
-          code=$((maj * 10000 + min * 100 + pat))
+          if ! [[ "$maj" =~ ^[0-9]+$ && "$min" =~ ^[0-9]+$ && "$pat" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid SemVer tag: $ver"
+            exit 1
+          fi
+          if (( min > 99 || pat > 99 )); then
+            echo "::error::Android versionCode scheme requires minor and patch <= 99"
+            exit 1
+          fi
+          # Android release epoch. Introduced for v0.5.7 after temporary signed
+          # benchmark builds reached versionCode 2507. Keep this offset stable.
+          semver_code=$((maj * 10000 + min * 100 + pat))
+          code=$((100000 + semver_code))
+          if (( code <= 2507 )); then
+            echo "::error::Android versionCode $code must stay above historical floor 2507"
+            exit 1
+          fi
+          echo "Android versionName=$ver versionCode=$code"
           flutter build apk --release --split-per-abi --build-name="$ver" --build-number="$code"
 
       - name: Upload APKs to GitHub Release

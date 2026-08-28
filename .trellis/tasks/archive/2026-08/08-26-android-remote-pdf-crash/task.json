@@ -27,7 +27,7 @@
     "app/lib/ui/reader_page.dart",
     "app/rust/Cargo.toml"
   ],
-  "notes": "All incident-specific regressions are confirmed on the fixed Android build: original Baidu four-page PDF passes on the reporting PGFM10 device/source, local multi-page PDF smoke passes, and the transient non-PDF Reader self-deadlock regression also passes. Final product commit is 0c7e2ed874c5fddf24084a7f12ebd9e9bea2c17e. Whole-PDF Vec<u8> buffering remains a separate architecture risk.",
+  "notes": "All incident-specific regressions are confirmed on the fixed Android build: original Baidu four-page PDF passes on the reporting PGFM10 device/source, local multi-page PDF smoke passes, and the transient non-PDF Reader self-deadlock regression also passes. Final product fix commit is 0c7e2ed874c5fddf24084a7f12ebd9e9bea2c17e. Whole-PDF Vec<u8> buffering remains a separate architecture risk. The fix was released publicly as RCH v0.5.6 on 2026-08-28; Windows x64 plus Android arm64-v8a, armeabi-v7a, and x86_64 artifacts were published successfully.",
   "meta": {
     "priority": "P1",
     "origin": "post_release_android_bug",
@@ -41,6 +41,18 @@
     "local_multi_page_pdf_regression": "passed",
     "non_pdf_reader_regression": "passed",
     "pdf_webp_dimension_regression": "passed",
-    "archival_method": "manual_github_equivalent_after_task_py_archive_backend_failure"
+    "archival_method": "manual_github_equivalent_after_task_py_archive_backend_failure",
+    "release_tag": "v0.5.6",
+    "release_commit": "abea5c16d8c800815c71b77fce6013fa832525bd",
+    "release_url": "https://github.com/ChangfengluoO71/RCH/releases/tag/v0.5.6",
+    "release_published_at": "2026-08-28",
+    "release_verified": true,
+    "release_assets": [
+      "RCH-0.5.6-windows-x64.exe",
+      "app-arm64-v8a-release.apk",
+      "app-armeabi-v7a-release.apk",
+      "app-x86_64-release.apk"
+    ],
+    "archive_finalized_at": "2026-08-28"
   }
 }

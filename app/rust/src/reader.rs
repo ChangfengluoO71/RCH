@@ -157,7 +157,8 @@ impl Reader {
 
     /// 已认领页的唯一实际读取路径。无论成功、失败还是 panic 都释放 inflight 并唤醒等待者。
     fn load_claimed(&self, index: u32) -> Result<Arc<Vec<u8>>> {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.read_page(index)));
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.read_page(index)));
 
         match outcome {
             Ok(result) => {

@@ -1,12 +1,11 @@
-# RCH v0.5.7 — Draft
-
-> 状态：待发布。正式打 tag 前必须先解决 Android versionCode 单调递增策略。
+# RCH v0.5.7
 
 ## Improved
 
 - 显著缩短 Android 冷启动关键路径：首页首帧不再等待目录快照、资料库树、同步管理器、AI 队列恢复和自动同步/刮削流程完成。
 - `LibraryStore` 启动加载不再等待 JSON 备份的 800 ms 防抖保存；备份仍保留并在首帧后异步触发。
 - 自动同步、刮削和 AI 恢复功能语义保持不变，只调整到首帧后执行，其中 `AutomationCoordinator` 最后启动，避免重任务阻塞进入首页。
+- Android 正式发布版采用新的单调递增 `versionCode` 规则：`100000 + (major × 10000 + minor × 100 + patch)`；v0.5.7 对应 `100507`，可直接覆盖此前用于真机测试的正式签名 `2507` 构建。
 
 ## Verification
 
@@ -22,8 +21,10 @@
 
 完整证据见 `docs/project/STARTUP_PERFORMANCE_2026-08-28.md`。
 
-## Release blocker — Android versionCode
+## Android upgrade compatibility
 
-真机基线安装版本为 `versionCode=2506`，本次无损覆盖测试临时使用正式签名 `versionCode=2507`。当前 release workflow 对 `v0.5.7` 会按版本号公式生成 `507`，至少无法覆盖已经安装 `2507` 的测试设备。
+- 历史真机基线：`versionCode=2506`
+- 启动性能正式签名测试包：`versionCode=2507`
+- v0.5.7 正式包：`versionCode=100507`
 
-正式发布 v0.5.7 前需要先冻结新的 versionCode 规则，确保后续正式 APK 始终单调递增；在此之前不要创建 v0.5.7 tag。
+因此 v0.5.7 可以直接覆盖安装在上述测试包之上，后续版本也会沿同一规则继续递增。

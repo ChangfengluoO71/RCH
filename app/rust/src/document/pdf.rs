@@ -3,7 +3,6 @@
 //! 用 pdfium-render (Google PDFium 的 Rust 绑定) 渲染 PDF 页面为位图。
 
 use super::{Document, DocumentMeta};
-use crate::diag::pdf_diag;
 use crate::source::ByteSource;
 use anyhow::{Context, Result};
 use pdfium_render::prelude::*;
@@ -49,14 +48,12 @@ static NATIVE_LIB_DIR: OnceLock<String> = OnceLock::new();
 /// 设置 pdfium 动态库所在目录。设置后打开 PDF 时优先从该目录加载
 /// `libpdfium.so`（Android 打包进 jniLibs 后即位于 nativeLibraryDir）。
 pub fn set_native_lib_dir(dir: String) {
-    pdf_diag(format!("pdf set_native_lib_dir dir={dir}"));
     let _ = NATIVE_LIB_DIR.set(dir);
 }
 
 fn get_pdfium() -> Result<&'static Pdfium> {
     PDFIUM
         .get_or_init(|| {
-            pdf_diag("pdf get_pdfium INIT");
             // 依次尝试：nativeLibraryDir(Android) → 进程工作目录 → RCH.exe 所在目录 → PATH → 系统目录。
             let mut dirs: Vec<String> = vec![];
             if let Some(dir) = NATIVE_LIB_DIR.get() {
@@ -74,30 +71,17 @@ fn get_pdfium() -> Result<&'static Pdfium> {
             let mut last_err = String::new();
             for dir in &dirs {
                 let name = Pdfium::pdfium_platform_library_name_at_path(dir);
-                pdf_diag(format!("pdf bind attempt path={}", name.display()));
                 match Pdfium::bind_to_library(name) {
-                    Ok(bindings) => {
-                        pdf_diag("pdf bind_to_library OK");
-                        return Ok(Pdfium::new(bindings));
-                    }
-                    Err(e) => {
-                        last_err = format!("{e}");
-                        pdf_diag(format!("pdf bind_to_library ERR err={e}"));
-                    }
+                    Ok(bindings) => return Ok(Pdfium::new(bindings)),
+                    Err(e) => last_err = format!("{e}"),
                 }
             }
             match Pdfium::bind_to_system_library() {
-                Ok(bindings) => {
-                    pdf_diag("pdf bind_to_system_library OK");
-                    Ok(Pdfium::new(bindings))
-                }
-                Err(e) => {
-                    pdf_diag(format!("pdf bind_to_system_library ERR err={e}"));
-                    Err(format!(
-                        "无法加载 pdfium 动态库，请将 pdfium.dll 放在 RCH.exe 同目录（从 \
-                         bblanchon/pdfium-binaries 下载 win-x64 版本）。{last_err} {e}"
-                    ))
-                }
+                Ok(bindings) => Ok(Pdfium::new(bindings)),
+                Err(e) => Err(format!(
+                    "无法加载 pdfium 动态库，请将 pdfium.dll 放在 RCH.exe 同目录（从 \
+                     bblanchon/pdfium-binaries 下载 win-x64 版本）。{last_err} {e}"
+                )),
             }
         })
         .as_ref()
@@ -114,28 +98,22 @@ pub struct PdfBook {
 impl PdfBook {
     pub fn open(src: impl ByteSource, path: &str) -> Result<Self> {
         let len = src.len() as usize;
-        pdf_diag(format!("pdf open READ_SOURCE_START bytes={len}"));
         let mut data = vec![0u8; len];
         src.read_exact_at(0, &mut data)
             .context("读取 PDF 文件失败")?;
-        pdf_diag(format!("pdf open READ_SOURCE_OK bytes={}", data.len()));
 
         let title = std::path::Path::new(path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
 
-        pdf_diag("pdf open WAIT_GATE");
         with_pdfium_lock(|| {
-            pdf_diag("pdf open ACQUIRED_GATE");
             let pdfium = get_pdfium()?;
-            pdf_diag("pdf open LOAD_DOCUMENT_START");
             // 懒加载：只解析文档与页数，页面按需渲染（page_bytes），
             // 避免整本 PDF 在 open 阶段全量栅格化导致下载 100% 后长时间无响应。
             let doc = pdfium
                 .load_pdf_from_byte_vec(data, None)
                 .context("加载 PDF 失败(可能是加密或损坏)")?;
-            pdf_diag("pdf open LOAD_DOCUMENT_OK");
 
             Ok(PdfBook {
                 doc: Some(doc),
@@ -153,25 +131,14 @@ impl Drop for PdfBook {
     fn drop(&mut self) {
         if let Some(doc) = self.doc.take() {
             // PdfDocument 的 Drop 会回到 PDFium；必须和打开、页访问、渲染使用同一把锁。
-            pdf_diag("pdf drop WAIT_GATE");
-            with_pdfium_lock(|| {
-                pdf_diag("pdf drop ACQUIRED_GATE");
-                drop(doc);
-                pdf_diag("pdf drop DONE");
-            });
+            with_pdfium_lock(|| drop(doc));
         }
     }
 }
 
 impl Document for PdfBook {
     fn page_count(&self) -> u32 {
-        pdf_diag("pdf page_count WAIT_GATE");
-        with_pdfium_lock(|| {
-            pdf_diag("pdf page_count ACQUIRED_GATE");
-            let count = self.doc().pages().len() as u32;
-            pdf_diag(format!("pdf page_count OK count={count}"));
-            count
-        })
+        with_pdfium_lock(|| self.doc().pages().len() as u32)
     }
 
     fn metadata(&self) -> DocumentMeta {
@@ -182,45 +149,30 @@ impl Document for PdfBook {
     }
 
     fn page_bytes(&self, index: u32) -> Result<Vec<u8>> {
-        pdf_diag(format!("pdf page_bytes START index={index}"));
         // 将所有 PDFium 对象的访问和位图复制限制在同一临界区；
         // DynamicImage 已拥有自己的像素数据，WebP 编码可以在锁外并行执行。
-        pdf_diag(format!("pdf page_bytes WAIT_GATE index={index}"));
         let img = with_pdfium_lock(|| -> Result<image::DynamicImage> {
-            pdf_diag(format!("pdf page_bytes ACQUIRED_GATE index={index}"));
-            pdf_diag(format!("pdf load_page START index={index}"));
             let page = self
                 .doc()
                 .pages()
                 .get(index as i32)
                 .with_context(|| format!("获取 PDF 第 {index} 页失败"))?;
-            pdf_diag(format!("pdf load_page OK index={index}"));
             let h = page.height();
             let w = page.width();
             let (render_width, render_height) =
                 fit_webp_render_dimensions(w.value as f64, h.value as f64);
-            pdf_diag(format!(
-                "pdf render START index={index} width={render_width} height={render_height} source_width={} source_height={}",
-                w.value, h.value
-            ));
             let bitmap = page
                 .render(render_width, render_height, None)
                 .with_context(|| format!("渲染 PDF 第 {index} 页失败"))?;
-            pdf_diag(format!("pdf render OK index={index}"));
-            let image = bitmap
+            bitmap
                 .as_image()
-                .with_context(|| format!("PDF 位图转图片失败: 第 {index} 页"))?;
-            pdf_diag(format!("pdf bitmap_copy OK index={index}"));
-            Ok(image)
+                .with_context(|| format!("PDF 位图转图片失败: 第 {index} 页"))
         })?;
-        pdf_diag(format!("pdf page_bytes RELEASED_GATE index={index}"));
 
         let mut buf = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut buf);
-        pdf_diag(format!("pdf webp START index={index}"));
         img.write_to(&mut cursor, image::ImageFormat::WebP)
             .with_context(|| format!("编码 PDF 第 {index} 页为 WebP 失败"))?;
-        pdf_diag(format!("pdf webp OK index={index} bytes={}", buf.len()));
         Ok(buf)
     }
 }

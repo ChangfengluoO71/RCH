@@ -8,6 +8,20 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.5.6] — 2026-08-28
+
+### Fixed
+
+- 修复 Android 端远程多页 PDF 可能因 PDFium 并发访问触发原生 `SIGSEGV` 闪退的问题；所有 PDFium FFI 调用统一通过进程级 gate 串行化。
+- 修复 Reader L1 缓存命中后触发预取时的 mutex 自锁，避免非 PDF 漫画出现大量页面同时转圈并停止继续加载。
+- 修复超长 PDF 页面渲染尺寸超过 WebP 16383 像素单边限制后编码失败、页面持续转圈的问题；超长页面现在保持比例缩放到安全尺寸。
+
+### Verification
+
+- 原始百度网盘 4 页 PDF 在同一 Android 设备上通过回归。
+- 本地多页 PDF 与触发过批量转圈的非 PDF 漫画均通过实机回归。
+- Rust 全量串行测试、`cargo check`、Android arm64 Release 核心构建与正式 APK 签名验证通过。
+
 ## [0.5.5] — 2026-08-25
 
 ### Fixed

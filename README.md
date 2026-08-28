@@ -88,22 +88,22 @@ RCH 不只是一个“打开漫画文件”的阅读器，而是希望把**本�
 
 当前稳定版本：
 
-**v0.5.5**
+**v0.5.6**
 
 | 平台                  | 文件                          | 说明                           |
 | ------------------- | --------------------------- | ---------------------------- |
-| Windows 10 / 11 x64 | `RCH-0.5.5-windows-x64.exe` | Windows 桌面版                  |
+| Windows 10 / 11 x64 | `RCH-0.5.6-windows-x64.exe` | Windows 桌面版                  |
 | Android arm64-v8a   | `app-arm64-v8a-release.apk` | Android 64 位（推荐）            |
 | Android armeabi-v7a | `app-armeabi-v7a-release.apk` | Android 32 位                 |
 | Android x86_64      | `app-x86_64-release.apk`    | Android x86 模拟器 / 通用        |
 
-### v0.5.5 更新重点
+### v0.5.6 更新重点
 
-- 修复本地图片型漫画文件夹无法批量添加/移除标签的问题，并支持文件与文件夹混合选择。
-- 文件夹标签写入离线索引时保留目录类型，避免后续被当作文件处理。
-- 复用漫画文件夹检测结果，减少标签弹窗出现前的重复扫描等待。
+- 修复 Android 远程多页 PDF 可能因 PDFium 并发访问而原生闪退的问题。
+- 修复 Reader L1 缓存命中后预取自锁，导致非 PDF 漫画大量页面持续转圈的问题。
+- 修复超长 PDF 页面超过 WebP 单边尺寸上限后无法显示的问题。
 
-完整说明见[版本更新说明](docs/releases/release_notes_v0.5.5.md)。
+完整说明见[版本更新说明](docs/releases/release_notes_v0.5.6.md)。
 
 ### Windows
 

@@ -64,8 +64,8 @@ jobs:
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
-          body="RCH ${tag} - see CHANGELOG.md for details"
-          notes="${GITHUB_WORKSPACE}/release_notes_${tag}.md"
+          body="RCH ${tag} - see docs/project/CHANGELOG.md for details"
+          notes="${GITHUB_WORKSPACE}/docs/releases/release_notes_${tag}.md"
           if [ -f "$notes" ]; then body=$(cat "$notes"); fi
           printf '%s' "$body" > "$RUNNER_TEMP/release_body.md"
 

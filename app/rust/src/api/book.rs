@@ -4,7 +4,6 @@
 //! 重 IO(解压/解码)经 `spawn_blocking` 隔离;翻页流畅性由
 //! `reader::Reader` 的缓存 + 预取保证。
 
-use crate::diag::pdf_diag;
 use crate::reader::Reader;
 use crate::{cache, decode, document, source::local};
 use anyhow::Result;
@@ -55,15 +54,12 @@ pub struct CropRect {
 /// 首个可见页由 Dart 发起 `book_page()`；该前台页完成后 Reader 再围绕真实页码预取，
 /// 避免注册阶段固定从第 0 页抢跑后台任务，挤占 PDF 等重渲染格式的首屏请求。
 pub(crate) fn register_book(book: Box<dyn document::Document>, cache_ns: &str) -> BookInfo {
-    pdf_diag("book register START");
     let reader = Arc::new(Reader::new(book, cache_ns));
     let handle = next_id();
-    let title = reader.title();
-    let page_count = reader.page_count();
     let info = BookInfo {
         handle,
-        title,
-        page_count,
+        title: reader.title(),
+        page_count: reader.page_count(),
     };
     sessions().lock().unwrap().insert(
         handle,
@@ -71,9 +67,6 @@ pub(crate) fn register_book(book: Box<dyn document::Document>, cache_ns: &str) -
             reader: Arc::clone(&reader),
         },
     );
-    pdf_diag(format!(
-        "book register OK handle={handle} page_count={page_count}"
-    ));
     info
 }
 
@@ -98,39 +91,13 @@ pub async fn open_local_book(path: String) -> Result<BookInfo> {
 /// 读取一页的原始图片字节(优先命中缓存/预取,翻页秒出)。
 /// 返回 ZIP 内该页的原始字节(JPEG/PNG 等);像素解码由 Flutter 侧完成(自带 image cache)。
 pub async fn book_page(handle: u64, index: u32) -> Result<Vec<u8>> {
-    pdf_diag(format!("book_page REQUEST handle={handle} index={index}"));
     let reader = {
         let g = sessions().lock().unwrap();
         g.get(&handle).map(|s| Arc::clone(&s.reader))
     };
-    let reader = match reader {
-        Some(reader) => reader,
-        None => {
-            pdf_diag(format!("book_page INVALID_HANDLE handle={handle} index={index}"));
-            return Err(anyhow::anyhow!("无效的书句柄: {handle}"));
-        }
-    };
-    let bytes = tokio::task::spawn_blocking(move || {
-        pdf_diag(format!("book_page WORKER_ENTER handle={handle} index={index}"));
-        let result = reader.get_page(index);
-        match &result {
-            Ok(bytes) => pdf_diag(format!(
-                "book_page WORKER_OK handle={handle} index={index} bytes={}",
-                bytes.len()
-            )),
-            Err(err) => pdf_diag(format!(
-                "book_page WORKER_ERR handle={handle} index={index} err={err:#}"
-            )),
-        }
-        result
-    })
-    .await??;
-    let out = (*bytes).clone();
-    pdf_diag(format!(
-        "book_page RETURN handle={handle} index={index} bytes={}",
-        out.len()
-    ));
-    Ok(out)
+    let reader = reader.ok_or_else(|| anyhow::anyhow!("无效的书句柄: {handle}"))?;
+    let bytes = tokio::task::spawn_blocking(move || reader.get_page(index)).await??;
+    Ok((*bytes).clone())
 }
 
 /// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
@@ -178,7 +145,6 @@ pub async fn book_cover(
 
 /// 关闭书籍会话,释放资源。
 pub fn close_book(handle: u64) {
-    pdf_diag(format!("book close handle={handle}"));
     sessions().lock().unwrap().remove(&handle);
 }
 

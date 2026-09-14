@@ -25,7 +25,7 @@ pub fn classify(name: &str, is_dir: bool) -> RemoteAssetKind {
     let n = name.to_ascii_lowercase();
     if is_dir { return RemoteAssetKind::PlainDir; }
     if ["cbz","zip","cbr","rar","cb7","7z","cbt","tar","epub","pdf","mobi","azw","azw3"].iter().any(|x| n.ends_with(&format!(".{x}"))) { RemoteAssetKind::ArchiveFile }
-    else if ["jpg","jpeg","png","webp","gif","bmp"].iter().any(|x| n.ends_with(&format!(".{x}"))) { RemoteAssetKind::ImageFile } else { RemoteAssetKind::Other }
+    else if ["jpg","jpeg","png","webp","gif","bmp","avif"].iter().any(|x| n.ends_with(&format!(".{x}"))) { RemoteAssetKind::ImageFile } else { RemoteAssetKind::Other }
 }
 pub fn classify_directory(children: &[RemoteEntry]) -> RemoteAssetKind {
     if children.iter().any(|e| matches!(e.asset_kind, RemoteAssetKind::ArchiveFile)) { RemoteAssetKind::ContainerDir }

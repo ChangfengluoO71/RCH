@@ -45,6 +45,6 @@ Future<List<FolderSnapshotEntry>> listRemoteDirFor(
   };
   if (list == null) return const [];
   return list
-      .map((e) => FolderSnapshotEntry(name: e.name, path: e.path, isDir: e.isDir, size: e.size, mtime: e.modifiedAt))
+      .map((e) => FolderSnapshotEntry(name: e.name, path: e.path, isDir: e.isDir, size: e.size.toInt(), mtime: e.mtime.toInt()))
       .toList();
 }

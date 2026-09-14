@@ -1,6 +1,6 @@
 use super::model::RemoteEntry;
 use std::fmt;
-#[derive(Debug)] pub enum RemoteScanError { NotFound, Unauthorized, Unsupported, Io(String), Provider(String) }
+#[derive(Debug)] pub enum RemoteScanError { NotFound, Forbidden, RateLimited { retry_after_ms: Option<u64> }, TransientNetwork(String), MalformedResponse(String), RangeUnavailable, Cancelled, Unauthorized, Unsupported, Io(String), Provider(String) }
 impl fmt::Display for RemoteScanError { fn fmt(&self,f:&mut fmt::Formatter<'_>)->fmt::Result { write!(f,"{self:?}") } }
 impl std::error::Error for RemoteScanError {}
 #[derive(Debug, Clone, Default)] pub struct RemoteCapabilities { pub range_read: bool, pub pagination: bool }

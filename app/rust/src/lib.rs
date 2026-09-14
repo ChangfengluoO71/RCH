@@ -9,6 +9,7 @@ pub mod downloader;
 mod frb_generated;
 pub mod rchpkg;
 pub mod reader;
+pub mod remote_scan;
 pub mod scrape_projection;
 pub mod scraper;
 pub mod source;

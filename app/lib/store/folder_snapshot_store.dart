@@ -65,8 +65,11 @@ class FolderSnapshotStore {
         final entries = m['entries'] as List?;
         if (key == null || entries == null) continue;
         _snapshots[key] = entries
-            .map((e) => FolderSnapshotEntry.fromJson(
-                Map<String, dynamic>.from(e as Map)))
+            .map(
+              (e) => FolderSnapshotEntry.fromJson(
+                Map<String, dynamic>.from(e as Map),
+              ),
+            )
             .toList();
       }
     } catch (_) {
@@ -113,12 +116,14 @@ class FolderSnapshotStore {
       final root = await cacheRootPath();
       final f = File('$root${Platform.pathSeparator}folder_snapshots.json');
       final payload = {
-        'version': 1,
+        'version': 2,
         'folders': _snapshots.entries
-            .map((e) => {
-                  'key': e.key,
-                  'entries': e.value.map((x) => x.toJson()).toList(),
-                })
+            .map(
+              (e) => {
+                'key': e.key,
+                'entries': e.value.map((x) => x.toJson()).toList(),
+              },
+            )
             .toList(),
       };
       await f.parent.create(recursive: true);
@@ -133,5 +138,20 @@ class FolderSnapshotStore {
     _saveTimer?.cancel();
     _saveTimer = null;
     await _save();
+  }
+
+  /// Drops the in-memory and on-disk snapshot cache together. Rust's
+  /// `clearAllCaches` removes the file on disk; clearing the Dart projection
+  /// here prevents a later lifecycle flush from resurrecting it.
+  Future<void> clear() async {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    _snapshots.clear();
+    _dirty = false;
+    try {
+      final root = await cacheRootPath();
+      final f = File('$root${Platform.pathSeparator}folder_snapshots.json');
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
   }
 }

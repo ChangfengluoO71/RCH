@@ -470,6 +470,7 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_book_tags_book ON book_tags(book_key);
         ",
     )?;
+    crate::remote_scan::persistence::migrate(conn)?;
     // 旧库升级：补 rotations 列（每页旋转，JSON 文本，如 {"0":90}）。
     let meta_cols: Vec<String> = conn
         .prepare("PRAGMA table_info(book_metas)")?

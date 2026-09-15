@@ -7,9 +7,10 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `quark_downloads`, `quark_sessions`, `sessions`, `sftp_downloads`, `sftp_sessions`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`
+// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `canonical_child_path`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_cookie_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `prime_remote_folder_locator`, `provider_path`, `quark_downloads`, `quark_sessions`, `remote_folder_cache_ns`, `remote_provider_adapter`, `retry_after_ms`, `scan_error`, `sessions`, `sftp_downloads`, `sftp_sessions`, `supports_remote_scan`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`, `RemoteSessionClient`, `SessionRemoteAdapter`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `capabilities`, `list`, `normalize_path`, `read_file_limited`, `read_range`
 
 /// 连接 WebDAV 服务器并自动探测能力,返回会话句柄与初始浏览路径。
 Future<WebDavSession> webdavConnect({
@@ -47,6 +48,31 @@ Future<BookInfo> openWebdavBook({
   session: session,
   path: path,
   strategy: strategy,
+);
+
+/// Whether a complete, successfully published image-folder manifest exists.
+/// This is a local SQLite query and never creates a provider session.
+Future<bool> remoteImageFolderManifestComplete({
+  required String sourceId,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceRemoteImageFolderManifestComplete(
+  sourceId: sourceId,
+  path: path,
+);
+
+/// Open a committed remote image folder without creating an archive raw cache.
+Future<BookInfo> openRemoteFolderBook({
+  required String sourceType,
+  required String sourceId,
+  required BigInt session,
+  required String path,
+  required String title,
+}) => RustLib.instance.api.crateApiSourceOpenRemoteFolderBook(
+  sourceType: sourceType,
+  sourceId: sourceId,
+  session: session,
+  path: path,
+  title: title,
 );
 
 /// 查询当前下载进度(0.0 ~ 1.0),若 session 不在下载中则返回 1.0。

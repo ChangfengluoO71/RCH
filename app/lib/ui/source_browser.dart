@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:app/src/rust/api/book.dart';
@@ -61,7 +62,11 @@ class SourceBrowser extends StatefulWidget {
 
 class _SourceBrowserState extends State<SourceBrowser> {
   late String _path = widget.source.effectiveRootPath;
+  late String _logicalPath = _normalizeRemoteLogicalPath(
+    widget.source.effectiveRootPath,
+  );
   final List<String> _stack = [];
+  final List<String> _logicalStack = [];
   List<DirEntry> _entries = [];
   bool _loading = false;
   String? _error;
@@ -108,6 +113,26 @@ class _SourceBrowserState extends State<SourceBrowser> {
   static bool _isComicEntry(DirEntry e) =>
       !e.isDir && _comicExts.any((ext) => e.name.toLowerCase().endsWith(ext));
 
+  bool get _usesOpaqueProviderPaths =>
+      widget.source.isBaidu || widget.source.is115 || widget.source.isQuark;
+
+  static String _normalizeRemoteLogicalPath(String path) {
+    var value = path.trim().replaceAll('\\', '/');
+    while (value.contains('//')) {
+      value = value.replaceAll('//', '/');
+    }
+    if (value.isEmpty) return '/';
+    if (!value.startsWith('/')) value = '/$value';
+    while (value.length > 1 && value.endsWith('/')) {
+      value = value.substring(0, value.length - 1);
+    }
+    return value;
+  }
+
+  String _logicalPathOf(DirEntry entry) => _usesOpaqueProviderPaths
+      ? _normalizeRemoteLogicalPath('$_logicalPath/${entry.name}')
+      : _normalizeRemoteLogicalPath(entry.path);
+
   @override
   void initState() {
     super.initState();
@@ -125,12 +150,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 例如下载完成 / 记录加载后 未缓存 → 封面。
   void _onStoreChanged() {
     if (_offlineMode || widget.source.isLocalFs || _entries.isEmpty) return;
-    setState(() {
-      for (final e in _entries) {
-        if (!e.isDir) continue;
-        _detectRemoteFolderKind(e);
-      }
-    });
+    unawaited(_detectComicFolders());
   }
 
   Future<void> _init() async {
@@ -241,6 +261,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             .where((e) => e.isDir || _isComicEntry(e))
             .toList();
       });
+      await _detectComicFolders();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
@@ -297,7 +318,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
         _path = path;
         _entries = list.where((e) => e.isDir || _isComicEntry(e)).toList();
       });
-      _detectComicFolders();
+      await _detectComicFolders();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
@@ -335,13 +356,18 @@ class _SourceBrowserState extends State<SourceBrowser> {
       }
       return;
     }
-    // 网盘：纯本地判定（快照 / 阅读记录），同步完成
-    setState(() {
-      for (final e in _entries) {
-        if (!e.isDir) continue;
-        _detectRemoteFolderKind(e);
+    // 网盘：已发布的扫描清单优先；查询仅访问本地 SQLite，不建立新会话。
+    for (final e in _entries) {
+      if (!e.isDir) continue;
+      if (await remoteImageFolderManifestComplete(
+        sourceId: widget.source.id,
+        path: _logicalPathOf(e),
+      )) {
+        _setFolderKind(e.path, _FolderCoverKind.book);
+      } else if (mounted) {
+        setState(() => _detectRemoteFolderKind(e));
       }
-    });
+    }
   }
 
   /// 网盘子目录封面判定（纯本地，无任何网盘请求）。
@@ -405,10 +431,14 @@ class _SourceBrowserState extends State<SourceBrowser> {
     return candidates.first;
   }
 
-  void _openDir(String path) {
+  void _openDir(String path, String name) {
     setState(() {
       _stack.add(_path);
+      _logicalStack.add(_logicalPath);
       _path = path;
+      _logicalPath = _usesOpaqueProviderPaths
+          ? _normalizeRemoteLogicalPath('$_logicalPath/$name')
+          : _normalizeRemoteLogicalPath(path);
     });
     _relist();
   }
@@ -417,6 +447,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     if (_stack.isEmpty) return;
     setState(() {
       _path = _stack.removeLast();
+      _logicalPath = _logicalStack.removeLast();
     });
     _relist();
   }
@@ -1158,7 +1189,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           final sel = _selectMode && _selectedPaths.contains(e.path);
           Widget folderCard = _FolderCard(
             name: e.name,
-            onTap: _selectMode ? null : () => _openDir(e.path),
+            onTap: _selectMode ? null : () => _openDir(e.path, e.name),
           );
           if (!_selectMode) return folderCard;
           return Stack(
@@ -1191,7 +1222,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                           ? _selectedPaths.remove(e.path)
                           : _selectedPaths.add(e.path),
                     ),
-                    onDoubleTap: () => _openDir(e.path),
+                    onDoubleTap: () => _openDir(e.path, e.name),
                   ),
                 ),
               ),
@@ -1260,9 +1291,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 带封面的文件夹卡片：book 进详情；container / uncached 下钻。
   Widget _folderCoverCard(DirEntry e, _FolderCoverKind kind) {
     final sel = _selectMode && _selectedPaths.contains(e.path);
+    final bookPath = kind == _FolderCoverKind.book ? _logicalPathOf(e) : e.path;
     final card = _ComicFolderCoverCard(
       source: widget.source,
-      dirPath: e.path,
+      dirPath: bookPath,
       name: e.name,
       kind: kind,
       firstComicFile: _folderFirstFile[e.path],
@@ -1273,12 +1305,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
               MaterialPageRoute(
                 builder: (_) => BookDetailPage(
                   source: widget.source,
-                  path: e.path,
+                  path: bookPath,
                   title: e.name,
                 ),
               ),
             )
-          : () => _openDir(e.path),
+          : () => _openDir(e.path, e.name),
     );
     if (!_selectMode) return card;
     return Stack(
@@ -1332,7 +1364,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             return ListTile(
               leading: const Icon(Icons.folder, color: Colors.amber),
               title: Text(e.name),
-              onTap: () => _openDir(e.path),
+              onTap: () => _openDir(e.path, e.name),
             );
           }
           return ListTile(
@@ -1347,7 +1379,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
             trailing: IconButton(
               icon: const Icon(Icons.arrow_forward_ios, size: 16),
-              onPressed: () => _openDir(e.path),
+              onPressed: () => _openDir(e.path, e.name),
             ),
             onTap: () => setState(
               () => sel

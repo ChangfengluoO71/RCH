@@ -8,6 +8,7 @@ pub mod folder;
 pub mod mobi;
 pub mod pdf;
 pub mod rar;
+pub mod remote_folder;
 pub mod sevenz;
 pub mod tar;
 pub mod zip;

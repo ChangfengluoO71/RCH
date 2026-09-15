@@ -6,6 +6,7 @@ import 'package:app/store/quark_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:app/ui/reader_page.dart';
+import 'package:app/src/rust/api/source.dart';
 import 'package:flutter/material.dart';
 
 /// 打开一本书（使用 AI 超分版本，如果缓存存在）。
@@ -53,6 +54,12 @@ Future<void> _open(
     }
   }
   final store = LibraryStore.instance;
+  final remoteImageFolder = source.needsSession &&
+      !source.remoteOnly &&
+      await remoteImageFolderManifestComplete(
+        sourceId: source.id,
+        path: path,
+      );
   // 记录一次"打开"(readCount+1),并取出上次进度。
   await store.recordRead(source: source, path: path, title: title);
   final initialPage = store.recordOf(source, path)?.lastPage ?? 0;
@@ -66,6 +73,7 @@ Future<void> _open(
         source: source,
         initialPage: initialPage,
         skipAiCache: skipAiCache,
+        remoteImageFolder: remoteImageFolder,
       ),
     ),
   );

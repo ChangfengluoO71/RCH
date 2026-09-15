@@ -3,6 +3,7 @@
 use super::book::{register_book, BookInfo, CropRect, DirEntry, PageImage};
 use crate::cache;
 use crate::document;
+use crate::document::remote_folder::{AdapterFolderReader, RemoteFolderBook};
 use crate::remote_scan::adapter::{RemoteCapabilities, RemoteProviderAdapter, RemoteScanError};
 use crate::remote_scan::model::{classify, normalize_path, RemoteEntry};
 use crate::source::baidu::{self as baidu_source, BaiduClient};
@@ -445,7 +446,22 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
         let read = match &self.client {
             RemoteSessionClient::WebDav(c) => c.read_range(&provider_path, offset, &mut bytes),
             RemoteSessionClient::Sftp(c) => c.read_at(&provider_path, offset, &mut bytes),
-            _ => return Err(RemoteScanError::RangeUnavailable),
+            RemoteSessionClient::Baidu(c) => {
+                let (url, _) = c.dlink(&provider_path).map_err(scan_error)?;
+                c.read_range_with_dlink(&url, &provider_path, offset, &mut bytes)
+            }
+            RemoteSessionClient::Cloud115(c) => {
+                let (url, _) = c.downurl(&provider_path).map_err(scan_error)?;
+                c.read_range_url(&url, offset, &mut bytes)
+            }
+            RemoteSessionClient::Cloud115Cookie(c) => {
+                let info = c.downurl(&provider_path).map_err(scan_error)?;
+                c.read_range_url(&info.url, offset, &mut bytes)
+            }
+            RemoteSessionClient::Quark(c) => {
+                let info = c.downlink(&provider_path).map_err(scan_error)?;
+                c.read_range_url(&info.url, offset, &mut bytes)
+            }
         }
         .map_err(|_| RemoteScanError::TransientNetwork("range_read_failed".into()))?;
         bytes.truncate(read);
@@ -458,7 +474,10 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
         _path: &str,
         _max_bytes: u64,
     ) -> std::result::Result<Vec<u8>, RemoteScanError> {
-        Err(RemoteScanError::Unsupported)
+        // A provider-specific bounded streaming GET is not available here.
+        // Return a typed capability failure instead of falling back to any
+        // existing whole-file/archive download method.
+        Err(RemoteScanError::RangeUnavailable)
     }
 
     #[flutter_rust_bridge::frb(ignore)]
@@ -472,14 +491,108 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
         _path: &str,
         _fingerprint: &str,
     ) -> std::result::Result<RemoteCapabilities, RemoteScanError> {
+        let provider_path = self.provider_path(_path);
+        let range_read = match &self.client {
+            RemoteSessionClient::WebDav(c) => c.range_supported(&provider_path).unwrap_or(false),
+            RemoteSessionClient::Sftp(_) => true,
+            RemoteSessionClient::Baidu(c) => c
+                .dlink(&provider_path)
+                .map(|(url, _)| c.probe_range(&url))
+                .unwrap_or(false),
+            RemoteSessionClient::Cloud115(c) => c
+                .downurl(&provider_path)
+                .map(|(url, _)| c.probe_range(&url))
+                .unwrap_or(false),
+            RemoteSessionClient::Cloud115Cookie(c) => c
+                .downurl(&provider_path)
+                .map(|info| c.probe(&info.url).0)
+                .unwrap_or(false),
+            RemoteSessionClient::Quark(c) => c
+                .downlink(&provider_path)
+                .map(|info| c.probe(&info.url).0)
+                .unwrap_or(false),
+        };
         Ok(RemoteCapabilities {
-            range_read: matches!(
-                self.client,
-                RemoteSessionClient::WebDav(_) | RemoteSessionClient::Sftp(_)
-            ),
+            range_read,
             pagination: false,
         })
     }
+}
+
+fn remote_folder_cache_ns(source_type: &str, session: u64, path: &str) -> Result<String> {
+    let origin = match source_type {
+        "webdav" => get_session(session)?.origin().to_string(),
+        "sftp" => get_sftp_session(session)?.endpoint().to_string(),
+        "baidu" => get_baidu_session(session)?.origin(),
+        "115" => {
+            if let Ok(client) = get_cloud115_cookie_session(session) {
+                client.origin()
+            } else {
+                get_cloud115_session(session)?.origin()
+            }
+        }
+        "quark" => get_quark_session(session)?.origin(),
+        _ => return Err(anyhow!("unsupported remote folder source type")),
+    };
+    Ok(format!("{source_type}|{origin}|{}", normalize_path(path)))
+}
+
+fn prime_remote_folder_locator(
+    adapter: &dyn RemoteProviderAdapter,
+    logical_path: &str,
+) -> std::result::Result<(), RemoteScanError> {
+    let logical_path = normalize_path(logical_path);
+    if logical_path != "/" {
+        let mut parent = String::from("/");
+        for segment in logical_path.trim_start_matches('/').split('/') {
+            let _ = adapter.list(&parent, None)?;
+            parent = canonical_child_path(&parent, segment);
+        }
+    }
+    let _ = adapter.list(&logical_path, None)?;
+    Ok(())
+}
+
+/// Whether a complete, successfully published image-folder manifest exists.
+/// This is a local SQLite query and never creates a provider session.
+pub fn remote_image_folder_manifest_complete(source_id: String, path: String) -> bool {
+    crate::remote_scan::persistence::load_complete_image_folder_manifest(
+        &crate::db::get().lock().unwrap(),
+        &source_id,
+        &path,
+    )
+    .map(|entries| !entries.is_empty())
+    .unwrap_or(false)
+}
+
+/// Open a committed remote image folder without creating an archive raw cache.
+pub async fn open_remote_folder_book(
+    source_type: String,
+    source_id: String,
+    session: u64,
+    path: String,
+    title: String,
+) -> Result<BookInfo> {
+    let entries = crate::remote_scan::persistence::load_complete_image_folder_manifest(
+        &crate::db::get().lock().unwrap(),
+        &source_id,
+        &path,
+    )?;
+    if entries.is_empty() {
+        return Err(anyhow!("remote image-folder manifest is incomplete"));
+    }
+    let adapter = remote_provider_adapter(&source_type, session, "/")?;
+    let path_for_prime = path.clone();
+    let adapter_for_prime = Arc::clone(&adapter);
+    tokio::task::spawn_blocking(move || {
+        prime_remote_folder_locator(adapter_for_prime.as_ref(), &path_for_prime)
+            .map_err(|error| anyhow!(error))
+    })
+    .await??;
+    let cache_ns = remote_folder_cache_ns(&source_type, session, &path)?;
+    let reader = Arc::new(AdapterFolderReader::new(adapter));
+    let book = RemoteFolderBook::open(entries, reader, title)?;
+    Ok(register_book(Box::new(book), &cache_ns))
 }
 
 pub(crate) fn remote_provider_adapter(

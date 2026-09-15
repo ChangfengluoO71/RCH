@@ -2,6 +2,7 @@ use super::engine::{CoverTask, ScanDirectoryTask};
 use super::model::{
     fingerprint as entry_fingerprint, RemoteAssetKind, RemoteEntry, RemoteScanState,
 };
+use crate::document::remote_folder::RemoteImageEntry;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 
 pub fn migrate(conn: &Connection) -> Result<()> {
@@ -364,5 +365,131 @@ pub fn take_pending_task(
     } else {
         tx.commit()?;
         Ok(None)
+    }
+}
+
+pub fn load_complete_image_folder_manifest(
+    conn: &Connection,
+    source_id: &str,
+    logical_path: &str,
+) -> Result<Vec<RemoteImageEntry>> {
+    let logical_path = super::model::normalize_path(logical_path);
+    let proof: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT li.scan_generation, li.content_fingerprint
+             FROM library_index li
+             JOIN remote_listing_state rs
+               ON rs.source_id=li.source_id AND rs.logical_path=li.path
+              AND rs.scan_generation=li.scan_generation
+              AND rs.content_fingerprint=li.content_fingerprint
+             WHERE li.source_id=?1 AND li.path=?2 AND li.entry_type='dir'
+               AND li.asset_kind='ImageFolder' AND li.listing_complete=1 AND li.deleted=0
+               AND rs.listing_complete=1",
+            params![source_id, logical_path],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((generation, _folder_fingerprint)) = proof else {
+        return Ok(Vec::new());
+    };
+
+    let prefix = if logical_path == "/" {
+        "/".to_string()
+    } else {
+        format!("{logical_path}/")
+    };
+    let mut stmt = conn.prepare(
+        "SELECT path,name,size,modified_at,content_fingerprint
+         FROM library_index
+         WHERE source_id=?1 AND path LIKE ?2 AND entry_type='file'
+           AND asset_kind='ImageFile' AND scan_generation=?3
+           AND listing_complete=1 AND deleted=0
+         ORDER BY path",
+    )?;
+    let like = format!("{prefix}%");
+    let rows = stmt.query_map(params![source_id, like, generation], |row| {
+        Ok(RemoteImageEntry {
+            logical_path: row.get(0)?,
+            name: row.get(1)?,
+            size: row.get::<_, Option<i64>>(2)?.map(|value| value.max(0) as u64),
+            mtime: row.get(3)?,
+            fingerprint: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+        })
+    })?;
+    let mut entries = Vec::new();
+    for row in rows {
+        let entry = row?;
+        let remainder = entry.logical_path.strip_prefix(&prefix).unwrap_or("");
+        if !remainder.is_empty() && !remainder.contains('/') {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+#[cfg(test)]
+mod remote_folder_manifest_tests {
+    use super::*;
+
+    fn manifest_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE library_index (
+                source_id TEXT NOT NULL, parent_id TEXT, name TEXT NOT NULL, path TEXT NOT NULL,
+                entry_type TEXT NOT NULL, size INTEGER, modified_at INTEGER, asset_kind TEXT,
+                content_fingerprint TEXT, scan_generation INTEGER, listing_complete INTEGER NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE remote_listing_state (
+                source_id TEXT NOT NULL, logical_path TEXT NOT NULL, content_fingerprint TEXT,
+                scan_generation INTEGER NOT NULL, listing_complete INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn complete_image_folder_manifest_loads_only_committed_image_children() {
+        let conn = manifest_db();
+        conn.execute(
+            "INSERT INTO library_index VALUES('s','root','Book','/Book','dir',NULL,NULL,'ImageFolder','folder-fp',4,1,0)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('s','/Book','folder-fp',4,1)",
+            [],
+        ).unwrap();
+        for (name, path, kind) in [
+            ("2.jpg", "/Book/2.jpg", "ImageFile"),
+            ("note.txt", "/Book/note.txt", "Other"),
+        ] {
+            conn.execute(
+                "INSERT INTO library_index VALUES('s',NULL,?1,?2,'file',3,7,?3,'child-fp',4,1,0)",
+                params![name, path, kind],
+            ).unwrap();
+        }
+
+        let entries = load_complete_image_folder_manifest(&conn, "s", "/Book").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].logical_path, "/Book/2.jpg");
+        assert_eq!(entries[0].fingerprint, "child-fp");
+    }
+
+    #[test]
+    fn incomplete_or_generation_mismatched_folder_manifest_is_rejected() {
+        let conn = manifest_db();
+        conn.execute(
+            "INSERT INTO library_index VALUES('s','root','Book','/Book','dir',NULL,NULL,'ImageFolder','folder-fp',4,1,0)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('s','/Book','folder-fp',5,1)",
+            [],
+        ).unwrap();
+
+        assert!(load_complete_image_folder_manifest(&conn, "s", "/Book")
+            .unwrap()
+            .is_empty());
     }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/source.dart';
@@ -5,6 +7,7 @@ import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/remote_cache_cleanup.dart';
 import 'package:app/ui/common.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
@@ -15,8 +18,10 @@ import 'package:photo_view/photo_view.dart';
 class ReaderPage extends StatefulWidget {
   final String path; final String title; final BigInt? webdavSession;
   final BookSource? source; final int initialPage; final bool skipAiCache;
+  final bool remoteImageFolder;
   const ReaderPage({super.key, required this.path, required this.title,
-    this.webdavSession, this.source, this.initialPage = 0, this.skipAiCache = false,});
+    this.webdavSession, this.source, this.initialPage = 0, this.skipAiCache = false,
+    this.remoteImageFolder = false,});
   @override State<ReaderPage> createState() => _ReaderPageState();
 }
 
@@ -45,6 +50,8 @@ class _ReaderPageState extends State<ReaderPage> {
   /// 进入阅读器时是否为紧凑（手机）布局：退出时据此恢复竖屏锁定或保持可旋转。
   bool _compactAtOpen = true;
   bool _orientationCaptured = false;
+  final ReadingCompletionState _completion = ReadingCompletionState(pageCount: 0);
+  RemoteBookUseLease? _cleanupLease;
 
   // ---- 视口页 ↔ 真实页映射(双页模式一视口对应两页) ----
   ReaderPaging get _paging => ReaderPaging(
@@ -121,6 +128,13 @@ class _ReaderPageState extends State<ReaderPage> {
     final s0 = widget.source;
     if (s0 != null) {
       _rotations.addAll(LibraryStore.instance.metaOf(s0, widget.path).rotations);
+      _cleanupLease = RemoteBookUseRegistry.instance.acquire(
+        source: s0,
+        path: widget.path,
+        enabled: true,
+        strategy: g.bookOpenStrategy,
+        isImageFolder: widget.remoteImageFolder,
+      );
     }
     _open();
     AiUpscaleManager.instance.addListener(_onAiManager);
@@ -201,7 +215,17 @@ class _ReaderPageState extends State<ReaderPage> {
   Future<void> _open() async { try {
     final src = widget.source;
     final strategy = LibraryStore.instance.settings.bookOpenStrategy.name;
-    if (src?.isWebDav == true && widget.webdavSession != null) {
+    if (widget.remoteImageFolder && src != null && widget.webdavSession != null) {
+      final b = await openRemoteFolderBook(
+        sourceType: src.type,
+        sourceId: src.id,
+        session: widget.webdavSession!,
+        path: widget.path,
+        title: widget.title,
+      );
+      if (!mounted) return;
+      setState(() { _book = b; });
+    } else if (src?.isWebDav == true && widget.webdavSession != null) {
       // 远程(WebDAV/SFTP)会话: 轮询下载进度后打开
       _startPollingProgress(
           progressFn: () => webdavDownloadProgress(session: widget.webdavSession!));
@@ -250,6 +274,7 @@ class _ReaderPageState extends State<ReaderPage> {
     }
     if (!mounted) return;
     setState(() { _page = widget.initialPage.clamp(0, _book!.pageCount > 0 ? _book!.pageCount - 1 : 0); });
+    _completion.reset(pageCount: _book!.pageCount, initialPage: _page);
     _recreatePageCtrl();
     _ensure(_page); _ensure(_page+1); _ensure(_page+2);
   } catch(e) { if (mounted) setState(() { _error = '$e'; _downloadProgress = null; }); } }
@@ -273,6 +298,7 @@ class _ReaderPageState extends State<ReaderPage> {
     if(_bytes.containsKey(i)||_loading.contains(i))return;_loading.add(i);
     bookPage(handle: b.handle, index: i).then((d) async {
       if (!mounted) return;
+      if (i == _page) _completion.observeStablePage(i);
       if (widget.skipAiCache || !_useAiVersion) {
         if (mounted) setState(() { _bytes[i] = d; _loading.remove(i); });
         return;
@@ -314,6 +340,7 @@ class _ReaderPageState extends State<ReaderPage> {
       final n=(_page+d).clamp(0,b.pageCount-1);
       if(n==_page)return;
       setState(()=>_page=n);
+      _completion.observeStablePage(n);
       if (_webtoonCtrl.hasClients) _webtoonCtrl.animateTo(_webtoonOffsetTo(n),duration:const Duration(milliseconds:220),curve:Curves.easeOut);
       for(var i=n-3;i<=n+3;i++){_ensure(i);}
       final src=widget.source;if(src!=null){await LibraryStore.instance.recordRead(source:src,path:widget.path,title:widget.title,page:n);}
@@ -322,6 +349,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final n=(_page+d).clamp(0,b.pageCount-1);
     if(n==_page)return;
     setState(()=>_page=n);
+    _completion.observeStablePage(n);
     _photoCtrlOf(n).reset();_scaleStateCtrlOf(n).reset();_dualZoomCtrl.value=Matrix4.identity();
     _pageCtrl?.animateToPage(_viewOfPage(n),duration:const Duration(milliseconds:220),curve:Curves.easeOutCubic);
     _disposeDistantPhotoCtrls(n);
@@ -348,7 +376,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
   void _showJumpDialog() { final b=_book;if(b==null)return;final ctrl=TextEditingController();
     showDialog(context:context,builder:(ctx)=>AlertDialog(title:const Text('跳转到页码'),content:TextField(controller:ctrl,keyboardType:TextInputType.number,autofocus:true,decoration:const InputDecoration(hintText:'输入页码',border:OutlineInputBorder()),onSubmitted:(v){_doJump(v,ctrl,ctx);}),actions:[TextButton(onPressed:()=>Navigator.of(ctx).pop(),child:const Text('取消')),FilledButton(onPressed:(){_doJump(ctrl.text,ctrl,ctx);},child:const Text('跳转'))]));}
-  void _doJump(String v, TextEditingController ctrl, BuildContext ctx) { final b=_book;if(b==null)return;final p=int.tryParse(v.trim());if(p!=null){final n=(p-1).clamp(0,b.pageCount-1);setState(()=>_page=n);
+  void _doJump(String v, TextEditingController ctrl, BuildContext ctx) { final b=_book;if(b==null)return;final p=int.tryParse(v.trim());if(p!=null){final n=(p-1).clamp(0,b.pageCount-1);setState(()=>_page=n);_completion.observeStablePage(n);
     if (_mode == ReadMode.webtoon) {
       // 条漫: 滚动到目标页顶部。
       if (_webtoonCtrl.hasClients) _webtoonCtrl.jumpTo(_webtoonOffsetTo(n));
@@ -387,6 +415,10 @@ class _ReaderPageState extends State<ReaderPage> {
       );
     }
     final b=_book;if(b!=null)closeBook(handle:b.handle);
+    final lease = _cleanupLease;
+    if (lease != null) {
+      unawaited(lease.release(completionCandidate: _completion.completionCandidate));
+    }
     for (final c in _photoCtrls.values) { c.dispose(); }
     for (final c in _scaleStateCtrls.values) { c.dispose(); }
     _dualZoomCtrl.removeListener(_onDualZoomChanged);
@@ -459,6 +491,7 @@ class _ReaderPageState extends State<ReaderPage> {
         final p = _pageOfView(v);
         if (p == _page) return;
         setState(() { _page = p; _photoCtrlOf(p).reset(); _scaleStateCtrlOf(p).reset(); _dualZoomCtrl.value = Matrix4.identity(); });
+        _completion.observeStablePage(p);
         _disposeDistantPhotoCtrls(p);
         for (var i = p - 2; i <= p + 2; i++) { _ensure(i); }
         final s = widget.source;
@@ -526,7 +559,10 @@ class _ReaderPageState extends State<ReaderPage> {
     }
     if (p < 0) p = 0;
     if (p >= b.pageCount) p = b.pageCount - 1;
-    if (p != _page && mounted) setState(() => _page = p);
+    if (p != _page && mounted) {
+      setState(() => _page = p);
+      _completion.observeStablePage(p);
+    }
   }
 
   Widget _buildWebtoon(){final b=_book;if(b==null)return const Center(child:CircularProgressIndicator());
@@ -542,7 +578,7 @@ class _ReaderPageState extends State<ReaderPage> {
           child: ListView.builder(controller:_webtoonCtrl,itemCount:b.pageCount,itemBuilder:(context,i){final bytes=_bytes[i];
             Widget item;
             if(bytes==null){_ensure(i);item=const SizedBox(height:200,child:Center(child:CircularProgressIndicator()));}
-            else{item=GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:decodeW),fit:BoxFit.fitWidth),);}
+            else{item=GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);_completion.observeStablePage(i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:decodeW),fit:BoxFit.fitWidth),);}
             // 每帧 build 后测量该项实际高度并缓存(加载中占位→真实图片高度自动收敛),供滚动定位页码。
             return Builder(builder:(itemCtx){
               WidgetsBinding.instance.addPostFrameCallback((_){

@@ -123,6 +123,33 @@ Future<BigInt> purgeStaleBookCache({
   cookieMode: cookieMode,
 );
 
+/// Completion cleanup for a live remote Reader session.
+///
+/// Generated covers and all database projections are deliberately outside
+/// this function. Image folders never have a whole-book raw cache, so their
+/// completion path deletes only the page-cache namespace.
+Future<BigInt> purgeRemoteBookContentCache({
+  required String sourceType,
+  required String path,
+  String? url,
+  PlatformInt64? port,
+  required String rootPath,
+  String? clientId,
+  String? rootId,
+  required bool cookieMode,
+  required bool imageFolder,
+}) => RustLib.instance.api.crateApiCachePurgeRemoteBookContentCache(
+  sourceType: sourceType,
+  path: path,
+  url: url,
+  port: port,
+  rootPath: rootPath,
+  clientId: clientId,
+  rootId: rootId,
+  cookieMode: cookieMode,
+  imageFolder: imageFolder,
+);
+
 /// 缓存分类大小信息。
 class CacheSize {
   /// 页面缓存(字节)，L2 磁盘页面缓存（page/）。

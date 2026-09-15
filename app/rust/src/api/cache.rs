@@ -293,4 +293,132 @@ pub fn purge_stale_book_cache(
     Ok(freed)
 }
 
+/// Completion cleanup for a live remote Reader session.
+///
+/// Generated covers and all database projections are deliberately outside
+/// this function. Image folders never have a whole-book raw cache, so their
+/// completion path deletes only the page-cache namespace.
+pub fn purge_remote_book_content_cache(
+    source_type: String,
+    path: String,
+    url: Option<String>,
+    port: Option<i64>,
+    root_path: String,
+    client_id: Option<String>,
+    root_id: Option<String>,
+    cookie_mode: bool,
+    image_folder: bool,
+) -> Result<u64, String> {
+    use crate::cache::{delete_page_cache_for_ns, delete_raw_cache_for_key};
+    if path.is_empty() {
+        return Ok(0);
+    }
+    let (cache_ns, raw_key) = match source_type.as_str() {
+        "webdav" => {
+            let Some(origin) = url.as_deref().and_then(webdav_origin) else {
+                return Ok(0);
+            };
+            (format!("webdav|{origin}|{path}"), format!("{origin}{path}"))
+        }
+        "sftp" => {
+            let Some(endpoint) = sftp_endpoint(url.as_deref(), port) else {
+                return Ok(0);
+            };
+            (format!("sftp|{endpoint}|{path}"), format!("{endpoint}{path}"))
+        }
+        "baidu" => {
+            let root = if root_path.trim().is_empty() {
+                "/".to_string()
+            } else {
+                root_path
+            };
+            let origin = format!("baidu:{}:{root}", client_id.unwrap_or_default());
+            (format!("baidu|{origin}|{path}"), format!("{origin}{path}"))
+        }
+        "115" => {
+            let root = root_id.unwrap_or_default();
+            let root = if root.trim().is_empty() {
+                "0".to_string()
+            } else {
+                root
+            };
+            let origin = if cookie_mode {
+                format!("115web:{root}")
+            } else {
+                format!("115:{}:{root}", client_id.unwrap_or_default())
+            };
+            (format!("115|{origin}|{path}"), format!("{origin}{path}"))
+        }
+        "quark" => {
+            let root = root_id.unwrap_or_default();
+            let root = if root.trim().is_empty() {
+                "0".to_string()
+            } else {
+                root
+            };
+            let origin = format!("quark:{root}");
+            (format!("quark|{origin}|{path}"), format!("{origin}{path}"))
+        }
+        _ => return Ok(0),
+    };
+    let mut freed = delete_page_cache_for_ns(&cache_ns).map_err(|e| e.to_string())?;
+    if !image_folder {
+        freed += delete_raw_cache_for_key(&raw_key).map_err(|e| e.to_string())?;
+    }
+    Ok(freed)
+}
+
 use std::path::PathBuf;
+
+#[cfg(test)]
+mod remote_book_completion_cleanup_tests {
+    use super::*;
+    use crate::cache::{self, CacheDir};
+
+    #[test]
+    fn remote_folder_completion_removes_pages_but_preserves_raw_and_cover() {
+        let base = std::env::temp_dir().join(format!(
+            "rch_remote_folder_completion_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        cache::set_custom_cache_root(base.to_str().unwrap());
+
+        let path = "/Series/Book";
+        let origin = "https://host";
+        let page_dir = CacheDir::Page
+            .ensure()
+            .unwrap()
+            .join(cache::stable_hash(&format!("webdav|{origin}|{path}")));
+        std::fs::create_dir_all(&page_dir).unwrap();
+        std::fs::write(page_dir.join("0.bin"), b"page").unwrap();
+        let raw_dir = CacheDir::Raw
+            .ensure()
+            .unwrap()
+            .join(cache::stable_hash(&format!("{origin}{path}")));
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::write(raw_dir.join("unexpected.bin"), b"raw").unwrap();
+        cache::cover_cache_write(path, 0, 1, 1, None, &[1, 2, 3, 4]).unwrap();
+
+        let freed = purge_remote_book_content_cache(
+            "webdav".into(),
+            path.into(),
+            Some("https://host/dav".into()),
+            None,
+            "/".into(),
+            None,
+            None,
+            false,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(freed, 4);
+        assert!(!page_dir.exists());
+        assert!(raw_dir.exists());
+        assert!(cache::cover_cache_read(path, 0, 1, 1, None).is_some());
+
+        cache::set_custom_cache_root("");
+        let _ = std::fs::remove_dir_all(base);
+    }
+}

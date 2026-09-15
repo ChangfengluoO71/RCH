@@ -1,0 +1,145 @@
+// The page count is mutable because a Reader is initialized before its remote
+// document handle is available; retain the named constructor API for callers.
+// ignore_for_file: prefer_initializing_formals
+
+import 'dart:async';
+
+import '../src/rust/api/cache.dart';
+import 'models.dart';
+
+/// Completion is intentionally separate from the currently visible list item.
+/// A transient layout estimate must not mark a book complete, and navigating
+/// back from the final page clears the candidate before Reader exits.
+class ReadingCompletionState {
+  ReadingCompletionState({required int pageCount, int initialPage = 0})
+      : _pageCount = pageCount,
+        _stablePage = initialPage;
+
+  int _pageCount;
+  int _stablePage;
+  bool _candidate = false;
+
+  int get stablePage => _stablePage;
+  bool get completionCandidate => _candidate;
+
+  void reset({required int pageCount, int initialPage = 0}) {
+    _pageCount = pageCount;
+    _stablePage = initialPage.clamp(0, pageCount > 0 ? pageCount - 1 : 0);
+    _candidate = false;
+  }
+
+  void observeStablePage(int page) {
+    if (_pageCount <= 0) return;
+    _stablePage = page.clamp(0, _pageCount - 1);
+    if (_stablePage == _pageCount - 1) {
+      _candidate = true;
+    } else if (_stablePage < _pageCount - 1) {
+      _candidate = false;
+    }
+  }
+}
+
+class RemoteBookCleanupResult {
+  const RemoteBookCleanupResult({required this.freedBytes, this.error});
+
+  final BigInt freedBytes;
+  final Object? error;
+  bool get succeeded => error == null;
+}
+
+/// Process-local active-use leases protect a cache from being deleted while a
+/// second Reader window still references the same remote book.
+class RemoteBookUseRegistry {
+  RemoteBookUseRegistry._();
+
+  static final instance = RemoteBookUseRegistry._();
+
+  final Map<String, int> _active = <String, int>{};
+  final Map<String, BookSource> _sources = <String, BookSource>{};
+  final Map<String, String> _paths = <String, String>{};
+  final Map<String, bool> _imageFolders = <String, bool>{};
+  final Set<String> _pendingCleanup = <String>{};
+
+  int activeCount(String key) => _active[key] ?? 0;
+
+  RemoteBookUseLease acquire({
+    required BookSource source,
+    required String path,
+    required bool enabled,
+    required BookOpenStrategy strategy,
+    bool isImageFolder = false,
+  }) {
+    final key = bookKeyOf(source.type, source.id, path);
+    final eligible = enabled && source.needsSession &&
+        (isImageFolder || strategy == BookOpenStrategy.download ||
+            strategy == BookOpenStrategy.auto) &&
+        !source.remoteOnly;
+    if (eligible) {
+      _active[key] = (_active[key] ?? 0) + 1;
+      _sources[key] = source;
+      _paths[key] = path;
+      _imageFolders[key] = isImageFolder;
+    }
+    return RemoteBookUseLease._(this, key, eligible);
+  }
+
+  Future<RemoteBookCleanupResult?> _release(
+    String key, {
+    required bool completionCandidate,
+  }) async {
+    if (!_active.containsKey(key)) return null;
+    final remaining = (_active[key] ?? 1) - 1;
+    if (remaining > 0) {
+      _active[key] = remaining;
+      return null;
+    }
+    _active.remove(key);
+    if (!completionCandidate) {
+      _sources.remove(key);
+      _paths.remove(key);
+      _imageFolders.remove(key);
+      return null;
+    }
+    final source = _sources[key];
+    if (source == null) return null;
+    try {
+      final freed = await purgeRemoteBookContentCache(
+        sourceType: source.type,
+        path: _paths[key] ?? key,
+        url: source.url,
+        port: source.port,
+        rootPath: source.effectiveRootPath,
+        clientId: source.clientId,
+        rootId: source.rootId,
+        cookieMode: (source.cookie ?? '').isNotEmpty,
+        imageFolder: _imageFolders[key] ?? false,
+      );
+      _pendingCleanup.remove(key);
+      _sources.remove(key);
+      _paths.remove(key);
+      _imageFolders.remove(key);
+      return RemoteBookCleanupResult(freedBytes: freed);
+    } catch (error) {
+      // Reader close remains successful. Keep a retry marker for the next
+      // eligible close; cleanup is opportunistic and never blocks navigation.
+      _pendingCleanup.add(key);
+      return RemoteBookCleanupResult(freedBytes: BigInt.zero, error: error);
+    }
+  }
+
+}
+
+class RemoteBookUseLease {
+  RemoteBookUseLease._(this._registry, this.key, this.enabled);
+
+  final RemoteBookUseRegistry _registry;
+  final String key;
+  final bool enabled;
+  bool _released = false;
+
+  Future<RemoteBookCleanupResult?> release({required bool completionCandidate}) {
+    if (_released || !enabled) return Future<RemoteBookCleanupResult?>.value();
+    _released = true;
+    return _registry._release(key, completionCandidate: completionCandidate);
+  }
+}

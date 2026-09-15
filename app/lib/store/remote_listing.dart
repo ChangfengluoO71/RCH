@@ -7,19 +7,22 @@
 // 与 source_browser.dart 中"全量重建索引（联网）"的 listRemote 回调同构；
 // 任何新增书源类型只需在此扩展 switch。
 
+import 'dart:async';
+
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 
 /// 按书源类型建立会话；未知类型返回 null（调用方视为不可用，跳过该源）。
 /// 会话建立失败以异常上抛，由调用方捕获降级。
 Future<BigInt?> remoteSessionFor(BookSource source) async {
-  return switch (source.type) {
+  final session = switch (source.type) {
     'webdav' => await webdavSessionFor(source),
     'sftp' => await sftpSessionFor(source),
     'baidu' => await baiduSessionFor(source),
@@ -27,6 +30,14 @@ Future<BigInt?> remoteSessionFor(BookSource source) async {
     'quark' => await quarkSessionFor(source),
     _ => null,
   };
+  if (session != null) {
+    unawaited(
+      RemoteScanCoordinator.instance
+          .ensureForSession(source, session)
+          .then<void>((_) {}, onError: (_) {}),
+    );
+  }
+  return session;
 }
 
 /// 按书源类型列出远程目录（一个目录一条 list 请求），转为离线索引统一结构。

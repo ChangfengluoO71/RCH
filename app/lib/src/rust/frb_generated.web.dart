@@ -14,6 +14,7 @@ import 'api/export.dart';
 import 'api/library.dart';
 import 'api/package.dart';
 import 'api/pdf.dart';
+import 'api/remote_scan.dart';
 import 'api/scraper.dart';
 import 'api/simple.dart';
 import 'api/source.dart';
@@ -97,6 +98,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, String) dco_decode_box_autoadd_record_string_string(dynamic raw);
+
+  @protected
+  RemoteScanStatusDto dco_decode_box_autoadd_remote_scan_status_dto(
+    dynamic raw,
+  );
 
   @protected
   ScrapeQueueDto dco_decode_box_autoadd_scrape_queue_dto(dynamic raw);
@@ -263,6 +269,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RemoteScanStatusDto? dco_decode_opt_box_autoadd_remote_scan_status_dto(
+    dynamic raw,
+  );
+
+  @protected
   ScrapeQueueDto? dco_decode_opt_box_autoadd_scrape_queue_dto(dynamic raw);
 
   @protected
@@ -290,6 +301,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) dco_decode_record_u_64_u_64(dynamic raw);
+
+  @protected
+  RemoteScanJobDto dco_decode_remote_scan_job_dto(dynamic raw);
+
+  @protected
+  RemoteScanStatusDto dco_decode_remote_scan_status_dto(dynamic raw);
 
   @protected
   ScrapeProposalDto dco_decode_scrape_proposal_dto(dynamic raw);
@@ -429,6 +446,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, String) sse_decode_box_autoadd_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RemoteScanStatusDto sse_decode_box_autoadd_remote_scan_status_dto(
     SseDeserializer deserializer,
   );
 
@@ -639,6 +661,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RemoteScanStatusDto? sse_decode_opt_box_autoadd_remote_scan_status_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ScrapeQueueDto? sse_decode_opt_box_autoadd_scrape_queue_dto(
     SseDeserializer deserializer,
   );
@@ -672,6 +699,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) sse_decode_record_u_64_u_64(SseDeserializer deserializer);
+
+  @protected
+  RemoteScanJobDto sse_decode_remote_scan_job_dto(SseDeserializer deserializer);
+
+  @protected
+  RemoteScanStatusDto sse_decode_remote_scan_status_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ScrapeProposalDto sse_decode_scrape_proposal_dto(
@@ -846,6 +881,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_record_string_string(
     (String, String) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_remote_scan_status_dto(
+    RemoteScanStatusDto self,
     SseSerializer serializer,
   );
 
@@ -1120,6 +1161,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_remote_scan_status_dto(
+    RemoteScanStatusDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_scrape_queue_dto(
     ScrapeQueueDto? self,
     SseSerializer serializer,
@@ -1164,6 +1211,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_record_u_64_u_64(
     (BigInt, BigInt) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_remote_scan_job_dto(
+    RemoteScanJobDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_remote_scan_status_dto(
+    RemoteScanStatusDto self,
     SseSerializer serializer,
   );
 

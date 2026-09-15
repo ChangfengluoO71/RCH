@@ -19,9 +19,12 @@ pub struct RemoteScanState { pub source_id: String, pub status: RemoteScanStatus
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteCoverDependency { pub book_key: String, pub dependency_path: String, pub dependency_fingerprint: String, pub profile: String, pub status: String }
 
-pub fn normalize_path(path: &str) -> String { let mut s = path.trim().replace('\\', "/"); while s.contains("//") { s = s.replace("//", "/"); } if s.len() > 1 { s = s.trim_end_matches('/').to_string(); } s }
+pub fn normalize_path(path: &str) -> String { let mut s = path.trim().replace('\\', "/"); while s.contains("//") { s = s.replace("//", "/"); } if s.is_empty() { return "/".to_string(); } if !s.starts_with('/') { s.insert(0, '/'); } if s.len() > 1 { s = s.trim_end_matches('/').to_string(); } s }
+pub fn is_ignored_name(name: &str) -> bool {
+    name.starts_with('.') || name.starts_with("~$") || matches!(name.to_ascii_lowercase().as_str(), "$recycle.bin" | "system volume information" | "__macosx")
+}
 pub fn classify(name: &str, is_dir: bool) -> RemoteAssetKind {
-    if name.starts_with('.') || name.starts_with("~$") { return RemoteAssetKind::Other; }
+    if is_ignored_name(name) { return RemoteAssetKind::Other; }
     let n = name.to_ascii_lowercase();
     if is_dir { return RemoteAssetKind::PlainDir; }
     if ["cbz","zip","cbr","rar","cb7","7z","cbt","tar","epub","pdf","mobi","azw","azw3"].iter().any(|x| n.ends_with(&format!(".{x}"))) { RemoteAssetKind::ArchiveFile }
@@ -38,6 +41,6 @@ pub fn natural_sort_key(name: &str) -> Vec<String> {
     if !cur.is_empty() { out.push(if digit { format!("#{:020}",cur.parse::<u64>().unwrap_or(0)) } else { cur.to_ascii_lowercase() }); } out
 }
 pub fn fingerprint(entries: &[RemoteEntry]) -> String {
-    let mut rows: Vec<String> = entries.iter().filter(|e| !e.name.starts_with('.') && !e.name.starts_with("~$")).map(|e| format!("{}|{}|{}|{}|{:?}", normalize_path(&e.logical_path), e.name, e.is_dir, e.size.unwrap_or(0), e.mtime.unwrap_or(0))).collect(); rows.sort(); let mut h=Sha256::new(); h.update(rows.join("\n")); format!("{:x}",h.finalize())
+    let mut rows: Vec<String> = entries.iter().filter(|e| !is_ignored_name(&e.name)).map(|e| format!("{}|{}|{}|{:?}|{:?}|{:?}", normalize_path(&e.logical_path), e.name, e.is_dir, e.size, e.mtime, e.asset_kind)).collect(); rows.sort(); let mut h=Sha256::new(); h.update(rows.join("\n")); format!("{:x}",h.finalize())
 }
 #[cfg(test)] mod tests { use super::*; #[test] fn normalized_fingerprint_stable(){ let a=RemoteEntry{name:"x.jpg".into(),logical_path:"/a/".into(),is_dir:false,size:Some(1),mtime:Some(2),asset_kind:RemoteAssetKind::ImageFile}; let mut b=a.clone(); b.logical_path="\\a".into(); assert_eq!(fingerprint(&[a]),fingerprint(&[b])); } }

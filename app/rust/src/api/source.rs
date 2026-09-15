@@ -8,7 +8,9 @@ use crate::source::cloud115::{self as cloud115_source, Cloud115Client, Cloud115W
 use crate::source::quark::{self as quark_source, QuarkClient};
 use crate::source::sftp::{self as sftp_source, SftpClient};
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
-use anyhow::Result;
+use crate::remote_scan::adapter::{RemoteCapabilities, RemoteProviderAdapter, RemoteScanError};
+use crate::remote_scan::model::{classify, normalize_path, RemoteEntry};
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -94,7 +96,7 @@ pub(crate) fn get_session(id: u64) -> Result<Arc<WebDavClient>> {
         .ok_or_else(|| anyhow::anyhow!("无效的 WebDAV 会话: {id}"))
 }
 
-fn get_sftp_session(id: u64) -> Result<Arc<SftpClient>> {
+pub(crate) fn get_sftp_session(id: u64) -> Result<Arc<SftpClient>> {
     sftp_sessions()
         .lock()
         .unwrap()
@@ -103,7 +105,7 @@ fn get_sftp_session(id: u64) -> Result<Arc<SftpClient>> {
         .ok_or_else(|| anyhow::anyhow!("无效的 SFTP 会话: {id}"))
 }
 
-fn get_baidu_session(id: u64) -> Result<Arc<BaiduClient>> {
+pub(crate) fn get_baidu_session(id: u64) -> Result<Arc<BaiduClient>> {
     baidu_sessions()
         .lock()
         .unwrap()
@@ -112,7 +114,7 @@ fn get_baidu_session(id: u64) -> Result<Arc<BaiduClient>> {
         .ok_or_else(|| anyhow::anyhow!("无效的百度网盘会话: {id}"))
 }
 
-fn get_cloud115_session(id: u64) -> Result<Arc<Cloud115Client>> {
+pub(crate) fn get_cloud115_session(id: u64) -> Result<Arc<Cloud115Client>> {
     cloud115_sessions()
         .lock()
         .unwrap()
@@ -121,7 +123,7 @@ fn get_cloud115_session(id: u64) -> Result<Arc<Cloud115Client>> {
         .ok_or_else(|| anyhow::anyhow!("无效的 115 网盘会话: {id}"))
 }
 
-fn get_quark_session(id: u64) -> Result<Arc<QuarkClient>> {
+pub(crate) fn get_quark_session(id: u64) -> Result<Arc<QuarkClient>> {
     quark_sessions()
         .lock()
         .unwrap()
@@ -294,6 +296,130 @@ pub async fn open_webdav_book(session: u64, path: String, strategy: String) -> R
     }
 
     Ok(register_book(book, &cache_ns))
+}
+
+pub(crate) fn get_cloud115_cookie_session(id: u64) -> Result<Arc<Cloud115WebClient>> {
+    cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(Arc::clone)
+        .ok_or_else(|| anyhow::anyhow!("115 Cookie 会话不存在，请重新连接"))
+}
+
+enum RemoteSessionClient {
+    WebDav(Arc<WebDavClient>),
+    Sftp(Arc<SftpClient>),
+    Baidu(Arc<BaiduClient>),
+    Cloud115(Arc<Cloud115Client>),
+    Cloud115Cookie(Arc<Cloud115WebClient>),
+    Quark(Arc<QuarkClient>),
+}
+
+struct SessionRemoteAdapter {
+    client: RemoteSessionClient,
+    root: String,
+    opaque_paths: bool,
+}
+
+impl SessionRemoteAdapter {
+    fn provider_path<'a>(&'a self, canonical: &'a str) -> &'a str {
+        if canonical == "/" { &self.root } else if self.opaque_paths { canonical.trim_start_matches('/') } else { canonical }
+    }
+}
+
+fn scan_error(error: anyhow::Error) -> RemoteScanError {
+    let text = error.to_string().to_ascii_lowercase();
+    if text.contains("401") || text.contains("登录") || text.contains("token") || text.contains("认证") {
+        RemoteScanError::Unauthorized
+    } else if text.contains("403") || text.contains("权限") || text.contains("forbidden") {
+        RemoteScanError::Forbidden
+    } else if text.contains("404") || text.contains("不存在") || text.contains("not found") {
+        RemoteScanError::NotFound
+    } else if text.contains("429") || text.contains("频繁") || text.contains("rate") {
+        RemoteScanError::RateLimited { retry_after_ms: None }
+    } else if text.contains("timeout") || text.contains("timed out") || text.contains("连接") || text.contains("network") {
+        RemoteScanError::TransientNetwork("provider_unavailable".into())
+    } else {
+        RemoteScanError::Provider("provider_error".into())
+    }
+}
+
+impl RemoteProviderAdapter for SessionRemoteAdapter {
+    #[flutter_rust_bridge::frb(ignore)]
+    fn list(&self, path: &str, cursor: Option<&str>) -> std::result::Result<(Vec<RemoteEntry>, Option<String>), RemoteScanError> {
+        if cursor.is_some() { return Err(RemoteScanError::MalformedResponse("unexpected_cursor".into())); }
+        let provider_path = self.provider_path(path);
+        let entries = match &self.client {
+            RemoteSessionClient::WebDav(c) => c.list(provider_path),
+            RemoteSessionClient::Sftp(c) => c.list(provider_path),
+            RemoteSessionClient::Baidu(c) => c.list(provider_path),
+            RemoteSessionClient::Cloud115(c) => c.list(provider_path),
+            RemoteSessionClient::Cloud115Cookie(c) => c.list(provider_path),
+            RemoteSessionClient::Quark(c) => c.list(provider_path),
+        }.map_err(scan_error)?;
+        Ok((entries.into_iter().map(|entry| RemoteEntry {
+            asset_kind: classify(&entry.name, entry.is_dir),
+            name: entry.name,
+            logical_path: normalize_path(&entry.path),
+            is_dir: entry.is_dir,
+            size: (entry.size != 0).then_some(entry.size),
+            mtime: (entry.mtime != 0).then_some(entry.mtime),
+        }).collect(), None))
+    }
+
+    #[flutter_rust_bridge::frb(ignore)]
+    fn read_range(&self, path: &str, offset: u64, length: u64) -> std::result::Result<Vec<u8>, RemoteScanError> {
+        let length = usize::try_from(length).map_err(|_| RemoteScanError::RangeUnavailable)?;
+        let mut bytes = vec![0; length];
+        let provider_path = self.provider_path(path);
+        let read = match &self.client {
+            RemoteSessionClient::WebDav(c) => c.read_range(provider_path, offset, &mut bytes),
+            RemoteSessionClient::Sftp(c) => c.read_at(provider_path, offset, &mut bytes),
+            _ => return Err(RemoteScanError::RangeUnavailable),
+        }.map_err(|_| RemoteScanError::TransientNetwork("range_read_failed".into()))?;
+        bytes.truncate(read);
+        Ok(bytes)
+    }
+
+    #[flutter_rust_bridge::frb(ignore)]
+    fn read_file_limited(&self, _path: &str, _max_bytes: u64) -> std::result::Result<Vec<u8>, RemoteScanError> {
+        Err(RemoteScanError::Unsupported)
+    }
+
+    #[flutter_rust_bridge::frb(ignore)]
+    fn normalize_path(&self, path: &str) -> String { normalize_path(path) }
+
+    #[flutter_rust_bridge::frb(ignore)]
+    fn capabilities(&self, _path: &str, _fingerprint: &str) -> std::result::Result<RemoteCapabilities, RemoteScanError> {
+        Ok(RemoteCapabilities {
+            range_read: matches!(self.client, RemoteSessionClient::WebDav(_) | RemoteSessionClient::Sftp(_)),
+            pagination: false,
+        })
+    }
+}
+
+pub(crate) fn remote_provider_adapter(source_type: &str, session: u64, root_path: &str) -> Result<Arc<dyn RemoteProviderAdapter>> {
+    let (client, default_root, opaque_paths) = match source_type {
+        "webdav" => (RemoteSessionClient::WebDav(get_session(session)?), root_path.to_string(), false),
+        "sftp" => (RemoteSessionClient::Sftp(get_sftp_session(session)?), root_path.to_string(), false),
+        "baidu" => { let client = get_baidu_session(session)?; let root = client.root().to_string(); (RemoteSessionClient::Baidu(client), root, true) },
+        "115" => {
+            if let Ok(client) = get_cloud115_cookie_session(session) {
+                let root = client.root().to_string();
+                (RemoteSessionClient::Cloud115Cookie(client), root, true)
+            } else {
+                let client = get_cloud115_session(session)?;
+                let root = client.root_id().to_string();
+                (RemoteSessionClient::Cloud115(client), root, true)
+            }
+        }
+        "quark" => { let client = get_quark_session(session)?; let root = client.root().to_string(); (RemoteSessionClient::Quark(client), root, true) },
+        "smb" | "local" => return Err(anyhow!("local-only source is not eligible for remote scan")),
+        _ => return Err(anyhow!("unsupported remote source type")),
+    };
+    let root = if root_path.trim().is_empty() || root_path == "/" { default_root } else { root_path.to_string() };
+    Ok(Arc::new(SessionRemoteAdapter { client, root, opaque_paths }))
 }
 
 /// 查询当前下载进度(0.0 ~ 1.0),若 session 不在下载中则返回 1.0。

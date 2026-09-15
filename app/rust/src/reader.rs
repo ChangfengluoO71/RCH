@@ -4,15 +4,166 @@
 //! 读过的页字节写盘,下次打开同一本书(尤其 WebDAV)无需重新下载。
 
 use crate::document::Document;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 /// L1 内存缓存容量(原始页字节)。
 const CACHE_CAP: usize = 24;
 /// 预取半径(以当前页为中心,前后各预取的页数)。
 const PREFETCH_RADIUS: i64 = 3;
+const REQUEST_GOVERNOR_CAPACITY: usize = 3;
+const REQUEST_GOVERNOR_QUEUE_CAPACITY: usize = 64;
+
+/// Priority for blocking work that might make a remote document request.
+///
+/// The governor only chooses which queued work may start. Once the permit is
+/// held, the underlying synchronous I/O remains non-cancellable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestPriority {
+    Foreground,
+    Prefetch,
+    Cover,
+    Scan,
+}
+
+impl RequestPriority {
+    const fn queue_index(self) -> usize {
+        match self {
+            Self::Foreground => 0,
+            Self::Prefetch => 1,
+            Self::Cover => 2,
+            Self::Scan => 3,
+        }
+    }
+
+    const fn is_background(self) -> bool {
+        !matches!(self, Self::Foreground)
+    }
+}
+
+/// Fair, bounded coordinator for blocking remote work.
+///
+/// Background work is limited to `capacity - 1`, reserving one opportunity
+/// for a current-page request. FIFO is preserved within each priority class;
+/// queued foreground work prevents lower priorities from starting first.
+pub struct BlockingRequestGovernor {
+    capacity: usize,
+    queue_capacity: usize,
+    state: Mutex<RequestGovernorState>,
+    changed: Condvar,
+}
+
+struct RequestGovernorState {
+    active_total: usize,
+    active_background: usize,
+    next_ticket: u64,
+    queues: [VecDeque<u64>; 4],
+}
+
+/// Held only while the blocking operation has actually started.
+pub struct BlockingRequestPermit<'a> {
+    governor: &'a BlockingRequestGovernor,
+    priority: RequestPriority,
+}
+
+impl BlockingRequestGovernor {
+    pub fn new(capacity: usize, queue_capacity: usize) -> Self {
+        assert!(capacity >= 2, "reserve one foreground opportunity");
+        Self {
+            capacity,
+            queue_capacity,
+            state: Mutex::new(RequestGovernorState {
+                active_total: 0,
+                active_background: 0,
+                next_ticket: 0,
+                queues: std::array::from_fn(|_| VecDeque::new()),
+            }),
+            changed: Condvar::new(),
+        }
+    }
+
+    pub fn acquire(&self, priority: RequestPriority) -> Result<BlockingRequestPermit<'_>> {
+        let mut state = self.state.lock().unwrap();
+        if state.queues[priority.queue_index()].len() >= self.queue_capacity {
+            bail!("blocking request priority queue is full");
+        }
+        let ticket = state.next_ticket;
+        state.next_ticket = state.next_ticket.wrapping_add(1);
+        state.queues[priority.queue_index()].push_back(ticket);
+
+        loop {
+            if self.can_start(&state, priority, ticket) {
+                state.queues[priority.queue_index()].pop_front();
+                state.active_total += 1;
+                if priority.is_background() {
+                    state.active_background += 1;
+                }
+                return Ok(BlockingRequestPermit {
+                    governor: self,
+                    priority,
+                });
+            }
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    fn can_start(
+        &self,
+        state: &RequestGovernorState,
+        priority: RequestPriority,
+        ticket: u64,
+    ) -> bool {
+        if state.queues[priority.queue_index()].front() != Some(&ticket) {
+            return false;
+        }
+        if state.active_total >= self.capacity {
+            return false;
+        }
+        match priority {
+            RequestPriority::Foreground => true,
+            RequestPriority::Prefetch => {
+                state.queues[RequestPriority::Foreground.queue_index()].is_empty()
+                    && state.active_background < self.capacity - 1
+            }
+            RequestPriority::Cover => {
+                state.queues[RequestPriority::Foreground.queue_index()].is_empty()
+                    && state.queues[RequestPriority::Prefetch.queue_index()].is_empty()
+                    && state.active_background < self.capacity - 1
+            }
+            RequestPriority::Scan => {
+                state.queues[RequestPriority::Foreground.queue_index()].is_empty()
+                    && state.queues[RequestPriority::Prefetch.queue_index()].is_empty()
+                    && state.queues[RequestPriority::Cover.queue_index()].is_empty()
+                    && state.active_background < self.capacity - 1
+            }
+        }
+    }
+
+    fn release(&self, priority: RequestPriority) {
+        let mut state = self.state.lock().unwrap();
+        state.active_total -= 1;
+        if priority.is_background() {
+            state.active_background -= 1;
+        }
+        self.changed.notify_all();
+    }
+}
+
+impl Drop for BlockingRequestPermit<'_> {
+    fn drop(&mut self) {
+        self.governor.release(self.priority);
+    }
+}
+
+/// Process-wide governor shared by reader work and safe remote cover reads.
+pub fn blocking_request_governor() -> &'static BlockingRequestGovernor {
+    static GOVERNOR: OnceLock<BlockingRequestGovernor> = OnceLock::new();
+    GOVERNOR.get_or_init(|| {
+        BlockingRequestGovernor::new(REQUEST_GOVERNOR_CAPACITY, REQUEST_GOVERNOR_QUEUE_CAPACITY)
+    })
+}
 
 /// 轻量 LRU:容量有限的内存缓存。
 struct Lru {
@@ -232,6 +383,89 @@ mod tests {
         mpsc, Condvar,
     };
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn request_priority_contract_keeps_reader_before_prefetch_before_cover() {
+        assert!(RequestPriority::Foreground.queue_index() < RequestPriority::Prefetch.queue_index());
+        assert!(RequestPriority::Prefetch.queue_index() < RequestPriority::Cover.queue_index());
+        assert!(RequestPriority::Cover.queue_index() < RequestPriority::Scan.queue_index());
+    }
+
+    #[test]
+    fn scan_queue_is_bounded_and_keeps_a_foreground_slot_available() {
+        let governor = Arc::new(BlockingRequestGovernor::new(2, 1));
+        let active_scan = governor.acquire(RequestPriority::Scan).unwrap();
+        let (queued_tx, queued_rx) = mpsc::channel();
+        let waiting_governor = Arc::clone(&governor);
+        let waiting = std::thread::spawn(move || {
+            queued_tx.send(()).unwrap();
+            let _permit = waiting_governor.acquire(RequestPriority::Scan).unwrap();
+        });
+        queued_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while governor.state.lock().unwrap().queues[RequestPriority::Scan.queue_index()].is_empty() {
+            assert!(std::time::Instant::now() < deadline, "scan waiter did not queue");
+            std::thread::yield_now();
+        }
+
+        assert!(governor.acquire(RequestPriority::Scan).is_err());
+        let foreground = governor.acquire(RequestPriority::Foreground).unwrap();
+        drop(foreground);
+        drop(active_scan);
+        waiting.join().unwrap();
+    }
+
+    #[test]
+    fn queued_foreground_work_wins_over_prefetch_and_cover_work() {
+        let governor = Arc::new(BlockingRequestGovernor::new(2, 8));
+        let first_foreground = governor
+            .acquire(RequestPriority::Foreground)
+            .expect("initial foreground permit");
+        let first_cover = governor
+            .acquire(RequestPriority::Cover)
+            .expect("initial cover permit");
+        let (started_tx, started_rx) = mpsc::channel();
+
+        for (name, priority) in [
+            ("prefetch", RequestPriority::Prefetch),
+            ("cover", RequestPriority::Cover),
+            ("foreground", RequestPriority::Foreground),
+        ] {
+            let governor = Arc::clone(&governor);
+            let started_tx = started_tx.clone();
+            std::thread::spawn(move || {
+                let _permit = governor.acquire(priority).expect("queued permit");
+                started_tx.send(name).expect("receiver stays alive");
+            });
+        }
+        drop(started_tx);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while governor
+            .state
+            .lock()
+            .unwrap()
+            .queues
+            .iter()
+            .map(VecDeque::len)
+            .sum::<usize>()
+            != 3
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "all priority waiters should queue before permits are released"
+            );
+            std::thread::yield_now();
+        }
+
+        drop(first_foreground);
+        assert_eq!(
+            started_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            "foreground",
+            "a queued current-page request must start before queued prefetch/cover work"
+        );
+        drop(first_cover);
+    }
 
     struct BlockingDoc {
         page1_calls: Arc<AtomicUsize>,

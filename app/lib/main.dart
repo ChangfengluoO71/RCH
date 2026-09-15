@@ -10,6 +10,7 @@ import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/automation_coordinator.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/storage_access.dart';
@@ -82,6 +83,9 @@ Future<void> _initializeAfterFirstFrame() async {
   // 本地只读/轻量状态先恢复，再启动可能涉及同步与刮削的较重流程。
   await FolderSnapshotStore.instance.load();
   await LibraryCatalogStore.instance.loadTree();
+  await RemoteScanCoordinator.instance.restoreStatuses(
+    LibraryStore.instance.sources,
+  );
   await SyncManager.instance.init();
   await AiUpscaleManager.instance.init();
   await AutomationCoordinator.instance.init();

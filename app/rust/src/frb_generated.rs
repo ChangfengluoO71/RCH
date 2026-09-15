@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1918694319;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 498911828;
 
 // Section: executor
 
@@ -4729,6 +4729,187 @@ fn wire__crate__api__package__rchpkg_import_with_credentials_impl(
         },
     )
 }
+fn wire__crate__api__remote_scan__remote_scan_cancel_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_scan_cancel",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::remote_scan::remote_scan_cancel(api_source_id)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_scan__remote_scan_pause_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_scan_pause",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::remote_scan::remote_scan_pause(api_source_id)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_scan__remote_scan_resume_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_scan_resume",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::remote_scan::remote_scan_resume(api_source_id)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_scan__remote_scan_start_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_scan_start",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_type = <String>::sse_decode(&mut deserializer);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_root_path = <String>::sse_decode(&mut deserializer);
+            let api_mode = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::remote_scan::remote_scan_start(
+                            api_source_type,
+                            api_source_id,
+                            api_session,
+                            api_root_path,
+                            api_mode,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_scan__remote_scan_status_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_scan_status",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, ()>((move || {
+                    let output_ok = Result::<_, ()>::Ok(
+                        crate::api::remote_scan::remote_scan_status(api_source_id),
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__db__reopen_data_db_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -6731,6 +6912,19 @@ impl SseDecode for Option<(String, String)> {
     }
 }
 
+impl SseDecode for Option<crate::api::remote_scan::RemoteScanStatusDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::remote_scan::RemoteScanStatusDto>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::scraper::ScrapeQueueDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -6846,6 +7040,50 @@ impl SseDecode for (u64, u64) {
         let mut var_field0 = <u64>::sse_decode(deserializer);
         let mut var_field1 = <u64>::sse_decode(deserializer);
         return (var_field0, var_field1);
+    }
+}
+
+impl SseDecode for crate::api::remote_scan::RemoteScanJobDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_jobId = <String>::sse_decode(deserializer);
+        let mut var_sourceId = <String>::sse_decode(deserializer);
+        let mut var_status = <String>::sse_decode(deserializer);
+        let mut var_mode = <String>::sse_decode(deserializer);
+        let mut var_generation = <i64>::sse_decode(deserializer);
+        return crate::api::remote_scan::RemoteScanJobDto {
+            job_id: var_jobId,
+            source_id: var_sourceId,
+            status: var_status,
+            mode: var_mode,
+            generation: var_generation,
+        };
+    }
+}
+
+impl SseDecode for crate::api::remote_scan::RemoteScanStatusDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_sourceId = <String>::sse_decode(deserializer);
+        let mut var_status = <String>::sse_decode(deserializer);
+        let mut var_mode = <String>::sse_decode(deserializer);
+        let mut var_generation = <i64>::sse_decode(deserializer);
+        let mut var_checkpoint = <Option<String>>::sse_decode(deserializer);
+        let mut var_lastSuccessAt = <Option<i64>>::sse_decode(deserializer);
+        let mut var_errorCode = <Option<String>>::sse_decode(deserializer);
+        let mut var_processed = <u64>::sse_decode(deserializer);
+        let mut var_total = <u64>::sse_decode(deserializer);
+        return crate::api::remote_scan::RemoteScanStatusDto {
+            source_id: var_sourceId,
+            status: var_status,
+            mode: var_mode,
+            generation: var_generation,
+            checkpoint: var_checkpoint,
+            last_success_at: var_lastSuccessAt,
+            error_code: var_errorCode,
+            processed: var_processed,
+            total: var_total,
+        };
     }
 }
 
@@ -7596,49 +7834,73 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        130 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
-        131 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        132 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
-        133 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
-        134 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
-        135 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        136 => {
-            wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
-        }
-        137 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
-        138 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
-        139 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        140 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        141 => {
-            wire__crate__api__sync__sync_clear_last_error_impl(port, ptr, rust_vec_len, data_len)
-        }
-        142 => wire__crate__api__sync__sync_devices_list_impl(port, ptr, rust_vec_len, data_len),
-        143 => wire__crate__api__sync__sync_history_recent_impl(port, ptr, rust_vec_len, data_len),
-        144 => wire__crate__api__sync__sync_local_counts_impl(port, ptr, rust_vec_len, data_len),
-        145 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
-        146 => wire__crate__api__sync__sync_remote_revision_impl(port, ptr, rust_vec_len, data_len),
-        147 => wire__crate__api__sync__sync_set_last_error_impl(port, ptr, rust_vec_len, data_len),
-        148 => wire__crate__api__sync__sync_status_impl(port, ptr, rust_vec_len, data_len),
-        149 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        150 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        151 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        152 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
-        153 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        154 => {
-            wire__crate__api__source__webdav_download_file_impl(port, ptr, rust_vec_len, data_len)
-        }
-        155 => wire__crate__api__source__webdav_download_progress_impl(
+        130 => wire__crate__api__remote_scan__remote_scan_cancel_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        156 => {
+        131 => {
+            wire__crate__api__remote_scan__remote_scan_pause_impl(port, ptr, rust_vec_len, data_len)
+        }
+        132 => wire__crate__api__remote_scan__remote_scan_resume_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        133 => {
+            wire__crate__api__remote_scan__remote_scan_start_impl(port, ptr, rust_vec_len, data_len)
+        }
+        134 => wire__crate__api__remote_scan__remote_scan_status_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        135 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        136 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        137 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
+        138 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
+        139 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
+        140 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        141 => {
+            wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
+        }
+        142 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
+        143 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
+        144 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        145 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        146 => {
+            wire__crate__api__sync__sync_clear_last_error_impl(port, ptr, rust_vec_len, data_len)
+        }
+        147 => wire__crate__api__sync__sync_devices_list_impl(port, ptr, rust_vec_len, data_len),
+        148 => wire__crate__api__sync__sync_history_recent_impl(port, ptr, rust_vec_len, data_len),
+        149 => wire__crate__api__sync__sync_local_counts_impl(port, ptr, rust_vec_len, data_len),
+        150 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
+        151 => wire__crate__api__sync__sync_remote_revision_impl(port, ptr, rust_vec_len, data_len),
+        152 => wire__crate__api__sync__sync_set_last_error_impl(port, ptr, rust_vec_len, data_len),
+        153 => wire__crate__api__sync__sync_status_impl(port, ptr, rust_vec_len, data_len),
+        154 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        155 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        156 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        157 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
+        158 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        159 => {
+            wire__crate__api__source__webdav_download_file_impl(port, ptr, rust_vec_len, data_len)
+        }
+        160 => wire__crate__api__source__webdav_download_progress_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        161 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        157 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
-        158 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
-        159 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
+        162 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        163 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
+        164 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -8261,6 +8523,58 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::db::ReadRecordDto>
     for crate::api::db::ReadRecordDto
 {
     fn into_into_dart(self) -> crate::api::db::ReadRecordDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::remote_scan::RemoteScanJobDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.job_id.into_into_dart().into_dart(),
+            self.source_id.into_into_dart().into_dart(),
+            self.status.into_into_dart().into_dart(),
+            self.mode.into_into_dart().into_dart(),
+            self.generation.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::remote_scan::RemoteScanJobDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::remote_scan::RemoteScanJobDto>
+    for crate::api::remote_scan::RemoteScanJobDto
+{
+    fn into_into_dart(self) -> crate::api::remote_scan::RemoteScanJobDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::remote_scan::RemoteScanStatusDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.source_id.into_into_dart().into_dart(),
+            self.status.into_into_dart().into_dart(),
+            self.mode.into_into_dart().into_dart(),
+            self.generation.into_into_dart().into_dart(),
+            self.checkpoint.into_into_dart().into_dart(),
+            self.last_success_at.into_into_dart().into_dart(),
+            self.error_code.into_into_dart().into_dart(),
+            self.processed.into_into_dart().into_dart(),
+            self.total.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::remote_scan::RemoteScanStatusDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::remote_scan::RemoteScanStatusDto>
+    for crate::api::remote_scan::RemoteScanStatusDto
+{
+    fn into_into_dart(self) -> crate::api::remote_scan::RemoteScanStatusDto {
         self
     }
 }
@@ -9349,6 +9663,16 @@ impl SseEncode for Option<(String, String)> {
     }
 }
 
+impl SseEncode for Option<crate::api::remote_scan::RemoteScanStatusDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::remote_scan::RemoteScanStatusDto>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::scraper::ScrapeQueueDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -9433,6 +9757,32 @@ impl SseEncode for (u64, u64) {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <u64>::sse_encode(self.0, serializer);
         <u64>::sse_encode(self.1, serializer);
+    }
+}
+
+impl SseEncode for crate::api::remote_scan::RemoteScanJobDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.job_id, serializer);
+        <String>::sse_encode(self.source_id, serializer);
+        <String>::sse_encode(self.status, serializer);
+        <String>::sse_encode(self.mode, serializer);
+        <i64>::sse_encode(self.generation, serializer);
+    }
+}
+
+impl SseEncode for crate::api::remote_scan::RemoteScanStatusDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.source_id, serializer);
+        <String>::sse_encode(self.status, serializer);
+        <String>::sse_encode(self.mode, serializer);
+        <i64>::sse_encode(self.generation, serializer);
+        <Option<String>>::sse_encode(self.checkpoint, serializer);
+        <Option<i64>>::sse_encode(self.last_success_at, serializer);
+        <Option<String>>::sse_encode(self.error_code, serializer);
+        <u64>::sse_encode(self.processed, serializer);
+        <u64>::sse_encode(self.total, serializer);
     }
 }
 

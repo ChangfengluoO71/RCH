@@ -16,6 +16,7 @@ use std::time::Duration;
 struct RecordingSink {
     commits: Mutex<Vec<CommittedDirectory>>,
     covers: Mutex<Vec<CoverTask>>,
+    spilled: Mutex<Vec<ScanDirectoryTask>>,
 }
 
 impl RecordingSink {
@@ -25,16 +26,30 @@ impl RecordingSink {
     fn cover_tasks(&self) -> Vec<CoverTask> {
         self.covers.lock().unwrap().clone()
     }
+    fn spilled_tasks(&self) -> Vec<ScanDirectoryTask> {
+        self.spilled.lock().unwrap().clone()
+    }
 }
 
 impl ScanCommitSink for RecordingSink {
-    fn commit_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError> {
+    fn stage_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError> {
         self.commits.lock().unwrap().push(directory);
         Ok(())
     }
     fn enqueue_cover(&self, task: CoverTask) -> Result<(), RemoteScanError> {
         self.covers.lock().unwrap().push(task);
         Ok(())
+    }
+    fn spill_directory(&self, task: ScanDirectoryTask) -> Result<(), RemoteScanError> {
+        self.spilled.lock().unwrap().push(task);
+        Ok(())
+    }
+    fn take_spilled_directory(
+        &self,
+        _source_id: &str,
+        _generation: i64,
+    ) -> Result<Option<ScanDirectoryTask>, RemoteScanError> {
+        Ok(self.spilled.lock().unwrap().pop())
     }
 }
 
@@ -108,18 +123,116 @@ fn remote_scan_canonical_root_filters_system_entries_and_fingerprint_distinguish
 }
 
 #[test]
-fn remote_scan_duplicate_directory_tasks_coalesce_and_queue_capacity_is_bounded() {
+fn remote_scan_duplicate_directory_tasks_coalesce_and_overflow_spills_with_bounded_memory() {
     let adapter = Arc::new(FakeAdapter {
         pages: Mutex::new(VecDeque::new()),
     });
     let sink = Arc::new(RecordingSink::default());
-    let engine = RemoteScanEngine::new(adapter, sink, 1, 1, RetryPolicy::default());
+    let engine = RemoteScanEngine::new(adapter, sink.clone(), 1, 1, RetryPolicy::default());
     let task = ScanDirectoryTask::new("source", "/", 7);
     assert!(engine.enqueue_directory(task.clone()).unwrap());
     assert!(!engine.enqueue_directory(task).unwrap());
     assert!(engine
         .enqueue_directory(ScanDirectoryTask::new("source", "/other", 7))
-        .is_err());
+        .unwrap());
+    assert_eq!(sink.spilled_tasks().len(), 1);
+}
+
+#[test]
+fn remote_scan_auth_and_missing_errors_are_never_retried() {
+    for error in [
+        RemoteScanError::Unauthorized,
+        RemoteScanError::Forbidden,
+        RemoteScanError::NotFound,
+    ] {
+        let adapter = Arc::new(FakeAdapter {
+            pages: Mutex::new(VecDeque::from([Err(error.clone())])),
+        });
+        let sink = Arc::new(RecordingSink::default());
+        let engine = RemoteScanEngine::new(
+            adapter,
+            sink,
+            1,
+            1,
+            RetryPolicy::new(3, Duration::from_millis(1), Duration::from_millis(2)),
+        );
+        engine
+            .enqueue_directory(ScanDirectoryTask::new("source-no-retry", "/", 1))
+            .unwrap();
+        assert_eq!(engine.run_next().unwrap_err(), error);
+    }
+}
+
+#[test]
+fn remote_scan_retry_wait_is_interrupted_by_cancellation() {
+    let adapter = Arc::new(FakeAdapter {
+        pages: Mutex::new(VecDeque::from([Err(RemoteScanError::RateLimited {
+            retry_after_ms: Some(5_000),
+        })])),
+    });
+    let sink = Arc::new(RecordingSink::default());
+    let token = CancellationToken::new();
+    let engine = Arc::new(RemoteScanEngine::with_token(
+        adapter,
+        sink,
+        1,
+        1,
+        RetryPolicy::new(3, Duration::from_secs(5), Duration::from_secs(5)),
+        token.clone(),
+    ));
+    engine
+        .enqueue_directory(ScanDirectoryTask::new("source-cancel-wait", "/", 1))
+        .unwrap();
+    let worker = {
+        let engine = Arc::clone(&engine);
+        std::thread::spawn(move || engine.run_next())
+    };
+    std::thread::sleep(Duration::from_millis(25));
+    token.cancel();
+    assert!(matches!(
+        worker.join().unwrap(),
+        Err(RemoteScanError::Cancelled)
+    ));
+}
+
+#[test]
+fn remote_cover_dependency_is_consumed_into_partial_cache() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE book_sources(id TEXT PRIMARY KEY,fingerprint TEXT);\
+         CREATE TABLE library_index(\
+           id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
+           size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
+           scan_generation INTEGER,listing_complete INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+    )
+    .unwrap();
+    persistence::migrate(&conn).unwrap();
+    let task = CoverTask {
+        source_id: "source".into(),
+        logical_path: "/book.cbz".into(),
+        fingerprint: "fp".into(),
+        profile: "default".into(),
+    };
+    persistence::stage_cover_task(&conn, 4, "shared-cover-key", &task).unwrap();
+    persistence::publish_staged_generation(&conn, "source", 4).unwrap();
+    persistence::finish_cover_task(
+        &conn,
+        "source",
+        4,
+        "shared-cover-key",
+        "partial_ready",
+        Some(&[1, 2, 3]),
+    )
+    .unwrap();
+    let (status, bytes): (String, Vec<u8>) = conn
+        .query_row(
+            "SELECT d.status,c.bytes FROM remote_cover_dependency d JOIN remote_cover_partial_cache c USING(book_key) WHERE d.book_key='shared-cover-key'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(status, "partial_ready");
+    assert_eq!(bytes, vec![1, 2, 3]);
 }
 
 #[test]
@@ -222,4 +335,95 @@ fn remote_scan_manifest_keeps_typed_metadata_and_per_entry_fingerprint() {
         params!["source", "/album"], |row| row.get(0),
     ).unwrap();
     assert_eq!(listing_fingerprint, "directory-fingerprint");
+}
+
+#[test]
+fn staged_generation_is_invisible_until_publish_and_discard_retains_previous_generation() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE book_sources(id TEXT PRIMARY KEY,fingerprint TEXT);\
+         CREATE TABLE library_index(\
+           id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
+           size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
+           scan_generation INTEGER,listing_complete INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+    ).unwrap();
+    persistence::migrate(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO book_sources VALUES('source','canonical-source')",
+        [],
+    )
+    .unwrap();
+    let old = entry("old.cbz", "/old.cbz", false, Some(1), Some(1));
+    persistence::upsert_complete_listing(&conn, "source", "/", &[old], 1, "old", true).unwrap();
+
+    let fresh = entry("new.cbz", "/new.cbz", false, Some(2), Some(2));
+    persistence::stage_complete_listing(
+        &conn,
+        "source",
+        "/",
+        &[fresh],
+        2,
+        "new",
+        RemoteAssetKind::ContainerDir,
+        false,
+    )
+    .unwrap();
+    let visible_before: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM library_index WHERE source_id='source' AND path='/new.cbz' AND listing_complete=1",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(visible_before, 0);
+
+    persistence::discard_staged_generation(&conn, "source", 2).unwrap();
+    let old_visible: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM library_index WHERE source_id='source' AND path='/old.cbz' AND deleted=0",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(old_visible, 1);
+}
+
+#[test]
+fn successful_generation_publishes_and_reconciles_missing_children_atomically() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE book_sources(id TEXT PRIMARY KEY,fingerprint TEXT);\
+         CREATE TABLE library_index(\
+           id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
+           size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
+           scan_generation INTEGER,listing_complete INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+    ).unwrap();
+    persistence::migrate(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO book_sources VALUES('source','canonical-source')",
+        [],
+    )
+    .unwrap();
+    persistence::upsert_complete_listing(
+        &conn,
+        "source",
+        "/",
+        &[entry("gone.cbz", "/gone.cbz", false, Some(1), Some(1))],
+        1,
+        "old",
+        true,
+    )
+    .unwrap();
+    persistence::stage_complete_listing(
+        &conn,
+        "source",
+        "/",
+        &[entry("kept.cbz", "/kept.cbz", false, Some(2), Some(2))],
+        2,
+        "new",
+        RemoteAssetKind::ContainerDir,
+        false,
+    )
+    .unwrap();
+    persistence::publish_staged_generation(&conn, "source", 2).unwrap();
+
+    let rows: (i64, i64) = conn.query_row(
+        "SELECT SUM(path='/kept.cbz' AND deleted=0),SUM(path='/gone.cbz' AND deleted=1) FROM library_index WHERE source_id='source'",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+    assert_eq!(rows, (1, 1));
 }

@@ -6,10 +6,10 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `error_code`, `job_dto`, `jobs`, `next_job_id`, `persist_terminal`, `start_job`
+// These functions are ignored because they are not marked as `pub`: `consume_staged_covers`, `error_code`, `fetch_safe_cover_partial`, `job_dto`, `jobs`, `next_job_id`, `persist_config_status`, `persist_terminal`, `start_job`, `start_lock`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `ScanJob`, `SqliteScanSink`, `StartConfig`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `commit_directory`, `enqueue_cover`, `previous_fingerprint`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `enqueue_cover`, `previous_fingerprint`, `spill_directory`, `stage_directory`, `take_spilled_directory`
 
 Future<RemoteScanJobDto> remoteScanStart({
   required String sourceType,

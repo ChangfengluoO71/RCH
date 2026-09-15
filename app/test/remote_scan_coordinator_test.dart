@@ -10,6 +10,7 @@ void main() {
     final first = Completer<RemoteScanStatus>();
     final modes = <String>[];
     final coordinator = RemoteScanCoordinator(
+      debounce: Duration.zero,
       start:
           ({
             required source,
@@ -91,6 +92,126 @@ void main() {
         'resume:remote-2',
         'cancel:remote-2',
       ]);
+    },
+  );
+
+  test(
+    'provider success hub emits one initial full scan per provider and debounces completion',
+    () async {
+      final modes = <String, List<String>>{};
+      final hub = RemoteSessionSuccessHub();
+      final coordinator = RemoteScanCoordinator(
+        sessionHub: hub,
+        debounce: const Duration(minutes: 1),
+        start:
+            ({
+              required source,
+              required session,
+              required rootPath,
+              required mode,
+            }) async {
+              modes.putIfAbsent(source.type, () => []).add(mode);
+              return RemoteScanStatus(
+                sourceId: source.id,
+                status: 'complete',
+                mode: mode,
+                generation: 1,
+              );
+            },
+      );
+
+      for (final type in ['webdav', 'sftp', 'baidu', '115', 'quark']) {
+        final source = BookSource(id: type, type: type, name: type, path: '/');
+        hub.emit(source, BigInt.one);
+        hub.emit(source, BigInt.one);
+      }
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(modes, {
+        'webdav': ['full'],
+        'sftp': ['full'],
+        'baidu': ['full'],
+        '115': ['full'],
+        'quark': ['full'],
+      });
+      coordinator.dispose();
+    },
+  );
+
+  test('manual full does not silently join an incremental scan', () async {
+    final pending = Completer<RemoteScanStatus>();
+    final coordinator = RemoteScanCoordinator(
+      start:
+          ({
+            required source,
+            required session,
+            required rootPath,
+            required mode,
+          }) => pending.future,
+    );
+    final source = BookSource(
+      id: 'manual',
+      type: 'webdav',
+      name: 'manual',
+      path: '/',
+    );
+    coordinator.ensureForSession(source, BigInt.one);
+    await expectLater(
+      coordinator.rescan(source, BigInt.one, 'full'),
+      throwsA(isA<RemoteScanAlreadyRunning>()),
+    );
+    pending.complete(
+      const RemoteScanStatus(
+        sourceId: 'manual',
+        status: 'complete',
+        mode: 'incremental',
+        generation: 1,
+      ),
+    );
+  });
+
+  test(
+    'persisted running status restarts after a new provider session succeeds',
+    () async {
+      final hub = RemoteSessionSuccessHub();
+      final modes = <String>[];
+      final coordinator = RemoteScanCoordinator(
+        sessionHub: hub,
+        statusCall: (_) async => const RemoteScanStatus(
+          sourceId: 'recover',
+          status: 'running',
+          mode: 'incremental',
+          generation: 7,
+          checkpoint: '/a',
+        ),
+        start:
+            ({
+              required source,
+              required session,
+              required rootPath,
+              required mode,
+            }) async {
+              modes.add(mode);
+              return RemoteScanStatus(
+                sourceId: source.id,
+                status: 'complete',
+                mode: mode,
+                generation: 8,
+              );
+            },
+      );
+      final source = BookSource(
+        id: 'recover',
+        type: 'sftp',
+        name: 'recover',
+        path: '/',
+      );
+      await coordinator.restoreStatuses([source]);
+      hub.emit(source, BigInt.two);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(modes, ['full']);
+      coordinator.dispose();
     },
   );
 }

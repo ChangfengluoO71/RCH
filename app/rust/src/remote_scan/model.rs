@@ -2,45 +2,187 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RemoteAssetKind { ArchiveFile, ImageFile, ImageFolder, ContainerDir, PlainDir, Other }
+#[flutter_rust_bridge::frb(ignore)]
+pub enum RemoteAssetKind {
+    ArchiveFile,
+    ImageFile,
+    ImageFolder,
+    ContainerDir,
+    PlainDir,
+    Other,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[flutter_rust_bridge::frb(ignore)]
 pub struct RemoteEntry {
-    pub name: String, pub logical_path: String, pub is_dir: bool,
-    pub size: Option<u64>, pub mtime: Option<i64>, pub asset_kind: RemoteAssetKind,
+    pub name: String,
+    pub logical_path: String,
+    pub is_dir: bool,
+    pub size: Option<u64>,
+    pub mtime: Option<i64>,
+    pub asset_kind: RemoteAssetKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RemoteScanStatus { Idle, Running, Succeeded, Failed }
+#[flutter_rust_bridge::frb(ignore)]
+pub enum RemoteScanStatus {
+    Idle,
+    Running,
+    Succeeded,
+    Failed,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RemoteScanMode { Snapshot, Incremental }
+#[flutter_rust_bridge::frb(ignore)]
+pub enum RemoteScanMode {
+    Snapshot,
+    Incremental,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteScanState { pub source_id: String, pub status: RemoteScanStatus, pub mode: RemoteScanMode, pub generation: i64, pub checkpoint: Option<String>, pub last_success_at: Option<i64>, pub error_code: Option<String> }
+#[flutter_rust_bridge::frb(ignore)]
+pub struct RemoteScanState {
+    pub source_id: String,
+    pub status: RemoteScanStatus,
+    pub mode: RemoteScanMode,
+    pub generation: i64,
+    pub checkpoint: Option<String>,
+    pub last_success_at: Option<i64>,
+    pub error_code: Option<String>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteCoverDependency { pub book_key: String, pub dependency_path: String, pub dependency_fingerprint: String, pub profile: String, pub status: String }
+#[flutter_rust_bridge::frb(ignore)]
+pub struct RemoteCoverDependency {
+    pub book_key: String,
+    pub dependency_path: String,
+    pub dependency_fingerprint: String,
+    pub profile: String,
+    pub status: String,
+}
 
-pub fn normalize_path(path: &str) -> String { let mut s = path.trim().replace('\\', "/"); while s.contains("//") { s = s.replace("//", "/"); } if s.is_empty() { return "/".to_string(); } if !s.starts_with('/') { s.insert(0, '/'); } if s.len() > 1 { s = s.trim_end_matches('/').to_string(); } s }
+pub fn normalize_path(path: &str) -> String {
+    let mut s = path.trim().replace('\\', "/");
+    while s.contains("//") {
+        s = s.replace("//", "/");
+    }
+    if s.is_empty() {
+        return "/".to_string();
+    }
+    if !s.starts_with('/') {
+        s.insert(0, '/');
+    }
+    if s.len() > 1 {
+        s = s.trim_end_matches('/').to_string();
+    }
+    s
+}
 pub fn is_ignored_name(name: &str) -> bool {
-    name.starts_with('.') || name.starts_with("~$") || matches!(name.to_ascii_lowercase().as_str(), "$recycle.bin" | "system volume information" | "__macosx")
+    name.starts_with('.')
+        || name.starts_with("~$")
+        || matches!(
+            name.to_ascii_lowercase().as_str(),
+            "$recycle.bin" | "system volume information" | "__macosx"
+        )
 }
 pub fn classify(name: &str, is_dir: bool) -> RemoteAssetKind {
-    if is_ignored_name(name) { return RemoteAssetKind::Other; }
+    if is_ignored_name(name) {
+        return RemoteAssetKind::Other;
+    }
     let n = name.to_ascii_lowercase();
-    if is_dir { return RemoteAssetKind::PlainDir; }
-    if ["cbz","zip","cbr","rar","cb7","7z","cbt","tar","epub","pdf","mobi","azw","azw3"].iter().any(|x| n.ends_with(&format!(".{x}"))) { RemoteAssetKind::ArchiveFile }
-    else if ["jpg","jpeg","png","webp","gif","bmp","avif"].iter().any(|x| n.ends_with(&format!(".{x}"))) { RemoteAssetKind::ImageFile } else { RemoteAssetKind::Other }
+    if is_dir {
+        return RemoteAssetKind::PlainDir;
+    }
+    if [
+        "cbz", "zip", "cbr", "rar", "cb7", "7z", "cbt", "tar", "epub", "pdf", "mobi", "azw", "azw3",
+    ]
+    .iter()
+    .any(|x| n.ends_with(&format!(".{x}")))
+    {
+        RemoteAssetKind::ArchiveFile
+    } else if ["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"]
+        .iter()
+        .any(|x| n.ends_with(&format!(".{x}")))
+    {
+        RemoteAssetKind::ImageFile
+    } else {
+        RemoteAssetKind::Other
+    }
 }
 pub fn classify_directory(children: &[RemoteEntry]) -> RemoteAssetKind {
-    if children.iter().any(|e| matches!(e.asset_kind, RemoteAssetKind::ArchiveFile)) { RemoteAssetKind::ContainerDir }
-    else if children.iter().any(|e| matches!(e.asset_kind, RemoteAssetKind::ImageFile)) { RemoteAssetKind::ImageFolder }
-    else { RemoteAssetKind::PlainDir }
+    if children
+        .iter()
+        .any(|e| matches!(e.asset_kind, RemoteAssetKind::ArchiveFile))
+    {
+        RemoteAssetKind::ContainerDir
+    } else if children
+        .iter()
+        .any(|e| matches!(e.asset_kind, RemoteAssetKind::ImageFile))
+    {
+        RemoteAssetKind::ImageFolder
+    } else {
+        RemoteAssetKind::PlainDir
+    }
 }
 pub fn natural_sort_key(name: &str) -> Vec<String> {
-    let mut out=Vec::new(); let mut cur=String::new(); let mut digit=false;
-    for c in name.chars() { let d=c.is_ascii_digit(); if d != digit && !cur.is_empty() { out.push(if digit { format!("#{:020}",cur.parse::<u64>().unwrap_or(0)) } else { cur.to_ascii_lowercase() }); cur.clear(); } digit=d; cur.push(c); }
-    if !cur.is_empty() { out.push(if digit { format!("#{:020}",cur.parse::<u64>().unwrap_or(0)) } else { cur.to_ascii_lowercase() }); } out
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut digit = false;
+    for c in name.chars() {
+        let d = c.is_ascii_digit();
+        if d != digit && !cur.is_empty() {
+            out.push(if digit {
+                format!("#{:020}", cur.parse::<u64>().unwrap_or(0))
+            } else {
+                cur.to_ascii_lowercase()
+            });
+            cur.clear();
+        }
+        digit = d;
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(if digit {
+            format!("#{:020}", cur.parse::<u64>().unwrap_or(0))
+        } else {
+            cur.to_ascii_lowercase()
+        });
+    }
+    out
 }
 pub fn fingerprint(entries: &[RemoteEntry]) -> String {
-    let mut rows: Vec<String> = entries.iter().filter(|e| !is_ignored_name(&e.name)).map(|e| format!("{}|{}|{}|{:?}|{:?}|{:?}", normalize_path(&e.logical_path), e.name, e.is_dir, e.size, e.mtime, e.asset_kind)).collect(); rows.sort(); let mut h=Sha256::new(); h.update(rows.join("\n")); format!("{:x}",h.finalize())
+    let mut rows: Vec<String> = entries
+        .iter()
+        .filter(|e| !is_ignored_name(&e.name))
+        .map(|e| {
+            format!(
+                "{}|{}|{}|{:?}|{:?}|{:?}",
+                normalize_path(&e.logical_path),
+                e.name,
+                e.is_dir,
+                e.size,
+                e.mtime,
+                e.asset_kind
+            )
+        })
+        .collect();
+    rows.sort();
+    let mut h = Sha256::new();
+    h.update(rows.join("\n"));
+    format!("{:x}", h.finalize())
 }
-#[cfg(test)] mod tests { use super::*; #[test] fn normalized_fingerprint_stable(){ let a=RemoteEntry{name:"x.jpg".into(),logical_path:"/a/".into(),is_dir:false,size:Some(1),mtime:Some(2),asset_kind:RemoteAssetKind::ImageFile}; let mut b=a.clone(); b.logical_path="\\a".into(); assert_eq!(fingerprint(&[a]),fingerprint(&[b])); } }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn normalized_fingerprint_stable() {
+        let a = RemoteEntry {
+            name: "x.jpg".into(),
+            logical_path: "/a/".into(),
+            is_dir: false,
+            size: Some(1),
+            mtime: Some(2),
+            asset_kind: RemoteAssetKind::ImageFile,
+        };
+        let mut b = a.clone();
+        b.logical_path = "\\a".into();
+        assert_eq!(fingerprint(&[a]), fingerprint(&[b]));
+    }
+}

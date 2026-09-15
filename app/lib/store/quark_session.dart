@@ -1,6 +1,7 @@
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 
 /// 夸克网盘会话缓存（按书源 id），避免每次打开都重新连接。
 final Map<String, BigInt> _quarkSessions = {};
@@ -8,7 +9,10 @@ final Map<String, BigInt> _quarkSessions = {};
 /// 获取/重连夸克网盘书源会话；连接成功后把会话内续期后的 cookie 回写 DB。
 Future<BigInt> quarkSessionFor(BookSource source) async {
   final cached = _quarkSessions[source.id];
-  if (cached != null) return cached;
+  if (cached != null) {
+    remoteSessionSuccessHub.emit(source, cached);
+    return cached;
+  }
   final s = await quarkConnect(
     cookie: source.cookie ?? '',
     rootId: source.rootId ?? '0',
@@ -18,6 +22,7 @@ Future<BigInt> quarkSessionFor(BookSource source) async {
     source.cookie = s.cookie;
     await LibraryStore.instance.updateSource(source.id, cookie: s.cookie);
   }
+  remoteSessionSuccessHub.emit(source, s.id);
   return s.id;
 }
 

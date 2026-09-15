@@ -13,6 +13,30 @@ typedef RemoteScanStart =
       required String mode,
     });
 typedef RemoteScanControl = Future<void> Function(String sourceId);
+typedef RemoteScanStatusLoader =
+    Future<RemoteScanStatus?> Function(String sourceId);
+
+class RemoteScanAlreadyRunning implements Exception {
+  const RemoteScanAlreadyRunning(this.sourceId, this.requestedMode);
+  final String sourceId;
+  final String requestedMode;
+}
+
+class RemoteSessionSuccess {
+  const RemoteSessionSuccess(this.source, this.session);
+  final BookSource source;
+  final BigInt session;
+}
+
+class RemoteSessionSuccessHub {
+  final _events = StreamController<RemoteSessionSuccess>.broadcast(sync: true);
+  Stream<RemoteSessionSuccess> get events => _events.stream;
+  void emit(BookSource source, BigInt session) =>
+      _events.add(RemoteSessionSuccess(source, session));
+  Future<void> dispose() => _events.close();
+}
+
+final remoteSessionSuccessHub = RemoteSessionSuccessHub();
 
 class RemoteScanCoordinator {
   RemoteScanCoordinator({
@@ -20,10 +44,26 @@ class RemoteScanCoordinator {
     RemoteScanControl? pauseCall,
     RemoteScanControl? resumeCall,
     RemoteScanControl? cancelCall,
+    RemoteScanStatusLoader? statusCall,
+    RemoteSessionSuccessHub? sessionHub,
+    this._debounce = const Duration(seconds: 2),
+    DateTime Function()? clock,
   }) : _start = start ?? _nativeStart,
        _pause = pauseCall ?? _nativePause,
        _resume = resumeCall ?? _nativeResume,
-       _cancel = cancelCall ?? _nativeCancel;
+       _cancel = cancelCall ?? _nativeCancel,
+       _status = statusCall ?? _nativeStatus,
+       _clock = clock ?? DateTime.now {
+    _sessionSubscription = (sessionHub ?? remoteSessionSuccessHub).events
+        .listen((event) {
+          unawaited(
+            ensureForSession(
+              event.source,
+              event.session,
+            ).then<void>((_) {}, onError: (_) {}),
+          );
+        });
+  }
 
   static final instance = RemoteScanCoordinator();
 
@@ -31,28 +71,47 @@ class RemoteScanCoordinator {
   final RemoteScanControl _pause;
   final RemoteScanControl _resume;
   final RemoteScanControl _cancel;
+  final RemoteScanStatusLoader _status;
+  final Duration _debounce;
+  final DateTime Function() _clock;
+  late final StreamSubscription<RemoteSessionSuccess> _sessionSubscription;
   final Map<String, Future<RemoteScanStatus>> _inflight = {};
   final Set<String> _observedSources = {};
   final Map<String, ValueNotifier<RemoteScanStatus?>> _statuses = {};
+  final Map<String, DateTime> _completedAt = {};
+  final Map<String, RemoteScanStatus> _lastCompleted = {};
+  final Set<String> _recoveringSources = {};
 
   ValueListenable<RemoteScanStatus?> statusFor(String sourceId) =>
       _statuses.putIfAbsent(sourceId, () => ValueNotifier(null));
 
   Future<void> restoreStatuses(Iterable<BookSource> sources) async {
     for (final source in sources.where((source) => source.needsSession)) {
-      final dto = await rust.remoteScanStatus(sourceId: source.id);
-      if (dto == null) continue;
-      final status = _fromStatusDto(dto);
+      final status = await _status(source.id);
+      if (status == null) continue;
       _statuses.putIfAbsent(source.id, () => ValueNotifier(null)).value =
           status;
       _observedSources.add(source.id);
+      if (status.status == 'running' || status.status == 'paused') {
+        _recoveringSources.add(source.id);
+      }
     }
   }
 
   Future<RemoteScanStatus> ensureForSession(BookSource source, BigInt session) {
     final existing = _inflight[source.id];
     if (existing != null) return existing;
-    final mode = _observedSources.contains(source.id) ? 'incremental' : 'full';
+    final completedAt = _completedAt[source.id];
+    final completed = _lastCompleted[source.id];
+    if (completedAt != null &&
+        completed != null &&
+        _clock().difference(completedAt) < _debounce) {
+      return Future.value(completed);
+    }
+    final recovering = _recoveringSources.remove(source.id);
+    final mode = recovering
+        ? 'full'
+        : (_observedSources.contains(source.id) ? 'incremental' : 'full');
     return _startShared(source, session, mode);
   }
 
@@ -64,7 +123,10 @@ class RemoteScanCoordinator {
     if (mode != 'incremental' && mode != 'full') {
       return Future.error(ArgumentError.value(mode, 'mode'));
     }
-    return _inflight[source.id] ?? _startShared(source, session, mode);
+    if (_inflight.containsKey(source.id)) {
+      return Future.error(RemoteScanAlreadyRunning(source.id, mode));
+    }
+    return _startShared(source, session, mode);
   }
 
   Future<void> pause(String sourceId) async {
@@ -101,6 +163,10 @@ class RemoteScanCoordinator {
                       .putIfAbsent(source.id, () => ValueNotifier(null))
                       .value =
                   status;
+              if (status.status == 'complete') {
+                _completedAt[source.id] = _clock();
+                _lastCompleted[source.id] = status;
+              }
               return status;
             })
             .whenComplete(() {
@@ -153,6 +219,18 @@ class RemoteScanCoordinator {
       rust.remoteScanResume(sourceId: sourceId);
   static Future<void> _nativeCancel(String sourceId) =>
       rust.remoteScanCancel(sourceId: sourceId);
+
+  static Future<RemoteScanStatus?> _nativeStatus(String sourceId) async {
+    final dto = await rust.remoteScanStatus(sourceId: sourceId);
+    return dto == null ? null : _fromStatusDto(dto);
+  }
+
+  Future<void> dispose() async {
+    await _sessionSubscription.cancel();
+    for (final notifier in _statuses.values) {
+      notifier.dispose();
+    }
+  }
 
   static RemoteScanStatus _fromStatusDto(rust.RemoteScanStatusDto dto) {
     return RemoteScanStatus(

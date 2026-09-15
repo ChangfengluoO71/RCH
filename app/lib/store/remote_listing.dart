@@ -7,15 +7,12 @@
 // 与 source_browser.dart 中"全量重建索引（联网）"的 listRemote 回调同构；
 // 任何新增书源类型只需在此扩展 switch。
 
-import 'dart:async';
-
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
-import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 
@@ -30,13 +27,6 @@ Future<BigInt?> remoteSessionFor(BookSource source) async {
     'quark' => await quarkSessionFor(source),
     _ => null,
   };
-  if (session != null) {
-    unawaited(
-      RemoteScanCoordinator.instance
-          .ensureForSession(source, session)
-          .then<void>((_) {}, onError: (_) {}),
-    );
-  }
   return session;
 }
 
@@ -56,6 +46,8 @@ Future<List<FolderSnapshotEntry>> listRemoteDirFor(
   };
   if (list == null) return const [];
   return list
-      .map((e) => FolderSnapshotEntry(name: e.name, path: e.path, isDir: e.isDir, size: e.size.toInt(), mtime: e.mtime.toInt()))
+      .map(
+        (e) => FolderSnapshotEntry(name: e.name, path: e.path, isDir: e.isDir),
+      )
       .toList();
 }

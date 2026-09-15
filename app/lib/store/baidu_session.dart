@@ -1,6 +1,7 @@
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 
 /// 百度网盘会话缓存（按书源 id），避免每次打开都重新连接。
 final Map<String, BigInt> _baiduSessions = {};
@@ -8,7 +9,10 @@ final Map<String, BigInt> _baiduSessions = {};
 /// 获取/重连百度网盘书源会话；连接成功后回写刷新后的 refresh_token。
 Future<BigInt> baiduSessionFor(BookSource source) async {
   final cached = _baiduSessions[source.id];
-  if (cached != null) return cached;
+  if (cached != null) {
+    remoteSessionSuccessHub.emit(source, cached);
+    return cached;
+  }
   final s = await baiduConnect(
     refreshToken: source.refreshToken ?? '',
     appKey: source.clientId ?? '',
@@ -23,6 +27,7 @@ Future<BigInt> baiduSessionFor(BookSource source) async {
       refreshToken: s.refreshToken,
     );
   }
+  remoteSessionSuccessHub.emit(source, s.id);
   return s.id;
 }
 

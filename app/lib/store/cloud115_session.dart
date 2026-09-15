@@ -3,6 +3,7 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/ui/cloud115_qr_scan.dart';
 
 /// 115 网盘会话缓存（按书源 id），避免每次打开都重新连接。
@@ -63,7 +64,10 @@ Future<BigInt> cloud115SessionFor(BookSource source) {
 /// 官方 APP ID 模式：连接成功后回写刷新后的 refresh_token。
 Future<BigInt> cloud115OpenSessionFor(BookSource source) async {
   final cached = _cloud115OpenSessions[source.id];
-  if (cached != null) return cached;
+  if (cached != null) {
+    remoteSessionSuccessHub.emit(source, cached);
+    return cached;
+  }
   final s = await cloud115Connect(
     refreshToken: source.refreshToken ?? '',
     appId: source.clientId ?? '',
@@ -77,13 +81,17 @@ Future<BigInt> cloud115OpenSessionFor(BookSource source) async {
       refreshToken: s.refreshToken,
     );
   }
+  remoteSessionSuccessHub.emit(source, s.id);
   return s.id;
 }
 
 /// 网页扫码 Cookie 模式（无需 APP ID）：连接成功后回写 Cookie（如已变化）。
 Future<BigInt> cloud115CookieSessionFor(BookSource source) async {
   final cached = _cloud115CookieSessions[source.id];
-  if (cached != null) return cached;
+  if (cached != null) {
+    remoteSessionSuccessHub.emit(source, cached);
+    return cached;
+  }
   final s = await cloud115CookieConnect(
     cookie: source.cookie ?? '',
     rootId: source.rootId ?? '0',
@@ -93,6 +101,7 @@ Future<BigInt> cloud115CookieSessionFor(BookSource source) async {
     source.cookie = s.cookie;
     await LibraryStore.instance.updateSource(source.id, cookie: s.cookie);
   }
+  remoteSessionSuccessHub.emit(source, s.id);
   return s.id;
 }
 

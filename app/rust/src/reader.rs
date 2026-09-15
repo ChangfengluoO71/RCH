@@ -158,11 +158,16 @@ impl Drop for BlockingRequestPermit<'_> {
 }
 
 /// Process-wide governor shared by reader work and safe remote cover reads.
-pub fn blocking_request_governor() -> &'static BlockingRequestGovernor {
-    static GOVERNOR: OnceLock<BlockingRequestGovernor> = OnceLock::new();
-    GOVERNOR.get_or_init(|| {
-        BlockingRequestGovernor::new(REQUEST_GOVERNOR_CAPACITY, REQUEST_GOVERNOR_QUEUE_CAPACITY)
-    })
+pub fn blocking_request_governor() -> Arc<BlockingRequestGovernor> {
+    static GOVERNOR: OnceLock<Arc<BlockingRequestGovernor>> = OnceLock::new();
+    GOVERNOR
+        .get_or_init(|| {
+            Arc::new(BlockingRequestGovernor::new(
+                REQUEST_GOVERNOR_CAPACITY,
+                REQUEST_GOVERNOR_QUEUE_CAPACITY,
+            ))
+        })
+        .clone()
 }
 
 /// 轻量 LRU:容量有限的内存缓存。
@@ -219,6 +224,7 @@ pub struct Reader {
     inflight_done: Condvar,
     /// 该书的磁盘缓存目录(原始页字节)。
     disk_dir: PathBuf,
+    governor: Arc<BlockingRequestGovernor>,
 }
 
 impl Reader {
@@ -245,6 +251,7 @@ impl Reader {
             inflight: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: dir,
+            governor: blocking_request_governor(),
         }
     }
 
@@ -292,7 +299,7 @@ impl Reader {
 
             inflight.insert(index);
             drop(inflight);
-            return self.load_claimed(index);
+            return self.load_claimed(index, RequestPriority::Foreground);
         }
     }
 
@@ -307,9 +314,11 @@ impl Reader {
     }
 
     /// 已认领页的唯一实际读取路径。无论成功、失败还是 panic 都释放 inflight 并唤醒等待者。
-    fn load_claimed(&self, index: u32) -> Result<Arc<Vec<u8>>> {
-        let outcome =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.read_page(index)));
+    fn load_claimed(&self, index: u32, priority: RequestPriority) -> Result<Arc<Vec<u8>>> {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _permit = self.governor.acquire(priority)?;
+            self.read_page(index)
+        }));
 
         match outcome {
             Ok(result) => {
@@ -368,7 +377,7 @@ impl Reader {
             }
             let me = Arc::clone(self);
             std::thread::spawn(move || {
-                let _ = me.load_claimed(t);
+                let _ = me.load_claimed(t, RequestPriority::Prefetch);
             });
         }
     }
@@ -386,7 +395,9 @@ mod tests {
 
     #[test]
     fn request_priority_contract_keeps_reader_before_prefetch_before_cover() {
-        assert!(RequestPriority::Foreground.queue_index() < RequestPriority::Prefetch.queue_index());
+        assert!(
+            RequestPriority::Foreground.queue_index() < RequestPriority::Prefetch.queue_index()
+        );
         assert!(RequestPriority::Prefetch.queue_index() < RequestPriority::Cover.queue_index());
         assert!(RequestPriority::Cover.queue_index() < RequestPriority::Scan.queue_index());
     }
@@ -403,8 +414,12 @@ mod tests {
         });
         queued_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while governor.state.lock().unwrap().queues[RequestPriority::Scan.queue_index()].is_empty() {
-            assert!(std::time::Instant::now() < deadline, "scan waiter did not queue");
+        while governor.state.lock().unwrap().queues[RequestPriority::Scan.queue_index()].is_empty()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "scan waiter did not queue"
+            );
             std::thread::yield_now();
         }
 
@@ -521,6 +536,7 @@ mod tests {
             inflight: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
+            governor: Arc::new(BlockingRequestGovernor::new(3, 8)),
         });
 
         reader.warm_up();
@@ -562,5 +578,83 @@ mod tests {
         }
         drop(inflight);
         let _ = std::fs::remove_dir_all(disk_dir);
+    }
+
+    #[test]
+    fn real_foreground_read_waits_for_a_governor_permit() {
+        let governor = Arc::new(BlockingRequestGovernor::new(3, 8));
+        let held = [
+            governor.acquire(RequestPriority::Foreground).unwrap(),
+            governor.acquire(RequestPriority::Foreground).unwrap(),
+            governor.acquire(RequestPriority::Foreground).unwrap(),
+        ];
+        let (started_tx, started_rx) = mpsc::channel();
+        let disk_dir = std::env::temp_dir().join(format!(
+            "rch_reader_foreground_governor_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        let reader = Arc::new(Reader {
+            book: Box::new(NotifyDoc(started_tx)),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+            governor: Arc::clone(&governor),
+        });
+        let worker = std::thread::spawn(move || reader.get_page(0));
+        assert!(started_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(held);
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.join().unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(disk_dir);
+    }
+
+    #[test]
+    fn real_prefetch_respects_background_reservation() {
+        let governor = Arc::new(BlockingRequestGovernor::new(3, 8));
+        let scan_a = governor.acquire(RequestPriority::Scan).unwrap();
+        let scan_b = governor.acquire(RequestPriority::Scan).unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let disk_dir = std::env::temp_dir().join(format!(
+            "rch_reader_governor_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        let reader = Arc::new(Reader {
+            book: Box::new(NotifyDoc(started_tx)),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+            governor: Arc::clone(&governor),
+        });
+        reader.warm_up();
+        assert!(started_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(scan_a);
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        drop(scan_b);
+        let _ = std::fs::remove_dir_all(disk_dir);
+    }
+
+    struct NotifyDoc(mpsc::Sender<()>);
+
+    impl Document for NotifyDoc {
+        fn page_count(&self) -> u32 {
+            2
+        }
+        fn metadata(&self) -> DocumentMeta {
+            DocumentMeta::default()
+        }
+        fn page_bytes(&self, _index: u32) -> Result<Vec<u8>> {
+            let _ = self.0.send(());
+            Ok(vec![1])
+        }
     }
 }

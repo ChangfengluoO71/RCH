@@ -1,5 +1,6 @@
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 
 /// SFTP 会话缓存(按书源 id)，避免每次打开都重新连接。
 final Map<String, BigInt> _sftpSessions = {};
@@ -7,7 +8,10 @@ final Map<String, BigInt> _sftpSessions = {};
 /// 获取/重连某 SFTP 书源的会话（带缓存，避免每次打开都重连）。
 Future<BigInt> sftpSessionFor(BookSource source) async {
   final cached = _sftpSessions[source.id];
-  if (cached != null) return cached;
+  if (cached != null) {
+    remoteSessionSuccessHub.emit(source, cached);
+    return cached;
+  }
   final (host, port) = _parseHostPort(source);
   final s = await sftpConnect(
     host: host,
@@ -16,6 +20,7 @@ Future<BigInt> sftpSessionFor(BookSource source) async {
     password: source.password ?? '',
   );
   _sftpSessions[source.id] = s.id;
+  remoteSessionSuccessHub.emit(source, s.id);
   return s.id;
 }
 

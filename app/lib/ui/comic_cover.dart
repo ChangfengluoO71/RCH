@@ -13,6 +13,98 @@ import 'package:app/ui/common.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
 
+class VisibleCoverLease<T> {
+  VisibleCoverLease(this.future, this._dispose);
+
+  final Future<T> future;
+  final void Function() _dispose;
+  bool _disposed = false;
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _dispose();
+  }
+}
+
+class VisibleCoverScheduler<T> {
+  VisibleCoverScheduler({this.maxConcurrent = 4}) : assert(maxConcurrent > 0);
+
+  final int maxConcurrent;
+  final Map<String, _VisibleCoverTask<T>> _tasks = {};
+  final List<_VisibleCoverTask<T>> _pending = [];
+  int _running = 0;
+
+  VisibleCoverLease<T> acquire(String key, Future<T> Function() load) {
+    final existing = _tasks[key];
+    final _VisibleCoverTask<T> task;
+    if (existing == null) {
+      task = _VisibleCoverTask<T>(key, load);
+      _tasks[key] = task;
+      _pending.add(task);
+    } else {
+      task = existing;
+    }
+    task.subscribers++;
+    _drain();
+    return VisibleCoverLease<T>(task.completer.future, () => _release(task));
+  }
+
+  void _release(_VisibleCoverTask<T> task) {
+    task.subscribers--;
+    if (task.subscribers > 0 || task.running || task.completer.isCompleted) {
+      return;
+    }
+    _pending.remove(task);
+    if (identical(_tasks[task.key], task)) _tasks.remove(task.key);
+    task.completer.completeError(StateError('cover load cancelled'));
+  }
+
+  void _drain() {
+    while (_running < maxConcurrent && _pending.isNotEmpty) {
+      final task = _pending.removeAt(0);
+      if (task.completer.isCompleted || task.subscribers == 0) continue;
+      task.running = true;
+      _running++;
+      Future<T>.sync(task.load)
+          .then(task.completer.complete, onError: task.completer.completeError)
+          .whenComplete(() {
+            task.running = false;
+            _running--;
+            if (identical(_tasks[task.key], task)) _tasks.remove(task.key);
+            _drain();
+          });
+    }
+  }
+}
+
+class _VisibleCoverTask<T> {
+  _VisibleCoverTask(this.key, this.load);
+
+  final String key;
+  final Future<T> Function() load;
+  final Completer<T> completer = Completer<T>();
+  int subscribers = 0;
+  bool running = false;
+}
+
+Future<T?> loadCoverWithSafePolicy<T>({
+  required bool remoteFetchEnabled,
+  required BigInt? liveSession,
+  required Future<BigInt> Function() createSession,
+  required Future<T> Function(BigInt session, bool remoteFetchEnabled) load,
+}) async {
+  if (!remoteFetchEnabled) return null;
+  final session = liveSession ?? await createSession();
+  return load(session, true);
+}
+
+class SourceCoverNoticeGate {
+  final Set<String> _seen = {};
+
+  bool take(String sourceKey) => _seen.add(sourceKey);
+}
+
 /// 封面加载任务队列 — 限制并发 FFI 调用数，避免数百个封面同时竞争线程池。
 ///
 /// 设计：
@@ -22,7 +114,8 @@ import 'package:flutter/material.dart';
 class _CoverLoadQueue {
   _CoverLoadQueue._();
 
-  static final _CoverLoadQueue instance = _CoverLoadQueue._();
+  static final VisibleCoverScheduler<ui.Image> scheduler =
+      VisibleCoverScheduler<ui.Image>();
 
   static const int maxConcurrent = 4;
 
@@ -54,14 +147,18 @@ class _CoverLoadQueue {
       final qt = _pending.removeAt(0);
       if (qt.completer.isCompleted) continue; // 已被 cancel
       _running++;
-      qt.task().then((img) {
-        qt.completer.complete(img);
-      }).catchError((e) {
-        if (!qt.completer.isCompleted) qt.completer.completeError(e);
-      }).whenComplete(() {
-        _running--;
-        _drain();
-      });
+      qt
+          .task()
+          .then((img) {
+            qt.completer.complete(img);
+          })
+          .catchError((e) {
+            if (!qt.completer.isCompleted) qt.completer.completeError(e);
+          })
+          .whenComplete(() {
+            _running--;
+            _drain();
+          });
     }
   }
 }
@@ -112,24 +209,31 @@ class ComicCover extends StatefulWidget {
 
   /// “未缓存”占位（网盘文件未下载 / 网盘文件夹无本地数据共用）。
   static Widget uncachedPlaceholder() => Container(
-        color: Colors.black26,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.cloud_download_outlined,
-                  size: 36, color: Colors.lightBlueAccent.withAlpha(120)),
-              const SizedBox(height: 4),
-              const Text('未缓存',
-                  style: TextStyle(fontSize: 10, color: Colors.white38)),
-            ],
+    color: Colors.black26,
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.cloud_download_outlined,
+            size: 36,
+            color: Colors.lightBlueAccent.withAlpha(120),
           ),
-        ),
-      );
+          const SizedBox(height: 4),
+          const Text(
+            '未缓存',
+            style: TextStyle(fontSize: 10, color: Colors.white38),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _ComicCoverState extends State<ComicCover> {
   Future<ui.Image>? _future;
+  VisibleCoverLease<ui.Image>? _lease;
+
   /// 上一次使用的缓存 key；封面页/裁切/画质等元数据变化时用于触发重载。
   String? _lastCacheKey;
 
@@ -137,7 +241,12 @@ class _ComicCoverState extends State<ComicCover> {
     final store = LibraryStore.instance;
     final q = store.settings.coverQuality;
     final meta = store.metaOf(widget.source, widget.path);
-    return '${widget.source.id}|${widget.path}|${q.name}|${meta.coverPage}'
+    final dependencyKey = bookKeyOf(
+      widget.source.type,
+      widget.source.id,
+      widget.path,
+    );
+    return '$dependencyKey|${q.name}|${meta.coverPage}'
         '|${meta.cropX},${meta.cropY},${meta.cropW},${meta.cropH}';
   }
 
@@ -164,9 +273,8 @@ class _ComicCoverState extends State<ComicCover> {
         oldWidget.force != widget.force ||
         newKey != _lastCacheKey) {
       // 路径变化：取消旧队列任务，重新加载
-      if (_lastCacheKey != null) {
-        _CoverLoadQueue.instance.cancel(_lastCacheKey!);
-      }
+      _lease?.dispose();
+      _lease = null;
       _future = null;
       _lastCacheKey = newKey;
       _maybeLoad();
@@ -176,7 +284,7 @@ class _ComicCoverState extends State<ComicCover> {
   @override
   void dispose() {
     // Widget 不可见时取消队列中的等待任务（已经开始的 FFI 调用不中断）
-    _CoverLoadQueue.instance.cancel(_cacheKey);
+    _lease?.dispose();
     super.dispose();
   }
 
@@ -194,11 +302,13 @@ class _ComicCoverState extends State<ComicCover> {
     }
 
     // 入队：并发控制在队列内部
-    final completer = _CoverLoadQueue.instance.enqueue(key, _load);
-    _future = completer.future;
-    _future!.then((img) {
-      ComicCover._cache[key] = img;
-    }).catchError((_) {});
+    _lease = _CoverLoadQueue.scheduler.acquire(key, _load);
+    _future = _lease!.future;
+    _future!
+        .then((img) {
+          ComicCover._cache[key] = img;
+        })
+        .catchError((_) {});
   }
 
   /// 实际的封面加载逻辑（不包含队列调度）。
@@ -208,102 +318,129 @@ class _ComicCoverState extends State<ComicCover> {
     final (w, h) = q.size;
     final meta = store.metaOf(widget.source, widget.path);
     final crop = meta.hasCrop
-        ? CropRect(x: meta.cropX!, y: meta.cropY!, w: meta.cropW!, h: meta.cropH!)
+        ? CropRect(
+            x: meta.cropX!,
+            y: meta.cropY!,
+            w: meta.cropW!,
+            h: meta.cropH!,
+          )
         : null;
 
     if (widget.source.isWebDav) {
       try {
         final session = await webdavSessionFor(widget.source);
         final hasRaw = await webdavHasRawCache(
-            session: session, path: widget.path);
+          session: session,
+          path: widget.path,
+        );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
       final session = await webdavSessionFor(widget.source);
       final p = await webdavCover(
-          session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
-          crop: crop);
+        session: session,
+        path: widget.path,
+        page: meta.coverPage,
+        width: w,
+        height: h,
+        crop: crop,
+      );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.isSftp) {
       try {
         final session = await sftpSessionFor(widget.source);
-        final hasRaw = await sftpHasRawCache(session: session, path: widget.path);
+        final hasRaw = await sftpHasRawCache(
+          session: session,
+          path: widget.path,
+        );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
       final session = await sftpSessionFor(widget.source);
       final p = await sftpCover(
-          session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
-          crop: crop);
+        session: session,
+        path: widget.path,
+        page: meta.coverPage,
+        width: w,
+        height: h,
+        crop: crop,
+      );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.isBaidu) {
       try {
         final session = await baiduSessionFor(widget.source);
-        final hasRaw = await baiduHasRawCache(session: session, path: widget.path);
+        final hasRaw = await baiduHasRawCache(
+          session: session,
+          path: widget.path,
+        );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
       final session = await baiduSessionFor(widget.source);
       final p = await baiduCover(
-          session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
-          crop: crop);
+        session: session,
+        path: widget.path,
+        page: meta.coverPage,
+        width: w,
+        height: h,
+        crop: crop,
+      );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.is115) {
       try {
         final session = await cloud115SessionFor(widget.source);
-        final hasRaw =
-            await cloud115HasRawCacheFor(widget.source,
-                session: session, path: widget.path);
+        final hasRaw = await cloud115HasRawCacheFor(
+          widget.source,
+          session: session,
+          path: widget.path,
+        );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
       final session = await cloud115SessionFor(widget.source);
       final p = await cloud115CoverFor(
-          widget.source,
-          session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
-          crop: crop);
+        widget.source,
+        session: session,
+        path: widget.path,
+        page: meta.coverPage,
+        width: w,
+        height: h,
+        crop: crop,
+      );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.isQuark) {
       try {
         final session = await quarkSessionFor(widget.source);
-        final hasRaw =
-            await quarkHasRawCache(session: session, path: widget.path);
+        final hasRaw = await quarkHasRawCache(
+          session: session,
+          path: widget.path,
+        );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
       final session = await quarkSessionFor(widget.source);
       final p = await quarkCover(
-          session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
-          crop: crop);
+        session: session,
+        path: widget.path,
+        page: meta.coverPage,
+        width: w,
+        height: h,
+        crop: crop,
+      );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else {
       final p = await bookCover(
-          path: widget.path, page: meta.coverPage, width: w, height: h, crop: crop);
+        path: widget.path,
+        page: meta.coverPage,
+        width: w,
+        height: h,
+        crop: crop,
+      );
       return await rgbaToImage(p.rgba, p.width, p.height);
     }
   }
@@ -331,7 +468,8 @@ class _ComicCoverState extends State<ComicCover> {
     color: Colors.black26,
     child: const Center(
       child: SizedBox(
-        width: 22, height: 22,
+        width: 22,
+        height: 22,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
     ),
@@ -368,7 +506,9 @@ class ComicCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(child: ComicCover(source: source, path: path)),
+            Expanded(
+              child: ComicCover(source: source, path: path),
+            ),
             Container(
               color: Colors.black45,
               padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
@@ -383,8 +523,13 @@ class ComicCard extends StatelessWidget {
                   ),
                   if (subtitle != null) ...[
                     const SizedBox(height: 2),
-                    Text(subtitle!,
-                        style: const TextStyle(fontSize: 10, color: Colors.white54)),
+                    Text(
+                      subtitle!,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.white54,
+                      ),
+                    ),
                   ],
                 ],
               ),

@@ -3,13 +3,13 @@
 use super::book::{register_book, BookInfo, CropRect, DirEntry, PageImage};
 use crate::cache;
 use crate::document;
+use crate::remote_scan::adapter::{RemoteCapabilities, RemoteProviderAdapter, RemoteScanError};
+use crate::remote_scan::model::{classify, normalize_path, RemoteEntry};
 use crate::source::baidu::{self as baidu_source, BaiduClient};
 use crate::source::cloud115::{self as cloud115_source, Cloud115Client, Cloud115WebClient};
 use crate::source::quark::{self as quark_source, QuarkClient};
 use crate::source::sftp::{self as sftp_source, SftpClient};
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
-use crate::remote_scan::adapter::{RemoteCapabilities, RemoteProviderAdapter, RemoteScanError};
-use crate::remote_scan::model::{classify, normalize_path, RemoteEntry};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -320,25 +320,63 @@ struct SessionRemoteAdapter {
     client: RemoteSessionClient,
     root: String,
     opaque_paths: bool,
+    path_ids: Mutex<HashMap<String, String>>,
 }
 
 impl SessionRemoteAdapter {
-    fn provider_path<'a>(&'a self, canonical: &'a str) -> &'a str {
-        if canonical == "/" { &self.root } else if self.opaque_paths { canonical.trim_start_matches('/') } else { canonical }
+    fn provider_path(&self, canonical: &str) -> String {
+        if !self.opaque_paths {
+            return canonical.to_string();
+        }
+        self.path_ids
+            .lock()
+            .unwrap()
+            .get(&normalize_path(canonical))
+            .cloned()
+            .unwrap_or_else(|| self.root.clone())
     }
+}
+
+fn canonical_child_path(parent: &str, name: &str) -> String {
+    let name = name.trim_matches(['/', '\\']);
+    normalize_path(&format!("{}/{}", normalize_path(parent), name))
+}
+
+fn retry_after_ms(text: &str) -> Option<u64> {
+    ["retry-after-ms=", "retry_after_ms="]
+        .iter()
+        .find_map(|prefix| {
+            text.find(prefix).and_then(|index| {
+                text[index + prefix.len()..]
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+        })
 }
 
 fn scan_error(error: anyhow::Error) -> RemoteScanError {
     let text = error.to_string().to_ascii_lowercase();
-    if text.contains("401") || text.contains("登录") || text.contains("token") || text.contains("认证") {
+    if text.contains("401")
+        || text.contains("登录")
+        || text.contains("token")
+        || text.contains("认证")
+    {
         RemoteScanError::Unauthorized
     } else if text.contains("403") || text.contains("权限") || text.contains("forbidden") {
         RemoteScanError::Forbidden
     } else if text.contains("404") || text.contains("不存在") || text.contains("not found") {
         RemoteScanError::NotFound
     } else if text.contains("429") || text.contains("频繁") || text.contains("rate") {
-        RemoteScanError::RateLimited { retry_after_ms: None }
-    } else if text.contains("timeout") || text.contains("timed out") || text.contains("连接") || text.contains("network") {
+        RemoteScanError::RateLimited {
+            retry_after_ms: retry_after_ms(&text),
+        }
+    } else if text.contains("timeout")
+        || text.contains("timed out")
+        || text.contains("连接")
+        || text.contains("network")
+    {
         RemoteScanError::TransientNetwork("provider_unavailable".into())
     } else {
         RemoteScanError::Provider("provider_error".into())
@@ -347,63 +385,130 @@ fn scan_error(error: anyhow::Error) -> RemoteScanError {
 
 impl RemoteProviderAdapter for SessionRemoteAdapter {
     #[flutter_rust_bridge::frb(ignore)]
-    fn list(&self, path: &str, cursor: Option<&str>) -> std::result::Result<(Vec<RemoteEntry>, Option<String>), RemoteScanError> {
-        if cursor.is_some() { return Err(RemoteScanError::MalformedResponse("unexpected_cursor".into())); }
+    fn list(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+    ) -> std::result::Result<(Vec<RemoteEntry>, Option<String>), RemoteScanError> {
+        if cursor.is_some() {
+            return Err(RemoteScanError::MalformedResponse(
+                "unexpected_cursor".into(),
+            ));
+        }
         let provider_path = self.provider_path(path);
         let entries = match &self.client {
-            RemoteSessionClient::WebDav(c) => c.list(provider_path),
-            RemoteSessionClient::Sftp(c) => c.list(provider_path),
-            RemoteSessionClient::Baidu(c) => c.list(provider_path),
-            RemoteSessionClient::Cloud115(c) => c.list(provider_path),
-            RemoteSessionClient::Cloud115Cookie(c) => c.list(provider_path),
-            RemoteSessionClient::Quark(c) => c.list(provider_path),
-        }.map_err(scan_error)?;
-        Ok((entries.into_iter().map(|entry| RemoteEntry {
-            asset_kind: classify(&entry.name, entry.is_dir),
-            name: entry.name,
-            logical_path: normalize_path(&entry.path),
-            is_dir: entry.is_dir,
-            size: (entry.size != 0).then_some(entry.size),
-            mtime: (entry.mtime != 0).then_some(entry.mtime),
-        }).collect(), None))
+            RemoteSessionClient::WebDav(c) => c.list(&provider_path),
+            RemoteSessionClient::Sftp(c) => c.list(&provider_path),
+            RemoteSessionClient::Baidu(c) => c.list(&provider_path),
+            RemoteSessionClient::Cloud115(c) => c.list(&provider_path),
+            RemoteSessionClient::Cloud115Cookie(c) => c.list(&provider_path),
+            RemoteSessionClient::Quark(c) => c.list(&provider_path),
+        }
+        .map_err(scan_error)?;
+        let mapped = entries
+            .into_iter()
+            .map(|entry| {
+                let logical_path = if self.opaque_paths {
+                    canonical_child_path(path, &entry.name)
+                } else {
+                    normalize_path(&entry.path)
+                };
+                if self.opaque_paths {
+                    self.path_ids
+                        .lock()
+                        .unwrap()
+                        .insert(logical_path.clone(), entry.path.clone());
+                }
+                RemoteEntry {
+                    asset_kind: classify(&entry.name, entry.is_dir),
+                    name: entry.name,
+                    logical_path,
+                    is_dir: entry.is_dir,
+                    size: (entry.size != 0).then_some(entry.size),
+                    mtime: (entry.mtime != 0).then_some(entry.mtime),
+                }
+            })
+            .collect();
+        Ok((mapped, None))
     }
 
     #[flutter_rust_bridge::frb(ignore)]
-    fn read_range(&self, path: &str, offset: u64, length: u64) -> std::result::Result<Vec<u8>, RemoteScanError> {
+    fn read_range(
+        &self,
+        path: &str,
+        offset: u64,
+        length: u64,
+    ) -> std::result::Result<Vec<u8>, RemoteScanError> {
         let length = usize::try_from(length).map_err(|_| RemoteScanError::RangeUnavailable)?;
         let mut bytes = vec![0; length];
         let provider_path = self.provider_path(path);
         let read = match &self.client {
-            RemoteSessionClient::WebDav(c) => c.read_range(provider_path, offset, &mut bytes),
-            RemoteSessionClient::Sftp(c) => c.read_at(provider_path, offset, &mut bytes),
+            RemoteSessionClient::WebDav(c) => c.read_range(&provider_path, offset, &mut bytes),
+            RemoteSessionClient::Sftp(c) => c.read_at(&provider_path, offset, &mut bytes),
             _ => return Err(RemoteScanError::RangeUnavailable),
-        }.map_err(|_| RemoteScanError::TransientNetwork("range_read_failed".into()))?;
+        }
+        .map_err(|_| RemoteScanError::TransientNetwork("range_read_failed".into()))?;
         bytes.truncate(read);
         Ok(bytes)
     }
 
     #[flutter_rust_bridge::frb(ignore)]
-    fn read_file_limited(&self, _path: &str, _max_bytes: u64) -> std::result::Result<Vec<u8>, RemoteScanError> {
+    fn read_file_limited(
+        &self,
+        _path: &str,
+        _max_bytes: u64,
+    ) -> std::result::Result<Vec<u8>, RemoteScanError> {
         Err(RemoteScanError::Unsupported)
     }
 
     #[flutter_rust_bridge::frb(ignore)]
-    fn normalize_path(&self, path: &str) -> String { normalize_path(path) }
+    fn normalize_path(&self, path: &str) -> String {
+        normalize_path(path)
+    }
 
     #[flutter_rust_bridge::frb(ignore)]
-    fn capabilities(&self, _path: &str, _fingerprint: &str) -> std::result::Result<RemoteCapabilities, RemoteScanError> {
+    fn capabilities(
+        &self,
+        _path: &str,
+        _fingerprint: &str,
+    ) -> std::result::Result<RemoteCapabilities, RemoteScanError> {
         Ok(RemoteCapabilities {
-            range_read: matches!(self.client, RemoteSessionClient::WebDav(_) | RemoteSessionClient::Sftp(_)),
+            range_read: matches!(
+                self.client,
+                RemoteSessionClient::WebDav(_) | RemoteSessionClient::Sftp(_)
+            ),
             pagination: false,
         })
     }
 }
 
-pub(crate) fn remote_provider_adapter(source_type: &str, session: u64, root_path: &str) -> Result<Arc<dyn RemoteProviderAdapter>> {
+pub(crate) fn remote_provider_adapter(
+    source_type: &str,
+    session: u64,
+    root_path: &str,
+) -> Result<Arc<dyn RemoteProviderAdapter>> {
+    if matches!(source_type, "smb" | "local") {
+        return Err(anyhow!("local-only source is not eligible for remote scan"));
+    }
+    if !supports_remote_scan(source_type) {
+        return Err(anyhow!("unsupported remote source type"));
+    }
     let (client, default_root, opaque_paths) = match source_type {
-        "webdav" => (RemoteSessionClient::WebDav(get_session(session)?), root_path.to_string(), false),
-        "sftp" => (RemoteSessionClient::Sftp(get_sftp_session(session)?), root_path.to_string(), false),
-        "baidu" => { let client = get_baidu_session(session)?; let root = client.root().to_string(); (RemoteSessionClient::Baidu(client), root, true) },
+        "webdav" => (
+            RemoteSessionClient::WebDav(get_session(session)?),
+            root_path.to_string(),
+            false,
+        ),
+        "sftp" => (
+            RemoteSessionClient::Sftp(get_sftp_session(session)?),
+            root_path.to_string(),
+            false,
+        ),
+        "baidu" => {
+            let client = get_baidu_session(session)?;
+            let root = client.root().to_string();
+            (RemoteSessionClient::Baidu(client), root, true)
+        }
         "115" => {
             if let Ok(client) = get_cloud115_cookie_session(session) {
                 let root = client.root().to_string();
@@ -414,12 +519,80 @@ pub(crate) fn remote_provider_adapter(source_type: &str, session: u64, root_path
                 (RemoteSessionClient::Cloud115(client), root, true)
             }
         }
-        "quark" => { let client = get_quark_session(session)?; let root = client.root().to_string(); (RemoteSessionClient::Quark(client), root, true) },
-        "smb" | "local" => return Err(anyhow!("local-only source is not eligible for remote scan")),
-        _ => return Err(anyhow!("unsupported remote source type")),
+        "quark" => {
+            let client = get_quark_session(session)?;
+            let root = client.root().to_string();
+            (RemoteSessionClient::Quark(client), root, true)
+        }
+        _ => unreachable!("source type was validated above"),
     };
-    let root = if root_path.trim().is_empty() || root_path == "/" { default_root } else { root_path.to_string() };
-    Ok(Arc::new(SessionRemoteAdapter { client, root, opaque_paths }))
+    let root = if root_path.trim().is_empty() || root_path == "/" {
+        default_root
+    } else {
+        root_path.to_string()
+    };
+    let path_ids = Mutex::new(HashMap::from([("/".to_string(), root.clone())]));
+    Ok(Arc::new(SessionRemoteAdapter {
+        client,
+        root,
+        opaque_paths,
+        path_ids,
+    }))
+}
+
+fn supports_remote_scan(source_type: &str) -> bool {
+    matches!(source_type, "webdav" | "sftp" | "baidu" | "115" | "quark")
+}
+
+#[cfg(test)]
+mod remote_scan_adapter_tests {
+    use super::*;
+
+    #[test]
+    fn opaque_child_ids_keep_canonical_nested_hierarchy() {
+        assert_eq!(
+            canonical_child_path("/series", "volume 1"),
+            "/series/volume 1"
+        );
+        assert_eq!(
+            canonical_child_path("/series/volume 1", "book.cbz"),
+            "/series/volume 1/book.cbz"
+        );
+    }
+
+    #[test]
+    fn retry_after_metadata_is_preserved_without_exposing_the_error() {
+        assert!(matches!(
+            scan_error(anyhow!("HTTP 429 retry-after-ms=275 secret=hidden")),
+            RemoteScanError::RateLimited {
+                retry_after_ms: Some(275)
+            }
+        ));
+        let sanitized = format!(
+            "{:?}",
+            scan_error(anyhow!(
+                "network Authorization=Bearer-secret cookie=session-secret https://signed.example/x?token=secret"
+            ))
+        );
+        for secret in [
+            "Bearer-secret",
+            "session-secret",
+            "signed.example",
+            "token=secret",
+        ] {
+            assert!(!sanitized.contains(secret));
+        }
+    }
+
+    #[test]
+    fn provider_factory_contract_covers_every_remote_source_and_excludes_local_only_sources() {
+        for source_type in ["webdav", "sftp", "baidu", "115", "quark"] {
+            assert!(supports_remote_scan(source_type), "{source_type}");
+        }
+        for source_type in ["local", "smb", "m8", "unknown"] {
+            assert!(!supports_remote_scan(source_type), "{source_type}");
+        }
+    }
 }
 
 /// 查询当前下载进度(0.0 ~ 1.0),若 session 不在下载中则返回 1.0。
@@ -746,6 +919,8 @@ pub async fn sftp_cover(
     let path_clone = path.clone();
     let client_clone = Arc::clone(&client);
     let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
         if let Some(local_path) = sftp_source::raw_cache_path(&endpoint_clone, &path_clone) {
             let src = crate::source::local::LocalFile::open(&local_path)?;
             let book = document::open_document(src, &path_clone)?;
@@ -1028,6 +1203,8 @@ pub async fn cloud115_cookie_cover(
     let path_clone = path.clone();
     let client_clone = Arc::clone(&client);
     let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
         let name = client_clone.resolve_name(&path_clone)?;
         if let Some(local_path) = cloud115_source::web_raw_cache_path(&origin_clone, &path_clone) {
             let src = crate::source::local::LocalFile::open(&local_path)?;
@@ -1263,6 +1440,8 @@ pub async fn quark_cover(
     let client_clone = Arc::clone(&client);
     let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
         let name = client_clone.resolve_name(&path_clone)?;
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
         if let Some(local_path) = quark_source::raw_cache_path(&origin_clone, &path_clone) {
             let src = crate::source::local::LocalFile::open(&local_path)?;
             let book = document::open_document(src, &name)?;
@@ -1340,6 +1519,8 @@ pub async fn webdav_cover(
     let client_clone = Arc::clone(&client);
     let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
         // 先尝试 raw/ 本地缓存(已下载过的漫画直接本地秒出)
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
         if let Some(local_path) = webdav::raw_cache_path(&origin_clone, &path_clone) {
             let src = crate::source::local::LocalFile::open(&local_path)?;
             let book = document::open_document(src, &path_clone)?;
@@ -1600,6 +1781,8 @@ pub async fn baidu_cover(
     let path_clone = path.clone();
     let client_clone = Arc::clone(&client);
     let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
         if let Some(local_path) = baidu_source::raw_cache_path(&origin_clone, &path_clone) {
             let src = crate::source::local::LocalFile::open(&local_path)?;
             let book = document::open_document(src, &path_clone)?;
@@ -1871,6 +2054,8 @@ pub async fn cloud115_cover(
     let path_clone = path.clone();
     let client_clone = Arc::clone(&client);
     let img = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
         if let Some(local_path) = cloud115_source::raw_cache_path(&origin_clone, &path_clone) {
             let src = crate::source::local::LocalFile::open(&local_path)?;
             let book = document::open_document(src, &path_clone)?;

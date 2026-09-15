@@ -4,15 +4,15 @@ use super::model::{
     RemoteEntry,
 };
 use crate::reader::{blocking_request_governor, RequestPriority};
-use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 const MAX_LIST_PAGES: usize = 256;
 const MAX_DIRECTORY_ENTRIES: usize = 20_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[flutter_rust_bridge::frb(ignore)]
 pub struct ScanDirectoryTask {
     pub source_id: String,
     pub logical_path: String,
@@ -41,6 +41,7 @@ impl ScanDirectoryTask {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[flutter_rust_bridge::frb(ignore)]
 pub struct CoverTask {
     pub source_id: String,
     pub logical_path: String,
@@ -49,6 +50,7 @@ pub struct CoverTask {
 }
 
 #[derive(Debug, Clone)]
+#[flutter_rust_bridge::frb(ignore)]
 pub struct CommittedDirectory {
     pub source_id: String,
     pub logical_path: String,
@@ -59,6 +61,7 @@ pub struct CommittedDirectory {
     pub incremental: bool,
 }
 
+#[flutter_rust_bridge::frb(ignore)]
 pub trait ScanCommitSink: Send + Sync {
     fn previous_fingerprint(
         &self,
@@ -67,26 +70,46 @@ pub trait ScanCommitSink: Send + Sync {
     ) -> Result<Option<String>, RemoteScanError> {
         Ok(None)
     }
-    fn commit_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError>;
+    fn stage_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError>;
     fn enqueue_cover(&self, task: CoverTask) -> Result<(), RemoteScanError>;
+    fn spill_directory(&self, _task: ScanDirectoryTask) -> Result<(), RemoteScanError> {
+        Err(RemoteScanError::Io("pending_store_unavailable".into()))
+    }
+    fn take_spilled_directory(
+        &self,
+        _source_id: &str,
+        _generation: i64,
+    ) -> Result<Option<ScanDirectoryTask>, RemoteScanError> {
+        Ok(None)
+    }
 }
 
 #[derive(Clone, Default)]
-pub struct CancellationToken(Arc<AtomicBool>);
+#[flutter_rust_bridge::frb(ignore)]
+pub struct CancellationToken(Arc<(Mutex<bool>, Condvar)>);
 
 impl CancellationToken {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        *self.0 .0.lock().unwrap() = true;
+        self.0 .1.notify_all();
     }
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        *self.0 .0.lock().unwrap()
+    }
+    fn wait_or_cancel(&self, delay: Duration) -> bool {
+        let cancelled = self.0 .0.lock().unwrap();
+        if *cancelled {
+            return true;
+        }
+        *self.0 .1.wait_timeout(cancelled, delay).unwrap().0
     }
 }
 
 #[derive(Debug, Clone, Copy)]
+#[flutter_rust_bridge::frb(ignore)]
 pub struct RetryPolicy {
     max_retries: usize,
     base_delay: Duration,
@@ -133,14 +156,15 @@ struct TaskQueue {
     keys: HashSet<ScanDirectoryTask>,
 }
 
+#[flutter_rust_bridge::frb(ignore)]
 pub struct RemoteScanEngine {
     adapter: Arc<dyn RemoteProviderAdapter>,
     sink: Arc<dyn ScanCommitSink>,
     directories: Mutex<TaskQueue>,
-    cover_capacity: usize,
     cover_keys: Mutex<HashSet<CoverTask>>,
     retry: RetryPolicy,
     token: CancellationToken,
+    active_scan: Mutex<Option<(String, i64)>>,
 }
 
 impl RemoteScanEngine {
@@ -191,7 +215,7 @@ impl RemoteScanEngine {
         adapter: Arc<dyn RemoteProviderAdapter>,
         sink: Arc<dyn ScanCommitSink>,
         directory_capacity: usize,
-        cover_capacity: usize,
+        _cover_capacity: usize,
         retry: RetryPolicy,
         token: CancellationToken,
     ) -> Self {
@@ -203,10 +227,10 @@ impl RemoteScanEngine {
                 pending: VecDeque::new(),
                 keys: HashSet::new(),
             }),
-            cover_capacity: cover_capacity.max(1),
             cover_keys: Mutex::new(HashSet::new()),
             retry,
             token,
+            active_scan: Mutex::new(None),
         }
     }
 
@@ -220,10 +244,13 @@ impl RemoteScanEngine {
             return Ok(false);
         }
         if queue.pending.len() >= queue.capacity {
-            return Err(RemoteScanError::Provider("scan_queue_full".into()));
+            drop(queue);
+            self.sink.spill_directory(task)?;
+            return Ok(true);
         }
+        *self.active_scan.lock().unwrap() = Some((task.source_id.clone(), task.generation));
         queue.keys.insert(task.clone());
-        queue.pending.push_back(task);
+        queue.pending.push_front(task);
         Ok(true)
     }
 
@@ -235,18 +262,27 @@ impl RemoteScanEngine {
         if self.token.is_cancelled() {
             return Err(RemoteScanError::Cancelled);
         }
-        let task = {
+        let mut task = {
             let mut queue = self.directories.lock().unwrap();
-            let Some(task) = queue.pending.pop_front() else {
-                return Ok(false);
-            };
-            queue.keys.remove(&task);
-            task
+            queue.pending.pop_front().map(|task| {
+                queue.keys.remove(&task);
+                task
+            })
         };
-        let _permit = blocking_request_governor()
+        if task.is_none() {
+            let active = self.active_scan.lock().unwrap().clone();
+            if let Some((source_id, generation)) = active {
+                task = self.sink.take_spilled_directory(&source_id, generation)?;
+            }
+        }
+        let Some(task) = task else {
+            return Ok(false);
+        };
+        let governor = blocking_request_governor();
+        let _permit = governor
             .acquire(RequestPriority::Scan)
             .map_err(|_| RemoteScanError::Provider("request_queue_full".into()))?;
-        let entries = self.list_complete(&task.logical_path)?;
+        let entries = self.list_complete(&task.source_id, &task.logical_path)?;
         if self.token.is_cancelled() {
             return Err(RemoteScanError::Cancelled);
         }
@@ -257,7 +293,7 @@ impl RemoteScanEngine {
             .previous_fingerprint(&task.source_id, &task.logical_path)?
             .as_deref()
             != Some(&directory_fingerprint);
-        self.sink.commit_directory(CommittedDirectory {
+        self.sink.stage_directory(CommittedDirectory {
             source_id: task.source_id.clone(),
             logical_path: task.logical_path.clone(),
             generation: task.generation,
@@ -304,15 +340,17 @@ impl RemoteScanEngine {
         if !keys.insert(task.clone()) {
             return Ok(());
         }
-        if keys.len() > self.cover_capacity {
-            keys.remove(&task);
-            return Err(RemoteScanError::Provider("cover_queue_full".into()));
-        }
         drop(keys);
-        self.sink.enqueue_cover(task)
+        let result = self.sink.enqueue_cover(task.clone());
+        self.cover_keys.lock().unwrap().remove(&task);
+        result
     }
 
-    fn list_complete(&self, path: &str) -> Result<Vec<RemoteEntry>, RemoteScanError> {
+    fn list_complete(
+        &self,
+        source_id: &str,
+        path: &str,
+    ) -> Result<Vec<RemoteEntry>, RemoteScanError> {
         let mut cursor = None;
         let mut seen_cursors = HashSet::new();
         let mut entries = Vec::new();
@@ -322,12 +360,15 @@ impl RemoteScanEngine {
                 if self.token.is_cancelled() {
                     return Err(RemoteScanError::Cancelled);
                 }
+                self.wait_for_source_turn(source_id)?;
                 match self.adapter.list(path, cursor.as_deref()) {
                     Ok(page) => break page,
                     Err(error) => match self.retry.retry_delay(&error, attempt) {
                         Some(delay) => {
                             attempt += 1;
-                            std::thread::sleep(delay);
+                            if self.token.wait_or_cancel(delay) {
+                                return Err(RemoteScanError::Cancelled);
+                            }
                         }
                         None => return Err(error),
                     },
@@ -365,5 +406,22 @@ impl RemoteScanEngine {
         Err(RemoteScanError::MalformedResponse(
             "pagination_page_limit".into(),
         ))
+    }
+
+    fn wait_for_source_turn(&self, source_key: &str) -> Result<(), RemoteScanError> {
+        static GATES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+        let gates = GATES.get_or_init(|| Mutex::new(HashMap::new()));
+        let wait = {
+            let mut gates = gates.lock().unwrap();
+            let now = Instant::now();
+            let next = gates.entry(source_key.to_string()).or_insert(now);
+            let wait = next.saturating_duration_since(now);
+            *next = now.max(*next) + Duration::from_millis(25);
+            wait
+        };
+        if !wait.is_zero() && self.token.wait_or_cancel(wait) {
+            return Err(RemoteScanError::Cancelled);
+        }
+        Ok(())
     }
 }

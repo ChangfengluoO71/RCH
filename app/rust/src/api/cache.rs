@@ -1,6 +1,7 @@
 //! 缓存管理 API（暴露给 Dart）。
 
 use crate::cache;
+use rusqlite::{params, Connection, OptionalExtension};
 
 /// 缓存分类大小信息。
 pub struct CacheSize {
@@ -324,7 +325,10 @@ pub fn purge_remote_book_content_cache(
             let Some(endpoint) = sftp_endpoint(url.as_deref(), port) else {
                 return Ok(0);
             };
-            (format!("sftp|{endpoint}|{path}"), format!("{endpoint}{path}"))
+            (
+                format!("sftp|{endpoint}|{path}"),
+                format!("{endpoint}{path}"),
+            )
         }
         "baidu" => {
             let root = if root_path.trim().is_empty() {
@@ -366,6 +370,183 @@ pub fn purge_remote_book_content_cache(
         freed += delete_raw_cache_for_key(&raw_key).map_err(|e| e.to_string())?;
     }
     Ok(freed)
+}
+
+fn path_is_within(path: &str, root: &str) -> bool {
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|tail| tail.starts_with('/'))
+}
+
+struct RemoteCacheSourceIdentity {
+    source_type: String,
+    url: Option<String>,
+    port: Option<i64>,
+    root_path: String,
+    client_id: Option<String>,
+    root_id: Option<String>,
+    cookie_mode: bool,
+}
+
+pub(crate) fn purge_verified_remote_asset_on(
+    conn: &Connection,
+    source_id: &str,
+    logical_path: &str,
+    dependency_paths: &[String],
+) -> Result<u64, String> {
+    let logical_path = crate::remote_scan::model::normalize_path(logical_path);
+    let verified =
+        crate::remote_scan::persistence::load_verified_remote_tombstones(conn, source_id)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|tombstone| tombstone.logical_path == logical_path)
+            .ok_or_else(|| {
+                "remote deletion is not backed by current complete-listing proof".to_string()
+            })?;
+    let verified_dependencies = verified
+        .dependency_paths
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let dependencies = dependency_paths
+        .iter()
+        .map(|path| crate::remote_scan::model::normalize_path(path))
+        .collect::<std::collections::HashSet<_>>();
+    if !dependencies.is_subset(&verified_dependencies) {
+        return Err("remote cover dependency is outside the verified tombstone".to_string());
+    }
+
+    let source = conn
+        .query_row(
+            "SELECT type,url,port,path,client_id,root_id,COALESCE(cookie,'') <> '' \
+             FROM book_sources WHERE id=?1",
+            [source_id],
+            |row| {
+                Ok(RemoteCacheSourceIdentity {
+                    source_type: row.get(0)?,
+                    url: row.get(1)?,
+                    port: row.get(2)?,
+                    root_path: row.get(3)?,
+                    client_id: row.get(4)?,
+                    root_id: row.get(5)?,
+                    cookie_mode: row.get(6)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some(source) = source else {
+        return Err("remote source no longer exists".to_string());
+    };
+    if !matches!(
+        source.source_type.as_str(),
+        "webdav" | "sftp" | "baidu" | "115" | "quark"
+    ) {
+        return Err("verified remote cleanup is unavailable for this source type".to_string());
+    }
+
+    let logical_prefix = format!("{logical_path}/");
+    let mut physical_paths = conn
+        .prepare("SELECT path FROM library_index WHERE source_id=?1")
+        .map_err(|error| error.to_string())?
+        .query_map([source_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .filter_map(|row| row.ok())
+        .filter(|path| path == &logical_path || path.starts_with(&logical_prefix))
+        .collect::<std::collections::HashSet<_>>();
+    physical_paths.insert(logical_path.clone());
+    physical_paths.extend(dependencies.iter().cloned());
+
+    let dependency_rows = conn
+        .prepare(
+            "SELECT book_key,dependency_path FROM remote_cover_dependency \
+             WHERE substr(book_key,1,length(?1))=?1",
+        )
+        .map_err(|error| error.to_string())?
+        .query_map([format!("{}|{source_id}|", source.source_type)], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| error.to_string())?
+        .filter_map(|row| row.ok())
+        .collect::<Vec<_>>();
+    let mut affected_book_keys = std::collections::HashSet::from([crate::db::book_key_of(
+        &source.source_type,
+        source_id,
+        &logical_path,
+    )]);
+    for (book_key, dependency_path) in &dependency_rows {
+        let dependency_path = crate::remote_scan::model::normalize_path(dependency_path);
+        if dependencies.contains(&dependency_path)
+            || path_is_within(&dependency_path, &logical_path)
+        {
+            affected_book_keys.insert(book_key.clone());
+            physical_paths.insert(dependency_path);
+        }
+    }
+
+    let indexed_paths = conn
+        .prepare("SELECT path FROM library_index WHERE source_id=?1")
+        .map_err(|error| error.to_string())?
+        .query_map([source_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .filter_map(|row| row.ok())
+        .collect::<Vec<_>>();
+    for path in indexed_paths {
+        let book_key = crate::db::book_key_of(&source.source_type, source_id, &path);
+        if affected_book_keys.contains(&book_key) {
+            physical_paths.insert(path);
+        }
+    }
+
+    let mut freed = 0;
+    for path in physical_paths {
+        freed += purge_stale_book_cache(
+            source.source_type.clone(),
+            path,
+            source.url.clone(),
+            source.port,
+            source.root_path.clone(),
+            source.client_id.clone(),
+            source.root_id.clone(),
+            source.cookie_mode,
+        )?;
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    for (book_key, dependency_path) in dependency_rows {
+        let dependency_path = crate::remote_scan::model::normalize_path(&dependency_path);
+        if dependencies.contains(&dependency_path)
+            || path_is_within(&dependency_path, &logical_path)
+        {
+            tx.execute(
+                "DELETE FROM remote_cover_dependency WHERE book_key=?1 AND dependency_path=?2",
+                params![book_key, dependency_path],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+    }
+    for book_key in affected_book_keys {
+        tx.execute(
+            "DELETE FROM remote_cover_partial_cache WHERE book_key=?1",
+            [book_key],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(freed)
+}
+
+/// Delete cache state only for a tombstone proven by a complete listing from
+/// the source's current successful scan generation.
+pub fn purge_verified_remote_asset(
+    source_id: String,
+    logical_path: String,
+    dependency_paths: Vec<String>,
+) -> Result<u64, String> {
+    let conn = crate::db::get().lock().map_err(|error| error.to_string())?;
+    purge_verified_remote_asset_on(&conn, &source_id, &logical_path, &dependency_paths)
 }
 
 use std::path::PathBuf;
@@ -417,6 +598,391 @@ mod remote_book_completion_cleanup_tests {
         assert!(!page_dir.exists());
         assert!(raw_dir.exists());
         assert!(cache::cover_cache_read(path, 0, 1, 1, None).is_some());
+
+        cache::set_custom_cache_root("");
+        let _ = std::fs::remove_dir_all(base);
+    }
+}
+
+#[cfg(test)]
+mod verified_remote_asset_cleanup_tests {
+    use super::*;
+    use crate::cache::{self, CacheDir};
+    use rusqlite::{params, Connection};
+
+    fn write_namespace(dir: CacheDir, key: &str, name: &str) -> std::path::PathBuf {
+        let path = dir.ensure().unwrap().join(cache::stable_hash(key));
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join(name), b"cache").unwrap();
+        path
+    }
+
+    #[test]
+    fn verified_folder_deletion_removes_alias_dependency_page_and_raw_caches_only() {
+        let base = std::env::temp_dir().join(format!(
+            "rch_verified_remote_asset_cleanup_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        cache::set_custom_cache_root(base.to_str().unwrap());
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE book_sources(\
+               id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL,url TEXT,port INTEGER,path TEXT,client_id TEXT,root_id TEXT,cookie TEXT);\
+             CREATE TABLE library_index(\
+               id TEXT PRIMARY KEY,source_id TEXT NOT NULL,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
+               size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
+               scan_generation INTEGER,listing_complete INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+        )
+        .unwrap();
+        crate::remote_scan::persistence::migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO book_sources VALUES('source','webdav','canonical-source','https://host/dav',NULL,'/',NULL,NULL,NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Succeeded','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source','/','root-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        let root_id = crate::db::library_index_id("canonical-source", "/");
+        for (path, deleted) in [
+            ("/Series", 1),
+            ("/Series/book.zip", 0),
+            ("/Series/book.cbz", 0),
+            ("/book.zip", 1),
+            ("/book.cbz", 0),
+            ("/Other/book.cbz", 0),
+        ] {
+            let parent = path
+                .rsplit_once('/')
+                .map(|(p, _)| if p.is_empty() { "/" } else { p })
+                .unwrap();
+            conn.execute(
+                "INSERT INTO library_index(id,source_id,parent_id,name,path,entry_type,scan_generation,listing_complete,deleted,updated_at)\
+                 VALUES(?1,'source',?2,?3,?4,?5,1,1,?6,1)",
+                params![
+                    crate::db::library_index_id("canonical-source", path),
+                    if path == "/Series" { root_id.clone() } else { crate::db::library_index_id("canonical-source", parent) },
+                    path.rsplit('/').next().unwrap(),
+                    path,
+                    if path.ends_with("Series") { "dir" } else { "file" },
+                    deleted,
+                ],
+            )
+            .unwrap();
+        }
+        let book_key = crate::db::book_key_of("webdav", "source", "/Series/book.cbz");
+        conn.execute(
+            "INSERT INTO remote_cover_dependency VALUES(?1,'/Series/001.jpg','image-v1','default','partial_ready')",
+            [&book_key],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_cover_dependency VALUES(?1,'/Series/new.jpg','image-v2','default','queued')",
+            [&book_key],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_cover_partial_cache VALUES(?1,'image-v1',X'0102',1)",
+            [&book_key],
+        )
+        .unwrap();
+        let unrelated_key = crate::db::book_key_of("webdav", "source", "/Other/book.cbz");
+        conn.execute(
+            "INSERT INTO remote_cover_dependency VALUES(?1,'/Other/001.jpg','other-v1','default','partial_ready')",
+            [&unrelated_key],
+        )
+        .unwrap();
+
+        let origin = "https://host";
+        let alias_page = write_namespace(
+            CacheDir::Page,
+            &format!("webdav|{origin}|/Series/book.cbz"),
+            "0.bin",
+        );
+        let alias_raw = write_namespace(
+            CacheDir::Raw,
+            &format!("{origin}/Series/book.zip"),
+            "book.zip",
+        );
+        let unrelated_page = write_namespace(
+            CacheDir::Page,
+            &format!("webdav|{origin}|/Other/book.cbz"),
+            "0.bin",
+        );
+        for path in [
+            "/Series",
+            "/Series/book.zip",
+            "/Series/book.cbz",
+            "/Series/001.jpg",
+            "/book.zip",
+            "/book.cbz",
+            "/Other/book.cbz",
+        ] {
+            cache::cover_cache_write(path, 0, 1, 1, None, &[1, 2, 3, 4]).unwrap();
+        }
+
+        let freed = purge_verified_remote_asset_on(
+            &conn,
+            "source",
+            "/Series",
+            &["/Series/001.jpg".to_string()],
+        )
+        .unwrap();
+
+        assert!(freed > 0);
+        assert!(!alias_page.exists());
+        assert!(!alias_raw.exists());
+        for path in [
+            "/Series",
+            "/Series/book.zip",
+            "/Series/book.cbz",
+            "/Series/001.jpg",
+        ] {
+            assert!(
+                cache::cover_cache_read(path, 0, 1, 1, None).is_none(),
+                "{path}"
+            );
+        }
+        assert!(unrelated_page.exists());
+        assert!(cache::cover_cache_read("/Other/book.cbz", 0, 1, 1, None).is_some());
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_dependency WHERE book_key=?1",
+                [&unrelated_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 1);
+        let queued: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_dependency WHERE book_key=?1",
+                [&book_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(queued, 0);
+        let removed_old: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_dependency WHERE book_key=?1 AND dependency_path='/Series/001.jpg'",
+                [&book_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(removed_old, 0);
+
+        purge_verified_remote_asset_on(&conn, "source", "/book.zip", &[]).unwrap();
+        assert!(cache::cover_cache_read("/book.zip", 0, 1, 1, None).is_none());
+        assert!(cache::cover_cache_read("/book.cbz", 0, 1, 1, None).is_none());
+
+        cache::set_custom_cache_root("");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn deleted_cover_dependency_preserves_newly_queued_replacement_for_live_book() {
+        let base = std::env::temp_dir().join(format!(
+            "rch_remote_cover_dependency_requeue_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        cache::set_custom_cache_root(base.to_str().unwrap());
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE book_sources(id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL,url TEXT,port INTEGER,path TEXT,client_id TEXT,root_id TEXT,cookie TEXT);\
+             CREATE TABLE library_index(id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,scan_generation INTEGER,listing_complete INTEGER,deleted INTEGER,updated_at INTEGER);",
+        )
+        .unwrap();
+        crate::remote_scan::persistence::migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO book_sources VALUES('source','webdav','canonical-source','https://host/dav',NULL,'/',NULL,NULL,NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Succeeded','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source','/Series','series-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        let series_id = crate::db::library_index_id("canonical-source", "/Series");
+        conn.execute(
+            "INSERT INTO library_index(id,source_id,parent_id,name,path,entry_type,scan_generation,listing_complete,deleted,updated_at)\
+             VALUES(?1,'source',?2,'Series','/Series','dir',2,1,0,1)",
+            params![
+                series_id,
+                crate::db::library_index_id("canonical-source", "/"),
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO library_index(id,source_id,parent_id,name,path,entry_type,scan_generation,listing_complete,deleted,updated_at)\
+             VALUES(?1,'source',?2,'001.jpg','/Series/001.jpg','file',1,1,1,1)",
+            params![
+                crate::db::library_index_id("canonical-source", "/Series/001.jpg"),
+                series_id,
+            ],
+        )
+        .unwrap();
+        let book_key = crate::db::book_key_of("webdav", "source", "/Series");
+        for (path, fingerprint, status) in [
+            ("/Series/001.jpg", "image-v1", "partial_ready"),
+            ("/Series/new.jpg", "image-v2", "queued"),
+        ] {
+            conn.execute(
+                "INSERT INTO remote_cover_dependency VALUES(?1,?2,?3,'default',?4)",
+                params![book_key, path, fingerprint, status],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO remote_cover_partial_cache VALUES(?1,'image-v1',X'0102',1)",
+            [&book_key],
+        )
+        .unwrap();
+        cache::cover_cache_write("/Series", 0, 1, 1, None, &[1, 2, 3, 4]).unwrap();
+
+        purge_verified_remote_asset_on(
+            &conn,
+            "source",
+            "/Series/001.jpg",
+            &["/Series/001.jpg".into()],
+        )
+        .unwrap();
+
+        let remaining: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT dependency_path,status FROM remote_cover_dependency WHERE book_key=?1 ORDER BY dependency_path",
+            )
+            .unwrap()
+            .query_map([&book_key], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(remaining, vec![("/Series/new.jpg".into(), "queued".into())]);
+        assert!(cache::cover_cache_read("/Series", 0, 1, 1, None).is_none());
+        let partial: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_partial_cache WHERE book_key=?1",
+                [&book_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(partial, 0);
+
+        cache::set_custom_cache_root("");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn unverified_remote_deletion_does_not_remove_any_cache() {
+        let base = std::env::temp_dir().join(format!(
+            "rch_unverified_remote_asset_cleanup_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        cache::set_custom_cache_root(base.to_str().unwrap());
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE book_sources(id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL,url TEXT,port INTEGER,path TEXT,client_id TEXT,root_id TEXT,cookie TEXT);\
+             CREATE TABLE library_index(id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,scan_generation INTEGER,listing_complete INTEGER,deleted INTEGER,updated_at INTEGER);",
+        )
+        .unwrap();
+        crate::remote_scan::persistence::migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO book_sources VALUES('source','webdav','canonical-source','https://host/dav',NULL,'/',NULL,NULL,NULL)",
+            [],
+        )
+        .unwrap();
+        cache::cover_cache_write("/book.cbz", 0, 1, 1, None, &[1, 2, 3, 4]).unwrap();
+
+        assert!(purge_verified_remote_asset_on(&conn, "source", "/book.cbz", &[]).is_err());
+        assert!(cache::cover_cache_read("/book.cbz", 0, 1, 1, None).is_some());
+
+        cache::set_custom_cache_root("");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn verified_cleanup_matches_source_id_literally() {
+        let base = std::env::temp_dir().join(format!(
+            "rch_verified_remote_asset_literal_source_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        cache::set_custom_cache_root(base.to_str().unwrap());
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE book_sources(id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL,url TEXT,port INTEGER,path TEXT,client_id TEXT,root_id TEXT,cookie TEXT);\
+             CREATE TABLE library_index(id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,scan_generation INTEGER,listing_complete INTEGER,deleted INTEGER,updated_at INTEGER);",
+        )
+        .unwrap();
+        crate::remote_scan::persistence::migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO book_sources VALUES('source%','webdav','canonical-source','https://host/dav',NULL,'/',NULL,NULL,NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source%','Succeeded','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source%','/','root-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO library_index(id,source_id,parent_id,name,path,entry_type,scan_generation,listing_complete,deleted,updated_at)\
+             VALUES(?1,'source%',?2,'gone.cbz','/gone.cbz','file',1,1,1,1)",
+            params![
+                crate::db::library_index_id("canonical-source", "/gone.cbz"),
+                crate::db::library_index_id("canonical-source", "/"),
+            ],
+        )
+        .unwrap();
+        let unrelated_book_key = crate::db::book_key_of("webdav", "sourceX", "/other.cbz");
+        conn.execute(
+            "INSERT INTO remote_cover_dependency VALUES(?1,'/gone.cbz','other-v1','default','partial_ready')",
+            [&unrelated_book_key],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_cover_partial_cache VALUES(?1,'other-v1',X'0102',1)",
+            [&unrelated_book_key],
+        )
+        .unwrap();
+
+        purge_verified_remote_asset_on(&conn, "source%", "/gone.cbz", &[]).unwrap();
+
+        let dependency_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_dependency WHERE book_key=?1",
+                [&unrelated_book_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let partial_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_partial_cache WHERE book_key=?1",
+                [&unrelated_book_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!((dependency_count, partial_count), (1, 1));
 
         cache::set_custom_cache_root("");
         let _ = std::fs::remove_dir_all(base);

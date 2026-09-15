@@ -5,6 +5,12 @@ use super::model::{
 use crate::document::remote_folder::RemoteImageEntry;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedRemoteTombstone {
+    pub logical_path: String,
+    pub dependency_paths: Vec<String>,
+}
+
 pub fn migrate(conn: &Connection) -> Result<()> {
     for (name, ty) in [
         ("asset_kind", "TEXT"),
@@ -165,22 +171,33 @@ fn replace_verified_children_on(
     generation: i64,
     complete: bool,
 ) -> Result<()> {
-    let now = crate::db::now_ms();
-    for path in paths {
-        conn.execute("UPDATE library_index SET deleted=0,scan_generation=?1,updated_at=?4 WHERE source_id=?2 AND path=?3", params![generation, source_id, path, now])?;
-    }
     let parent = super::model::normalize_path(parent);
     let proven: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM remote_listing_state WHERE source_id=?1 AND logical_path=?2 AND scan_generation=?3 AND listing_complete=1)",
-        params![source_id, parent, generation], |row| row.get(0),
+        "SELECT EXISTS( \
+           SELECT 1 FROM remote_listing_state listing \
+           JOIN remote_scan_state scan ON scan.source_id=listing.source_id \
+           WHERE listing.source_id=?1 AND listing.logical_path=?2 \
+             AND listing.scan_generation=?3 AND listing.listing_complete=1 \
+             AND scan.generation=?3 AND scan.status IN ('Running','Succeeded'))",
+        params![source_id, parent, generation],
+        |row| row.get(0),
     )?;
     if complete && proven {
+        let now = crate::db::now_ms();
         let source_fp: String = conn.query_row(
-            "SELECT fingerprint FROM book_sources WHERE id=?1",
+            "SELECT fingerprint FROM book_sources WHERE id=?1 AND fingerprint IS NOT NULL AND fingerprint <> ''",
             [source_id],
             |row| row.get(0),
         )?;
         let parent_id = crate::db::library_index_id(&source_fp, &parent);
+        for path in paths {
+            let path = super::model::normalize_path(path);
+            conn.execute(
+                "UPDATE library_index SET deleted=0,scan_generation=?1,updated_at=?5 \
+                 WHERE source_id=?2 AND parent_id=?3 AND path=?4",
+                params![generation, source_id, parent_id, path, now],
+            )?;
+        }
         conn.execute(
             "UPDATE library_index SET deleted=1,updated_at=?4 WHERE source_id=?1 AND parent_id=?2 AND scan_generation < ?3 AND listing_complete=1",
             params![source_id, parent_id, generation, now],
@@ -201,7 +218,7 @@ pub fn publish_staged_generation(
             |row| row.get(0),
         )
         .optional()?;
-    if latest.is_some_and(|value| value != generation) {
+    if latest != Some(generation) {
         return Err(rusqlite::Error::InvalidQuery);
     }
     let tx = conn.unchecked_transaction()?;
@@ -341,6 +358,110 @@ pub fn replace_verified_children(
     tx.commit()
 }
 
+fn parent_path(path: &str) -> String {
+    let path = super::model::normalize_path(path);
+    match path.rfind('/') {
+        Some(0) | None => "/".to_string(),
+        Some(index) => path[..index].to_string(),
+    }
+}
+
+pub fn verify_remote_tombstone(
+    conn: &Connection,
+    source_id: &str,
+    logical_path: &str,
+) -> Result<bool> {
+    let logical_path = super::model::normalize_path(logical_path);
+    let parent = parent_path(&logical_path);
+    let source_fp: Option<String> = conn
+        .query_row(
+            "SELECT fingerprint FROM book_sources \
+             WHERE id=?1 AND fingerprint IS NOT NULL AND fingerprint <> ''",
+            [source_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(source_fp) = source_fp else {
+        return Ok(false);
+    };
+    let parent_id = crate::db::library_index_id(&source_fp, &parent);
+    conn.query_row(
+        "SELECT EXISTS( \
+           SELECT 1 FROM library_index child \
+           JOIN remote_listing_state listing \
+             ON listing.source_id=child.source_id AND listing.logical_path=?4 \
+           JOIN remote_scan_state scan ON scan.source_id=child.source_id \
+           WHERE child.source_id=?1 AND child.path=?2 AND child.parent_id=?3 \
+             AND child.deleted=1 AND child.listing_complete=1 \
+             AND child.scan_generation < listing.scan_generation \
+             AND listing.listing_complete=1 \
+             AND listing.scan_generation=scan.generation \
+             AND scan.status='Succeeded')",
+        params![source_id, logical_path, parent_id, parent],
+        |row| row.get(0),
+    )
+}
+
+pub fn load_verified_remote_tombstones(
+    conn: &Connection,
+    source_id: &str,
+) -> Result<Vec<VerifiedRemoteTombstone>> {
+    let source_type: Option<String> = conn
+        .query_row(
+            "SELECT type FROM book_sources WHERE id=?1",
+            [source_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(source_type) = source_type else {
+        return Ok(Vec::new());
+    };
+    let paths = conn
+        .prepare(
+            "SELECT path FROM library_index \
+             WHERE source_id=?1 AND deleted=1 ORDER BY path",
+        )?
+        .query_map([source_id], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>>>()?;
+    let dependency_prefix = format!("{source_type}|{source_id}|");
+    let dependencies = conn
+        .prepare(
+            "SELECT book_key,dependency_path FROM remote_cover_dependency \
+             WHERE substr(book_key,1,length(?1))=?1 ORDER BY book_key,dependency_path",
+        )?
+        .query_map([dependency_prefix], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut verified = Vec::new();
+    for path in paths {
+        let path = super::model::normalize_path(&path);
+        if !verify_remote_tombstone(conn, source_id, &path)? {
+            continue;
+        }
+        let path_prefix = format!("{path}/");
+        let logical_book = crate::db::book_key_of(&source_type, source_id, &path);
+        let logical_book_prefix = format!("{logical_book}/");
+        let dependency_paths = dependencies
+            .iter()
+            .filter(|(book_key, dependency_path)| {
+                let dependency_path = super::model::normalize_path(dependency_path);
+                book_key == &logical_book
+                    || book_key.starts_with(&logical_book_prefix)
+                    || dependency_path == path
+                    || dependency_path.starts_with(&path_prefix)
+            })
+            .map(|(_, dependency_path)| super::model::normalize_path(dependency_path))
+            .collect();
+        verified.push(VerifiedRemoteTombstone {
+            logical_path: path,
+            dependency_paths,
+        });
+    }
+    Ok(verified)
+}
+
 pub fn store_pending_task(conn: &Connection, task: &ScanDirectoryTask) -> Result<()> {
     conn.execute("INSERT OR IGNORE INTO remote_scan_pending(source_id,generation,logical_path,incremental) VALUES(?1,?2,?3,?4)", params![task.source_id, task.generation, super::model::normalize_path(&task.logical_path), task.incremental as i64])?;
     Ok(())
@@ -411,7 +532,9 @@ pub fn load_complete_image_folder_manifest(
         Ok(RemoteImageEntry {
             logical_path: row.get(0)?,
             name: row.get(1)?,
-            size: row.get::<_, Option<i64>>(2)?.map(|value| value.max(0) as u64),
+            size: row
+                .get::<_, Option<i64>>(2)?
+                .map(|value| value.max(0) as u64),
             mtime: row.get(3)?,
             fingerprint: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
         })
@@ -459,7 +582,8 @@ mod remote_folder_manifest_tests {
         conn.execute(
             "INSERT INTO remote_listing_state VALUES('s','/Book','folder-fp',4,1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         for (name, path, kind) in [
             ("2.jpg", "/Book/2.jpg", "ImageFile"),
             ("note.txt", "/Book/note.txt", "Other"),
@@ -467,7 +591,8 @@ mod remote_folder_manifest_tests {
             conn.execute(
                 "INSERT INTO library_index VALUES('s',NULL,?1,?2,'file',3,7,?3,'child-fp',4,1,0)",
                 params![name, path, kind],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let entries = load_complete_image_folder_manifest(&conn, "s", "/Book").unwrap();
@@ -486,10 +611,252 @@ mod remote_folder_manifest_tests {
         conn.execute(
             "INSERT INTO remote_listing_state VALUES('s','/Book','folder-fp',5,1)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(load_complete_image_folder_manifest(&conn, "s", "/Book")
             .unwrap()
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod verified_remote_deletion_tests {
+    use super::*;
+
+    fn deletion_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE book_sources(id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL);\
+             CREATE TABLE library_index(\
+               id TEXT PRIMARY KEY,source_id TEXT NOT NULL,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
+               size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
+               scan_generation INTEGER,listing_complete INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO book_sources VALUES('source','webdav','canonical-source')",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert_child(conn: &Connection, source_id: &str, source_fp: &str, path: &str) {
+        let parent = path
+            .rsplit_once('/')
+            .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO library_index(id,source_id,parent_id,name,path,entry_type,scan_generation,listing_complete,deleted,updated_at)\
+             VALUES(?1,?2,?3,?4,?5,'file',1,1,0,1)",
+            params![
+                crate::db::library_index_id(source_fp, path),
+                source_id,
+                crate::db::library_index_id(source_fp, parent),
+                path.rsplit('/').next().unwrap(),
+                path,
+            ],
+        )
+        .unwrap();
+    }
+
+    fn set_scan_state(conn: &Connection, generation: i64, status: &str) {
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source',?1,'Snapshot',?2)\
+             ON CONFLICT(source_id) DO UPDATE SET status=excluded.status,generation=excluded.generation",
+            params![status, generation],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn complete_current_root_listing_tombstones_exact_children_without_root_row() {
+        let conn = deletion_db();
+        insert_child(&conn, "source", "canonical-source", "/gone.cbz");
+        insert_child(&conn, "source", "canonical-source", "/kept.cbz");
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source','/','root-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        set_scan_state(&conn, 2, "Running");
+
+        replace_verified_children(&conn, "source", "///", &["/kept.cbz/".to_string()], 2, true)
+            .unwrap();
+
+        let states: (i64, i64) = conn
+            .query_row(
+                "SELECT SUM(path='/gone.cbz' AND deleted=1),SUM(path='/kept.cbz' AND deleted=0) FROM library_index WHERE source_id='source'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(states, (1, 1));
+    }
+
+    #[test]
+    fn verified_empty_non_root_listing_tombstones_only_direct_children_without_parent_row() {
+        let conn = deletion_db();
+        insert_child(&conn, "source", "canonical-source", "/Shelf/gone.cbz");
+        insert_child(
+            &conn,
+            "source",
+            "canonical-source",
+            "/Shelf/Nested/keep.cbz",
+        );
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source','/Shelf','shelf-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        set_scan_state(&conn, 2, "Running");
+
+        replace_verified_children(&conn, "source", "/Shelf/", &[], 2, true).unwrap();
+
+        let states: (i64, i64) = conn
+            .query_row(
+                "SELECT SUM(path='/Shelf/gone.cbz' AND deleted=1),\
+                        SUM(path='/Shelf/Nested/keep.cbz' AND deleted=0)\
+                 FROM library_index WHERE source_id='source'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(states, (1, 1));
+    }
+
+    #[test]
+    fn incomplete_failed_or_stale_proof_never_changes_existing_rows() {
+        for (complete, proof_generation, current_generation, status) in [
+            (false, 2, 2, "Running"),
+            (true, 1, 2, "Running"),
+            (true, 2, 2, "Failed"),
+        ] {
+            let conn = deletion_db();
+            insert_child(&conn, "source", "canonical-source", "/kept.cbz");
+            insert_child(&conn, "source", "canonical-source", "/gone.cbz");
+            conn.execute(
+                "INSERT INTO remote_listing_state VALUES('source','/','root',?1,?2)",
+                params![proof_generation, complete],
+            )
+            .unwrap();
+            set_scan_state(&conn, current_generation, status);
+
+            replace_verified_children(
+                &conn,
+                "source",
+                "/",
+                &["/kept.cbz".to_string()],
+                2,
+                complete,
+            )
+            .unwrap();
+
+            let deleted: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM library_index WHERE source_id='source' AND deleted=1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                deleted, 0,
+                "case {complete}/{proof_generation}/{current_generation}/{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn verified_tombstones_require_succeeded_current_parent_proof_and_keep_siblings() {
+        let conn = deletion_db();
+        conn.execute(
+            "INSERT INTO book_sources VALUES('sibling','webdav','canonical-sibling')",
+            [],
+        )
+        .unwrap();
+        for (source_id, fp, path) in [
+            ("source", "canonical-source", "/gone.cbz"),
+            ("sibling", "canonical-sibling", "/gone.cbz"),
+        ] {
+            insert_child(&conn, source_id, fp, path);
+            conn.execute(
+                "UPDATE library_index SET deleted=1 WHERE source_id=?1 AND path=?2",
+                params![source_id, path],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source','/','root-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        set_scan_state(&conn, 2, "Succeeded");
+
+        let tombstones = load_verified_remote_tombstones(&conn, "source").unwrap();
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].logical_path, "/gone.cbz");
+        assert!(tombstones[0].dependency_paths.is_empty());
+    }
+
+    #[test]
+    fn deleted_row_from_current_generation_is_not_a_verified_missing_child() {
+        let conn = deletion_db();
+        insert_child(&conn, "source", "canonical-source", "/gone.cbz");
+        conn.execute(
+            "UPDATE library_index SET deleted=1,scan_generation=2 WHERE source_id='source' AND path='/gone.cbz'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source','/','root-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        set_scan_state(&conn, 2, "Succeeded");
+
+        assert!(!verify_remote_tombstone(&conn, "source", "/gone.cbz").unwrap());
+        assert!(load_verified_remote_tombstones(&conn, "source")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn verified_tombstone_dependencies_match_source_id_literally() {
+        let conn = deletion_db();
+        conn.execute("UPDATE book_sources SET id='source%' WHERE id='source'", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO book_sources VALUES('sourceX','webdav','canonical-sibling')",
+            [],
+        )
+        .unwrap();
+        insert_child(&conn, "source%", "canonical-source", "/gone.cbz");
+        conn.execute(
+            "UPDATE library_index SET deleted=1 WHERE source_id='source%' AND path='/gone.cbz'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source%','/','root-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source%','Succeeded','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_cover_dependency VALUES('webdav|sourceX|/other','/gone.cbz','other-v1','default','partial_ready')",
+            [],
+        )
+        .unwrap();
+
+        let tombstones = load_verified_remote_tombstones(&conn, "source%").unwrap();
+
+        assert_eq!(tombstones.len(), 1);
+        assert!(tombstones[0].dependency_paths.is_empty());
     }
 }

@@ -602,6 +602,29 @@ pub fn db_load_library_index_tombstones(source_id: String) -> Result<Vec<String>
     Ok(db::load_library_index_tombstones_for_source(&source_id))
 }
 
+pub struct VerifiedRemoteTombstoneDto {
+    pub logical_path: String,
+    pub dependency_paths: Vec<String>,
+}
+
+/// Return only remote tombstones backed by the current successful complete
+/// parent listing. Soft tombstones from older/failed refreshes are excluded.
+pub fn db_load_verified_remote_tombstones(
+    source_id: String,
+) -> Result<Vec<VerifiedRemoteTombstoneDto>, String> {
+    let conn = db::get().lock().map_err(|error| error.to_string())?;
+    crate::remote_scan::persistence::load_verified_remote_tombstones(&conn, &source_id)
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| VerifiedRemoteTombstoneDto {
+                    logical_path: row.logical_path,
+                    dependency_paths: row.dependency_paths,
+                })
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
 /// 补写索引条目的输入（id/parent 由 Rust 按 book_id 规则计算，调用方只给路径语义）。
 pub struct IndexEntryInput {
     pub path: String,

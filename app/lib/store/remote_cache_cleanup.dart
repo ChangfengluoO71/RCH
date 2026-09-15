@@ -50,6 +50,82 @@ class RemoteBookCleanupResult {
 typedef RemoteBookContentCleanup =
     Future<BigInt> Function(BookSource source, String path, bool imageFolder);
 
+class VerifiedRemoteTombstone {
+  const VerifiedRemoteTombstone({
+    required this.logicalPath,
+    required this.dependencyPaths,
+  });
+
+  final String logicalPath;
+  final List<String> dependencyPaths;
+}
+
+typedef VerifiedRemoteAssetCleanup =
+    Future<BigInt> Function(
+      String sourceId,
+      String logicalPath,
+      List<String> dependencyPaths,
+    );
+
+typedef VerifiedRemoteCleanupError =
+    void Function(VerifiedRemoteTombstone tombstone, Object error);
+
+class VerifiedRemoteTombstoneCleanupResult {
+  VerifiedRemoteTombstoneCleanupResult({
+    required this.freedBytes,
+    required Iterable<VerifiedRemoteTombstone> verifiedTombstones,
+  }) : verifiedTombstones = List.unmodifiable(verifiedTombstones);
+
+  final BigInt freedBytes;
+  final List<VerifiedRemoteTombstone> verifiedTombstones;
+}
+
+Future<BigInt> purgeVerifiedRemoteTombstones({
+  required BookSource source,
+  required Iterable<VerifiedRemoteTombstone> tombstones,
+  required VerifiedRemoteAssetCleanup cleanup,
+}) async {
+  var freed = BigInt.zero;
+  for (final tombstone in tombstones) {
+    freed += await cleanup(
+      source.id,
+      tombstone.logicalPath,
+      List<String>.unmodifiable(tombstone.dependencyPaths),
+    );
+  }
+  return freed;
+}
+
+/// Re-verifies each candidate through [cleanup] and returns only the
+/// tombstones whose proof-aware Rust purge completed. Callers must use the
+/// returned list, rather than the candidates, for destructive catalog work.
+Future<VerifiedRemoteTombstoneCleanupResult>
+purgeVerifiedRemoteTombstonesSafely({
+  required String sourceId,
+  required Iterable<VerifiedRemoteTombstone> tombstones,
+  required VerifiedRemoteAssetCleanup cleanup,
+  VerifiedRemoteCleanupError? onError,
+}) async {
+  var freed = BigInt.zero;
+  final verified = <VerifiedRemoteTombstone>[];
+  for (final tombstone in tombstones) {
+    try {
+      freed += await cleanup(
+        sourceId,
+        tombstone.logicalPath,
+        List<String>.unmodifiable(tombstone.dependencyPaths),
+      );
+      verified.add(tombstone);
+    } catch (error) {
+      onError?.call(tombstone, error);
+    }
+  }
+  return VerifiedRemoteTombstoneCleanupResult(
+    freedBytes: freed,
+    verifiedTombstones: verified,
+  );
+}
+
 Future<BigInt> _purgeRemoteBookContent(
   BookSource source,
   String path,

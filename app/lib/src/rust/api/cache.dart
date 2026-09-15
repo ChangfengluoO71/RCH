@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `sftp_endpoint`, `webdav_origin`
+// These functions are ignored because they are not marked as `pub`: `path_is_within`, `purge_verified_remote_asset_on`, `sftp_endpoint`, `webdav_origin`
 
 /// 获取所有缓存分类大小。
 Future<CacheSize> cacheSizes() =>
@@ -148,6 +148,18 @@ Future<BigInt> purgeRemoteBookContentCache({
   rootId: rootId,
   cookieMode: cookieMode,
   imageFolder: imageFolder,
+);
+
+/// Delete cache state only for a tombstone proven by a complete listing from
+/// the source's current successful scan generation.
+Future<BigInt> purgeVerifiedRemoteAsset({
+  required String sourceId,
+  required String logicalPath,
+  required List<String> dependencyPaths,
+}) => RustLib.instance.api.crateApiCachePurgeVerifiedRemoteAsset(
+  sourceId: sourceId,
+  logicalPath: logicalPath,
+  dependencyPaths: dependencyPaths,
 );
 
 /// 缓存分类大小信息。

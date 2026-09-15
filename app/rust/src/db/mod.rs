@@ -3736,6 +3736,22 @@ pub(crate) fn replace_library_index_for_source_on(
     for r in rows {
         upsert_library_index_on(conn, r)?;
     }
+    let source_type: Option<String> = conn
+        .query_row(
+            "SELECT type FROM book_sources WHERE id=?1",
+            [source_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if source_type
+        .as_deref()
+        .is_some_and(|kind| matches!(kind, "webdav" | "sftp" | "baidu" | "115" | "quark"))
+    {
+        // Remote deletion belongs exclusively to the proof-carrying scan
+        // publication path. This legacy whole-source replacement may refresh
+        // live rows, but cannot infer absence or run deletion cleanup.
+        return Ok(());
+    }
     let old: Vec<String> = conn
         .prepare("SELECT id FROM library_index WHERE source_id = ?1 AND deleted = 0")?
         .query_map([source_id], |r| r.get::<_, String>(0))?
@@ -5624,6 +5640,43 @@ mod tests {
         assert!(sync_rows
             .iter()
             .any(|r| r.id == library_index_id(&fp, "/b.cbz") && r.deleted));
+    }
+
+    #[test]
+    fn legacy_remote_index_replacement_does_not_create_unverified_tombstones() {
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO book_sources(id,type,name,path,fingerprint)\
+             VALUES('remote','webdav','Remote','/','remote-fingerprint')",
+            [],
+        )
+        .unwrap();
+        let row = LibraryIndexRow {
+            id: library_index_id("remote-fingerprint", "/book.cbz"),
+            source_id: "remote".into(),
+            parent_id: Some(library_index_id("remote-fingerprint", "/")),
+            name: "book.cbz".into(),
+            path: "/book.cbz".into(),
+            entry_type: "file".into(),
+            size: None,
+            modified_at: None,
+            cover_path: None,
+            hash: None,
+            updated_at: 1,
+            deleted: false,
+        };
+        replace_library_index_for_source_on(&conn, "remote", std::slice::from_ref(&row)).unwrap();
+
+        replace_library_index_for_source_on(&conn, "remote", &[]).unwrap();
+
+        let deleted: i64 = conn
+            .query_row(
+                "SELECT deleted FROM library_index WHERE id=?1",
+                [row.id],
+                |result| result.get(0),
+            )
+            .unwrap();
+        assert_eq!(deleted, 0);
     }
 
     #[test]

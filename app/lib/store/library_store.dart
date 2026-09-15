@@ -14,6 +14,32 @@ import 'library_catalog.dart';
 import 'library_index_service.dart';
 import 'models.dart';
 import 'remote_listing.dart';
+import 'remote_cache_cleanup.dart';
+import 'remote_scan_coordinator.dart';
+
+@visibleForTesting
+List<String> staleCachePathsForTombstones(
+  Iterable<String> tombstones,
+  Set<String> livePaths,
+) => tombstones.where((path) => !livePaths.contains(path)).toList();
+
+bool _pathWithinDeletedRoot(String path, Iterable<String> roots) {
+  String normalize(String value) {
+    final normalized = value
+        .replaceAll('\\', '/')
+        .replaceAll(RegExp(r'/+$'), '');
+    return normalized.isEmpty ? '/' : normalized;
+  }
+
+  final normalized = normalize(path);
+  return roots.any((root) {
+    final candidate = normalize(root);
+    return normalized == candidate ||
+        (candidate == '/'
+            ? normalized.startsWith('/')
+            : normalized.startsWith('$candidate/'));
+  });
+}
 
 /// 应用数据存储 facade（ADR-016/018）。
 ///
@@ -666,9 +692,8 @@ class LibraryStore extends ChangeNotifier {
   Future<(int, int, int, int)> purgeStaleData({bool alignRemote = true}) async {
     final sourceIds = sources.map((s) => s.id).toSet();
 
-    // Phase 0：在线索引对齐（仅远程源）。删除感知的前提是把"远程现状"落进
-    // library_index：整源重爬后消失的条目被软删（deleted=1）成为墓碑证据。
-    // 失败/离线 → 该源跳过，回退到 Phase 1 的存量墓碑证据（保守不清）。
+    // Phase 0：在线索引对齐（仅远程源）。只有 RemoteScanEngine 成功发布的
+    // 完整 generation 才能产生下方可消费的墓碑；失败/离线不会推进证明。
     var alignFailed = 0;
     if (alignRemote) {
       for (final s in sources) {
@@ -678,18 +703,68 @@ class LibraryStore extends ChangeNotifier {
       }
     }
 
-    // 远程失效证据：离线索引中 deleted=1 的条目 = 整源重建/对齐时远程文件已消失的软删墓碑。
-    // 注意必须用专用墓碑查询（dbLoadLibraryIndexForSource 的 SQL 过滤 deleted=0，拿不到墓碑）。
-    // 本地与远程都收集墓碑。墓碑来自已经持久化的本地 catalog，不会
-    // 触发目录刷新或任何远程 I/O；远程源的在线对齐仍只在上面的
-    // 独立 discovery lane 中执行。
+    // 远程只消费当前成功 generation + 完整父目录 listing 证明的墓碑；
+    // 本地仍使用普通离线索引墓碑。目录墓碑安全扩展到其已索引后代。
     final tombstones = <String, Set<String>>{};
+    final verifiedRemoteCandidates = <String, List<VerifiedRemoteTombstone>>{};
+    final verifiedRemoteTombstones = <String, List<VerifiedRemoteTombstone>>{};
     for (final s in sources) {
       try {
-        final gone = await dbLoadLibraryIndexTombstones(sourceId: s.id);
-        if (gone.isNotEmpty) tombstones[s.id] = gone.toSet();
+        if (s.needsSession) {
+          final verified = await dbLoadVerifiedRemoteTombstones(sourceId: s.id);
+          if (verified.isEmpty) continue;
+          final typed = verified
+              .map(
+                (row) => VerifiedRemoteTombstone(
+                  logicalPath: row.logicalPath,
+                  dependencyPaths: row.dependencyPaths,
+                ),
+              )
+              .toList(growable: false);
+          verifiedRemoteCandidates[s.id] = typed;
+        } else {
+          final gone = await dbLoadLibraryIndexTombstones(sourceId: s.id);
+          if (gone.isNotEmpty) tombstones[s.id] = gone.toSet();
+        }
       } catch (_) {
         /* 索引不可读则无墓碑证据，保守不清 */
+      }
+    }
+
+    var verifiedRemoteFreed = BigInt.zero;
+    for (final s in sources.where((source) => source.needsSession)) {
+      final candidates = verifiedRemoteCandidates[s.id];
+      if (candidates == null || candidates.isEmpty) continue;
+      try {
+        final result = await purgeVerifiedRemoteTombstonesSafely(
+          sourceId: s.id,
+          tombstones: candidates,
+          cleanup: (sourceId, logicalPath, dependencyPaths) =>
+              purgeVerifiedRemoteAsset(
+                sourceId: sourceId,
+                logicalPath: logicalPath,
+                dependencyPaths: dependencyPaths,
+              ),
+          onError: (tombstone, error) => debugPrint(
+            '[LibraryStore] verified remote cache cleanup rejected ${s.id} '
+            '${tombstone.logicalPath}: $error',
+          ),
+        );
+        verifiedRemoteFreed += result.freedBytes;
+        if (result.verifiedTombstones.isEmpty) continue;
+        final roots = result.verifiedTombstones
+            .map((row) => row.logicalPath)
+            .toList(growable: false);
+        final gone = roots.toSet();
+        for (final row in await dbLoadLibraryIndexForSource(sourceId: s.id)) {
+          if (_pathWithinDeletedRoot(row.path, roots)) gone.add(row.path);
+        }
+        verifiedRemoteTombstones[s.id] = result.verifiedTombstones;
+        tombstones[s.id] = gone;
+      } catch (e) {
+        debugPrint(
+          '[LibraryStore] verified remote cache cleanup failed ${s.id}: $e',
+        );
       }
     }
 
@@ -700,8 +775,16 @@ class LibraryStore extends ChangeNotifier {
       final gone = tombstones[s.id];
       if (gone == null || gone.isEmpty) continue;
       try {
+        final deletionRoots =
+            verifiedRemoteTombstones[s.id]
+                ?.map((row) => row.logicalPath)
+                .toList() ??
+            const <String>[];
         final liveKeys = (await dbLoadLibraryIndexForSource(sourceId: s.id))
-            .where((e) => !e.deleted)
+            .where(
+              (e) =>
+                  !e.deleted && !_pathWithinDeletedRoot(e.path, deletionRoots),
+            )
             .map((e) => bookKeyOf(s.type, s.id, e.path))
             .toSet();
         for (final path in gone) {
@@ -747,7 +830,7 @@ class LibraryStore extends ChangeNotifier {
       if (alignRemote || tombstones.isNotEmpty) {
         await LibraryCatalogStore.instance.loadTree();
       }
-      return (0, 0, 0, alignFailed);
+      return (0, 0, verifiedRemoteFreed.toInt(), alignFailed);
     }
 
     // 内存清理：元数据 + 失效 key 上的标签关联
@@ -797,16 +880,9 @@ class LibraryStore extends ChangeNotifier {
 
     for (final r in staleRecords) {
       final src = sourceById(r.sourceId);
-      if (src != null) addCacheTarget(src, r.path);
+      if (src != null && !src.needsSession) addCacheTarget(src, r.path);
     }
-    for (final s in sources) {
-      for (final path in tombstones[s.id] ?? const <String>{}) {
-        if (removedKeys.contains(bookKeyOf(s.type, s.id, path))) {
-          addCacheTarget(s, path);
-        }
-      }
-    }
-    var freed = BigInt.zero;
+    var freed = verifiedRemoteFreed;
     for (final target in cacheTargets) {
       final src = target.$1;
       if (src.isGhost) continue; // 幽灵书源无可读缓存；源已删由 removeSource 路径处理
@@ -847,19 +923,19 @@ class LibraryStore extends ChangeNotifier {
     );
   }
 
-  /// 对远程书源做一次在线索引对齐（连接 + 全树枚举 → dbReplaceSourceLibraryIndex，
-  /// 消失条目墓碑化），为"远程已删除"判定提供证据。失败返回 false（保守跳过）。
+  /// 通过 RemoteScanEngine 做一次完整对齐。只有 complete 终态才发布 generation；
+  /// 失败、取消、认证/权限/网络错误均返回 false 并保留旧证明。
   Future<bool> _alignRemoteIndex(BookSource s) async {
     if (!s.needsSession) return false;
     try {
       final session = await remoteSessionFor(s);
       if (session == null) return false;
-      final result = await LibraryIndexService.instance.refreshSourceIndex(
-        source: s,
-        force: true,
-        listRemote: (p) => listRemoteDirFor(s, session: session, path: p),
+      final result = await RemoteScanCoordinator.instance.rescan(
+        s,
+        session,
+        'full',
       );
-      return isUsableRemoteRefreshRevision(result.revision);
+      return result.status == 'complete';
     } catch (e) {
       debugPrint('[LibraryStore] 在线索引对齐失败 ${s.id}: $e');
       return false;

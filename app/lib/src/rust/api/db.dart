@@ -209,6 +209,14 @@ Future<List<String>> dbLoadLibraryIndexTombstones({required String sourceId}) =>
       sourceId: sourceId,
     );
 
+/// Return only remote tombstones backed by the current successful complete
+/// parent listing. Soft tombstones from older/failed refreshes are excluded.
+Future<List<VerifiedRemoteTombstoneDto>> dbLoadVerifiedRemoteTombstones({
+  required String sourceId,
+}) => RustLib.instance.api.crateApiDbDbLoadVerifiedRemoteTombstones(
+  sourceId: sourceId,
+);
+
 /// 补写一条索引条目（含父目录链；纯本地，零网络）。
 /// ADR-029：缓存/已读/标签触及的漫画自动入离线索引。
 Future<void> dbEnsureIndexEntry({
@@ -754,4 +762,25 @@ class TagDto {
           id == other.id &&
           name == other.name &&
           createdAt == other.createdAt;
+}
+
+class VerifiedRemoteTombstoneDto {
+  final String logicalPath;
+  final List<String> dependencyPaths;
+
+  const VerifiedRemoteTombstoneDto({
+    required this.logicalPath,
+    required this.dependencyPaths,
+  });
+
+  @override
+  int get hashCode => logicalPath.hashCode ^ dependencyPaths.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VerifiedRemoteTombstoneDto &&
+          runtimeType == other.runtimeType &&
+          logicalPath == other.logicalPath &&
+          dependencyPaths == other.dependencyPaths;
 }

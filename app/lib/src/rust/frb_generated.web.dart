@@ -241,6 +241,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TagDto> dco_decode_list_tag_dto(dynamic raw);
 
   @protected
+  List<VerifiedRemoteTombstoneDto>
+  dco_decode_list_verified_remote_tombstone_dto(dynamic raw);
+
+  @protected
   MaterializeResult dco_decode_materialize_result(dynamic raw);
 
   @protected
@@ -367,6 +371,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void dco_decode_unit(dynamic raw);
+
+  @protected
+  VerifiedRemoteTombstoneDto dco_decode_verified_remote_tombstone_dto(
+    dynamic raw,
+  );
 
   @protected
   WebDavSession dco_decode_web_dav_session(dynamic raw);
@@ -633,6 +642,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TagDto> sse_decode_list_tag_dto(SseDeserializer deserializer);
 
   @protected
+  List<VerifiedRemoteTombstoneDto>
+  sse_decode_list_verified_remote_tombstone_dto(SseDeserializer deserializer);
+
+  @protected
   MaterializeResult sse_decode_materialize_result(SseDeserializer deserializer);
 
   @protected
@@ -775,6 +788,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_decode_unit(SseDeserializer deserializer);
+
+  @protected
+  VerifiedRemoteTombstoneDto sse_decode_verified_remote_tombstone_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   WebDavSession sse_decode_web_dav_session(SseDeserializer deserializer);
@@ -1119,6 +1137,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_tag_dto(List<TagDto> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_verified_remote_tombstone_dto(
+    List<VerifiedRemoteTombstoneDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_materialize_result(
     MaterializeResult self,
     SseSerializer serializer,
@@ -1318,6 +1342,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_verified_remote_tombstone_dto(
+    VerifiedRemoteTombstoneDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_web_dav_session(WebDavSession self, SseSerializer serializer);

@@ -302,25 +302,27 @@ pub fn finish_cover_task(
     source_id: &str,
     generation: i64,
     book_key: &str,
+    dependency_path: &str,
     status: &str,
     bytes: Option<&[u8]>,
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
+    let dependency_path = super::model::normalize_path(dependency_path);
     if let Some(bytes) = bytes {
         tx.execute(
             "INSERT INTO remote_cover_partial_cache(book_key,dependency_fingerprint,bytes,updated_at)
-             SELECT book_key,dependency_fingerprint,?2,?3 FROM remote_cover_stage WHERE source_id=?1 AND generation=?4 AND book_key=?5
+             SELECT book_key,dependency_fingerprint,?2,?3 FROM remote_cover_stage WHERE source_id=?1 AND generation=?4 AND book_key=?5 AND dependency_path=?6
              ON CONFLICT(book_key) DO UPDATE SET dependency_fingerprint=excluded.dependency_fingerprint,bytes=excluded.bytes,updated_at=excluded.updated_at",
-            params![source_id, bytes, crate::db::now_ms(), generation, book_key],
+            params![source_id, bytes, crate::db::now_ms(), generation, book_key, dependency_path],
         )?;
     }
     tx.execute(
-        "UPDATE remote_cover_dependency SET status=?1 WHERE book_key=?2",
-        params![status, book_key],
+        "UPDATE remote_cover_dependency SET status=?1 WHERE book_key=?2 AND dependency_path=?3",
+        params![status, book_key, dependency_path],
     )?;
     tx.execute(
-        "DELETE FROM remote_cover_stage WHERE source_id=?1 AND generation=?2 AND book_key=?3",
-        params![source_id, generation, book_key],
+        "DELETE FROM remote_cover_stage WHERE source_id=?1 AND generation=?2 AND book_key=?3 AND dependency_path=?4",
+        params![source_id, generation, book_key, dependency_path],
     )?;
     tx.commit()
 }

@@ -417,6 +417,7 @@ fn consume_staged_covers(
             source_id,
             generation,
             &book_key,
+            &task.logical_path,
             status,
             bytes.as_deref(),
         )

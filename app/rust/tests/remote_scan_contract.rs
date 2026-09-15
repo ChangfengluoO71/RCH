@@ -213,13 +213,21 @@ fn remote_cover_dependency_is_consumed_into_partial_cache() {
         fingerprint: "fp".into(),
         profile: "default".into(),
     };
+    let sibling_dependency = CoverTask {
+        source_id: "source".into(),
+        logical_path: "/book/cover.jpg".into(),
+        fingerprint: "cover-fp".into(),
+        profile: "default".into(),
+    };
     persistence::stage_cover_task(&conn, 4, "shared-cover-key", &task).unwrap();
+    persistence::stage_cover_task(&conn, 4, "shared-cover-key", &sibling_dependency).unwrap();
     persistence::publish_staged_generation(&conn, "source", 4).unwrap();
     persistence::finish_cover_task(
         &conn,
         "source",
         4,
         "shared-cover-key",
+        "/book.cbz",
         "partial_ready",
         Some(&[1, 2, 3]),
     )
@@ -233,6 +241,22 @@ fn remote_cover_dependency_is_consumed_into_partial_cache() {
         .unwrap();
     assert_eq!(status, "partial_ready");
     assert_eq!(bytes, vec![1, 2, 3]);
+    let sibling_status: String = conn
+        .query_row(
+            "SELECT status FROM remote_cover_dependency WHERE book_key='shared-cover-key' AND dependency_path='/book/cover.jpg'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(sibling_status, "queued");
+    let remaining_stage: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM remote_cover_stage WHERE book_key='shared-cover-key' AND dependency_path='/book/cover.jpg'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining_stage, 1);
 }
 
 #[test]

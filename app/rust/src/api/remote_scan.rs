@@ -88,7 +88,7 @@ impl ScanCommitSink for SqliteScanSink {
         let conn = db::get().lock().unwrap();
         let latest: Option<i64> = conn
             .query_row(
-                "SELECT generation FROM remote_scan_state WHERE source_id=?1",
+            "SELECT scan.generation FROM remote_scan_state scan JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation WHERE scan.source_id=?1",
                 [&directory.source_id],
                 |row| row.get(0),
             )
@@ -138,7 +138,7 @@ impl ScanCommitSink for SqliteScanSink {
         let book_key = db::book_key_of(&source_type, &task.source_id, &task.logical_path);
         let generation: i64 = conn
             .query_row(
-                "SELECT generation FROM remote_scan_state WHERE source_id=?1",
+                "SELECT scan.generation FROM remote_scan_state scan JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation WHERE scan.source_id=?1",
                 [&task.source_id],
                 |row| row.get(0),
             )
@@ -264,6 +264,14 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
         config.mode.clone()
     };
     let checkpoint = stored.and_then(|(_, checkpoint)| checkpoint);
+    persistence::bind_scan_epoch(
+        &conn,
+        &config.source_id,
+        generation,
+        &config.root_path,
+        config.session,
+    )
+    .map_err(|_| "scan session proof unavailable".to_string())?;
     drop(conn);
     let token = CancellationToken::new();
     let status = RemoteScanStatusDto {

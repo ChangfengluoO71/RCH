@@ -1319,6 +1319,14 @@ pub fn find_fingerprint_duplicates(conn: &Connection) -> Vec<(String, Vec<String
 fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
     // ADR-020 约束 1.4：fingerprint 由身份字段派生，任何新增/编辑都不允许为 NULL。
     let fp = compute_source_fingerprint(&s.r#type, s.url.as_deref(), &s.path, s.root_id.as_deref());
+    let connection_changed: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM book_sources WHERE id=?1 AND (
+           type IS NOT ?2 OR path IS NOT ?3 OR url IS NOT ?4 OR username IS NOT ?5 OR
+           password IS NOT ?6 OR port IS NOT ?7 OR refresh_token IS NOT ?8 OR
+           client_id IS NOT ?9 OR client_secret IS NOT ?10 OR root_id IS NOT ?11 OR cookie IS NOT ?12))",
+        params![s.id, s.r#type, s.path, s.url, s.username, s.password, s.port, s.refresh_token, s.client_id, s.client_secret, s.root_id, s.cookie],
+        |row| row.get(0),
+    )?;
     conn.execute(
         "INSERT INTO book_sources
          (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label, fingerprint, updated_at)
@@ -1350,6 +1358,9 @@ fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
             now_ms(),
         ],
     )?;
+    if connection_changed {
+        crate::remote_scan::persistence::invalidate_source_proof_on(conn, &s.id)?;
+    }
     Ok(())
 }
 
@@ -5242,6 +5253,58 @@ mod tests {
                 None
             )
         );
+    }
+
+    #[test]
+    fn source_connection_mutation_invalidates_bound_scan_proof() {
+        let conn = schema_conn();
+        let mut source = BookSourceRow {
+            id: "epoch-source".into(),
+            r#type: "webdav".into(),
+            name: "NAS".into(),
+            path: "/books".into(),
+            url: Some("https://dav.example.com/dav".into()),
+            username: Some("alice".into()),
+            password: Some("old-secret".into()),
+            port: None,
+            refresh_token: None,
+            client_id: None,
+            client_secret: None,
+            root_id: None,
+            cookie: None,
+            note: String::new(),
+            capability_label: "webdav".into(),
+            remote_only: false,
+            origin_device_id: None,
+        };
+        upsert_source_on(&conn, &source).unwrap();
+        crate::remote_scan::persistence::bind_scan_epoch(&conn, &source.id, 7, &source.path, 99)
+            .unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES(?1,'Succeeded','Snapshot',7)",
+            [&source.id],
+        )
+        .unwrap();
+
+        source.password = Some("new-secret".into());
+        upsert_source_on(&conn, &source).unwrap();
+
+        let epoch_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_scan_epoch WHERE source_id=?1",
+                [&source.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let state: (String, Option<String>) = conn
+            .query_row(
+                "SELECT status,error_code FROM remote_scan_state WHERE source_id=?1",
+                [&source.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(epoch_count, 0);
+        assert_eq!(state, ("Failed".into(), Some("sourceChanged".into())));
     }
 
     #[test]

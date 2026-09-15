@@ -23,6 +23,31 @@ List<String> staleCachePathsForTombstones(
   Set<String> livePaths,
 ) => tombstones.where((path) => !livePaths.contains(path)).toList();
 
+@visibleForTesting
+String remoteAssetLogId(String sourceId, String logicalPath) =>
+    Object.hash(sourceId, logicalPath).toUnsigned(32).toRadixString(16);
+
+@visibleForTesting
+class PurgeStaleDataBindings {
+  const PurgeStaleDataBindings({
+    required this.loadVerifiedTombstones,
+    required this.loadIndex,
+    required this.purgeVerifiedAsset,
+    required this.reloadCatalog,
+  });
+
+  final Future<List<VerifiedRemoteTombstoneDto>> Function(String sourceId)
+  loadVerifiedTombstones;
+  final Future<List<LibraryIndexDto>> Function(String sourceId) loadIndex;
+  final Future<BigInt> Function(
+    String sourceId,
+    String logicalPath,
+    List<String> dependencyPaths,
+  )
+  purgeVerifiedAsset;
+  final Future<void> Function() reloadCatalog;
+}
+
 bool _pathWithinDeletedRoot(String path, Iterable<String> roots) {
   String normalize(String value) {
     final normalized = value
@@ -689,7 +714,26 @@ class LibraryStore extends ChangeNotifier {
   /// （在线索引对齐 + 离线索引墓碑）的记录，以及这些 key 上的标签关联、
   /// AI 任务与磁盘缓存（page/raw/cover）。
   /// 返回 (清理的记录数, 清理的元数据数, 释放的缓存字节数, 在线核对失败的远程源数)。
-  Future<(int, int, int, int)> purgeStaleData({bool alignRemote = true}) async {
+  Future<(int, int, int, int)> purgeStaleData({
+    bool alignRemote = true,
+    @visibleForTesting PurgeStaleDataBindings? bindings,
+  }) async {
+    final loadVerifiedTombstones =
+        bindings?.loadVerifiedTombstones ??
+        (String sourceId) => dbLoadVerifiedRemoteTombstones(sourceId: sourceId);
+    final loadIndex =
+        bindings?.loadIndex ??
+        (String sourceId) => dbLoadLibraryIndexForSource(sourceId: sourceId);
+    final purgeVerifiedAsset =
+        bindings?.purgeVerifiedAsset ??
+        (String sourceId, String logicalPath, List<String> dependencies) =>
+            purgeVerifiedRemoteAsset(
+              sourceId: sourceId,
+              logicalPath: logicalPath,
+              dependencyPaths: dependencies,
+            );
+    final reloadCatalog =
+        bindings?.reloadCatalog ?? LibraryCatalogStore.instance.loadTree;
     final sourceIds = sources.map((s) => s.id).toSet();
 
     // Phase 0：在线索引对齐（仅远程源）。只有 RemoteScanEngine 成功发布的
@@ -711,7 +755,7 @@ class LibraryStore extends ChangeNotifier {
     for (final s in sources) {
       try {
         if (s.needsSession) {
-          final verified = await dbLoadVerifiedRemoteTombstones(sourceId: s.id);
+          final verified = await loadVerifiedTombstones(s.id);
           if (verified.isEmpty) continue;
           final typed = verified
               .map(
@@ -739,15 +783,10 @@ class LibraryStore extends ChangeNotifier {
         final result = await purgeVerifiedRemoteTombstonesSafely(
           sourceId: s.id,
           tombstones: candidates,
-          cleanup: (sourceId, logicalPath, dependencyPaths) =>
-              purgeVerifiedRemoteAsset(
-                sourceId: sourceId,
-                logicalPath: logicalPath,
-                dependencyPaths: dependencyPaths,
-              ),
+          cleanup: purgeVerifiedAsset,
           onError: (tombstone, error) => debugPrint(
             '[LibraryStore] verified remote cache cleanup rejected ${s.id} '
-            '${tombstone.logicalPath}: $error',
+            'asset=${remoteAssetLogId(s.id, tombstone.logicalPath)}: $error',
           ),
         );
         verifiedRemoteFreed += result.freedBytes;
@@ -756,7 +795,7 @@ class LibraryStore extends ChangeNotifier {
             .map((row) => row.logicalPath)
             .toList(growable: false);
         final gone = roots.toSet();
-        for (final row in await dbLoadLibraryIndexForSource(sourceId: s.id)) {
+        for (final row in await loadIndex(s.id)) {
           if (_pathWithinDeletedRoot(row.path, roots)) gone.add(row.path);
         }
         verifiedRemoteTombstones[s.id] = result.verifiedTombstones;
@@ -771,6 +810,10 @@ class LibraryStore extends ChangeNotifier {
     // 只有当同一逻辑作品没有任何 live archive alias 时，才将墓碑提升
     // 为作品级删除；删除 .zip 而仍保留同名 .cbz 不应清掉元数据/标签。
     final deletedCatalogKeys = <String>{};
+    final logicalTombstones = <String, Set<String>>{
+      for (final s in sources.where((source) => !source.needsSession))
+        if (tombstones[s.id]?.isNotEmpty ?? false) s.id: tombstones[s.id]!,
+    };
     for (final s in sources) {
       final gone = tombstones[s.id];
       if (gone == null || gone.isEmpty) continue;
@@ -780,7 +823,7 @@ class LibraryStore extends ChangeNotifier {
                 ?.map((row) => row.logicalPath)
                 .toList() ??
             const <String>[];
-        final liveKeys = (await dbLoadLibraryIndexForSource(sourceId: s.id))
+        final liveKeys = (await loadIndex(s.id))
             .where(
               (e) =>
                   !e.deleted && !_pathWithinDeletedRoot(e.path, deletionRoots),
@@ -789,7 +832,10 @@ class LibraryStore extends ChangeNotifier {
             .toSet();
         for (final path in gone) {
           final key = bookKeyOf(s.type, s.id, path);
-          if (!liveKeys.contains(key)) deletedCatalogKeys.add(key);
+          if (!liveKeys.contains(key)) {
+            deletedCatalogKeys.add(key);
+            (logicalTombstones[s.id] ??= <String>{}).add(path);
+          }
         }
       } catch (_) {}
     }
@@ -797,7 +843,7 @@ class LibraryStore extends ChangeNotifier {
     // 1) 失效阅读记录（源已删除 / 本地文件丢失 / 远程墓碑）
     final staleRecords = _records.purgeStale(
       sources,
-      remoteTombstones: tombstones,
+      remoteTombstones: logicalTombstones,
     );
 
     // 2) 失效元数据（来源已删除）
@@ -828,7 +874,7 @@ class LibraryStore extends ChangeNotifier {
     };
     if (removedKeys.isEmpty) {
       if (alignRemote || tombstones.isNotEmpty) {
-        await LibraryCatalogStore.instance.loadTree();
+        await reloadCatalog();
       }
       return (0, 0, verifiedRemoteFreed.toInt(), alignFailed);
     }
@@ -914,7 +960,7 @@ class LibraryStore extends ChangeNotifier {
 
     notifyListeners();
     await saveToDisk();
-    await LibraryCatalogStore.instance.loadTree();
+    await reloadCatalog();
     return (
       staleRecords.length,
       allMetaKeys.length,

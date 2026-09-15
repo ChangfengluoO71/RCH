@@ -393,7 +393,7 @@ pub(crate) fn purge_verified_remote_asset_on(
     conn: &Connection,
     source_id: &str,
     logical_path: &str,
-    dependency_paths: &[String],
+    _dependency_paths: &[String],
 ) -> Result<u64, String> {
     let logical_path = crate::remote_scan::model::normalize_path(logical_path);
     let verified =
@@ -404,17 +404,12 @@ pub(crate) fn purge_verified_remote_asset_on(
             .ok_or_else(|| {
                 "remote deletion is not backed by current complete-listing proof".to_string()
             })?;
-    let verified_dependencies = verified
+    // The proof is authoritative.  Callers may have loaded an older or
+    // truncated DTO; never let that subset decide what dependent state stays.
+    let dependencies = verified
         .dependency_paths
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
-    let dependencies = dependency_paths
-        .iter()
-        .map(|path| crate::remote_scan::model::normalize_path(path))
-        .collect::<std::collections::HashSet<_>>();
-    if !dependencies.is_subset(&verified_dependencies) {
-        return Err("remote cover dependency is outside the verified tombstone".to_string());
-    }
 
     let source = conn
         .query_row(
@@ -469,11 +464,21 @@ pub(crate) fn purge_verified_remote_asset_on(
         .map_err(|error| error.to_string())?
         .filter_map(|row| row.ok())
         .collect::<Vec<_>>();
-    let mut affected_book_keys = std::collections::HashSet::from([crate::db::book_key_of(
-        &source.source_type,
-        source_id,
-        &logical_path,
-    )]);
+    let logical_book_key = crate::db::book_key_of(&source.source_type, source_id, &logical_path);
+    let has_live_alias = conn
+        .prepare("SELECT path FROM library_index WHERE source_id=?1 AND deleted=0")
+        .map_err(|error| error.to_string())?
+        .query_map([source_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .filter_map(|row| row.ok())
+        .any(|path| {
+            path != logical_path
+                && crate::db::book_key_of(&source.source_type, source_id, &path) == logical_book_key
+        });
+    let mut affected_book_keys = std::collections::HashSet::new();
+    if !has_live_alias {
+        affected_book_keys.insert(logical_book_key.clone());
+    }
     for (book_key, dependency_path) in &dependency_rows {
         let dependency_path = crate::remote_scan::model::normalize_path(dependency_path);
         if dependencies.contains(&dependency_path)
@@ -484,16 +489,17 @@ pub(crate) fn purge_verified_remote_asset_on(
         }
     }
 
-    let indexed_paths = conn
-        .prepare("SELECT path FROM library_index WHERE source_id=?1")
+    for path in conn
+        .prepare("SELECT path FROM library_index WHERE source_id=?1 AND deleted=0")
         .map_err(|error| error.to_string())?
         .query_map([source_id], |row| row.get::<_, String>(0))
         .map_err(|error| error.to_string())?
         .filter_map(|row| row.ok())
-        .collect::<Vec<_>>();
-    for path in indexed_paths {
+    {
         let book_key = crate::db::book_key_of(&source.source_type, source_id, &path);
-        if affected_book_keys.contains(&book_key) {
+        if affected_book_keys.contains(&book_key)
+            && !(has_live_alias && book_key == logical_book_key)
+        {
             physical_paths.insert(path);
         }
     }
@@ -642,6 +648,7 @@ mod verified_remote_asset_cleanup_tests {
             [],
         )
         .unwrap();
+        crate::remote_scan::persistence::bind_scan_epoch(&conn, "source", 2, "/", 2).unwrap();
         conn.execute(
             "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Succeeded','Snapshot',2)",
             [],
@@ -699,6 +706,17 @@ mod verified_remote_asset_cleanup_tests {
         conn.execute(
             "INSERT INTO remote_cover_dependency VALUES(?1,'/Other/001.jpg','other-v1','default','partial_ready')",
             [&unrelated_key],
+        )
+        .unwrap();
+        let alias_key = crate::db::book_key_of("webdav", "source", "/book.zip");
+        conn.execute(
+            "INSERT INTO remote_cover_dependency VALUES(?1,'/outside/cover.jpg','alias-v1','default','partial_ready')",
+            [&alias_key],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_cover_partial_cache VALUES(?1,'alias-v1',X'0102',1)",
+            [&alias_key],
         )
         .unwrap();
 
@@ -781,7 +799,17 @@ mod verified_remote_asset_cleanup_tests {
 
         purge_verified_remote_asset_on(&conn, "source", "/book.zip", &[]).unwrap();
         assert!(cache::cover_cache_read("/book.zip", 0, 1, 1, None).is_none());
-        assert!(cache::cover_cache_read("/book.cbz", 0, 1, 1, None).is_none());
+        assert!(cache::cover_cache_read("/book.cbz", 0, 1, 1, None).is_some());
+        let alias_state: (i64, i64) = conn
+            .query_row(
+                "SELECT
+                   (SELECT COUNT(*) FROM remote_cover_dependency WHERE book_key=?1),
+                   (SELECT COUNT(*) FROM remote_cover_partial_cache WHERE book_key=?1)",
+                [&alias_key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(alias_state, (0, 0));
 
         cache::set_custom_cache_root("");
         let _ = std::fs::remove_dir_all(base);
@@ -807,6 +835,7 @@ mod verified_remote_asset_cleanup_tests {
             [],
         )
         .unwrap();
+        crate::remote_scan::persistence::bind_scan_epoch(&conn, "source", 2, "/", 2).unwrap();
         conn.execute(
             "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Succeeded','Snapshot',2)",
             [],
@@ -935,6 +964,7 @@ mod verified_remote_asset_cleanup_tests {
             [],
         )
         .unwrap();
+        crate::remote_scan::persistence::bind_scan_epoch(&conn, "source%", 2, "/", 2).unwrap();
         conn.execute(
             "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source%','Succeeded','Snapshot',2)",
             [],

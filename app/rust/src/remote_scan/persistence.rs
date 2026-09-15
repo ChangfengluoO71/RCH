@@ -4,6 +4,7 @@ use super::model::{
 };
 use crate::document::remote_folder::RemoteImageEntry;
 use rusqlite::{params, Connection, OptionalExtension, Result};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedRemoteTombstone {
@@ -38,12 +39,56 @@ pub fn migrate(conn: &Connection) -> Result<()> {
          CREATE TABLE IF NOT EXISTS remote_scan_listing_stage (source_id TEXT NOT NULL,generation INTEGER NOT NULL,logical_path TEXT NOT NULL,content_fingerprint TEXT NOT NULL,asset_kind TEXT NOT NULL,entries_json TEXT NOT NULL,incremental INTEGER NOT NULL,PRIMARY KEY(source_id,generation,logical_path));
          CREATE TABLE IF NOT EXISTS remote_scan_pending (source_id TEXT NOT NULL,generation INTEGER NOT NULL,logical_path TEXT NOT NULL,incremental INTEGER NOT NULL,PRIMARY KEY(source_id,generation,logical_path));
          CREATE TABLE IF NOT EXISTS remote_scan_config (source_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,root_path TEXT NOT NULL,mode TEXT NOT NULL,generation INTEGER NOT NULL,status TEXT NOT NULL,updated_at INTEGER NOT NULL);
+         CREATE TABLE IF NOT EXISTS remote_scan_epoch (source_id TEXT NOT NULL,generation INTEGER NOT NULL,source_fingerprint TEXT NOT NULL,root_path TEXT NOT NULL,session_epoch TEXT NOT NULL,PRIMARY KEY(source_id,generation));
          CREATE TABLE IF NOT EXISTS remote_cover_partial_cache (book_key TEXT PRIMARY KEY,dependency_fingerprint TEXT NOT NULL,bytes BLOB NOT NULL,updated_at INTEGER NOT NULL);
          CREATE INDEX IF NOT EXISTS idx_remote_listing_source_path ON remote_listing_state(source_id,logical_path);
          CREATE INDEX IF NOT EXISTS idx_remote_cover_book_path ON remote_cover_dependency(book_key,dependency_path);
          CREATE INDEX IF NOT EXISTS idx_remote_stage_generation ON remote_scan_listing_stage(source_id,generation);
          CREATE INDEX IF NOT EXISTS idx_remote_pending_generation ON remote_scan_pending(source_id,generation);",
     )
+}
+
+/// Bind one scan generation to the concrete source/account session that
+/// produced it.  Legacy scans have no row here and therefore cannot prove a
+/// deletion after upgrading.
+pub fn bind_scan_epoch(
+    conn: &Connection,
+    source_id: &str,
+    generation: i64,
+    root_path: &str,
+    session: u64,
+) -> Result<()> {
+    let fingerprint: String = conn.query_row(
+        "SELECT fingerprint FROM book_sources WHERE id=?1 AND fingerprint IS NOT NULL AND fingerprint <> ''",
+        [source_id],
+        |row| row.get(0),
+    )?;
+    let root_path = super::model::normalize_path(root_path);
+    let mut digest = Sha256::new();
+    digest.update(fingerprint.as_bytes());
+    digest.update([0]);
+    digest.update(root_path.as_bytes());
+    digest.update([0]);
+    digest.update(session.to_le_bytes());
+    let session_epoch = format!("{:x}", digest.finalize());
+    conn.execute(
+        "INSERT INTO remote_scan_epoch(source_id,generation,source_fingerprint,root_path,session_epoch) VALUES(?1,?2,?3,?4,?5)
+         ON CONFLICT(source_id,generation) DO UPDATE SET source_fingerprint=excluded.source_fingerprint,root_path=excluded.root_path,session_epoch=excluded.session_epoch",
+        params![source_id, generation, fingerprint, root_path, session_epoch],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn invalidate_source_proof_on(conn: &Connection, source_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM remote_scan_epoch WHERE source_id=?1",
+        [source_id],
+    )?;
+    conn.execute(
+        "UPDATE remote_scan_state SET status='Failed',error_code='sourceChanged' WHERE source_id=?1",
+        [source_id],
+    )?;
+    Ok(())
 }
 
 pub fn load_checkpoint(conn: &Connection, source_id: &str) -> Result<Option<String>> {
@@ -62,12 +107,19 @@ pub fn load_checkpoint(conn: &Connection, source_id: &str) -> Result<Option<Stri
 }
 
 pub fn mark_scan_status(conn: &Connection, state: &RemoteScanState) -> Result<()> {
-    conn.execute(
+    let changed = conn.execute(
         "INSERT INTO remote_scan_state(source_id,status,mode,generation,checkpoint,last_success_at,error_code) VALUES(?1,?2,?3,?4,?5,?6,?7)
-         ON CONFLICT(source_id) DO UPDATE SET status=excluded.status,mode=excluded.mode,generation=excluded.generation,checkpoint=excluded.checkpoint,last_success_at=excluded.last_success_at,error_code=excluded.error_code",
+         ON CONFLICT(source_id) DO UPDATE SET status=excluded.status,mode=excluded.mode,generation=excluded.generation,checkpoint=excluded.checkpoint,last_success_at=excluded.last_success_at,error_code=excluded.error_code
+         WHERE excluded.generation > remote_scan_state.generation
+            OR (excluded.generation = remote_scan_state.generation AND EXISTS(
+                SELECT 1 FROM remote_scan_epoch epoch WHERE epoch.source_id=excluded.source_id AND epoch.generation=excluded.generation))",
         params![state.source_id, format!("{:?}", state.status), format!("{:?}", state.mode), state.generation, state.checkpoint, state.last_success_at, state.error_code],
     )?;
-    Ok(())
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(rusqlite::Error::InvalidQuery)
+    }
 }
 
 fn upsert_listing_on(
@@ -176,6 +228,7 @@ fn replace_verified_children_on(
         "SELECT EXISTS( \
            SELECT 1 FROM remote_listing_state listing \
            JOIN remote_scan_state scan ON scan.source_id=listing.source_id \
+           JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation \
            WHERE listing.source_id=?1 AND listing.logical_path=?2 \
              AND listing.scan_generation=?3 AND listing.listing_complete=1 \
              AND scan.generation=?3 AND scan.status IN ('Running','Succeeded'))",
@@ -213,7 +266,7 @@ pub fn publish_staged_generation(
 ) -> Result<()> {
     let latest: Option<i64> = conn
         .query_row(
-            "SELECT generation FROM remote_scan_state WHERE source_id=?1",
+            "SELECT scan.generation FROM remote_scan_state scan JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation WHERE scan.source_id=?1",
             [source_id],
             |row| row.get(0),
         )
@@ -391,13 +444,14 @@ pub fn verify_remote_tombstone(
            JOIN remote_listing_state listing \
              ON listing.source_id=child.source_id AND listing.logical_path=?4 \
            JOIN remote_scan_state scan ON scan.source_id=child.source_id \
+           JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation AND epoch.source_fingerprint=?5 \
            WHERE child.source_id=?1 AND child.path=?2 AND child.parent_id=?3 \
              AND child.deleted=1 AND child.listing_complete=1 \
              AND child.scan_generation < listing.scan_generation \
              AND listing.listing_complete=1 \
              AND listing.scan_generation=scan.generation \
              AND scan.status='Succeeded')",
-        params![source_id, logical_path, parent_id, parent],
+        params![source_id, logical_path, parent_id, parent, source_fp],
         |row| row.get(0),
     )
 }
@@ -663,12 +717,76 @@ mod verified_remote_deletion_tests {
     }
 
     fn set_scan_state(conn: &Connection, generation: i64, status: &str) {
+        bind_scan_epoch(conn, "source", generation, "/", generation as u64).unwrap();
         conn.execute(
             "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source',?1,'Snapshot',?2)\
              ON CONFLICT(source_id) DO UPDATE SET status=excluded.status,generation=excluded.generation",
             params![status, generation],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn legacy_proof_without_session_epoch_is_rejected() {
+        let conn = deletion_db();
+        insert_child(&conn, "source", "canonical-source", "/gone.cbz");
+        conn.execute(
+            "UPDATE library_index SET deleted=1 WHERE source_id='source' AND path='/gone.cbz'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_listing_state VALUES('source','/','root-v2',2,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Succeeded','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+
+        assert!(!verify_remote_tombstone(&conn, "source", "/gone.cbz").unwrap());
+    }
+
+    #[test]
+    fn stale_terminal_write_cannot_regress_newer_generation() {
+        let conn = deletion_db();
+        let state = |generation, status| RemoteScanState {
+            source_id: "source".into(),
+            status,
+            mode: super::super::model::RemoteScanMode::Snapshot,
+            generation,
+            checkpoint: None,
+            last_success_at: None,
+            error_code: None,
+        };
+        bind_scan_epoch(&conn, "source", 2, "/", 2).unwrap();
+        mark_scan_status(
+            &conn,
+            &state(2, super::super::model::RemoteScanStatus::Running),
+        )
+        .unwrap();
+        bind_scan_epoch(&conn, "source", 3, "/", 3).unwrap();
+        mark_scan_status(
+            &conn,
+            &state(3, super::super::model::RemoteScanStatus::Running),
+        )
+        .unwrap();
+
+        assert!(mark_scan_status(
+            &conn,
+            &state(2, super::super::model::RemoteScanStatus::Failed)
+        )
+        .is_err());
+        let current: (i64, String) = conn
+            .query_row(
+                "SELECT generation,status FROM remote_scan_state WHERE source_id='source'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(current, (3, "Running".into()));
     }
 
     #[test]
@@ -843,6 +961,7 @@ mod verified_remote_deletion_tests {
             [],
         )
         .unwrap();
+        bind_scan_epoch(&conn, "source%", 2, "/", 2).unwrap();
         conn.execute(
             "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source%','Succeeded','Snapshot',2)",
             [],

@@ -450,7 +450,6 @@ pub(crate) fn purge_verified_remote_asset_on(
         .filter(|path| path == &logical_path || path.starts_with(&logical_prefix))
         .collect::<std::collections::HashSet<_>>();
     physical_paths.insert(logical_path.clone());
-    physical_paths.extend(dependencies.iter().cloned());
 
     let dependency_rows = conn
         .prepare(
@@ -475,14 +474,18 @@ pub(crate) fn purge_verified_remote_asset_on(
             path != logical_path
                 && crate::db::book_key_of(&source.source_type, source_id, &path) == logical_book_key
         });
+    if !has_live_alias {
+        physical_paths.extend(dependencies.iter().cloned());
+    }
     let mut affected_book_keys = std::collections::HashSet::new();
     if !has_live_alias {
         affected_book_keys.insert(logical_book_key.clone());
     }
     for (book_key, dependency_path) in &dependency_rows {
         let dependency_path = crate::remote_scan::model::normalize_path(dependency_path);
-        if dependencies.contains(&dependency_path)
-            || path_is_within(&dependency_path, &logical_path)
+        if !has_live_alias
+            && (dependencies.contains(&dependency_path)
+                || path_is_within(&dependency_path, &logical_path))
         {
             affected_book_keys.insert(book_key.clone());
             physical_paths.insert(dependency_path);
@@ -523,8 +526,9 @@ pub(crate) fn purge_verified_remote_asset_on(
         .map_err(|error| error.to_string())?;
     for (book_key, dependency_path) in dependency_rows {
         let dependency_path = crate::remote_scan::model::normalize_path(&dependency_path);
-        if dependencies.contains(&dependency_path)
-            || path_is_within(&dependency_path, &logical_path)
+        if !has_live_alias
+            && (dependencies.contains(&dependency_path)
+                || path_is_within(&dependency_path, &logical_path))
         {
             tx.execute(
                 "DELETE FROM remote_cover_dependency WHERE book_key=?1 AND dependency_path=?2",
@@ -809,7 +813,10 @@ mod verified_remote_asset_cleanup_tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(alias_state, (0, 0));
+        // /book.zip and /book.cbz share the logical key. Removing the former
+        // must not discard dependency/partial state still used by the live
+        // alias.
+        assert_eq!(alias_state, (1, 1));
 
         cache::set_custom_cache_root("");
         let _ = std::fs::remove_dir_all(base);

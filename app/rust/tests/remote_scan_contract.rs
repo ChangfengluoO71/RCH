@@ -129,13 +129,17 @@ fn remote_scan_duplicate_directory_tasks_coalesce_and_overflow_spills_with_bound
     });
     let sink = Arc::new(RecordingSink::default());
     let engine = RemoteScanEngine::new(adapter, sink.clone(), 1, 1, RetryPolicy::default());
-    let task = ScanDirectoryTask::new("source", "/", 7);
+    let task = ScanDirectoryTask::new("source", "/", 7).with_session_epoch("spill-proof");
     assert!(engine.enqueue_directory(task.clone()).unwrap());
     assert!(!engine.enqueue_directory(task).unwrap());
     assert!(engine
-        .enqueue_directory(ScanDirectoryTask::new("source", "/other", 7))
+        .enqueue_directory(
+            ScanDirectoryTask::new("source", "/other", 7).with_session_epoch("spill-proof"),
+        )
         .unwrap());
-    assert_eq!(sink.spilled_tasks().len(), 1);
+    let spilled = sink.spilled_tasks();
+    assert_eq!(spilled.len(), 1);
+    assert_eq!(spilled[0].session_epoch, "spill-proof");
 }
 
 #[test]
@@ -212,15 +216,24 @@ fn remote_cover_dependency_is_consumed_into_partial_cache() {
         logical_path: "/book.cbz".into(),
         fingerprint: "fp".into(),
         profile: "default".into(),
+        generation: 4,
+        session_epoch: String::new(),
     };
     let sibling_dependency = CoverTask {
         source_id: "source".into(),
         logical_path: "/book/cover.jpg".into(),
         fingerprint: "cover-fp".into(),
         profile: "default".into(),
+        generation: 4,
+        session_epoch: String::new(),
     };
     persistence::stage_cover_task(&conn, 4, "shared-cover-key", &task).unwrap();
     persistence::stage_cover_task(&conn, 4, "shared-cover-key", &sibling_dependency).unwrap();
+    conn.execute(
+        "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Running','Snapshot',4)",
+        [],
+    )
+    .unwrap();
     persistence::publish_staged_generation(&conn, "source", 4).unwrap();
     persistence::finish_cover_task(
         &conn,
@@ -228,6 +241,7 @@ fn remote_cover_dependency_is_consumed_into_partial_cache() {
         4,
         "shared-cover-key",
         "/book.cbz",
+        "",
         "partial_ready",
         Some(&[1, 2, 3]),
     )
@@ -313,6 +327,76 @@ fn remote_scan_rate_limit_retry_is_bounded_and_complete_directory_enqueues_uniqu
 }
 
 #[test]
+fn remote_scan_epoch_flows_from_directory_task_to_commit_and_cover_tasks() {
+    let adapter = Arc::new(FakeAdapter {
+        pages: Mutex::new(VecDeque::from([Ok((
+            vec![
+                entry("book.cbz", "/book.cbz", false, Some(9), Some(3)),
+                entry("chapter", "/chapter", true, None, None),
+            ],
+            None,
+        ))])),
+    });
+    let sink = Arc::new(RecordingSink::default());
+    let engine = RemoteScanEngine::new(adapter, sink.clone(), 4, 4, RetryPolicy::default());
+    engine
+        .enqueue_directory(
+            ScanDirectoryTask::new("source", "/", 5).with_session_epoch("epoch-proof"),
+        )
+        .unwrap();
+    engine.run_next().unwrap();
+
+    let commits = sink.commits();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].generation, 5);
+    assert_eq!(commits[0].session_epoch, "epoch-proof");
+    let covers = sink.cover_tasks();
+    assert_eq!(covers.len(), 1);
+    assert_eq!(covers[0].generation, 5);
+    assert_eq!(covers[0].session_epoch, "epoch-proof");
+}
+
+#[test]
+fn remote_scan_pending_directory_roundtrip_preserves_session_epoch() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE book_sources(id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL,path TEXT,root_id TEXT);\
+         CREATE TABLE library_index(\
+           id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
+           size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
+           scan_generation INTEGER,listing_complete INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+    )
+    .unwrap();
+    persistence::migrate(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO book_sources VALUES('source','webdav','canonical-source','/',NULL)",
+        [],
+    )
+    .unwrap();
+    let session_epoch = persistence::bind_scan_epoch(&conn, "source", 6, "/", 42).unwrap();
+    conn.execute(
+        "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Running','Snapshot',6)",
+        [],
+    )
+    .unwrap();
+
+    persistence::store_pending_task(
+        &conn,
+        &ScanDirectoryTask::new("source", "/chapter", 6)
+            .with_session_epoch(session_epoch.clone())
+            .incremental(),
+    )
+    .unwrap();
+    let restored = persistence::take_pending_task(&conn, "source", 6)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(restored.logical_path, "/chapter");
+    assert!(restored.incremental);
+    assert_eq!(restored.session_epoch, session_epoch);
+}
+
+#[test]
 fn remote_scan_manifest_keeps_typed_metadata_and_per_entry_fingerprint() {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(
@@ -390,6 +474,7 @@ fn staged_generation_is_invisible_until_publish_and_discard_retains_previous_gen
         "new",
         RemoteAssetKind::ContainerDir,
         false,
+        "",
     )
     .unwrap();
     let visible_before: i64 = conn.query_row(
@@ -441,6 +526,12 @@ fn successful_generation_publishes_and_reconciles_missing_children_atomically() 
         "new",
         RemoteAssetKind::ContainerDir,
         false,
+        "",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Running','Snapshot',2)",
+        [],
     )
     .unwrap();
     persistence::publish_staged_generation(&conn, "source", 2).unwrap();
@@ -450,4 +541,41 @@ fn successful_generation_publishes_and_reconciles_missing_children_atomically() 
         [], |row| Ok((row.get(0)?, row.get(1)?)),
     ).unwrap();
     assert_eq!(rows, (1, 1));
+}
+
+#[test]
+fn publication_rejects_a_generation_without_current_persisted_scan_state() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE book_sources(id TEXT PRIMARY KEY,fingerprint TEXT);\
+         CREATE TABLE library_index(\
+           id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
+           size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
+           scan_generation INTEGER,listing_complete INTEGER NOT NULL DEFAULT 0,deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+    )
+    .unwrap();
+    persistence::migrate(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO book_sources VALUES('source','canonical-source')",
+        [],
+    )
+    .unwrap();
+    persistence::stage_complete_listing(
+        &conn,
+        "source",
+        "/",
+        &[entry("book.cbz", "/book.cbz", false, Some(1), Some(1))],
+        2,
+        "root-v2",
+        RemoteAssetKind::ContainerDir,
+        false,
+        "",
+    )
+    .unwrap();
+
+    assert!(persistence::publish_staged_generation(&conn, "source", 2).is_err());
+    let published: i64 = conn
+        .query_row("SELECT COUNT(*) FROM library_index", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(published, 0);
 }

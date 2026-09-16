@@ -86,15 +86,15 @@ impl ScanCommitSink for SqliteScanSink {
     #[flutter_rust_bridge::frb(ignore)]
     fn stage_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError> {
         let conn = db::get().lock().unwrap();
-        let latest: Option<i64> = conn
-            .query_row(
-            "SELECT scan.generation FROM remote_scan_state scan JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation WHERE scan.source_id=?1",
-                [&directory.source_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|_| RemoteScanError::Io("database_read_failed".into()))?;
-        if latest.is_some_and(|generation| generation != directory.generation) {
+        if !persistence::current_generation_is_active_with_epoch(
+            &conn,
+            &directory.source_id,
+            directory.generation,
+            "Running",
+            &directory.session_epoch,
+        )
+        .map_err(|_| RemoteScanError::Io("source_proof_lookup_failed".into()))?
+        {
             return Err(RemoteScanError::Cancelled);
         }
         persistence::stage_complete_listing(
@@ -106,6 +106,7 @@ impl ScanCommitSink for SqliteScanSink {
             &directory.fingerprint,
             directory.asset_kind,
             directory.incremental,
+            &directory.session_epoch,
         )
         .map_err(|_| RemoteScanError::Io("manifest_commit_failed".into()))?;
         let state = RemoteScanState {
@@ -136,14 +137,18 @@ impl ScanCommitSink for SqliteScanSink {
             )
             .map_err(|_| RemoteScanError::Io("source_lookup_failed".into()))?;
         let book_key = db::book_key_of(&source_type, &task.source_id, &task.logical_path);
-        let generation: i64 = conn
-            .query_row(
-                "SELECT scan.generation FROM remote_scan_state scan JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation WHERE scan.source_id=?1",
-                [&task.source_id],
-                |row| row.get(0),
-            )
-            .map_err(|_| RemoteScanError::Io("scan_generation_lookup_failed".into()))?;
-        persistence::stage_cover_task(&conn, generation, &book_key, &task)
+        if !persistence::current_generation_is_active_with_epoch(
+            &conn,
+            &task.source_id,
+            task.generation,
+            "Running",
+            &task.session_epoch,
+        )
+        .map_err(|_| RemoteScanError::Io("source_proof_lookup_failed".into()))?
+        {
+            return Err(RemoteScanError::Cancelled);
+        }
+        persistence::stage_cover_task(&conn, task.generation, &book_key, &task)
             .map_err(|_| RemoteScanError::Io("cover_dependency_stage_failed".into()))
     }
 
@@ -231,6 +236,14 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
         return Err("source is local-only".into());
     }
     let _reservation = start_lock().lock().unwrap();
+    {
+        let conn = db::get().lock().unwrap();
+        if !persistence::requested_root_matches_source(&conn, &config.source_id, &config.root_path)
+            .map_err(|_| "source proof unavailable".to_string())?
+        {
+            return Err("source root changed".into());
+        }
+    }
     if let Some(existing) = jobs().lock().unwrap().get(&config.source_id).cloned() {
         let active = matches!(
             existing.status.lock().unwrap().status.as_str(),
@@ -264,7 +277,7 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
         config.mode.clone()
     };
     let checkpoint = stored.and_then(|(_, checkpoint)| checkpoint);
-    persistence::bind_scan_epoch(
+    let session_epoch = persistence::bind_scan_epoch(
         &conn,
         &config.source_id,
         generation,
@@ -319,7 +332,8 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
             RetryPolicy::default(),
             token.clone(),
         );
-        let initial = ScanDirectoryTask::new(&job.config.source_id, root, generation);
+        let initial = ScanDirectoryTask::new(&job.config.source_id, root, generation)
+            .with_session_epoch(session_epoch);
         let initial = if mode == "incremental" {
             initial.incremental()
         } else {
@@ -426,6 +440,7 @@ fn consume_staged_covers(
             generation,
             &book_key,
             &task.logical_path,
+            &task.session_epoch,
             status,
             bytes.as_deref(),
         )
@@ -610,6 +625,8 @@ mod tests {
             logical_path: "/book.cbz".into(),
             fingerprint: "fingerprint".into(),
             profile: "default".into(),
+            generation: 0,
+            session_epoch: String::new(),
         };
         let worker =
             std::thread::spawn(move || fetch_safe_cover_partial(&CoverAdapter(started_tx), &task));
@@ -655,6 +672,8 @@ mod tests {
             logical_path: "/book.cbz".into(),
             fingerprint: "fp".into(),
             profile: "default".into(),
+            generation: 0,
+            session_epoch: String::new(),
         };
         assert_eq!(
             fetch_safe_cover_partial(&NoRange, &task).unwrap_err(),

@@ -12,6 +12,141 @@ pub struct VerifiedRemoteTombstone {
     pub dependency_paths: Vec<String>,
 }
 
+fn source_schema_has_proof_fields(conn: &Connection) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('book_sources') WHERE name='type')
+          AND EXISTS(SELECT 1 FROM pragma_table_info('book_sources') WHERE name='path')
+          AND EXISTS(SELECT 1 FROM pragma_table_info('book_sources') WHERE name='root_id')",
+        [],
+        |row| row.get(0),
+    )
+}
+
+fn source_identity_on(conn: &Connection, source_id: &str) -> Result<(String, String)> {
+    let fingerprint: Option<String> = conn.query_row(
+        "SELECT fingerprint FROM book_sources WHERE id=?1",
+        [source_id],
+        |row| row.get(0),
+    )?;
+    let fingerprint = fingerprint
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(rusqlite::Error::InvalidQuery)?;
+    if !source_schema_has_proof_fields(conn)? {
+        // Minimal pre-Task-1 test databases have only source id/fingerprint.
+        // They can exercise staging mechanics, but cannot produce deletion
+        // proof; production databases always have these columns after init.
+        return Ok((fingerprint, "/".to_string()));
+    }
+    let (source_type, path, root_id): (String, String, Option<String>) = conn.query_row(
+        "SELECT type,path,root_id FROM book_sources WHERE id=?1",
+        [source_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let root = if matches!(source_type.as_str(), "115" | "quark") {
+        root_id
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| (!path.trim().is_empty()).then_some(path.clone()))
+            .unwrap_or_else(|| "0".to_string())
+    } else {
+        path
+    };
+    Ok((fingerprint, super::model::normalize_path(&root)))
+}
+
+fn source_epoch_matches_on(conn: &Connection, source_id: &str, generation: i64) -> Result<bool> {
+    let (fingerprint, root) = source_identity_on(conn, source_id)?;
+    conn.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM remote_scan_epoch
+           WHERE source_id=?1 AND generation=?2
+             AND source_fingerprint=?3 AND root_path=?4 AND session_epoch <> ''
+         )",
+        params![source_id, generation, fingerprint, root],
+        |row| row.get(0),
+    )
+}
+
+/// Check that a caller is using the source's authoritative effective root.
+/// A root from an old source row or a legacy source without a fingerprint is
+/// never accepted as proof material.
+pub fn requested_root_matches_source(
+    conn: &Connection,
+    source_id: &str,
+    requested_root: &str,
+) -> Result<bool> {
+    if !source_schema_has_proof_fields(conn)? {
+        return Ok(false);
+    }
+    let (_, root) = source_identity_on(conn, source_id)?;
+    Ok(root == super::model::normalize_path(requested_root))
+}
+
+pub(crate) fn current_generation_is_active(
+    conn: &Connection,
+    source_id: &str,
+    generation: i64,
+    status: &str,
+) -> Result<bool> {
+    if !source_schema_has_proof_fields(conn)? {
+        let persisted: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT generation,status FROM remote_scan_state WHERE source_id=?1",
+                [source_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        return Ok(persisted == Some((generation, status.to_string())));
+    }
+    if !source_epoch_matches_on(conn, source_id, generation)? {
+        return Ok(false);
+    }
+    let persisted: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT generation,status FROM remote_scan_state WHERE source_id=?1",
+            [source_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    Ok(persisted == Some((generation, status.to_string())))
+}
+
+pub(crate) fn current_generation_is_active_with_epoch(
+    conn: &Connection,
+    source_id: &str,
+    generation: i64,
+    status: &str,
+    session_epoch: &str,
+) -> Result<bool> {
+    if session_epoch.is_empty() {
+        return Ok(false);
+    }
+    if !source_schema_has_proof_fields(conn)? {
+        return Ok(false);
+    }
+    if !source_epoch_matches_on(conn, source_id, generation)? {
+        return Ok(false);
+    }
+    let persisted: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT generation,status FROM remote_scan_state WHERE source_id=?1",
+            [source_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if persisted != Some((generation, status.to_string())) {
+        return Ok(false);
+    }
+    conn.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM remote_scan_epoch
+           WHERE source_id=?1 AND generation=?2 AND session_epoch=?3
+             AND session_epoch <> ''
+         )",
+        params![source_id, generation, session_epoch],
+        |row| row.get(0),
+    )
+}
+
 pub fn migrate(conn: &Connection) -> Result<()> {
     for (name, ty) in [
         ("asset_kind", "TEXT"),
@@ -35,17 +170,46 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS remote_scan_state (source_id TEXT PRIMARY KEY,status TEXT NOT NULL,mode TEXT NOT NULL,generation INTEGER NOT NULL,checkpoint TEXT,last_success_at INTEGER,error_code TEXT);
          CREATE TABLE IF NOT EXISTS remote_listing_state (source_id TEXT NOT NULL,logical_path TEXT NOT NULL,content_fingerprint TEXT,scan_generation INTEGER NOT NULL,listing_complete INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(source_id,logical_path));
          CREATE TABLE IF NOT EXISTS remote_cover_dependency (book_key TEXT NOT NULL,dependency_path TEXT NOT NULL,dependency_fingerprint TEXT NOT NULL,profile TEXT NOT NULL,status TEXT NOT NULL,PRIMARY KEY(book_key,dependency_path));
-         CREATE TABLE IF NOT EXISTS remote_cover_stage (source_id TEXT NOT NULL,generation INTEGER NOT NULL,book_key TEXT NOT NULL,dependency_path TEXT NOT NULL,dependency_fingerprint TEXT NOT NULL,profile TEXT NOT NULL,PRIMARY KEY(source_id,generation,book_key,dependency_path));
-         CREATE TABLE IF NOT EXISTS remote_scan_listing_stage (source_id TEXT NOT NULL,generation INTEGER NOT NULL,logical_path TEXT NOT NULL,content_fingerprint TEXT NOT NULL,asset_kind TEXT NOT NULL,entries_json TEXT NOT NULL,incremental INTEGER NOT NULL,PRIMARY KEY(source_id,generation,logical_path));
-         CREATE TABLE IF NOT EXISTS remote_scan_pending (source_id TEXT NOT NULL,generation INTEGER NOT NULL,logical_path TEXT NOT NULL,incremental INTEGER NOT NULL,PRIMARY KEY(source_id,generation,logical_path));
-         CREATE TABLE IF NOT EXISTS remote_scan_config (source_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,root_path TEXT NOT NULL,mode TEXT NOT NULL,generation INTEGER NOT NULL,status TEXT NOT NULL,updated_at INTEGER NOT NULL);
-         CREATE TABLE IF NOT EXISTS remote_scan_epoch (source_id TEXT NOT NULL,generation INTEGER NOT NULL,source_fingerprint TEXT NOT NULL,root_path TEXT NOT NULL,session_epoch TEXT NOT NULL,PRIMARY KEY(source_id,generation));
+         CREATE TABLE IF NOT EXISTS remote_cover_stage (source_id TEXT NOT NULL,generation INTEGER NOT NULL,book_key TEXT NOT NULL,dependency_path TEXT NOT NULL,dependency_fingerprint TEXT NOT NULL,profile TEXT NOT NULL,session_epoch TEXT NOT NULL DEFAULT '',PRIMARY KEY(source_id,generation,book_key,dependency_path));
+         CREATE TABLE IF NOT EXISTS remote_scan_listing_stage (source_id TEXT NOT NULL,generation INTEGER NOT NULL,logical_path TEXT NOT NULL,content_fingerprint TEXT NOT NULL,asset_kind TEXT NOT NULL,entries_json TEXT NOT NULL,incremental INTEGER NOT NULL,session_epoch TEXT NOT NULL DEFAULT '',PRIMARY KEY(source_id,generation,logical_path));
+         CREATE TABLE IF NOT EXISTS remote_scan_pending (source_id TEXT NOT NULL,generation INTEGER NOT NULL,logical_path TEXT NOT NULL,incremental INTEGER NOT NULL,session_epoch TEXT NOT NULL DEFAULT '',PRIMARY KEY(source_id,generation,logical_path));
+        CREATE TABLE IF NOT EXISTS remote_scan_config (source_id TEXT PRIMARY KEY,source_type TEXT NOT NULL,root_path TEXT NOT NULL,mode TEXT NOT NULL,generation INTEGER NOT NULL,status TEXT NOT NULL,updated_at INTEGER NOT NULL);
+         CREATE TABLE IF NOT EXISTS remote_scan_epoch (source_id TEXT NOT NULL,generation INTEGER NOT NULL,source_fingerprint TEXT NOT NULL,root_path TEXT NOT NULL,session_epoch TEXT NOT NULL,session_token INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(source_id,generation));
          CREATE TABLE IF NOT EXISTS remote_cover_partial_cache (book_key TEXT PRIMARY KEY,dependency_fingerprint TEXT NOT NULL,bytes BLOB NOT NULL,updated_at INTEGER NOT NULL);
          CREATE INDEX IF NOT EXISTS idx_remote_listing_source_path ON remote_listing_state(source_id,logical_path);
          CREATE INDEX IF NOT EXISTS idx_remote_cover_book_path ON remote_cover_dependency(book_key,dependency_path);
          CREATE INDEX IF NOT EXISTS idx_remote_stage_generation ON remote_scan_listing_stage(source_id,generation);
          CREATE INDEX IF NOT EXISTS idx_remote_pending_generation ON remote_scan_pending(source_id,generation);",
-    )
+    )?;
+    for table in [
+        "remote_cover_stage",
+        "remote_scan_listing_stage",
+        "remote_scan_pending",
+    ] {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name='session_epoch')",
+            [table],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            conn.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN session_epoch TEXT NOT NULL DEFAULT ''"),
+                [],
+            )?;
+        }
+    }
+    let epoch_has_token: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('remote_scan_epoch') WHERE name='session_token')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !epoch_has_token {
+        conn.execute(
+            "ALTER TABLE remote_scan_epoch ADD COLUMN session_token INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 /// Bind one scan generation to the concrete source/account session that
@@ -57,13 +221,12 @@ pub fn bind_scan_epoch(
     generation: i64,
     root_path: &str,
     session: u64,
-) -> Result<()> {
-    let fingerprint: String = conn.query_row(
-        "SELECT fingerprint FROM book_sources WHERE id=?1 AND fingerprint IS NOT NULL AND fingerprint <> ''",
-        [source_id],
-        |row| row.get(0),
-    )?;
+) -> Result<String> {
+    let (fingerprint, authoritative_root) = source_identity_on(conn, source_id)?;
     let root_path = super::model::normalize_path(root_path);
+    if root_path != authoritative_root {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     let mut digest = Sha256::new();
     digest.update(fingerprint.as_bytes());
     digest.update([0]);
@@ -71,12 +234,39 @@ pub fn bind_scan_epoch(
     digest.update([0]);
     digest.update(session.to_le_bytes());
     let session_epoch = format!("{:x}", digest.finalize());
+    let session_token = i64::try_from(session).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let previous: Option<(String, String, String, i64)> = conn
+        .query_row(
+            "SELECT source_fingerprint,root_path,session_epoch,session_token FROM remote_scan_epoch WHERE source_id=?1 AND generation=?2",
+            params![source_id, generation],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    if let Some(previous) = previous {
+        if previous
+            != (
+                fingerprint.clone(),
+                root_path.clone(),
+                session_epoch.clone(),
+                session_token,
+            )
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        return Ok(session_epoch);
+    }
     conn.execute(
-        "INSERT INTO remote_scan_epoch(source_id,generation,source_fingerprint,root_path,session_epoch) VALUES(?1,?2,?3,?4,?5)
-         ON CONFLICT(source_id,generation) DO UPDATE SET source_fingerprint=excluded.source_fingerprint,root_path=excluded.root_path,session_epoch=excluded.session_epoch",
-        params![source_id, generation, fingerprint, root_path, session_epoch],
+        "INSERT INTO remote_scan_epoch(source_id,generation,source_fingerprint,root_path,session_epoch,session_token) VALUES(?1,?2,?3,?4,?5,?6)",
+        params![
+            source_id,
+            generation,
+            fingerprint,
+            root_path,
+            session_epoch,
+            session_token
+        ],
     )?;
-    Ok(())
+    Ok(session_epoch)
 }
 
 pub(crate) fn invalidate_source_proof_on(conn: &Connection, source_id: &str) -> Result<()> {
@@ -107,12 +297,29 @@ pub fn load_checkpoint(conn: &Connection, source_id: &str) -> Result<Option<Stri
 }
 
 pub fn mark_scan_status(conn: &Connection, state: &RemoteScanState) -> Result<()> {
+    if !source_epoch_matches_on(conn, &state.source_id, state.generation)? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let existing: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT generation,status FROM remote_scan_state WHERE source_id=?1",
+            [&state.source_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((generation, status)) = existing {
+        if generation > state.generation
+            || (generation == state.generation
+                && matches!(status.as_str(), "Cancelled" | "Succeeded" | "Failed"))
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
     let changed = conn.execute(
         "INSERT INTO remote_scan_state(source_id,status,mode,generation,checkpoint,last_success_at,error_code) VALUES(?1,?2,?3,?4,?5,?6,?7)
          ON CONFLICT(source_id) DO UPDATE SET status=excluded.status,mode=excluded.mode,generation=excluded.generation,checkpoint=excluded.checkpoint,last_success_at=excluded.last_success_at,error_code=excluded.error_code
          WHERE excluded.generation > remote_scan_state.generation
-            OR (excluded.generation = remote_scan_state.generation AND EXISTS(
-                SELECT 1 FROM remote_scan_epoch epoch WHERE epoch.source_id=excluded.source_id AND epoch.generation=excluded.generation))",
+            OR (excluded.generation = remote_scan_state.generation AND remote_scan_state.status NOT IN ('Cancelled','Succeeded','Failed'))",
         params![state.source_id, format!("{:?}", state.status), format!("{:?}", state.mode), state.generation, state.checkpoint, state.last_success_at, state.error_code],
     )?;
     if changed == 1 {
@@ -181,6 +388,7 @@ pub fn upsert_complete_listing(
     tx.commit()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn stage_complete_listing(
     conn: &Connection,
     source_id: &str,
@@ -190,13 +398,30 @@ pub fn stage_complete_listing(
     fingerprint: &str,
     asset_kind: RemoteAssetKind,
     incremental: bool,
+    session_epoch: &str,
 ) -> Result<()> {
+    if source_schema_has_proof_fields(conn)?
+        && !current_generation_is_active_with_epoch(
+            conn,
+            source_id,
+            generation,
+            "Running",
+            session_epoch,
+        )?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let session_epoch = if source_schema_has_proof_fields(conn)? {
+        session_epoch.to_string()
+    } else {
+        String::new()
+    };
     let json = serde_json::to_string(entries)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     conn.execute(
-        "INSERT INTO remote_scan_listing_stage(source_id,generation,logical_path,content_fingerprint,asset_kind,entries_json,incremental) VALUES(?1,?2,?3,?4,?5,?6,?7)
-         ON CONFLICT(source_id,generation,logical_path) DO UPDATE SET content_fingerprint=excluded.content_fingerprint,asset_kind=excluded.asset_kind,entries_json=excluded.entries_json,incremental=excluded.incremental",
-        params![source_id, generation, super::model::normalize_path(path), fingerprint, format!("{:?}", asset_kind), json, incremental as i64],
+        "INSERT INTO remote_scan_listing_stage(source_id,generation,logical_path,content_fingerprint,asset_kind,entries_json,incremental,session_epoch) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+         ON CONFLICT(source_id,generation,logical_path) DO UPDATE SET content_fingerprint=excluded.content_fingerprint,asset_kind=excluded.asset_kind,entries_json=excluded.entries_json,incremental=excluded.incremental,session_epoch=excluded.session_epoch",
+        params![source_id, generation, super::model::normalize_path(path), fingerprint, format!("{:?}", asset_kind), json, incremental as i64, session_epoch],
     )?;
     Ok(())
 }
@@ -207,10 +432,29 @@ pub fn stage_cover_task(
     book_key: &str,
     task: &CoverTask,
 ) -> Result<()> {
+    if task.generation != generation {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if source_schema_has_proof_fields(conn)?
+        && !current_generation_is_active_with_epoch(
+            conn,
+            &task.source_id,
+            generation,
+            "Running",
+            &task.session_epoch,
+        )?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let session_epoch = if source_schema_has_proof_fields(conn)? {
+        task.session_epoch.clone()
+    } else {
+        String::new()
+    };
     conn.execute(
-        "INSERT INTO remote_cover_stage(source_id,generation,book_key,dependency_path,dependency_fingerprint,profile) VALUES(?1,?2,?3,?4,?5,?6)
-         ON CONFLICT(source_id,generation,book_key,dependency_path) DO UPDATE SET dependency_fingerprint=excluded.dependency_fingerprint,profile=excluded.profile",
-        params![task.source_id, generation, book_key, super::model::normalize_path(&task.logical_path), task.fingerprint, task.profile],
+        "INSERT INTO remote_cover_stage(source_id,generation,book_key,dependency_path,dependency_fingerprint,profile,session_epoch) VALUES(?1,?2,?3,?4,?5,?6,?7)
+         ON CONFLICT(source_id,generation,book_key,dependency_path) DO UPDATE SET dependency_fingerprint=excluded.dependency_fingerprint,profile=excluded.profile,session_epoch=excluded.session_epoch",
+        params![task.source_id, generation, book_key, super::model::normalize_path(&task.logical_path), task.fingerprint, task.profile, session_epoch],
     )?;
     Ok(())
 }
@@ -224,17 +468,36 @@ fn replace_verified_children_on(
     complete: bool,
 ) -> Result<()> {
     let parent = super::model::normalize_path(parent);
-    let proven: bool = conn.query_row(
-        "SELECT EXISTS( \
-           SELECT 1 FROM remote_listing_state listing \
-           JOIN remote_scan_state scan ON scan.source_id=listing.source_id \
-           JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation \
-           WHERE listing.source_id=?1 AND listing.logical_path=?2 \
-             AND listing.scan_generation=?3 AND listing.listing_complete=1 \
-             AND scan.generation=?3 AND scan.status IN ('Running','Succeeded'))",
-        params![source_id, parent, generation],
-        |row| row.get(0),
-    )?;
+    if source_schema_has_proof_fields(conn)?
+        && !current_generation_is_active(conn, source_id, generation, "Running")?
+    {
+        return Ok(());
+    }
+    let proven: bool = if source_schema_has_proof_fields(conn)? {
+        conn.query_row(
+            "SELECT EXISTS( \
+               SELECT 1 FROM remote_listing_state listing \
+               JOIN remote_scan_state scan ON scan.source_id=listing.source_id \
+               JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation \
+               WHERE listing.source_id=?1 AND listing.logical_path=?2 \
+                 AND listing.scan_generation=?3 AND listing.listing_complete=1 \
+                 AND scan.generation=?3 AND scan.status='Running' \
+                 AND epoch.session_epoch <> '')",
+            params![source_id, parent, generation],
+            |row| row.get(0),
+        )?
+    } else {
+        conn.query_row(
+            "SELECT EXISTS( \
+               SELECT 1 FROM remote_listing_state listing \
+               JOIN remote_scan_state scan ON scan.source_id=listing.source_id \
+               WHERE listing.source_id=?1 AND listing.logical_path=?2 \
+                 AND listing.scan_generation=?3 AND listing.listing_complete=1 \
+                 AND scan.generation=?3 AND scan.status='Running')",
+            params![source_id, parent, generation],
+            |row| row.get(0),
+        )?
+    };
     if complete && proven {
         let now = crate::db::now_ms();
         let source_fp: String = conn.query_row(
@@ -264,20 +527,13 @@ pub fn publish_staged_generation(
     source_id: &str,
     generation: i64,
 ) -> Result<()> {
-    let latest: Option<i64> = conn
-        .query_row(
-            "SELECT scan.generation FROM remote_scan_state scan JOIN remote_scan_epoch epoch ON epoch.source_id=scan.source_id AND epoch.generation=scan.generation WHERE scan.source_id=?1",
-            [source_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if latest != Some(generation) {
+    if !current_generation_is_active(conn, source_id, generation, "Running")? {
         return Err(rusqlite::Error::InvalidQuery);
     }
     let tx = conn.unchecked_transaction()?;
     loop {
         let staged: Option<(String, String, String, String)> = tx.query_row(
-            "SELECT logical_path,content_fingerprint,asset_kind,entries_json FROM remote_scan_listing_stage WHERE source_id=?1 AND generation=?2 ORDER BY logical_path LIMIT 1",
+            "SELECT logical_path,content_fingerprint,asset_kind,entries_json FROM remote_scan_listing_stage WHERE source_id=?1 AND generation=?2 AND session_epoch=COALESCE((SELECT session_epoch FROM remote_scan_epoch WHERE source_id=?1 AND generation=?2),'') ORDER BY logical_path LIMIT 1",
             params![source_id, generation],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).optional()?;
@@ -313,7 +569,7 @@ pub fn publish_staged_generation(
     }
     tx.execute(
         "INSERT INTO remote_cover_dependency(book_key,dependency_path,dependency_fingerprint,profile,status)
-         SELECT book_key,dependency_path,dependency_fingerprint,profile,'queued' FROM remote_cover_stage WHERE source_id=?1 AND generation=?2
+         SELECT book_key,dependency_path,dependency_fingerprint,profile,'queued' FROM remote_cover_stage WHERE source_id=?1 AND generation=?2 AND session_epoch=COALESCE((SELECT session_epoch FROM remote_scan_epoch WHERE source_id=?1 AND generation=?2),'')
          ON CONFLICT(book_key,dependency_path) DO UPDATE SET dependency_fingerprint=excluded.dependency_fingerprint,profile=excluded.profile,status='queued'",
         params![source_id, generation],
     )?;
@@ -350,8 +606,11 @@ pub fn next_staged_cover_task(
     source_id: &str,
     generation: i64,
 ) -> Result<Option<(String, CoverTask)>> {
+    if !current_generation_is_active(conn, source_id, generation, "Running")? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     conn.query_row(
-        "SELECT book_key,dependency_path,dependency_fingerprint,profile FROM remote_cover_stage WHERE source_id=?1 AND generation=?2 ORDER BY dependency_path LIMIT 1",
+        "SELECT book_key,dependency_path,dependency_fingerprint,profile,session_epoch FROM remote_cover_stage WHERE source_id=?1 AND generation=?2 AND session_epoch=(SELECT session_epoch FROM remote_scan_epoch WHERE source_id=?1 AND generation=?2) ORDER BY dependency_path LIMIT 1",
         params![source_id, generation],
         |row| {
             Ok((
@@ -361,6 +620,8 @@ pub fn next_staged_cover_task(
                     logical_path: row.get(1)?,
                     fingerprint: row.get(2)?,
                     profile: row.get(3)?,
+                    generation,
+                    session_epoch: row.get(4)?,
                 },
             ))
         },
@@ -368,23 +629,56 @@ pub fn next_staged_cover_task(
     .optional()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn finish_cover_task(
     conn: &Connection,
     source_id: &str,
     generation: i64,
     book_key: &str,
     dependency_path: &str,
+    session_epoch: &str,
     status: &str,
     bytes: Option<&[u8]>,
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     let dependency_path = super::model::normalize_path(dependency_path);
+    if source_schema_has_proof_fields(&tx)?
+        && !current_generation_is_active_with_epoch(
+            &tx,
+            source_id,
+            generation,
+            "Running",
+            session_epoch,
+        )?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let staged: bool = if source_schema_has_proof_fields(&tx)? {
+        tx.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM remote_cover_stage stage
+               JOIN remote_scan_epoch epoch ON epoch.source_id=stage.source_id AND epoch.generation=stage.generation AND epoch.session_epoch=stage.session_epoch
+               WHERE stage.source_id=?1 AND stage.generation=?2 AND stage.book_key=?3
+                 AND stage.dependency_path=?4 AND stage.session_epoch=?5 AND stage.session_epoch <> '')",
+            params![source_id, generation, book_key, dependency_path, session_epoch],
+            |row| row.get(0),
+        )?
+    } else {
+        tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM remote_cover_stage WHERE source_id=?1 AND generation=?2 AND book_key=?3 AND dependency_path=?4)",
+            params![source_id, generation, book_key, dependency_path],
+            |row| row.get(0),
+        )?
+    };
+    if !staged {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     if let Some(bytes) = bytes {
         tx.execute(
             "INSERT INTO remote_cover_partial_cache(book_key,dependency_fingerprint,bytes,updated_at)
-             SELECT book_key,dependency_fingerprint,?2,?3 FROM remote_cover_stage WHERE source_id=?1 AND generation=?4 AND book_key=?5 AND dependency_path=?6
+             SELECT book_key,dependency_fingerprint,?2,?3 FROM remote_cover_stage WHERE source_id=?1 AND generation=?4 AND book_key=?5 AND dependency_path=?6 AND session_epoch=?7
              ON CONFLICT(book_key) DO UPDATE SET dependency_fingerprint=excluded.dependency_fingerprint,bytes=excluded.bytes,updated_at=excluded.updated_at",
-            params![source_id, bytes, crate::db::now_ms(), generation, book_key, dependency_path],
+            params![source_id, bytes, crate::db::now_ms(), generation, book_key, dependency_path, session_epoch],
         )?;
     }
     tx.execute(
@@ -424,6 +718,9 @@ pub fn verify_remote_tombstone(
     source_id: &str,
     logical_path: &str,
 ) -> Result<bool> {
+    if !source_schema_has_proof_fields(conn)? {
+        return Ok(false);
+    }
     let logical_path = super::model::normalize_path(logical_path);
     let parent = parent_path(&logical_path);
     let source_fp: Option<String> = conn
@@ -437,6 +734,19 @@ pub fn verify_remote_tombstone(
     let Some(source_fp) = source_fp else {
         return Ok(false);
     };
+    let listing_generation: Option<i64> = conn
+        .query_row(
+            "SELECT scan_generation FROM remote_listing_state WHERE source_id=?1 AND logical_path=?2 AND listing_complete=1",
+            params![source_id, parent],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(listing_generation) = listing_generation else {
+        return Ok(false);
+    };
+    if !current_generation_is_active(conn, source_id, listing_generation, "Succeeded")? {
+        return Ok(false);
+    }
     let parent_id = crate::db::library_index_id(&source_fp, &parent);
     conn.query_row(
         "SELECT EXISTS( \
@@ -450,7 +760,7 @@ pub fn verify_remote_tombstone(
              AND child.scan_generation < listing.scan_generation \
              AND listing.listing_complete=1 \
              AND listing.scan_generation=scan.generation \
-             AND scan.status='Succeeded')",
+             AND scan.status='Succeeded' AND epoch.session_epoch <> '')",
         params![source_id, logical_path, parent_id, parent, source_fp],
         |row| row.get(0),
     )
@@ -517,7 +827,21 @@ pub fn load_verified_remote_tombstones(
 }
 
 pub fn store_pending_task(conn: &Connection, task: &ScanDirectoryTask) -> Result<()> {
-    conn.execute("INSERT OR IGNORE INTO remote_scan_pending(source_id,generation,logical_path,incremental) VALUES(?1,?2,?3,?4)", params![task.source_id, task.generation, super::model::normalize_path(&task.logical_path), task.incremental as i64])?;
+    let session_epoch = if source_schema_has_proof_fields(conn)? {
+        if !current_generation_is_active_with_epoch(
+            conn,
+            &task.source_id,
+            task.generation,
+            "Running",
+            &task.session_epoch,
+        )? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        task.session_epoch.clone()
+    } else {
+        String::new()
+    };
+    conn.execute("INSERT OR IGNORE INTO remote_scan_pending(source_id,generation,logical_path,incremental,session_epoch) VALUES(?1,?2,?3,?4,?5)", params![task.source_id, task.generation, super::model::normalize_path(&task.logical_path), task.incremental as i64, session_epoch])?;
     Ok(())
 }
 
@@ -527,11 +851,12 @@ pub fn take_pending_task(
     generation: i64,
 ) -> Result<Option<ScanDirectoryTask>> {
     let tx = conn.unchecked_transaction()?;
-    let row: Option<(String, bool)> = tx.query_row("SELECT logical_path,incremental FROM remote_scan_pending WHERE source_id=?1 AND generation=?2 ORDER BY rowid DESC LIMIT 1", params![source_id, generation], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
-    if let Some((path, incremental)) = row {
+    let row: Option<(String, bool, String)> = tx.query_row("SELECT logical_path,incremental,session_epoch FROM remote_scan_pending WHERE source_id=?1 AND generation=?2 AND session_epoch=COALESCE((SELECT session_epoch FROM remote_scan_epoch WHERE source_id=?1 AND generation=?2),'') ORDER BY rowid DESC LIMIT 1", params![source_id, generation], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?;
+    if let Some((path, incremental, session_epoch)) = row {
         tx.execute("DELETE FROM remote_scan_pending WHERE source_id=?1 AND generation=?2 AND logical_path=?3", params![source_id, generation, path])?;
         tx.commit()?;
-        let task = ScanDirectoryTask::new(source_id, path, generation);
+        let task =
+            ScanDirectoryTask::new(source_id, path, generation).with_session_epoch(session_epoch);
         Ok(Some(if incremental {
             task.incremental()
         } else {
@@ -681,7 +1006,7 @@ mod verified_remote_deletion_tests {
     fn deletion_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE book_sources(id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL);\
+            "CREATE TABLE book_sources(id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL,path TEXT,root_id TEXT);\
              CREATE TABLE library_index(\
                id TEXT PRIMARY KEY,source_id TEXT NOT NULL,parent_id TEXT,name TEXT,path TEXT,entry_type TEXT,\
                size INTEGER,modified_at INTEGER,asset_kind TEXT,content_fingerprint TEXT,\
@@ -690,7 +1015,7 @@ mod verified_remote_deletion_tests {
         .unwrap();
         migrate(&conn).unwrap();
         conn.execute(
-            "INSERT INTO book_sources VALUES('source','webdav','canonical-source')",
+            "INSERT INTO book_sources VALUES('source','webdav','canonical-source','/',NULL)",
             [],
         )
         .unwrap();
@@ -890,7 +1215,7 @@ mod verified_remote_deletion_tests {
     fn verified_tombstones_require_succeeded_current_parent_proof_and_keep_siblings() {
         let conn = deletion_db();
         conn.execute(
-            "INSERT INTO book_sources VALUES('sibling','webdav','canonical-sibling')",
+            "INSERT INTO book_sources VALUES('sibling','webdav','canonical-sibling','/',NULL)",
             [],
         )
         .unwrap();
@@ -946,7 +1271,7 @@ mod verified_remote_deletion_tests {
         conn.execute("UPDATE book_sources SET id='source%' WHERE id='source'", [])
             .unwrap();
         conn.execute(
-            "INSERT INTO book_sources VALUES('sourceX','webdav','canonical-sibling')",
+            "INSERT INTO book_sources VALUES('sourceX','webdav','canonical-sibling','/',NULL)",
             [],
         )
         .unwrap();
@@ -977,5 +1302,164 @@ mod verified_remote_deletion_tests {
 
         assert_eq!(tombstones.len(), 1);
         assert!(tombstones[0].dependency_paths.is_empty());
+    }
+
+    #[test]
+    fn same_generation_terminal_state_absorbs_delayed_running_checkpoint() {
+        let conn = deletion_db();
+        bind_scan_epoch(&conn, "source", 2, "/", 2).unwrap();
+        let state = |status| RemoteScanState {
+            source_id: "source".into(),
+            status,
+            mode: super::super::model::RemoteScanMode::Snapshot,
+            generation: 2,
+            checkpoint: Some("/late".into()),
+            last_success_at: None,
+            error_code: None,
+        };
+        mark_scan_status(
+            &conn,
+            &state(super::super::model::RemoteScanStatus::Running),
+        )
+        .unwrap();
+        mark_scan_status(&conn, &state(super::super::model::RemoteScanStatus::Failed)).unwrap();
+        assert!(mark_scan_status(
+            &conn,
+            &state(super::super::model::RemoteScanStatus::Running)
+        )
+        .is_err());
+        let current: String = conn
+            .query_row(
+                "SELECT status FROM remote_scan_state WHERE source_id='source'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, "Failed");
+        let delayed_cover = CoverTask {
+            source_id: "source".into(),
+            logical_path: "/book.cbz".into(),
+            fingerprint: "book-v1".into(),
+            profile: "default".into(),
+            generation: 2,
+            session_epoch: String::new(),
+        };
+        assert!(stage_cover_task(&conn, 2, "book-key", &delayed_cover).is_err());
+    }
+
+    #[test]
+    fn mismatched_requested_root_cannot_bind_current_source_epoch() {
+        let conn = deletion_db();
+        assert!(!requested_root_matches_source(&conn, "source", "/other").unwrap());
+        assert!(requested_root_matches_source(&conn, "source", "///").unwrap());
+    }
+
+    #[test]
+    fn delayed_cover_completion_after_epoch_replacement_is_rejected() {
+        let conn = deletion_db();
+        bind_scan_epoch(&conn, "source", 2, "/", 2).unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Running','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+        let task = CoverTask {
+            source_id: "source".into(),
+            logical_path: "/book.cbz".into(),
+            fingerprint: "book-v1".into(),
+            profile: "default".into(),
+            generation: 2,
+            session_epoch: conn
+                .query_row(
+                    "SELECT session_epoch FROM remote_scan_epoch WHERE source_id='source' AND generation=2",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+        };
+        stage_cover_task(&conn, 2, "book-key", &task).unwrap();
+        conn.execute("DELETE FROM remote_scan_epoch WHERE source_id='source'", [])
+            .unwrap();
+        assert!(finish_cover_task(
+            &conn,
+            "source",
+            2,
+            "book-key",
+            "/book.cbz",
+            &task.session_epoch,
+            "partial_ready",
+            Some(&[1, 2, 3]),
+        )
+        .is_err());
+        let partial_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_partial_cache WHERE book_key='book-key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(partial_count, 0);
+    }
+
+    #[test]
+    fn old_session_generation_cannot_stage_after_new_session_binds() {
+        let conn = deletion_db();
+        bind_scan_epoch(&conn, "source", 2, "/", 11).unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Running','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+        let old_task = CoverTask {
+            source_id: "source".into(),
+            logical_path: "/book.cbz".into(),
+            fingerprint: "book-v1".into(),
+            profile: "default".into(),
+            generation: 2,
+            session_epoch: conn
+                .query_row(
+                    "SELECT session_epoch FROM remote_scan_epoch WHERE source_id='source' AND generation=2",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap(),
+        };
+        bind_scan_epoch(&conn, "source", 3, "/", 22).unwrap();
+        conn.execute(
+            "UPDATE remote_scan_state SET generation=3 WHERE source_id='source'",
+            [],
+        )
+        .unwrap();
+        assert!(stage_cover_task(&conn, 2, "book-key", &old_task).is_err());
+    }
+
+    #[test]
+    fn staged_cover_task_retains_origin_generation_and_session_epoch() {
+        let conn = deletion_db();
+        bind_scan_epoch(&conn, "source", 2, "/", 11).unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation) VALUES('source','Running','Snapshot',2)",
+            [],
+        )
+        .unwrap();
+        let session_epoch: String = conn
+            .query_row(
+                "SELECT session_epoch FROM remote_scan_epoch WHERE source_id='source' AND generation=2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let task = CoverTask {
+            source_id: "source".into(),
+            logical_path: "/book.cbz".into(),
+            fingerprint: "book-v1".into(),
+            profile: "default".into(),
+            generation: 2,
+            session_epoch: session_epoch.clone(),
+        };
+        stage_cover_task(&conn, 2, "book-key", &task).unwrap();
+        let (_, queued) = next_staged_cover_task(&conn, "source", 2).unwrap().unwrap();
+        assert_eq!(queued.generation, 2);
+        assert_eq!(queued.session_epoch, session_epoch);
     }
 }

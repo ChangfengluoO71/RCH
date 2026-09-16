@@ -17,6 +17,7 @@ pub struct ScanDirectoryTask {
     pub source_id: String,
     pub logical_path: String,
     pub generation: i64,
+    pub session_epoch: String,
     pub incremental: bool,
 }
 
@@ -30,8 +31,14 @@ impl ScanDirectoryTask {
             source_id: source_id.into(),
             logical_path: normalize_path(&logical_path.into()),
             generation,
+            session_epoch: String::new(),
             incremental: false,
         }
+    }
+
+    pub fn with_session_epoch(mut self, session_epoch: impl Into<String>) -> Self {
+        self.session_epoch = session_epoch.into();
+        self
     }
 
     pub fn incremental(mut self) -> Self {
@@ -47,6 +54,8 @@ pub struct CoverTask {
     pub logical_path: String,
     pub fingerprint: String,
     pub profile: String,
+    pub generation: i64,
+    pub session_epoch: String,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +64,7 @@ pub struct CommittedDirectory {
     pub source_id: String,
     pub logical_path: String,
     pub generation: i64,
+    pub session_epoch: String,
     pub fingerprint: String,
     pub asset_kind: RemoteAssetKind,
     pub entries: Vec<RemoteEntry>,
@@ -264,9 +274,8 @@ impl RemoteScanEngine {
         }
         let mut task = {
             let mut queue = self.directories.lock().unwrap();
-            queue.pending.pop_front().map(|task| {
-                queue.keys.remove(&task);
-                task
+            queue.pending.pop_front().inspect(|task| {
+                queue.keys.remove(task);
             })
         };
         if task.is_none() {
@@ -297,6 +306,7 @@ impl RemoteScanEngine {
             source_id: task.source_id.clone(),
             logical_path: task.logical_path.clone(),
             generation: task.generation,
+            session_epoch: task.session_epoch.clone(),
             fingerprint: directory_fingerprint.clone(),
             asset_kind: directory_kind,
             entries: entries.clone(),
@@ -309,7 +319,8 @@ impl RemoteScanEngine {
         for entry in &entries {
             if entry.is_dir && (!task.incremental || changed) {
                 let child =
-                    ScanDirectoryTask::new(&task.source_id, &entry.logical_path, task.generation);
+                    ScanDirectoryTask::new(&task.source_id, &entry.logical_path, task.generation)
+                        .with_session_epoch(task.session_epoch.clone());
                 self.enqueue_directory(if task.incremental {
                     child.incremental()
                 } else {
@@ -321,6 +332,8 @@ impl RemoteScanEngine {
                     logical_path: entry.logical_path.clone(),
                     fingerprint: fingerprint(std::slice::from_ref(entry)),
                     profile: "default".into(),
+                    generation: task.generation,
+                    session_epoch: task.session_epoch.clone(),
                 })?;
             }
         }
@@ -330,6 +343,8 @@ impl RemoteScanEngine {
                 logical_path: task.logical_path,
                 fingerprint: directory_fingerprint,
                 profile: "default".into(),
+                generation: task.generation,
+                session_epoch: task.session_epoch,
             })?;
         }
         Ok(true)

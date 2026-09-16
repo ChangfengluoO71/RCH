@@ -1319,7 +1319,8 @@ pub fn find_fingerprint_duplicates(conn: &Connection) -> Vec<(String, Vec<String
 fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
     // ADR-020 约束 1.4：fingerprint 由身份字段派生，任何新增/编辑都不允许为 NULL。
     let fp = compute_source_fingerprint(&s.r#type, s.url.as_deref(), &s.path, s.root_id.as_deref());
-    let connection_changed: bool = conn.query_row(
+    let tx = conn.unchecked_transaction()?;
+    let connection_changed: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM book_sources WHERE id=?1 AND (
            type IS NOT ?2 OR path IS NOT ?3 OR url IS NOT ?4 OR username IS NOT ?5 OR
            password IS NOT ?6 OR port IS NOT ?7 OR refresh_token IS NOT ?8 OR
@@ -1327,7 +1328,7 @@ fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
         params![s.id, s.r#type, s.path, s.url, s.username, s.password, s.port, s.refresh_token, s.client_id, s.client_secret, s.root_id, s.cookie],
         |row| row.get(0),
     )?;
-    conn.execute(
+    tx.execute(
         "INSERT INTO book_sources
          (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label, fingerprint, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
@@ -1359,9 +1360,9 @@ fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
         ],
     )?;
     if connection_changed {
-        crate::remote_scan::persistence::invalidate_source_proof_on(conn, &s.id)?;
+        crate::remote_scan::persistence::invalidate_source_proof_on(&tx, &s.id)?;
     }
-    Ok(())
+    Ok(tx.commit()?)
 }
 
 pub fn upsert_source(s: &BookSourceRow) -> Result<()> {

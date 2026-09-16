@@ -9,8 +9,10 @@ import 'package:app/src/rust/api/library.dart' as frb;
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/opener.dart';
+import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:flutter/material.dart';
 
@@ -124,65 +126,83 @@ class _SourceTileState extends State<_SourceTile> {
   @override
   Widget build(BuildContext context) {
     final source = widget.source;
-    final hasMenu = widget.onEditSource != null ||
+    final hasMenu =
+        widget.onEditSource != null ||
         widget.onDeleteSource != null ||
         widget.onShowDetail != null;
-    return Column(children: [
-      ListTile(
-        dense: true,
-        key: PageStorageKey('source-${source.sourceId}'),
-        leading: const Icon(Icons.folder_outlined, size: 18),
-        title: Text(
-          '${LibraryCatalogStore.statusEmoji(source.status)} ${source.name}',
-          style: const TextStyle(fontSize: 13),
-        ),
-        subtitle: Text(
-          '${LibraryCatalogStore.statusLabel(source.status)} · ${source.offlineIndexCount} 本'
-          '${source.isRemote ? ' · 远端' : ''}',
-          style: const TextStyle(fontSize: 11, color: Colors.white54),
-        ),
-        // 点开书源 = 打开浏览器（在线浏览或离线索引），恢复"点开书源看漫画"。
-        onTap: () => _openBrowser(context),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          IconButton(
-            icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-            tooltip: '离线书目',
-            visualDensity: VisualDensity.compact,
-            onPressed: () => setState(() => _expanded = !_expanded),
+    return Column(
+      children: [
+        ListTile(
+          dense: true,
+          key: PageStorageKey('source-${source.sourceId}'),
+          leading: const Icon(Icons.folder_outlined, size: 18),
+          title: Text(
+            '${LibraryCatalogStore.statusEmoji(source.status)} ${source.name}',
+            style: const TextStyle(fontSize: 13),
           ),
-          if (hasMenu)
-            PopupMenuButton<String>(
-              itemBuilder: (c) => [
-                if (widget.onShowDetail != null)
-                  const PopupMenuItem(value: 'detail', child: Text('书源详情')),
-                if (widget.onEditSource != null)
-                  const PopupMenuItem(value: 'edit', child: Text('编辑书源')),
-                if (widget.onDeleteSource != null)
-                  const PopupMenuItem(value: 'delete', child: Text('删除书源')),
-              ],
-              onSelected: (act) {
-                if (act == 'edit') {
-                  widget.onEditSource?.call(source);
-                } else if (act == 'detail') {
-                  widget.onShowDetail?.call(source);
-                } else if (act == 'delete') {
-                  widget.onDeleteSource?.call(source);
-                }
-              },
-            ),
-        ]),
-      ),
-      if (_expanded)
-        Padding(
-          padding: const EdgeInsets.only(left: 16),
-          child: _SourceBooksList(source: source),
+          subtitle: Text(
+            '${LibraryCatalogStore.statusLabel(source.status)} · ${source.offlineIndexCount} 本'
+            '${source.isRemote ? ' · 远端' : ''}',
+            style: const TextStyle(fontSize: 11, color: Colors.white54),
+          ),
+          // 点开书源 = 打开浏览器（在线浏览或离线索引），恢复"点开书源看漫画"。
+          onTap: () => _openBrowser(context),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+                tooltip: '离线书目',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _expanded = !_expanded),
+              ),
+              if (hasMenu)
+                PopupMenuButton<String>(
+                  itemBuilder: (c) => [
+                    if (widget.onShowDetail != null)
+                      const PopupMenuItem(value: 'detail', child: Text('书源详情')),
+                    if (widget.onEditSource != null)
+                      const PopupMenuItem(value: 'edit', child: Text('编辑书源')),
+                    if (widget.onDeleteSource != null)
+                      const PopupMenuItem(value: 'delete', child: Text('删除书源')),
+                  ],
+                  onSelected: (act) {
+                    if (act == 'edit') {
+                      widget.onEditSource?.call(source);
+                    } else if (act == 'detail') {
+                      widget.onShowDetail?.call(source);
+                    } else if (act == 'delete') {
+                      widget.onDeleteSource?.call(source);
+                    }
+                  },
+                ),
+            ],
+          ),
         ),
-    ]);
+        if (source.isRemote)
+          Padding(
+            padding: const EdgeInsets.only(left: 16, right: 8),
+            child: RemoteScanStatusPanel(
+              sourceName: source.name,
+              compact: true,
+              stateListenable: RemoteScanCoordinator.instance.viewStateFor(
+                source.sourceId,
+              ),
+            ),
+          ),
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 16),
+            child: _SourceBooksList(source: source),
+          ),
+      ],
+    );
   }
 
   void _openBrowser(BuildContext context) {
     final source = widget.source;
-    final src = LibraryStore.instance.sourceById(source.sourceId) ??
+    final src =
+        LibraryStore.instance.sourceById(source.sourceId) ??
         BookSource(
           id: source.sourceId,
           type: source.type,
@@ -191,9 +211,11 @@ class _SourceTileState extends State<_SourceTile> {
           remoteOnly: source.isRemote,
           originDeviceId: source.deviceId,
         );
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => SourceBrowser(source: src, showBack: true),
-    ));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SourceBrowser(source: src, showBack: true),
+      ),
+    );
   }
 }
 
@@ -301,20 +323,22 @@ class _SourceBooksListState extends State<_SourceBooksList> {
     final local = LibraryStore.instance.sourceById(b.sourceId);
     if (b.status == 'index_only' || local == null) {
       // ⚪ 仅索引：详情页可编辑元数据，不尝试读取（远端源置 remoteOnly 显示只读横幅）
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => BookDetailPage(
-          source: BookSource(
-            id: b.sourceId,
-            type: b.sourceType,
-            name: b.sourceName,
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => BookDetailPage(
+            source: BookSource(
+              id: b.sourceId,
+              type: b.sourceType,
+              name: b.sourceName,
+              path: b.path,
+              remoteOnly: b.isRemote,
+              originDeviceId: b.deviceId,
+            ),
             path: b.path,
-            remoteOnly: b.isRemote,
-            originDeviceId: b.deviceId,
+            title: b.title,
           ),
-          path: b.path,
-          title: b.title,
         ),
-      ));
+      );
       return;
     }
     openBook(context, local, b.path, b.title);

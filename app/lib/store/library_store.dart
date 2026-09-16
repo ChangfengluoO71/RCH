@@ -145,6 +145,7 @@ class LibraryStore extends ChangeNotifier {
         // English/namespaced generated tags cannot be reintroduced.
         await TagRepository.instance.normalizeGeneratedTags();
         await _migrateAliasKeys();
+        _syncRemoteScanSettingsGate();
         _loaded = true;
         notifyListeners();
         if (persist) await saveToDisk();
@@ -175,6 +176,7 @@ class LibraryStore extends ChangeNotifier {
     } catch (e) {
       debugPrint('[LibraryStore] load JSON failed: $e');
     }
+    _syncRemoteScanSettingsGate();
     _loaded = true;
     await _migrateAliasKeys();
     notifyListeners();
@@ -210,6 +212,7 @@ class LibraryStore extends ChangeNotifier {
     if (settingsMap.isNotEmpty) {
       settings = AppSettings.fromJson(settingsMap);
     }
+    _syncRemoteScanSettingsGate();
   }
 
   /// 后缀别名归并（zip↔cbz 等视为同一本）：对阅读记录/元数据/标签关联做
@@ -1012,8 +1015,14 @@ class LibraryStore extends ChangeNotifier {
 
   void updateSettings(AppSettings s) {
     settings = s;
+    _syncRemoteScanSettingsGate();
     notifyListeners();
     saveToDisk();
+  }
+
+  void _syncRemoteScanSettingsGate() {
+    RemoteScanCoordinator.automaticStartsEnabled = () =>
+        settings.remoteBackgroundScanEnabled;
   }
 
   // ---- 标签相关（委托给 TagRepository + 跨模块协调） ----

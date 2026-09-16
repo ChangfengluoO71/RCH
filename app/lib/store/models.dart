@@ -332,6 +332,8 @@ class AppSettings {
   String updateMirror; // GitHub 下载镜像前缀（''=官方直连；自定义镜像也存这里）
   String updateMirrorList; // 远程拉取的镜像列表 JSON（[{name,url}]），供自动更新
   int updateMirrorFetchedAt; // 镜像列表最后成功拉取时间（ms epoch，0=从未）
+  bool remoteBackgroundScanEnabled;
+  bool remoteCoverFetchEnabled;
 
   AppSettings({
     this.coverQuality = CoverQuality.medium,
@@ -349,6 +351,8 @@ class AppSettings {
     this.updateMirror = '',
     this.updateMirrorList = '[]',
     this.updateMirrorFetchedAt = 0,
+    this.remoteBackgroundScanEnabled = true,
+    this.remoteCoverFetchEnabled = true,
   }) : keys = keys ?? KeyBinds();
 
   Map<String, dynamic> toJson() => {
@@ -367,6 +371,8 @@ class AppSettings {
     'updateMirror': updateMirror,
     'updateMirrorList': updateMirrorList,
     'updateMirrorFetchedAt': updateMirrorFetchedAt,
+    'remoteBackgroundScanEnabled': remoteBackgroundScanEnabled,
+    'remoteCoverFetchEnabled': remoteCoverFetchEnabled,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -397,6 +403,9 @@ class AppSettings {
     updateMirror: (j['updateMirror'] as String?) ?? '',
     updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),
     updateMirrorFetchedAt: (j['updateMirrorFetchedAt'] as int?) ?? 0,
+    remoteBackgroundScanEnabled:
+        (j['remoteBackgroundScanEnabled'] as bool?) ?? true,
+    remoteCoverFetchEnabled: (j['remoteCoverFetchEnabled'] as bool?) ?? true,
   );
 }
 

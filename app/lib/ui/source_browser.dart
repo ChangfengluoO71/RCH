@@ -14,10 +14,12 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/remote_listing.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
+import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -313,6 +315,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
         FolderSnapshotStore.instance.put(widget.source, path, snap);
         // ADR-029 浏览即索引：看过的目录顺手写入离线索引（本地，零网络）
         LibraryIndexService.indexDirSnapshot(widget.source, path, snap);
+        final session = _session;
+        if (session != null &&
+            _normalizeRemoteLogicalPath(path) ==
+                _normalizeRemoteLogicalPath(widget.source.effectiveRootPath)) {
+          unawaited(
+            RemoteScanCoordinator.instance
+                .noteRootListed(widget.source, session)
+                .then<void>((_) {}, onError: (_) {}),
+          );
+        }
       }
       setState(() {
         _path = path;
@@ -1136,6 +1148,39 @@ class _SourceBrowserState extends State<SourceBrowser> {
                           ),
                         ),
                       ),
+                    ),
+                  if (!widget.source.isLocalFs)
+                    RemoteScanStatusPanel(
+                      sourceName: widget.source.name,
+                      compact: true,
+                      stateListenable: RemoteScanCoordinator.instance
+                          .viewStateFor(widget.source.id),
+                      // Offline browsers have no live provider session. Keep
+                      // the status visible, but don't expose no-op controls.
+                      onPause: _session == null
+                          ? null
+                          : () => RemoteScanCoordinator.instance.pause(
+                              widget.source.id,
+                            ),
+                      onResume: _session == null
+                          ? null
+                          : () => RemoteScanCoordinator.instance.resume(
+                              widget.source.id,
+                            ),
+                      onRetry: _session == null
+                          ? null
+                          : () => RemoteScanCoordinator.instance
+                                .rescanIncremental(widget.source, _session!),
+                      onRescanIncremental: _session == null
+                          ? null
+                          : () => RemoteScanCoordinator.instance
+                                .rescanIncremental(widget.source, _session!),
+                      onRescanFull: _session == null
+                          ? null
+                          : () => RemoteScanCoordinator.instance.rescanFull(
+                              widget.source,
+                              _session!,
+                            ),
                     ),
                   Expanded(
                     child: _loading

@@ -46,6 +46,7 @@ class RemoteScanCoordinator {
     RemoteScanControl? cancelCall,
     RemoteScanStatusLoader? statusCall,
     RemoteSessionSuccessHub? sessionHub,
+    bool Function()? automaticEnabled,
     this._debounce = const Duration(seconds: 2),
     DateTime Function()? clock,
   }) : _start = start ?? _nativeStart,
@@ -53,9 +54,11 @@ class RemoteScanCoordinator {
        _resume = resumeCall ?? _nativeResume,
        _cancel = cancelCall ?? _nativeCancel,
        _status = statusCall ?? _nativeStatus,
+       _automaticEnabled = automaticEnabled ?? (() => automaticStartsEnabled()),
        _clock = clock ?? DateTime.now {
     _sessionSubscription = (sessionHub ?? remoteSessionSuccessHub).events
         .listen((event) {
+          if (!_automaticEnabled()) return;
           unawaited(
             ensureForSession(
               event.source,
@@ -66,18 +69,22 @@ class RemoteScanCoordinator {
   }
 
   static final instance = RemoteScanCoordinator();
+  static bool Function() automaticStartsEnabled = () => true;
 
   final RemoteScanStart _start;
   final RemoteScanControl _pause;
   final RemoteScanControl _resume;
   final RemoteScanControl _cancel;
   final RemoteScanStatusLoader _status;
+  final bool Function() _automaticEnabled;
   final Duration _debounce;
   final DateTime Function() _clock;
   late final StreamSubscription<RemoteSessionSuccess> _sessionSubscription;
   final Map<String, Future<RemoteScanStatus>> _inflight = {};
+  final Map<String, String> _inflightModes = {};
   final Set<String> _observedSources = {};
   final Map<String, ValueNotifier<RemoteScanStatus?>> _statuses = {};
+  final Map<String, ValueNotifier<RemoteScanViewState?>> _viewStates = {};
   final Map<String, DateTime> _completedAt = {};
   final Map<String, RemoteScanStatus> _lastCompleted = {};
   final Set<String> _recoveringSources = {};
@@ -85,12 +92,19 @@ class RemoteScanCoordinator {
   ValueListenable<RemoteScanStatus?> statusFor(String sourceId) =>
       _statuses.putIfAbsent(sourceId, () => ValueNotifier(null));
 
+  ValueListenable<RemoteScanViewState?> viewStateFor(String sourceId) =>
+      _viewStates.putIfAbsent(sourceId, () => ValueNotifier(null));
+
+  Future<RemoteScanStatus?> noteRootListed(BookSource source, BigInt session) {
+    if (!_automaticEnabled()) return Future.value(null);
+    return ensureForSession(source, session);
+  }
+
   Future<void> restoreStatuses(Iterable<BookSource> sources) async {
     for (final source in sources.where((source) => source.needsSession)) {
       final status = await _status(source.id);
       if (status == null) continue;
-      _statuses.putIfAbsent(source.id, () => ValueNotifier(null)).value =
-          status;
+      _setStatus(source.id, status);
       _observedSources.add(source.id);
       if (status.status == 'running' || status.status == 'paused') {
         _recoveringSources.add(source.id);
@@ -123,11 +137,23 @@ class RemoteScanCoordinator {
     if (mode != 'incremental' && mode != 'full') {
       return Future.error(ArgumentError.value(mode, 'mode'));
     }
-    if (_inflight.containsKey(source.id)) {
+    final existing = _inflight[source.id];
+    if (existing != null && _inflightModes[source.id] == mode) {
+      return existing;
+    }
+    if (existing != null) {
       return Future.error(RemoteScanAlreadyRunning(source.id, mode));
     }
     return _startShared(source, session, mode);
   }
+
+  Future<RemoteScanStatus> rescanIncremental(
+    BookSource source,
+    BigInt session,
+  ) => rescan(source, session, 'incremental');
+
+  Future<RemoteScanStatus> rescanFull(BookSource source, BigInt session) =>
+      rescan(source, session, 'full');
 
   Future<void> pause(String sourceId) async {
     await _pause(sourceId);
@@ -149,6 +175,17 @@ class RemoteScanCoordinator {
     BigInt session,
     String mode,
   ) {
+    // Native start returns a job handle while the status is polled. Publish a
+    // state immediately so the status panel is useful during that interval.
+    _setStatus(
+      source.id,
+      RemoteScanStatus(
+        sourceId: source.id,
+        status: 'queued',
+        mode: mode,
+        generation: _lastCompleted[source.id]?.generation ?? 0,
+      ),
+    );
     late final Future<RemoteScanStatus> future;
     future =
         _start(
@@ -159,10 +196,7 @@ class RemoteScanCoordinator {
             )
             .then((status) {
               _observedSources.add(source.id);
-              _statuses
-                      .putIfAbsent(source.id, () => ValueNotifier(null))
-                      .value =
-                  status;
+              _setStatus(source.id, status);
               if (status.status == 'complete') {
                 _completedAt[source.id] = _clock();
                 _lastCompleted[source.id] = status;
@@ -172,16 +206,24 @@ class RemoteScanCoordinator {
             .whenComplete(() {
               if (identical(_inflight[source.id], future)) {
                 _inflight.remove(source.id);
+                _inflightModes.remove(source.id);
               }
             });
     _inflight[source.id] = future;
+    _inflightModes[source.id] = mode;
     return future;
   }
 
   void _setControlState(String sourceId, String state) {
     final notifier = _statuses.putIfAbsent(sourceId, () => ValueNotifier(null));
     final current = notifier.value;
-    if (current != null) notifier.value = current.copyWith(status: state);
+    if (current != null) _setStatus(sourceId, current.copyWith(status: state));
+  }
+
+  void _setStatus(String sourceId, RemoteScanStatus status) {
+    _statuses.putIfAbsent(sourceId, () => ValueNotifier(null)).value = status;
+    _viewStates.putIfAbsent(sourceId, () => ValueNotifier(null)).value =
+        RemoteScanViewState.fromStatus(status);
   }
 
   static Future<RemoteScanStatus> _nativeStart({
@@ -228,6 +270,9 @@ class RemoteScanCoordinator {
   Future<void> dispose() async {
     await _sessionSubscription.cancel();
     for (final notifier in _statuses.values) {
+      notifier.dispose();
+    }
+    for (final notifier in _viewStates.values) {
       notifier.dispose();
     }
   }

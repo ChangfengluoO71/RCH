@@ -155,7 +155,7 @@ void main() {
       name: 'manual',
       path: '/',
     );
-    coordinator.ensureForSession(source, BigInt.one);
+    unawaited(coordinator.rescanIncremental(source, BigInt.one));
     await expectLater(
       coordinator.rescan(source, BigInt.one, 'full'),
       throwsA(isA<RemoteScanAlreadyRunning>()),
@@ -214,4 +214,177 @@ void main() {
       coordinator.dispose();
     },
   );
+
+  test(
+    'background setting suppresses automatic session and root triggers',
+    () async {
+      final hub = RemoteSessionSuccessHub();
+      final modes = <String>[];
+      final coordinator = RemoteScanCoordinator(
+        sessionHub: hub,
+        automaticEnabled: () => false,
+        start:
+            ({
+              required source,
+              required session,
+              required rootPath,
+              required mode,
+            }) async {
+              modes.add(mode);
+              return RemoteScanStatus(
+                sourceId: source.id,
+                status: 'complete',
+                mode: mode,
+                generation: 1,
+              );
+            },
+      );
+      final source = BookSource(
+        id: 'disabled',
+        type: 'webdav',
+        name: 'disabled',
+        path: '/',
+      );
+
+      hub.emit(source, BigInt.one);
+      await coordinator.noteRootListed(source, BigInt.one);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(modes, isEmpty);
+      coordinator.dispose();
+    },
+  );
+
+  test(
+    'default automatic gate observes setting callback changes after construction',
+    () async {
+      final previousGate = RemoteScanCoordinator.automaticStartsEnabled;
+      final hub = RemoteSessionSuccessHub();
+      final modes = <String>[];
+      RemoteScanCoordinator.automaticStartsEnabled = () => false;
+      final coordinator = RemoteScanCoordinator(
+        sessionHub: hub,
+        start:
+            ({
+              required source,
+              required session,
+              required rootPath,
+              required mode,
+            }) async {
+              modes.add(mode);
+              return RemoteScanStatus(
+                sourceId: source.id,
+                status: 'complete',
+                mode: mode,
+                generation: 1,
+              );
+            },
+      );
+      final source = BookSource(
+        id: 'dynamic-gate',
+        type: 'webdav',
+        name: 'dynamic-gate',
+        path: '/',
+      );
+
+      hub.emit(source, BigInt.one);
+      await Future<void>.delayed(Duration.zero);
+      expect(modes, isEmpty);
+
+      RemoteScanCoordinator.automaticStartsEnabled = () => true;
+      hub.emit(source, BigInt.one);
+      await Future<void>.delayed(Duration.zero);
+      expect(modes, ['full']);
+
+      await coordinator.dispose();
+      await hub.dispose();
+      RemoteScanCoordinator.automaticStartsEnabled = previousGate;
+    },
+  );
+
+  test(
+    'first root open shares the auth full scan and later root open is incremental',
+    () async {
+      final hub = RemoteSessionSuccessHub();
+      final modes = <String>[];
+      final first = Completer<RemoteScanStatus>();
+      final coordinator = RemoteScanCoordinator(
+        sessionHub: hub,
+        debounce: Duration.zero,
+        start:
+            ({
+              required source,
+              required session,
+              required rootPath,
+              required mode,
+            }) {
+              modes.add(mode);
+              return first.future;
+            },
+      );
+      final source = BookSource(
+        id: 'root-open',
+        type: 'sftp',
+        name: 'root-open',
+        path: '/books',
+      );
+
+      hub.emit(source, BigInt.one);
+      final rootFuture = coordinator.noteRootListed(source, BigInt.one);
+      await Future<void>.delayed(Duration.zero);
+      expect(modes, ['full']);
+
+      first.complete(
+        const RemoteScanStatus(
+          sourceId: 'root-open',
+          status: 'complete',
+          mode: 'full',
+          generation: 1,
+        ),
+      );
+      await rootFuture;
+
+      await coordinator.noteRootListed(source, BigInt.one);
+      expect(modes, ['full', 'incremental']);
+      coordinator.dispose();
+    },
+  );
+
+  test('duplicate manual rescans with the same mode join one future', () async {
+    final pending = Completer<RemoteScanStatus>();
+    var starts = 0;
+    final coordinator = RemoteScanCoordinator(
+      start:
+          ({
+            required source,
+            required session,
+            required rootPath,
+            required mode,
+          }) {
+            starts++;
+            return pending.future;
+          },
+    );
+    final source = BookSource(
+      id: 'manual-join',
+      type: 'webdav',
+      name: 'manual-join',
+      path: '/',
+    );
+
+    final first = coordinator.rescanFull(source, BigInt.one);
+    final second = coordinator.rescanFull(source, BigInt.one);
+    expect(identical(first, second), isTrue);
+    expect(starts, 1);
+
+    pending.complete(
+      const RemoteScanStatus(
+        sourceId: 'manual-join',
+        status: 'complete',
+        mode: 'full',
+        generation: 3,
+      ),
+    );
+    await first;
+  });
 }

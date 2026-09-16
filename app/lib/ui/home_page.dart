@@ -1640,6 +1640,34 @@ class _HomePageState extends State<HomePage> {
         '自动：先下载整本到缓存（有进度条），失败转流式；下载整本：适合网速快或想离线读；直接流式：即点即读、不占缓存',
         style: Theme.of(context).textTheme.bodySmall,
       ),
+      SwitchListTile(
+        title: const Text('Background remote scan'),
+        subtitle: const Text(
+          'Automatically scans cloud roots after authorization or root open.',
+        ),
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: s.remoteBackgroundScanEnabled,
+        onChanged: (v) {
+          s.remoteBackgroundScanEnabled = v;
+          LibraryStore.instance.updateSettings(s);
+          setState(() {});
+        },
+      ),
+      SwitchListTile(
+        title: const Text('Remote cover network fetch'),
+        subtitle: const Text(
+          'When off, existing covers stay visible but new remote cover I/O is skipped.',
+        ),
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: s.remoteCoverFetchEnabled,
+        onChanged: (v) {
+          s.remoteCoverFetchEnabled = v;
+          LibraryStore.instance.updateSettings(s);
+          setState(() {});
+        },
+      ),
     ],
   );
 

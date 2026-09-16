@@ -35,3 +35,41 @@ class RemoteScanStatus {
     );
   }
 }
+
+class RemoteScanViewState {
+  final String sourceId;
+  final String status;
+  final String mode;
+  final int processed;
+  final int total;
+  final DateTime? lastSuccess;
+  final String? errorCode;
+  final bool coverFetchPaused;
+
+  const RemoteScanViewState({
+    required this.sourceId,
+    required this.status,
+    required this.mode,
+    this.processed = 0,
+    this.total = 0,
+    this.lastSuccess,
+    this.errorCode,
+    this.coverFetchPaused = false,
+  });
+
+  factory RemoteScanViewState.fromStatus(
+    RemoteScanStatus status, {
+    bool coverFetchPaused = false,
+  }) {
+    return RemoteScanViewState(
+      sourceId: status.sourceId,
+      status: status.status,
+      mode: status.mode,
+      processed: status.processed,
+      total: status.total,
+      lastSuccess: status.lastSuccess,
+      errorCode: status.errorCode,
+      coverFetchPaused: coverFetchPaused,
+    );
+  }
+}

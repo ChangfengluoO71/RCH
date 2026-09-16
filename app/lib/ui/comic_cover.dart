@@ -99,6 +99,11 @@ Future<T?> loadCoverWithSafePolicy<T>({
   return load(session, true);
 }
 
+bool shouldSkipRemoteCoverNetwork({
+  required BookSource source,
+  required bool remoteCoverFetchEnabled,
+}) => source.needsSession && !remoteCoverFetchEnabled;
+
 class SourceCoverNoticeGate {
   final Set<String> _seen = {};
 
@@ -257,11 +262,37 @@ class _ComicCoverState extends State<ComicCover> {
     return !LibraryStore.instance.records.containsKey(key);
   }
 
+  bool get _remoteCoverNetworkPaused => shouldSkipRemoteCoverNetwork(
+    source: widget.source,
+    remoteCoverFetchEnabled:
+        LibraryStore.instance.settings.remoteCoverFetchEnabled,
+  );
+
   @override
   void initState() {
     super.initState();
+    LibraryStore.instance.addListener(_onStoreChanged);
     _lastCacheKey = _cacheKey;
     _maybeLoad();
+  }
+
+  void _onStoreChanged() {
+    final newKey = _cacheKey;
+    if (newKey != _lastCacheKey) {
+      _lease?.dispose();
+      _lease = null;
+      _future = null;
+      _lastCacheKey = newKey;
+      _maybeLoad();
+      if (mounted) setState(() {});
+      return;
+    }
+    // Toggling the remote network gate must not discard an already loaded
+    // cover (or metadata/custom-cover selection). It only affects future I/O.
+    if (_future == null) {
+      _maybeLoad();
+      if (mounted) setState(() {});
+    }
   }
 
   @override
@@ -284,6 +315,7 @@ class _ComicCoverState extends State<ComicCover> {
   @override
   void dispose() {
     // Widget 不可见时取消队列中的等待任务（已经开始的 FFI 调用不中断）
+    LibraryStore.instance.removeListener(_onStoreChanged);
     _lease?.dispose();
     super.dispose();
   }
@@ -300,6 +332,7 @@ class _ComicCoverState extends State<ComicCover> {
       _future = Future.value(cached);
       return;
     }
+    if (_remoteCoverNetworkPaused) return;
 
     // 入队：并发控制在队列内部
     _lease = _CoverLoadQueue.scheduler.acquire(key, _load);
@@ -448,6 +481,7 @@ class _ComicCoverState extends State<ComicCover> {
   @override
   Widget build(BuildContext context) {
     if (_shouldSkipLoad) return _placeholder();
+    if (_remoteCoverNetworkPaused && _future == null) return _placeholder();
     if (_future == null) return _loading();
 
     return FutureBuilder<ui.Image>(

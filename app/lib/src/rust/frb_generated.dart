@@ -663,6 +663,7 @@ abstract class RustLibApi extends BaseApi {
     required BigInt session,
     required String rootPath,
     required String mode,
+    String? initialListingJson,
   });
 
   Future<RemoteScanStatusDto?> crateApiRemoteScanRemoteScanStatus({
@@ -5374,6 +5375,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required BigInt session,
     required String rootPath,
     required String mode,
+    String? initialListingJson,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -5384,6 +5386,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_64(session, serializer);
           sse_encode_String(rootPath, serializer);
           sse_encode_String(mode, serializer);
+          sse_encode_opt_String(initialListingJson, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -5396,7 +5399,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiRemoteScanRemoteScanStartConstMeta,
-        argValues: [sourceType, sourceId, session, rootPath, mode],
+        argValues: [
+          sourceType,
+          sourceId,
+          session,
+          rootPath,
+          mode,
+          initialListingJson,
+        ],
         apiImpl: this,
       ),
     );
@@ -5405,7 +5415,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiRemoteScanRemoteScanStartConstMeta =>
       const TaskConstMeta(
         debugName: "remote_scan_start",
-        argNames: ["sourceType", "sourceId", "session", "rootPath", "mode"],
+        argNames: [
+          "sourceType",
+          "sourceId",
+          "session",
+          "rootPath",
+          "mode",
+          "initialListingJson",
+        ],
       );
 
   @override

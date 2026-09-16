@@ -90,13 +90,30 @@ class _VisibleCoverTask<T> {
 
 Future<T?> loadCoverWithSafePolicy<T>({
   required bool remoteFetchEnabled,
+  bool Function()? remoteFetchEnabledNow,
   required BigInt? liveSession,
   required Future<BigInt> Function() createSession,
   required Future<T> Function(BigInt session, bool remoteFetchEnabled) load,
 }) async {
-  if (!remoteFetchEnabled) return null;
+  bool isEnabled() =>
+      remoteFetchEnabled && (remoteFetchEnabledNow?.call() ?? true);
+  if (!isEnabled()) return null;
   final session = liveSession ?? await createSession();
+  if (!isEnabled()) return null;
   return load(session, true);
+}
+
+/// Run one remote-cover operation only while the live network gate remains
+/// enabled. The check after the await prevents a later step from continuing
+/// after settings changed while this operation was queued or in flight.
+Future<T?> runRemoteCoverOperationWithGate<T>({
+  required bool Function() isEnabled,
+  required Future<T> Function() operation,
+}) async {
+  if (!isEnabled()) return null;
+  final value = await operation();
+  if (!isEnabled()) return null;
+  return value;
 }
 
 bool shouldSkipRemoteCoverNetwork({
@@ -268,6 +285,17 @@ class _ComicCoverState extends State<ComicCover> {
         LibraryStore.instance.settings.remoteCoverFetchEnabled,
   );
 
+  Future<T> _guardRemoteCoverIo<T>(Future<T> Function() operation) async {
+    final value = await runRemoteCoverOperationWithGate(
+      isEnabled: () => !_remoteCoverNetworkPaused,
+      operation: operation,
+    );
+    if (value == null) {
+      throw const _RemoteCoverFetchDisabled();
+    }
+    return value;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -361,118 +389,148 @@ class _ComicCoverState extends State<ComicCover> {
 
     if (widget.source.isWebDav) {
       try {
-        final session = await webdavSessionFor(widget.source);
-        final hasRaw = await webdavHasRawCache(
-          session: session,
-          path: widget.path,
+        final session = await _guardRemoteCoverIo(
+          () => webdavSessionFor(widget.source),
+        );
+        final hasRaw = await _guardRemoteCoverIo(
+          () => webdavHasRawCache(session: session, path: widget.path),
         );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
-      final session = await webdavSessionFor(widget.source);
-      final p = await webdavCover(
-        session: session,
-        path: widget.path,
-        page: meta.coverPage,
-        width: w,
-        height: h,
-        crop: crop,
+      final session = await _guardRemoteCoverIo(
+        () => webdavSessionFor(widget.source),
+      );
+      final p = await _guardRemoteCoverIo(
+        () => webdavCover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop,
+        ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.isSftp) {
       try {
-        final session = await sftpSessionFor(widget.source);
-        final hasRaw = await sftpHasRawCache(
-          session: session,
-          path: widget.path,
+        final session = await _guardRemoteCoverIo(
+          () => sftpSessionFor(widget.source),
+        );
+        final hasRaw = await _guardRemoteCoverIo(
+          () => sftpHasRawCache(session: session, path: widget.path),
         );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
-      final session = await sftpSessionFor(widget.source);
-      final p = await sftpCover(
-        session: session,
-        path: widget.path,
-        page: meta.coverPage,
-        width: w,
-        height: h,
-        crop: crop,
+      final session = await _guardRemoteCoverIo(
+        () => sftpSessionFor(widget.source),
+      );
+      final p = await _guardRemoteCoverIo(
+        () => sftpCover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop,
+        ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.isBaidu) {
       try {
-        final session = await baiduSessionFor(widget.source);
-        final hasRaw = await baiduHasRawCache(
-          session: session,
-          path: widget.path,
+        final session = await _guardRemoteCoverIo(
+          () => baiduSessionFor(widget.source),
+        );
+        final hasRaw = await _guardRemoteCoverIo(
+          () => baiduHasRawCache(session: session, path: widget.path),
         );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
-      final session = await baiduSessionFor(widget.source);
-      final p = await baiduCover(
-        session: session,
-        path: widget.path,
-        page: meta.coverPage,
-        width: w,
-        height: h,
-        crop: crop,
+      final session = await _guardRemoteCoverIo(
+        () => baiduSessionFor(widget.source),
+      );
+      final p = await _guardRemoteCoverIo(
+        () => baiduCover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop,
+        ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.is115) {
       try {
-        final session = await cloud115SessionFor(widget.source);
-        final hasRaw = await cloud115HasRawCacheFor(
-          widget.source,
-          session: session,
-          path: widget.path,
+        final session = await _guardRemoteCoverIo(
+          () => cloud115SessionFor(widget.source),
+        );
+        final hasRaw = await _guardRemoteCoverIo(
+          () => cloud115HasRawCacheFor(
+            widget.source,
+            session: session,
+            path: widget.path,
+          ),
         );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
-      final session = await cloud115SessionFor(widget.source);
-      final p = await cloud115CoverFor(
-        widget.source,
-        session: session,
-        path: widget.path,
-        page: meta.coverPage,
-        width: w,
-        height: h,
-        crop: crop,
+      final session = await _guardRemoteCoverIo(
+        () => cloud115SessionFor(widget.source),
+      );
+      final p = await _guardRemoteCoverIo(
+        () => cloud115CoverFor(
+          widget.source,
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop,
+        ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (widget.source.isQuark) {
       try {
-        final session = await quarkSessionFor(widget.source);
-        final hasRaw = await quarkHasRawCache(
-          session: session,
-          path: widget.path,
+        final session = await _guardRemoteCoverIo(
+          () => quarkSessionFor(widget.source),
+        );
+        final hasRaw = await _guardRemoteCoverIo(
+          () => quarkHasRawCache(session: session, path: widget.path),
         );
         if (!hasRaw) throw Exception('no raw cache');
       } catch (_) {
         throw Exception('not cached');
       }
-      final session = await quarkSessionFor(widget.source);
-      final p = await quarkCover(
-        session: session,
-        path: widget.path,
-        page: meta.coverPage,
-        width: w,
-        height: h,
-        crop: crop,
+      final session = await _guardRemoteCoverIo(
+        () => quarkSessionFor(widget.source),
+      );
+      final p = await _guardRemoteCoverIo(
+        () => quarkCover(
+          session: session,
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop,
+        ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else {
-      final p = await bookCover(
-        path: widget.path,
-        page: meta.coverPage,
-        width: w,
-        height: h,
-        crop: crop,
+      final p = await _guardRemoteCoverIo(
+        () => bookCover(
+          path: widget.path,
+          page: meta.coverPage,
+          width: w,
+          height: h,
+          crop: crop,
+        ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     }
@@ -510,6 +568,10 @@ class _ComicCoverState extends State<ComicCover> {
   );
 
   Widget _placeholder() => ComicCover.uncachedPlaceholder();
+}
+
+class _RemoteCoverFetchDisabled implements Exception {
+  const _RemoteCoverFetchDisabled();
 }
 
 /// 漫画卡片：封面 + 标题 + 副标题，海报墙通用。

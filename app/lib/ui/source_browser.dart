@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:app/src/rust/api/book.dart';
@@ -39,6 +40,15 @@ enum _FolderCoverKind {
   /// 容器文件夹（内含漫画包）：封面 = 第一个漫画文件封面，点击下钻。
   container,
 }
+
+/// Whether reconnecting from the current logical path can hand its next
+/// listing to the automatic scan's root request.
+bool shouldDeferRemoteRootListing({
+  required String currentLogicalPath,
+  required String effectiveRootPath,
+}) =>
+    _SourceBrowserState._normalizeRemoteLogicalPath(currentLogicalPath) ==
+    _SourceBrowserState._normalizeRemoteLogicalPath(effectiveRootPath);
 
 /// 书源浏览器:浏览某个书源的漫画。
 /// 本地 → 海报墙(目录可下钻);WebDAV → 列表(目录可下钻)。
@@ -145,6 +155,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   @override
   void dispose() {
     LibraryStore.instance.removeListener(_onStoreChanged);
+    RemoteScanCoordinator.instance.cancelDeferredRootListing(widget.source);
     super.dispose();
   }
 
@@ -171,8 +182,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
     }
     // 云端本机源：默认在线浏览（连接服务器真实目录）。
     // 离线索引浏览作为可选模式：☁ 切换、浏览/触及自动积累、"生成离线索引（本地快照）"进入。
+    RemoteScanCoordinator.instance.deferRootListing(src);
     await _connectSession();
     if (_session == null) {
+      RemoteScanCoordinator.instance.cancelDeferredRootListing(src);
       // 连不上：有离线索引则回退离线浏览，否则提示错误
       final count = await frblib.dbSourceIndexCount(sourceId: src.id);
       if (count > 0) {
@@ -220,9 +233,21 @@ class _SourceBrowserState extends State<SourceBrowser> {
       _offlineMode = false;
       _error = null;
     });
+    if (shouldDeferRemoteRootListing(
+      currentLogicalPath: _path,
+      effectiveRootPath: widget.source.effectiveRootPath,
+    )) {
+      RemoteScanCoordinator.instance.deferRootListing(widget.source);
+    } else {
+      // A non-root reconnect has no root listing to hand off. Clear any
+      // stale root deferral so the successful session event can start its
+      // normal automatic scan.
+      RemoteScanCoordinator.instance.cancelDeferredRootListing(widget.source);
+    }
     await _connectSession();
     if (_session == null) {
       // 连不上：提示并留在离线浏览
+      RemoteScanCoordinator.instance.cancelDeferredRootListing(widget.source);
       if (mounted) {
         setState(() {
           _offlineMode = true;
@@ -301,6 +326,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
         _ => await listLocalDir(path: path),
       };
       if (!mounted) return;
+      final isRoot =
+          _normalizeRemoteLogicalPath(path) ==
+          _normalizeRemoteLogicalPath(widget.source.effectiveRootPath);
       // 远程：把本次列表响应写入本地快照（复用同一次请求，不新增网盘请求）
       if (!widget.source.isLocalFs) {
         final snap = list
@@ -316,12 +344,31 @@ class _SourceBrowserState extends State<SourceBrowser> {
         // ADR-029 浏览即索引：看过的目录顺手写入离线索引（本地，零网络）
         LibraryIndexService.indexDirSnapshot(widget.source, path, snap);
         final session = _session;
-        if (session != null &&
-            _normalizeRemoteLogicalPath(path) ==
-                _normalizeRemoteLogicalPath(widget.source.effectiveRootPath)) {
+        if (session != null && isRoot) {
+          final listing = jsonEncode(
+            list
+                .map(
+                  (e) => {
+                    'name': e.name,
+                    // path is the provider path. Opaque providers need it
+                    // to resolve descendants while the logical path keeps
+                    // the same hierarchy used by the scan manifest.
+                    'path': e.path,
+                    'logicalPath': _logicalPathOf(e),
+                    'isDir': e.isDir,
+                    'size': e.size.toInt(),
+                    'mtime': e.mtime == 0 ? null : e.mtime,
+                  },
+                )
+                .toList(),
+          );
           unawaited(
             RemoteScanCoordinator.instance
-                .noteRootListed(widget.source, session)
+                .noteRootListed(
+                  widget.source,
+                  session,
+                  initialListingJson: listing,
+                )
                 .then<void>((_) {}, onError: (_) {}),
           );
         }
@@ -332,6 +379,20 @@ class _SourceBrowserState extends State<SourceBrowser> {
       });
       await _detectComicFolders();
     } catch (e) {
+      final session = _session;
+      final isRoot =
+          _normalizeRemoteLogicalPath(path) ==
+          _normalizeRemoteLogicalPath(widget.source.effectiveRootPath);
+      if (session != null && isRoot && !widget.source.isLocalFs) {
+        // The deferred session trigger must not remain stuck if the browser
+        // request failed. Retry through the coordinator so the status panel
+        // still reflects the attempted automatic scan.
+        unawaited(
+          RemoteScanCoordinator.instance
+              .noteRootListed(widget.source, session)
+              .then<void>((_) {}, onError: (_) {}),
+        );
+      }
       if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _loading = false);

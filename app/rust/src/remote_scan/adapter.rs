@@ -37,6 +37,12 @@ pub trait RemoteProviderAdapter: Send + Sync {
     fn read_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>, RemoteScanError>;
     fn read_file_limited(&self, path: &str, max_bytes: u64) -> Result<Vec<u8>, RemoteScanError>;
     fn normalize_path(&self, path: &str) -> String;
+    /// Register a logical-to-provider path mapping supplied by a caller that
+    /// already fetched a directory listing. Providers with opaque ids (for
+    /// example fid/pickcode based sources) override this so a seeded root
+    /// listing can still be followed recursively without listing the root a
+    /// second time.
+    fn register_path(&self, _logical_path: &str, _provider_path: &str) {}
     fn capabilities(
         &self,
         path: &str,

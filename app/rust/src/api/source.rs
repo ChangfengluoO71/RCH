@@ -486,6 +486,14 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
     }
 
     #[flutter_rust_bridge::frb(ignore)]
+    fn register_path(&self, logical_path: &str, provider_path: &str) {
+        self.path_ids
+            .lock()
+            .unwrap()
+            .insert(normalize_path(logical_path), provider_path.to_string());
+    }
+
+    #[flutter_rust_bridge::frb(ignore)]
     fn capabilities(
         &self,
         _path: &str,

@@ -7,10 +7,11 @@ use crate::remote_scan::engine::{
     ScanCommitSink, ScanDirectoryTask,
 };
 use crate::remote_scan::model::{
-    normalize_path, RemoteScanMode, RemoteScanState, RemoteScanStatus,
+    classify, normalize_path, RemoteEntry, RemoteScanMode, RemoteScanState, RemoteScanStatus,
 };
 use crate::remote_scan::persistence;
 use rusqlite::{params, OptionalExtension};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -44,6 +45,49 @@ struct StartConfig {
     session: u64,
     root_path: String,
     mode: String,
+    initial_listing_json: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitialListingEntry {
+    name: String,
+    path: String,
+    logical_path: Option<String>,
+    is_dir: bool,
+    size: Option<u64>,
+    mtime: Option<i64>,
+}
+
+fn initial_scan_path(configured_root: &str) -> String {
+    normalize_path(configured_root)
+}
+
+fn parse_initial_listing(
+    listing_json: Option<&str>,
+) -> std::result::Result<Option<Vec<(RemoteEntry, String)>>, String> {
+    let Some(listing_json) = listing_json.filter(|json| !json.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let entries: Vec<InitialListingEntry> = serde_json::from_str(listing_json)
+        .map_err(|_| "invalid initial remote listing".to_string())?;
+    Ok(Some(
+        entries
+            .into_iter()
+            .map(|entry| {
+                let logical_path = entry.logical_path.unwrap_or_else(|| entry.path.clone());
+                let remote = RemoteEntry {
+                    name: entry.name.clone(),
+                    logical_path,
+                    is_dir: entry.is_dir,
+                    size: entry.size,
+                    mtime: entry.mtime,
+                    asset_kind: classify(&entry.name, entry.is_dir),
+                };
+                (remote, entry.path)
+            })
+            .collect(),
+    ))
 }
 
 struct ScanJob {
@@ -258,6 +302,22 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
     }
     let adapter = remote_provider_adapter(&config.source_type, config.session, &config.root_path)
         .map_err(|_| "remote session unavailable".to_string())?;
+    let initial_listing = if resume {
+        None
+    } else {
+        parse_initial_listing(config.initial_listing_json.as_deref())?
+    };
+    // Preserve the provider root alias even when the configured source root
+    // is a non-root path. Opaque providers additionally need each seeded
+    // child mapping so recursive tasks can resolve ids without relisting the
+    // root directory.
+    let configured_root = initial_scan_path(&config.root_path);
+    adapter.register_path(&configured_root, &config.root_path);
+    if let Some(entries) = &initial_listing {
+        for (entry, provider_path) in entries {
+            adapter.register_path(&entry.logical_path, provider_path);
+        }
+    }
     let conn = db::get().lock().unwrap();
     let stored: Option<(i64, Option<String>)> = conn
         .query_row(
@@ -310,6 +370,7 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
         job_id: next_job_id(),
         config: StartConfig {
             mode: mode.clone(),
+            initial_listing_json: None,
             ..config
         },
         status: Mutex::new(status),
@@ -320,7 +381,7 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
         .unwrap()
         .insert(job.config.source_id.clone(), Arc::clone(&job));
     let response = job_dto(&job);
-    let root = "/".to_string();
+    let root = initial_scan_path(&job.config.root_path);
     std::thread::spawn(move || {
         let sink: Arc<dyn ScanCommitSink> = Arc::new(SqliteScanSink {});
         let cover_adapter = Arc::clone(&adapter);
@@ -339,7 +400,18 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
         } else {
             initial
         };
-        let mut outcome = engine.enqueue_directory(initial).map(|_| ());
+        let mut seeded_listing = initial_listing;
+        let mut outcome =
+            engine
+                .enqueue_directory(initial)
+                .and_then(|_| match seeded_listing.take() {
+                    Some(entries) => engine
+                        .run_next_with_initial_entries(
+                            entries.into_iter().map(|(entry, _)| entry).collect(),
+                        )
+                        .map(|_| ()),
+                    None => engine.run_next().map(|_| ()),
+                });
         while outcome.is_ok() {
             let step = engine.run_next();
             if matches!(step, Ok(false)) {
@@ -472,6 +544,7 @@ pub async fn remote_scan_start(
     session: u64,
     root_path: String,
     mode: String,
+    initial_listing_json: Option<String>,
 ) -> std::result::Result<RemoteScanJobDto, String> {
     start_job(
         StartConfig {
@@ -480,6 +553,7 @@ pub async fn remote_scan_start(
             session,
             root_path,
             mode: mode.to_ascii_lowercase(),
+            initial_listing_json,
         },
         false,
     )
@@ -679,5 +753,13 @@ mod tests {
             fetch_safe_cover_partial(&NoRange, &task).unwrap_err(),
             RemoteScanError::RangeUnavailable
         );
+    }
+
+    #[test]
+    fn initial_scan_path_preserves_configured_root_and_defaults_to_root() {
+        assert_eq!(initial_scan_path("/books"), "/books");
+        assert_eq!(initial_scan_path("books"), "/books");
+        assert_eq!(initial_scan_path(""), "/");
+        assert_eq!(initial_scan_path("/"), "/");
     }
 }

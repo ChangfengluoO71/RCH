@@ -5065,6 +5065,7 @@ fn wire__crate__api__remote_scan__remote_scan_start_impl(
             let api_session = <u64>::sse_decode(&mut deserializer);
             let api_root_path = <String>::sse_decode(&mut deserializer);
             let api_mode = <String>::sse_decode(&mut deserializer);
+            let api_initial_listing_json = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, String>(
@@ -5075,6 +5076,7 @@ fn wire__crate__api__remote_scan__remote_scan_start_impl(
                             api_session,
                             api_root_path,
                             api_mode,
+                            api_initial_listing_json,
                         )
                         .await?;
                         Ok(output_ok)

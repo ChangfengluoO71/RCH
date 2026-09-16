@@ -269,6 +269,23 @@ impl RemoteScanEngine {
     }
 
     pub fn run_next(&self) -> Result<bool, RemoteScanError> {
+        self.run_next_internal(None)
+    }
+
+    /// Process one queued directory using a listing already fetched by the
+    /// browser. This is intentionally one-shot: callers pass the seed only
+    /// for the initial root task, then continue with [`Self::run_next`].
+    pub fn run_next_with_initial_entries(
+        &self,
+        initial_entries: Vec<RemoteEntry>,
+    ) -> Result<bool, RemoteScanError> {
+        self.run_next_internal(Some(initial_entries))
+    }
+
+    fn run_next_internal(
+        &self,
+        initial_entries: Option<Vec<RemoteEntry>>,
+    ) -> Result<bool, RemoteScanError> {
         if self.token.is_cancelled() {
             return Err(RemoteScanError::Cancelled);
         }
@@ -291,7 +308,10 @@ impl RemoteScanEngine {
         let _permit = governor
             .acquire(RequestPriority::Scan)
             .map_err(|_| RemoteScanError::Provider("request_queue_full".into()))?;
-        let entries = self.list_complete(&task.source_id, &task.logical_path)?;
+        let entries = match initial_entries {
+            Some(entries) => self.normalize_entries(entries)?,
+            None => self.list_complete(&task.source_id, &task.logical_path)?,
+        };
         if self.token.is_cancelled() {
             return Err(RemoteScanError::Cancelled);
         }
@@ -389,12 +409,7 @@ impl RemoteScanEngine {
                     },
                 }
             };
-            for mut entry in page {
-                if is_ignored_name(&entry.name) {
-                    continue;
-                }
-                entry.logical_path = self.adapter.normalize_path(&entry.logical_path);
-                entry.asset_kind = classify(&entry.name, entry.is_dir);
+            for entry in self.normalize_entries(page)? {
                 if entries
                     .iter()
                     .any(|existing: &RemoteEntry| existing.logical_path == entry.logical_path)
@@ -402,11 +417,11 @@ impl RemoteScanEngine {
                     continue;
                 }
                 entries.push(entry);
-                if entries.len() > MAX_DIRECTORY_ENTRIES {
-                    return Err(RemoteScanError::MalformedResponse(
-                        "directory_entry_limit".into(),
-                    ));
-                }
+            }
+            if entries.len() > MAX_DIRECTORY_ENTRIES {
+                return Err(RemoteScanError::MalformedResponse(
+                    "directory_entry_limit".into(),
+                ));
             }
             match next {
                 None => return Ok(entries),
@@ -421,6 +436,33 @@ impl RemoteScanEngine {
         Err(RemoteScanError::MalformedResponse(
             "pagination_page_limit".into(),
         ))
+    }
+
+    fn normalize_entries(
+        &self,
+        entries: Vec<RemoteEntry>,
+    ) -> Result<Vec<RemoteEntry>, RemoteScanError> {
+        let mut normalized = Vec::new();
+        for mut entry in entries {
+            if is_ignored_name(&entry.name) {
+                continue;
+            }
+            entry.logical_path = self.adapter.normalize_path(&entry.logical_path);
+            entry.asset_kind = classify(&entry.name, entry.is_dir);
+            if normalized
+                .iter()
+                .any(|existing: &RemoteEntry| existing.logical_path == entry.logical_path)
+            {
+                continue;
+            }
+            normalized.push(entry);
+            if normalized.len() > MAX_DIRECTORY_ENTRIES {
+                return Err(RemoteScanError::MalformedResponse(
+                    "directory_entry_limit".into(),
+                ));
+            }
+        }
+        Ok(normalized)
     }
 
     fn wait_for_source_turn(&self, source_key: &str) -> Result<(), RemoteScanError> {

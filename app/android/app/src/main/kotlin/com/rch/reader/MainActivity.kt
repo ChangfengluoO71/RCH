@@ -13,6 +13,7 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val channelName = "rch/storage"
+    private val credentialChannelName = "rch/credentials"
     private val updaterChannelName = "rch/updater"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -27,6 +28,35 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     else -> result.notImplemented()
+                }
+            }
+        val vault = CredentialVault(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, credentialChannelName)
+            .setMethodCallHandler { call, result ->
+                val key = call.argument<String>("key")
+                if (key.isNullOrBlank()) {
+                    result.error("bad_args", "credential key is required", null)
+                    return@setMethodCallHandler
+                }
+                runCatching {
+                    when (call.method) {
+                        "put" -> {
+                            val value = call.argument<String>("value")
+                            require(value != null) { "credential value is required" }
+                            vault.put(key, value)
+                            result.success(null)
+                        }
+                        "get" -> result.success(vault.get(key))
+                        "delete" -> {
+                            vault.delete(key)
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                }.onFailure { error ->
+                    // Do not send the credential value or ciphertext back to
+                    // Dart; only a stable code and a short native message.
+                    result.error("vault_error", "credential vault operation failed", error.message)
                 }
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, updaterChannelName)

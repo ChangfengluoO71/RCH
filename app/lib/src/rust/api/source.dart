@@ -7,10 +7,10 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `canonical_child_path`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_cookie_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `prime_remote_folder_locator`, `provider_path`, `quark_downloads`, `quark_sessions`, `remote_folder_cache_ns`, `remote_provider_adapter`, `retry_after_ms`, `scan_error`, `sessions`, `sftp_downloads`, `sftp_sessions`, `supports_remote_scan`
+// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `canonical_child_path`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_cookie_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `prime_remote_folder_locator`, `provider_path`, `quark_downloads`, `quark_sessions`, `remote_folder_cache_ns`, `remote_provider_adapter`, `retry_after_ms`, `scan_error`, `scan_io_error`, `sessions`, `sftp_downloads`, `sftp_sessions`, `supports_remote_scan`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`, `RemoteSessionClient`, `SessionRemoteAdapter`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `capabilities`, `list`, `normalize_path`, `read_file_limited`, `read_range`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `cache_path`, `capabilities`, `list`, `normalize_path`, `read_file_limited`, `read_range`, `register_path`
 
 /// 连接 WebDAV 服务器并自动探测能力,返回会话句柄与初始浏览路径。
 Future<WebDavSession> webdavConnect({

@@ -18,6 +18,26 @@ import 'package:flutter/material.dart';
 
 typedef SourceAction = void Function(frb.SourceAvailabilityDto source);
 
+bool _needsRemoteScanStatus(frb.SourceAvailabilityDto source) =>
+    source.isRemote ||
+    const {'webdav', 'sftp', 'baidu', '115', 'quark'}.contains(source.type);
+
+String remoteScanIdleMessageFor(
+  frb.SourceAvailabilityDto source, {
+  required bool backgroundScanEnabled,
+}) {
+  if (source.isRemote || source.status == 'index_only') {
+    return '仅离线索引，不执行在线扫描';
+  }
+  if (!backgroundScanEnabled) {
+    return '后台扫描已关闭';
+  }
+  if (source.status == 'needs_network' || !source.hasCredentials) {
+    return '等待授权或打开根目录后开始扫描';
+  }
+  return '等待扫描';
+}
+
 class SourceTreePanel extends StatelessWidget {
   final SourceAction? onEditSource;
   final SourceAction? onDeleteSource;
@@ -33,7 +53,10 @@ class SourceTreePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: LibraryCatalogStore.instance,
+      listenable: Listenable.merge([
+        LibraryCatalogStore.instance,
+        LibraryStore.instance,
+      ]),
       builder: (context, _) {
         final store = LibraryCatalogStore.instance;
         if (!store.loaded) {
@@ -179,12 +202,17 @@ class _SourceTileState extends State<_SourceTile> {
             ],
           ),
         ),
-        if (source.isRemote)
+        if (_needsRemoteScanStatus(source))
           Padding(
             padding: const EdgeInsets.only(left: 16, right: 8),
             child: RemoteScanStatusPanel(
               sourceName: source.name,
               compact: true,
+              idleMessage: remoteScanIdleMessageFor(
+                source,
+                backgroundScanEnabled:
+                    LibraryStore.instance.settings.remoteBackgroundScanEnabled,
+              ),
               stateListenable: RemoteScanCoordinator.instance.viewStateFor(
                 source.sourceId,
               ),

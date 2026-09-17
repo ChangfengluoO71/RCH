@@ -1,0 +1,4 @@
+{"file":"docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md","reason":"Authoritative remote-cloud-scan provider, generation, tombstone, and retention design for Task 6 contract evidence."}
+{"file":"docs/superpowers/plans/2026-09-14-remote-cloud-scan.md","reason":"Execution order and focused validation commands for the remote-cloud-scan task."}
+{"file":".trellis/spec/backend/remote-cover-update-contracts.md","reason":"Stable cover range, cache-retention, and redaction invariants consumed by provider contract tests."}
+{"file":".trellis/spec/backend/source-refresh-cleanup.md","reason":"Stable source refresh, complete-listing proof, tombstone, and cleanup boundaries."}

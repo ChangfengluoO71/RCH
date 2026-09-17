@@ -10,7 +10,6 @@ final Map<String, BigInt> _baiduSessions = {};
 Future<BigInt> baiduSessionFor(BookSource source) async {
   final cached = _baiduSessions[source.id];
   if (cached != null) {
-    remoteSessionSuccessHub.emit(source, cached);
     return cached;
   }
   final s = await baiduConnect(

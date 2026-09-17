@@ -1,0 +1,4 @@
+{"file":"docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md","reason":"Check provider capability/error, generation proof, tombstone, and cover-retention compliance against the design."}
+{"file":"docs/superpowers/plans/2026-09-14-remote-cloud-scan.md","reason":"Check Task 6 evidence scope and required command coverage against the execution plan."}
+{"file":".trellis/spec/backend/remote-cover-update-contracts.md","reason":"Check strict range handling, redaction, and live-cover retention invariants."}
+{"file":".trellis/spec/backend/source-refresh-cleanup.md","reason":"Check complete-listing deletion proof and failure-safe cleanup invariants."}

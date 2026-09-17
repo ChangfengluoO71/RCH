@@ -458,7 +458,10 @@ class LibraryStore extends ChangeNotifier {
     try {
       final f = await _file();
       final data = {
-        ..._books.toJson(),
+        ..._books.toJson(
+          includeSensitive:
+              !(!kIsWeb && defaultTargetPlatform == TargetPlatform.android),
+        ),
         ..._records.toJson(),
         'settings': settings.toJson(),
         ...TagRepository.instance.toJson(),
@@ -560,6 +563,7 @@ class LibraryStore extends ChangeNotifier {
     String? clientSecret,
     String? rootId,
     String? cookie,
+    String? credentialRef,
     String? note,
   }) async {
     final current = sourceById(id);
@@ -582,6 +586,7 @@ class LibraryStore extends ChangeNotifier {
       clientSecret: clientSecret,
       rootId: normalizedRoot,
       cookie: cookie,
+      credentialRef: credentialRef,
       note: note,
     );
     // Phase 6.1 采纳语义：用户编辑保存即视为"本机配置该书源"——

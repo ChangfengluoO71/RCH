@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/export.dart';
 import 'package:app/src/rust/api/library.dart' as frblib;
+import 'package:app/src/rust/api/remote_cover.dart' as remote_cover;
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
@@ -16,12 +17,15 @@ import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/remote_listing.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
+import 'package:app/store/remote_scan_models.dart';
+import 'package:app/store/remote_cover_repository.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/store/webdav_session.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'batch_tagging.dart';
@@ -49,6 +53,16 @@ bool shouldDeferRemoteRootListing({
 }) =>
     _SourceBrowserState._normalizeRemoteLogicalPath(currentLogicalPath) ==
     _SourceBrowserState._normalizeRemoteLogicalPath(effectiveRootPath);
+
+/// A reconnect outside the effective root has no listing handoff to trigger
+/// the automatic scan, so it must explicitly ensure a scan after auth.
+bool shouldTriggerRemoteScanAfterReconnect({
+  required String currentLogicalPath,
+  required String effectiveRootPath,
+}) => !shouldDeferRemoteRootListing(
+  currentLogicalPath: currentLogicalPath,
+  effectiveRootPath: effectiveRootPath,
+);
 
 /// 书源浏览器:浏览某个书源的漫画。
 /// 本地 → 海报墙(目录可下钻);WebDAV → 列表(目录可下钻)。
@@ -93,6 +107,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
   String _convertCurrent = '';
   bool _convertCancelled = false; // 用户点击取消
   bool _refreshingToken = false; // 百度网盘：正在强制刷新 refresh_token
+
+  /// 扫描完成后重新评估当前目录的远程文件夹类型，让图片文件夹/容器卡片
+  /// 不必等用户离开页面再进入才能从“未缓存”切换为可用封面。
+  late final ValueListenable<RemoteScanStatus?> _remoteScanStatus;
+  int? _lastAppliedScanGeneration;
+  remote_cover.RemoteDirectoryViewDto? _remoteDirectoryView;
+  Timer? _remoteViewRefreshTimer;
 
   /// 漫画文件夹检测结果：path → 封面形态（纯本地判定，不发网盘请求）。
   final Map<String, _FolderCoverKind> _folderKinds = {};
@@ -149,14 +170,38 @@ class _SourceBrowserState extends State<SourceBrowser> {
   void initState() {
     super.initState();
     LibraryStore.instance.addListener(_onStoreChanged);
+    _remoteScanStatus = RemoteScanCoordinator.instance.statusFor(
+      widget.source.id,
+    );
+    _remoteScanStatus.addListener(_onRemoteScanStatusChanged);
     _init();
   }
 
   @override
   void dispose() {
     LibraryStore.instance.removeListener(_onStoreChanged);
+    _remoteScanStatus.removeListener(_onRemoteScanStatusChanged);
     RemoteScanCoordinator.instance.cancelDeferredRootListing(widget.source);
+    _remoteViewRefreshTimer?.cancel();
     super.dispose();
+  }
+
+  void _onRemoteScanStatusChanged() {
+    final status = _remoteScanStatus.value;
+    if (status == null) return;
+    if (_lastAppliedScanGeneration != status.generation) {
+      _lastAppliedScanGeneration = status.generation;
+      if (mounted && !_offlineMode && _entries.isNotEmpty) {
+        // The manifest is committed before the cover worker finishes. Re-run
+        // local classification as a compatibility fallback while the
+        // unified projection is refreshed below.
+        unawaited(_detectComicFolders());
+      }
+    }
+    // Cover variants are published while the scan is still running, so a
+    // terminal-only listener would leave the root grid stale. Coalesce status
+    // callbacks into one local catalog read instead of rebuilding per item.
+    _queueRemoteDirectoryView();
   }
 
   /// 阅读记录/元数据变化后重跑网盘目录判定（纯本地），
@@ -211,7 +256,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
           ? await quarkSessionFor(widget.source)
           : await cloud115SessionFor(widget.source);
     } catch (e) {
-      if (mounted) setState(() => _error = '连接远程书源失败:$e');
+      if (mounted) {
+        setState(() => _error = '连接远程书源失败：\${remoteErrorMessage(e)}');
+      }
     }
   }
 
@@ -233,10 +280,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
       _offlineMode = false;
       _error = null;
     });
-    if (shouldDeferRemoteRootListing(
+    final atRoot = shouldDeferRemoteRootListing(
       currentLogicalPath: _path,
       effectiveRootPath: widget.source.effectiveRootPath,
-    )) {
+    );
+    if (atRoot) {
       RemoteScanCoordinator.instance.deferRootListing(widget.source);
     } else {
       // A non-root reconnect has no root listing to hand off. Clear any
@@ -255,6 +303,19 @@ class _SourceBrowserState extends State<SourceBrowser> {
         });
       }
       return;
+    }
+    if (shouldTriggerRemoteScanAfterReconnect(
+          currentLogicalPath: _path,
+          effectiveRootPath: widget.source.effectiveRootPath,
+        ) &&
+        LibraryStore.instance.settings.remoteBackgroundScanEnabled) {
+      // Cached provider sessions no longer emit a synchronous success event;
+      // explicitly start the scan when reconnecting at a non-root path.
+      unawaited(
+        RemoteScanCoordinator.instance
+            .ensureForSession(widget.source, _session!)
+            .then<void>((_) {}, onError: (_) {}),
+      );
     }
     await _list(_path);
   }
@@ -290,7 +351,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       });
       await _detectComicFolders();
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = remoteErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -377,6 +438,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
         _path = path;
         _entries = list.where((e) => e.isDir || _isComicEntry(e)).toList();
       });
+      await _refreshRemoteDirectoryView();
       await _detectComicFolders();
     } catch (e) {
       final session = _session;
@@ -393,10 +455,67 @@ class _SourceBrowserState extends State<SourceBrowser> {
               .then<void>((_) {}, onError: (_) {}),
         );
       }
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = remoteErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _queueRemoteDirectoryView() {
+    if (!mounted || _offlineMode || widget.source.isLocalFs) return;
+    if (_remoteViewRefreshTimer != null) return;
+    _remoteViewRefreshTimer = Timer(const Duration(milliseconds: 180), () {
+      _remoteViewRefreshTimer = null;
+      unawaited(_refreshRemoteDirectoryView());
+    });
+  }
+
+  Future<void> _refreshRemoteDirectoryView() async {
+    if (!mounted || _offlineMode || widget.source.isLocalFs) return;
+    final requestedPath = _logicalPath;
+    try {
+      final view = await RemoteCoverRepository.instance.directoryView(
+        source: widget.source,
+        logicalPath: requestedPath,
+        limit: 200,
+      );
+      if (!mounted || _offlineMode || requestedPath != _logicalPath) return;
+      if (_remoteDirectoryView?.revision == view.revision &&
+          _remoteDirectoryView?.entries.length == view.entries.length &&
+          _remoteDirectoryView?.listingComplete == view.listingComplete) {
+        // Cover state can change without a listing revision. Compare the
+        // compact state tuple before deciding whether a rebuild is needed.
+        final old = _remoteDirectoryView!.entries;
+        final changed =
+            old.length != view.entries.length ||
+            old.asMap().entries.any((entry) {
+              final before = entry.value.cover;
+              final after = view.entries[entry.key].cover;
+              return before.state != after.state ||
+                  before.revision != after.revision ||
+                  before.ready != after.ready ||
+                  before.errorCode != after.errorCode;
+            });
+        if (!changed) return;
+      }
+      setState(() => _remoteDirectoryView = view);
+    } catch (_) {
+      // The online provider listing remains authoritative for immediate
+      // browsing. A missing local projection simply keeps the compatibility
+      // card until the scanner publishes one.
+    }
+  }
+
+  remote_cover.RemoteDirectoryEntryDto? _remoteEntryFor(DirEntry entry) {
+    final view = _remoteDirectoryView;
+    if (view == null) return null;
+    final logical = _logicalPathOf(entry);
+    for (final candidate in view.entries) {
+      if (_normalizeRemoteLogicalPath(candidate.logicalPath) == logical) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   /// 检测当前列表中的子目录封面形态。
@@ -582,9 +701,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
       ).showSnackBar(const SnackBar(content: Text('已全量重建离线索引（联网）')));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('重建索引失败: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('重建索引失败：\${remoteErrorMessage(e)}')),
+        );
       }
     }
   }
@@ -609,7 +728,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
         context,
       ).showSnackBar(const SnackBar(content: Text('refresh_token 已重新刷新并保存')));
     } catch (e) {
-      if (mounted) setState(() => _error = '刷新 refresh_token 失败:$e');
+      if (mounted) {
+        setState(
+          () => _error = '刷新 refresh_token 失败：\${remoteErrorMessage(e)}',
+        );
+      }
       await _reauthorizeBaidu(e);
     } finally {
       _refreshingToken = false;
@@ -627,7 +750,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       if (mounted) {
         setState(
           () => _error =
-              '刷新 refresh_token 失败:$error\n（未配置 AppKey/SecretKey，请编辑书源填写）',
+              '刷新 refresh_token 失败：\${remoteErrorMessage(error)}\n（未配置 AppKey/SecretKey，请编辑书源填写）',
         );
       }
       return;
@@ -646,7 +769,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '刷新失败：$error\n浏览器已打开百度授权页，登录并同意后把页面显示的授权码粘贴到这里。',
+              '刷新失败：\${remoteErrorMessage(error)}\n浏览器已打开百度授权页，登录并同意后把页面显示的授权码粘贴到这里。',
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 10),
@@ -710,7 +833,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
         const SnackBar(content: Text('授权成功，refresh_token 已更新并重连')),
       );
     } catch (e) {
-      if (mounted) setState(() => _error = '重新授权失败:$e');
+      if (mounted) {
+        setState(() => _error = '重新授权失败：\${remoteErrorMessage(e)}');
+      }
     }
   }
 
@@ -1214,6 +1339,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
                     RemoteScanStatusPanel(
                       sourceName: widget.source.name,
                       compact: true,
+                      idleMessage: widget.source.remoteOnly
+                          ? '仅离线索引，不执行在线扫描'
+                          : !LibraryStore
+                                .instance
+                                .settings
+                                .remoteBackgroundScanEnabled
+                          ? '后台扫描已关闭'
+                          : _offlineMode
+                          ? '当前为离线浏览，连接后开始扫描'
+                          : '等待扫描',
                       stateListenable: RemoteScanCoordinator.instance
                           .viewStateFor(widget.source.id),
                       // Offline browsers have no live provider session. Keep
@@ -1230,8 +1365,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
                             ),
                       onRetry: _session == null
                           ? null
-                          : () => RemoteScanCoordinator.instance
-                                .rescanIncremental(widget.source, _session!),
+                          : () => RemoteScanCoordinator.instance.retry(
+                              widget.source,
+                              _session!,
+                            ),
                       onRescanIncremental: _session == null
                           ? null
                           : () => RemoteScanCoordinator.instance
@@ -1281,8 +1418,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
       itemCount: entries.length,
       itemBuilder: (context, i) {
         final e = entries[i];
+        final remoteEntry = _remoteEntryFor(e);
         // 目录：按封面形态区分卡片
         if (e.isDir) {
+          if (!widget.source.isLocalFs &&
+              remoteEntry?.representativeAssetId != null) {
+            final remoteKind = remoteEntry!.assetKind == 'ImageFolder'
+                ? _FolderCoverKind.book
+                : _FolderCoverKind.container;
+            return _folderCoverCard(e, remoteKind, remoteEntry: remoteEntry);
+          }
           final kind =
               _folderKinds[e.path] ??
               (widget.source.isLocalFs
@@ -1338,10 +1483,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
         // 普通漫画文件
         final sel = _selectedPaths.contains(e.path);
         final card = ComicCard(
+          key: ValueKey(
+            '${widget.source.id}|${remoteEntry?.assetId ?? _logicalPathOf(e)}',
+          ),
           source: widget.source,
           path: e.path,
           title: e.name,
           subtitle: fmtSize(e.size),
+          remoteAssetId: remoteEntry?.assetId,
+          remoteSession: _session,
+          preferUnifiedRemote: !widget.source.isLocalFs,
           onTap: _selectMode
               ? () {}
               : () => Navigator.of(context).push(
@@ -1395,15 +1546,29 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   /// 带封面的文件夹卡片：book 进详情；container / uncached 下钻。
-  Widget _folderCoverCard(DirEntry e, _FolderCoverKind kind) {
+  Widget _folderCoverCard(
+    DirEntry e,
+    _FolderCoverKind kind, {
+    remote_cover.RemoteDirectoryEntryDto? remoteEntry,
+  }) {
     final sel = _selectMode && _selectedPaths.contains(e.path);
     final bookPath = kind == _FolderCoverKind.book ? _logicalPathOf(e) : e.path;
     final card = _ComicFolderCoverCard(
+      key: ValueKey(
+        '${widget.source.id}|${remoteEntry?.assetId ?? _logicalPathOf(e)}',
+      ),
       source: widget.source,
       dirPath: bookPath,
       name: e.name,
       kind: kind,
       firstComicFile: _folderFirstFile[e.path],
+      // Image folders are represented by their directory asset because the
+      // Rust worker resolves the first ordered image from that asset.  A
+      // container/descendant card still uses its selected comic asset.
+      remoteAssetId: remoteEntry?.assetKind == 'ImageFolder'
+          ? remoteEntry?.assetId
+          : remoteEntry?.representativeAssetId,
+      remoteSession: _session,
       onTap: _selectMode
           ? () {}
           : kind == _FolderCoverKind.book
@@ -1573,14 +1738,19 @@ class _ComicFolderCoverCard extends StatefulWidget {
   final String name;
   final _FolderCoverKind kind;
   final String? firstComicFile;
+  final String? remoteAssetId;
+  final BigInt? remoteSession;
   final VoidCallback onTap;
 
   const _ComicFolderCoverCard({
+    super.key,
     required this.source,
     required this.dirPath,
     required this.name,
     required this.kind,
     this.firstComicFile,
+    this.remoteAssetId,
+    this.remoteSession,
     required this.onTap,
   });
 
@@ -1654,6 +1824,9 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
   }
 
   Widget _buildCover() {
+    if (widget.remoteAssetId != null) {
+      return _loadCover(widget.dirPath, widget.remoteAssetId);
+    }
     // 网盘无本地数据 → 与漫画文件一致的“未缓存”占位
     if (widget.kind == _FolderCoverKind.uncached) {
       return ComicCover.uncachedPlaceholder();
@@ -1684,7 +1857,7 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
     );
   }
 
-  Widget _loadCover(String path) {
+  Widget _loadCover(String path, [String? remoteAssetId]) {
     // 下载/阅读记录变化后强制重建 ComicCover，让 未缓存 → 封面 自动生效
     final key = bookKeyOf(widget.source.type, widget.source.id, path);
     final cached = LibraryStore.instance.records.containsKey(key);
@@ -1693,6 +1866,9 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
       source: widget.source,
       path: path,
       force: true,
+      remoteAssetId: remoteAssetId,
+      remoteSession: widget.remoteSession,
+      preferUnifiedRemote: !widget.source.isLocalFs,
     );
   }
 }

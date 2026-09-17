@@ -7,6 +7,7 @@ pub mod decode;
 pub mod document;
 pub mod downloader;
 mod frb_generated;
+pub mod perf;
 pub mod rchpkg;
 pub mod reader;
 pub mod remote_scan;

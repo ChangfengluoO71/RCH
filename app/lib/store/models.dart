@@ -43,6 +43,9 @@ class BookSource {
   String? clientSecret; // 百度 SecretKey（115 无）
   String? rootId; // 115 根文件夹 ID
   String? cookie; // 夸克网盘 Cookie（pan.quark.cn 登录后粘贴）
+  /// Android Keystore 中凭据包的引用。桌面端可为空，旧明文字段仍保留
+  /// 作为兼容输入，但新导出的脱敏 JSON 永不包含这些字段。
+  String? credentialRef;
   String note; // 用户备注
   String capabilityLabel; // "local" | "webdav_range" | "webdav_norange"
   bool remoteOnly; // 其他设备的本地书源：仅元数据，不可阅读
@@ -62,6 +65,7 @@ class BookSource {
     this.clientSecret,
     this.rootId,
     this.cookie,
+    this.credentialRef,
     this.note = '',
     this.capabilityLabel = '',
     this.remoteOnly = false,
@@ -124,20 +128,21 @@ class BookSource {
     return (emoji: '\u{1F534}', label: 'WebDAV 无Range');
   }
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({bool includeSensitive = true}) => {
     'id': id,
     'type': type,
     'name': name,
     'path': path,
     if (url != null) 'url': url,
     if (username != null) 'username': username,
-    if (password != null) 'password': password,
+    if (includeSensitive && password != null) 'password': password,
     if (port != null) 'port': port,
-    if (refreshToken != null) 'refreshToken': refreshToken,
+    if (includeSensitive && refreshToken != null) 'refreshToken': refreshToken,
     if (clientId != null) 'clientId': clientId,
-    if (clientSecret != null) 'clientSecret': clientSecret,
+    if (includeSensitive && clientSecret != null) 'clientSecret': clientSecret,
     if (rootId != null) 'rootId': rootId,
-    if (cookie != null) 'cookie': cookie,
+    if (includeSensitive && cookie != null) 'cookie': cookie,
+    if (credentialRef != null) 'credentialRef': credentialRef,
     'note': note,
     if (capabilityLabel.isNotEmpty) 'capabilityLabel': capabilityLabel,
     if (remoteOnly) 'remoteOnly': true,
@@ -158,6 +163,7 @@ class BookSource {
     clientSecret: j['clientSecret'] as String?,
     rootId: j['rootId'] as String?,
     cookie: j['cookie'] as String?,
+    credentialRef: j['credentialRef'] as String?,
     note: (j['note'] as String?) ?? '',
     capabilityLabel: (j['capabilityLabel'] as String?) ?? '',
     remoteOnly: j['remoteOnly'] as bool? ?? false,
@@ -264,8 +270,8 @@ extension CoverQualitySize on CoverQuality {
   };
 
   String get label => switch (this) {
-    CoverQuality.low => '低(最快)',
-    CoverQuality.medium => '中(默认)',
+    CoverQuality.low => '低(默认，最快)',
+    CoverQuality.medium => '中',
     CoverQuality.high => '高(最清晰)',
   };
 }
@@ -336,7 +342,7 @@ class AppSettings {
   bool remoteCoverFetchEnabled;
 
   AppSettings({
-    this.coverQuality = CoverQuality.medium,
+    this.coverQuality = CoverQuality.low,
     this.themeMode = 'dark',
     this.readMode = ReadMode.manga,
     this.invertTap = false,
@@ -378,7 +384,7 @@ class AppSettings {
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
     coverQuality: CoverQuality.values.firstWhere(
       (q) => q.name == j['coverQuality'],
-      orElse: () => CoverQuality.medium,
+      orElse: () => CoverQuality.low,
     ),
     themeMode: (j['themeMode'] as String?) ?? 'dark',
     readMode: ReadMode.values.firstWhere(

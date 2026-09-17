@@ -400,6 +400,7 @@ class BookSourceDto {
   final String? clientSecret;
   final String? rootId;
   final String? cookie;
+  final String? credentialRef;
   final String note;
   final String capabilityLabel;
   final bool remoteOnly;
@@ -419,6 +420,7 @@ class BookSourceDto {
     this.clientSecret,
     this.rootId,
     this.cookie,
+    this.credentialRef,
     required this.note,
     required this.capabilityLabel,
     required this.remoteOnly,
@@ -440,6 +442,7 @@ class BookSourceDto {
       clientSecret.hashCode ^
       rootId.hashCode ^
       cookie.hashCode ^
+      credentialRef.hashCode ^
       note.hashCode ^
       capabilityLabel.hashCode ^
       remoteOnly.hashCode ^
@@ -463,6 +466,7 @@ class BookSourceDto {
           clientSecret == other.clientSecret &&
           rootId == other.rootId &&
           cookie == other.cookie &&
+          credentialRef == other.credentialRef &&
           note == other.note &&
           capabilityLabel == other.capabilityLabel &&
           remoteOnly == other.remoteOnly &&

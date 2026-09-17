@@ -1,0 +1,32 @@
+{
+  "id": "remote-cloud-scan",
+  "name": "remote-cloud-scan",
+  "title": "全云端远程扫描与封面索引",
+  "description": "所有云端书源首次授权/打开后台全量扫描，后续增量扫描与手动重扫；识别图片文件夹漫画，接入封面、Reader、缓存清理和远程删除一致性。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-09-14",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "local-ai/cover-quark-debug",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-14-remote-scan-manifest",
+    "09-14-remote-scan-worker",
+    "09-14-remote-folder-reader",
+    "09-14-remote-cover-cleanup",
+    "09-14-remote-scan-ui-verify"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

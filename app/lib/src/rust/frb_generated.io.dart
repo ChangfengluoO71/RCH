@@ -11,6 +11,7 @@ import 'api/export.dart';
 import 'api/library.dart';
 import 'api/package.dart';
 import 'api/pdf.dart';
+import 'api/remote_cover.dart';
 import 'api/remote_scan.dart';
 import 'api/scraper.dart';
 import 'api/simple.dart';
@@ -83,6 +84,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CatalogRevisionDto dco_decode_box_autoadd_catalog_revision_dto(dynamic raw);
 
   @protected
+  CoverProfileDto dco_decode_box_autoadd_cover_profile_dto(dynamic raw);
+
+  @protected
+  CoverSelectionDto dco_decode_box_autoadd_cover_selection_dto(dynamic raw);
+
+  @protected
   CropRect dco_decode_box_autoadd_crop_rect(dynamic raw);
 
   @protected
@@ -90,6 +97,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+
+  @protected
+  PageImage dco_decode_box_autoadd_page_image(dynamic raw);
 
   @protected
   ReadRecordDto dco_decode_box_autoadd_read_record_dto(dynamic raw);
@@ -107,6 +117,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SourceSnapshotDto dco_decode_box_autoadd_source_snapshot_dto(dynamic raw);
+
+  @protected
+  BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
   CacheSize dco_decode_cache_size(dynamic raw);
@@ -130,6 +143,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Cloud115SessionInfo dco_decode_cloud_115_session_info(dynamic raw);
+
+  @protected
+  CoverProfileDto dco_decode_cover_profile_dto(dynamic raw);
+
+  @protected
+  CoverSelectionDto dco_decode_cover_selection_dto(dynamic raw);
 
   @protected
   CropRect dco_decode_crop_rect(dynamic raw);
@@ -213,6 +232,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<(String, PlatformInt64)> dco_decode_list_record_string_i_64(dynamic raw);
 
   @protected
+  List<RemoteDirectoryEntryDto> dco_decode_list_remote_directory_entry_dto(
+    dynamic raw,
+  );
+
+  @protected
   List<ScrapeProposalDto> dco_decode_list_scrape_proposal_dto(dynamic raw);
 
   @protected
@@ -266,6 +290,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
+  PageImage? dco_decode_opt_box_autoadd_page_image(dynamic raw);
+
+  @protected
   (String, String)? dco_decode_opt_box_autoadd_record_string_string(
     dynamic raw,
   );
@@ -282,6 +309,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SourceSnapshotDto? dco_decode_opt_box_autoadd_source_snapshot_dto(
     dynamic raw,
   );
+
+  @protected
+  BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
   Uint8List? dco_decode_opt_list_prim_u_8_strict(dynamic raw);
@@ -303,6 +333,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) dco_decode_record_u_64_u_64(dynamic raw);
+
+  @protected
+  RemoteCoverStateDto dco_decode_remote_cover_state_dto(dynamic raw);
+
+  @protected
+  RemoteDirectoryEntryDto dco_decode_remote_directory_entry_dto(dynamic raw);
+
+  @protected
+  RemoteDirectoryViewDto dco_decode_remote_directory_view_dto(dynamic raw);
 
   @protected
   RemoteScanJobDto dco_decode_remote_scan_job_dto(dynamic raw);
@@ -438,6 +477,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CoverProfileDto sse_decode_box_autoadd_cover_profile_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CoverSelectionDto sse_decode_box_autoadd_cover_selection_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CropRect sse_decode_box_autoadd_crop_rect(SseDeserializer deserializer);
 
   @protected
@@ -445,6 +494,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
+  PageImage sse_decode_box_autoadd_page_image(SseDeserializer deserializer);
 
   @protected
   ReadRecordDto sse_decode_box_autoadd_read_record_dto(
@@ -470,6 +522,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SourceSnapshotDto sse_decode_box_autoadd_source_snapshot_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
   CacheSize sse_decode_cache_size(SseDeserializer deserializer);
@@ -501,6 +556,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Cloud115SessionInfo sse_decode_cloud_115_session_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CoverProfileDto sse_decode_cover_profile_dto(SseDeserializer deserializer);
+
+  @protected
+  CoverSelectionDto sse_decode_cover_selection_dto(
     SseDeserializer deserializer,
   );
 
@@ -602,6 +665,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<RemoteDirectoryEntryDto> sse_decode_list_remote_directory_entry_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<ScrapeProposalDto> sse_decode_list_scrape_proposal_dto(
     SseDeserializer deserializer,
   );
@@ -667,6 +735,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  PageImage? sse_decode_opt_box_autoadd_page_image(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   (String, String)? sse_decode_opt_box_autoadd_record_string_string(
     SseDeserializer deserializer,
   );
@@ -685,6 +758,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SourceSnapshotDto? sse_decode_opt_box_autoadd_source_snapshot_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -710,6 +786,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) sse_decode_record_u_64_u_64(SseDeserializer deserializer);
+
+  @protected
+  RemoteCoverStateDto sse_decode_remote_cover_state_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RemoteDirectoryEntryDto sse_decode_remote_directory_entry_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RemoteDirectoryViewDto sse_decode_remote_directory_view_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   RemoteScanJobDto sse_decode_remote_scan_job_dto(SseDeserializer deserializer);
@@ -874,6 +965,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cover_profile_dto(
+    CoverProfileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cover_selection_dto(
+    CoverSelectionDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_crop_rect(
     CropRect self,
     SseSerializer serializer,
@@ -885,6 +988,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_i_64(
     PlatformInt64 self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_page_image(
+    PageImage self,
     SseSerializer serializer,
   );
 
@@ -917,6 +1026,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     SourceSnapshotDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_cache_size(CacheSize self, SseSerializer serializer);
@@ -954,6 +1066,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_115_session_info(
     Cloud115SessionInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cover_profile_dto(
+    CoverProfileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cover_selection_dto(
+    CoverSelectionDto self,
     SseSerializer serializer,
   );
 
@@ -1090,6 +1214,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_remote_directory_entry_dto(
+    List<RemoteDirectoryEntryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_scrape_proposal_dto(
     List<ScrapeProposalDto> self,
     SseSerializer serializer,
@@ -1177,6 +1307,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_page_image(
+    PageImage? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_record_string_string(
     (String, String)? self,
     SseSerializer serializer,
@@ -1199,6 +1335,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     SourceSnapshotDto? self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_list_prim_u_8_strict(
@@ -1233,6 +1372,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_record_u_64_u_64(
     (BigInt, BigInt) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_remote_cover_state_dto(
+    RemoteCoverStateDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_remote_directory_entry_dto(
+    RemoteDirectoryEntryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_remote_directory_view_dto(
+    RemoteDirectoryViewDto self,
     SseSerializer serializer,
   );
 

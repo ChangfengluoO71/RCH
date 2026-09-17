@@ -10,7 +10,6 @@ final Map<String, BigInt> _quarkSessions = {};
 Future<BigInt> quarkSessionFor(BookSource source) async {
   final cached = _quarkSessions[source.id];
   if (cached != null) {
-    remoteSessionSuccessHub.emit(source, cached);
     return cached;
   }
   final s = await quarkConnect(

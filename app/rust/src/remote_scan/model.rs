@@ -17,6 +17,10 @@ pub enum RemoteAssetKind {
 pub struct RemoteEntry {
     pub name: String,
     pub logical_path: String,
+    /// Provider-facing identifier/path (cid/fid/pickcode or a normal path).
+    /// It is intentionally not a URL and is optional for legacy fixtures.
+    #[serde(default)]
+    pub provider_path: Option<String>,
     pub is_dir: bool,
     pub size: Option<u64>,
     pub mtime: Option<i64>,
@@ -176,6 +180,7 @@ mod tests {
         let a = RemoteEntry {
             name: "x.jpg".into(),
             logical_path: "/a/".into(),
+            provider_path: None,
             is_dir: false,
             size: Some(1),
             mtime: Some(2),

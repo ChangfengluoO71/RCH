@@ -6,10 +6,11 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `consume_staged_covers`, `error_code`, `fetch_safe_cover_partial`, `initial_scan_path`, `job_dto`, `jobs`, `next_job_id`, `parse_initial_listing`, `persist_config_status`, `persist_terminal`, `start_job`, `start_lock`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `InitialListingEntry`, `ScanJob`, `SqliteScanSink`, `StartConfig`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `enqueue_cover`, `previous_fingerprint`, `spill_directory`, `stage_directory`, `take_spilled_directory`
+// These functions are ignored because they are not marked as `pub`: `consume_staged_covers`, `cover_budget_key`, `cover_cache_paths`, `cover_error`, `cover_fetch_enabled_from_conn`, `cover_job_failure_state`, `cover_source_fingerprint`, `cover_source_info`, `cover_workers`, `current_cover_fetch_enabled`, `durable_cover_progress_on`, `effective_scan_mode`, `error_code`, `fetch_remote_cover_image_with_dimensions`, `initial_scan_path`, `job_dto`, `jobs`, `next_job_id`, `parse_bool_setting`, `parse_cover_profile`, `parse_cover_selection`, `parse_initial_listing`, `persist_config_status`, `persist_terminal`, `refresh_cover_progress`, `refresh_status_counts`, `run_remote_cover_worker`, `start_job`, `start_lock`, `storage_failed`, `wake_remote_cover_worker`, `write_remote_cover_cache`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AdapterByteSource`, `CoverConsumeResult`, `CoverSourceInfo`, `InitialListingEntry`, `ScanJob`, `SqliteScanSink`, `StartConfig`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `enqueue_cover`, `previous_fingerprint`, `should_recheck_directory`, `spill_directory`, `stage_directory`, `take_spilled_directory`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `len`, `read_at`
 
 Future<RemoteScanJobDto> remoteScanStart({
   required String sourceType,
@@ -19,6 +20,25 @@ Future<RemoteScanJobDto> remoteScanStart({
   required String mode,
   String? initialListingJson,
 }) => RustLib.instance.api.crateApiRemoteScanRemoteScanStart(
+  sourceType: sourceType,
+  sourceId: sourceId,
+  session: session,
+  rootPath: rootPath,
+  mode: mode,
+  initialListingJson: initialListingJson,
+);
+
+/// Start a user-requested scan. Manual incremental scans intentionally bypass
+/// the automatic 15-minute directory TTL once, while the ordinary start API
+/// retains the inexpensive automatic recheck behavior.
+Future<RemoteScanJobDto> remoteScanStartManual({
+  required String sourceType,
+  required String sourceId,
+  required BigInt session,
+  required String rootPath,
+  required String mode,
+  String? initialListingJson,
+}) => RustLib.instance.api.crateApiRemoteScanRemoteScanStartManual(
   sourceType: sourceType,
   sourceId: sourceId,
   session: session,
@@ -85,6 +105,21 @@ class RemoteScanStatusDto {
   final BigInt processed;
   final BigInt total;
 
+  /// Directory discovery phase is intentionally separate from cover
+  /// readiness.  `processed/total` remain for old clients only.
+  final String listingPhase;
+  final BigInt directoriesChecked;
+  final BigInt discoveredBooks;
+  final bool discoveryComplete;
+  final BigInt readyBooks;
+  final BigInt activeBooks;
+  final BigInt pendingBooks;
+  final BigInt retryBooks;
+  final BigInt blockedBooks;
+  final BigInt unsupportedBooks;
+  final BigInt failedBooks;
+  final PlatformInt64 viewRevision;
+
   const RemoteScanStatusDto({
     required this.sourceId,
     required this.status,
@@ -95,6 +130,18 @@ class RemoteScanStatusDto {
     this.errorCode,
     required this.processed,
     required this.total,
+    required this.listingPhase,
+    required this.directoriesChecked,
+    required this.discoveredBooks,
+    required this.discoveryComplete,
+    required this.readyBooks,
+    required this.activeBooks,
+    required this.pendingBooks,
+    required this.retryBooks,
+    required this.blockedBooks,
+    required this.unsupportedBooks,
+    required this.failedBooks,
+    required this.viewRevision,
   });
 
   @override
@@ -107,7 +154,19 @@ class RemoteScanStatusDto {
       lastSuccessAt.hashCode ^
       errorCode.hashCode ^
       processed.hashCode ^
-      total.hashCode;
+      total.hashCode ^
+      listingPhase.hashCode ^
+      directoriesChecked.hashCode ^
+      discoveredBooks.hashCode ^
+      discoveryComplete.hashCode ^
+      readyBooks.hashCode ^
+      activeBooks.hashCode ^
+      pendingBooks.hashCode ^
+      retryBooks.hashCode ^
+      blockedBooks.hashCode ^
+      unsupportedBooks.hashCode ^
+      failedBooks.hashCode ^
+      viewRevision.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -122,5 +181,17 @@ class RemoteScanStatusDto {
           lastSuccessAt == other.lastSuccessAt &&
           errorCode == other.errorCode &&
           processed == other.processed &&
-          total == other.total;
+          total == other.total &&
+          listingPhase == other.listingPhase &&
+          directoriesChecked == other.directoriesChecked &&
+          discoveredBooks == other.discoveredBooks &&
+          discoveryComplete == other.discoveryComplete &&
+          readyBooks == other.readyBooks &&
+          activeBooks == other.activeBooks &&
+          pendingBooks == other.pendingBooks &&
+          retryBooks == other.retryBooks &&
+          blockedBooks == other.blockedBooks &&
+          unsupportedBooks == other.unsupportedBooks &&
+          failedBooks == other.failedBooks &&
+          viewRevision == other.viewRevision;
 }

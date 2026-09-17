@@ -116,8 +116,7 @@ pub(crate) fn materialize_ready_proposal_on(
     }
 
     let target_book_key = canonical_book_key(&proposal.book_key);
-    let (mut meta, legacy_keys_migrated) =
-        load_and_migrate_meta_aliases(conn, &target_book_key)?;
+    let (mut meta, legacy_keys_migrated) = load_and_migrate_meta_aliases(conn, &target_book_key)?;
     if legacy_keys_migrated {
         conn.execute(
             "UPDATE scrape_proposals SET book_key = ?2, updated_at = ?3 WHERE asset_key = ?1",
@@ -129,20 +128,20 @@ pub(crate) fn materialize_ready_proposal_on(
         .map_err(|error| anyhow!("invalid proposal semantic_json: {error}"))?;
     if meta.is_none() {
         meta = Some(db::BookMetaRow {
-        key: target_book_key.clone(),
-        cover_page: 0,
-        crop_x: None,
-        crop_y: None,
-        crop_w: None,
-        crop_h: None,
-        author: String::new(),
-        genre: String::new(),
-        series: String::new(),
-        title: String::new(),
-        chinese_title: String::new(),
-        summary: String::new(),
-        comment: String::new(),
-        rotations: "{}".into(),
+            key: target_book_key.clone(),
+            cover_page: 0,
+            crop_x: None,
+            crop_y: None,
+            crop_w: None,
+            crop_h: None,
+            author: String::new(),
+            genre: String::new(),
+            series: String::new(),
+            title: String::new(),
+            chinese_title: String::new(),
+            summary: String::new(),
+            comment: String::new(),
+            rotations: "{}".into(),
         });
     }
     let mut meta = meta.expect("metadata initialized above");
@@ -231,9 +230,13 @@ pub(crate) fn materialize_ready_proposal_on(
 /// as `F:\\...zip`; those rows are folded into the canonical key before a
 /// proposal can create a second metadata projection.
 fn canonical_book_key(key: &str) -> String {
-    let Some(first) = key.find('|') else { return key.to_string() };
+    let Some(first) = key.find('|') else {
+        return key.to_string();
+    };
     let rest = &key[first + 1..];
-    let Some(second_rel) = rest.find('|') else { return key.to_string() };
+    let Some(second_rel) = rest.find('|') else {
+        return key.to_string();
+    };
     let second = first + 1 + second_rel;
     db::book_key_of(&key[..first], &key[first + 1..second], &key[second + 1..])
 }
@@ -332,23 +335,47 @@ fn load_and_migrate_meta_aliases(
 }
 
 fn merge_non_empty_meta(target: &mut db::BookMetaRow, source: &db::BookMetaRow) {
-    if target.author.trim().is_empty() { target.author = source.author.clone(); }
-    if target.genre.trim().is_empty() { target.genre = source.genre.clone(); }
-    if target.series.trim().is_empty() { target.series = source.series.clone(); }
-    if target.title.trim().is_empty() { target.title = source.title.clone(); }
-    if target.chinese_title.trim().is_empty() { target.chinese_title = source.chinese_title.clone(); }
-    if target.summary.trim().is_empty() { target.summary = source.summary.clone(); }
-    if target.comment.trim().is_empty() { target.comment = source.comment.clone(); }
+    if target.author.trim().is_empty() {
+        target.author = source.author.clone();
+    }
+    if target.genre.trim().is_empty() {
+        target.genre = source.genre.clone();
+    }
+    if target.series.trim().is_empty() {
+        target.series = source.series.clone();
+    }
+    if target.title.trim().is_empty() {
+        target.title = source.title.clone();
+    }
+    if target.chinese_title.trim().is_empty() {
+        target.chinese_title = source.chinese_title.clone();
+    }
+    if target.summary.trim().is_empty() {
+        target.summary = source.summary.clone();
+    }
+    if target.comment.trim().is_empty() {
+        target.comment = source.comment.clone();
+    }
     if target.rotations.trim().is_empty() || target.rotations == "{}" {
         if !source.rotations.trim().is_empty() && source.rotations != "{}" {
             target.rotations = source.rotations.clone();
         }
     }
-    if target.cover_page == 0 && source.cover_page != 0 { target.cover_page = source.cover_page; }
-    if target.crop_x.is_none() { target.crop_x = source.crop_x; }
-    if target.crop_y.is_none() { target.crop_y = source.crop_y; }
-    if target.crop_w.is_none() { target.crop_w = source.crop_w; }
-    if target.crop_h.is_none() { target.crop_h = source.crop_h; }
+    if target.cover_page == 0 && source.cover_page != 0 {
+        target.cover_page = source.cover_page;
+    }
+    if target.crop_x.is_none() {
+        target.crop_x = source.crop_x;
+    }
+    if target.crop_y.is_none() {
+        target.crop_y = source.crop_y;
+    }
+    if target.crop_w.is_none() {
+        target.crop_w = source.crop_w;
+    }
+    if target.crop_h.is_none() {
+        target.crop_h = source.crop_h;
+    }
 }
 
 fn migrate_book_tag_links(conn: &Connection, old_key: &str, new_key: &str) -> Result<()> {
@@ -360,7 +387,10 @@ fn migrate_book_tag_links(conn: &Connection, old_key: &str, new_key: &str) -> Re
              deleted = 0, updated_at = MAX(book_tags.updated_at, excluded.updated_at)",
         params![new_key, old_key],
     )?;
-    conn.execute("DELETE FROM book_tags WHERE book_key = ?1", params![old_key])?;
+    conn.execute(
+        "DELETE FROM book_tags WHERE book_key = ?1",
+        params![old_key],
+    )?;
     Ok(())
 }
 
@@ -901,11 +931,8 @@ mod tests {
             params![row.book_key],
         )
         .unwrap();
-        conn.execute(
-            "DELETE FROM tags WHERE name IN ('Chinese', '无修正')",
-            [],
-        )
-        .unwrap();
+        conn.execute("DELETE FROM tags WHERE name IN ('Chinese', '无修正')", [])
+            .unwrap();
 
         let reconciled = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
         assert_eq!(reconciled.status, "applied");
@@ -952,7 +979,8 @@ mod tests {
         let result = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
         assert_eq!(result.status, "applied");
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r.get::<_, i64>(0))
+            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r
+                .get::<_, i64>(0))
                 .unwrap(),
             1
         );
@@ -965,7 +993,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             meta,
-            ("用户命名的标题".into(), "用户作者".into(), "用户系列".into())
+            (
+                "用户命名的标题".into(),
+                "用户作者".into(),
+                "用户系列".into()
+            )
         );
         assert_eq!(
             conn.query_row(

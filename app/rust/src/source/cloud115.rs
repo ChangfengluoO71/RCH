@@ -7,7 +7,10 @@
 //! - 限速：AList 默认 1 r/s，这里默认 1.5 r/s 保守节流。
 //!
 //! 契约细节见 `.trellis/tasks/08-03-m6-netdisk-official-api/research/115-openapi-contract.md`。
+use super::gate::CancelSignal;
+use super::singleflight::SingleFlight;
 use super::{ByteSource, Entry, RateGate};
+use crate::remote_scan::adapter::{classify_range_probe_response, RangeProbe, RemoteScanError};
 use crate::source::webdav::DownloadProgress;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -21,7 +24,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const API_AUTH_DEVICE_CODE: &str = "https://passportapi.115.com/open/authDeviceCode";
 const API_QR_STATUS: &str = "https://qrcodeapi.115.com/get/status/";
@@ -298,7 +301,7 @@ impl Cloud115Client {
             } else {
                 root_id.to_string()
             },
-            gate: RateGate::new(1.5),
+            gate: RateGate::fixed_interval("115app.api", 1.5),
         })
     }
 
@@ -348,7 +351,9 @@ impl Cloud115Client {
     ) -> Result<(i64, String)> {
         let mut attempts = 0;
         loop {
-            self.gate.wait();
+            // 许可按"每次尝试"持有：失败重试时必须重新排队。
+            let gate_guard = self.gate.enter();
+            crate::source::record_gate_wait(self.gate.channel(), gate_guard.waited_us());
             let token = self.ensure_token()?;
             let mut req = self
                 .client
@@ -365,11 +370,9 @@ impl Cloud115Client {
             let status = resp.status();
             let body = resp.text().unwrap_or_default();
             if !status.is_success() {
-                bail!(
-                    "115 API HTTP {}: {}",
-                    status.as_u16(),
-                    body.chars().take(200).collect::<String>()
-                );
+                // Do not surface an HTML/WAF body: it may be large and can
+                // contain provider diagnostics or signed redirect details.
+                bail!("115 API HTTP {}", status.as_u16());
             }
             let parsed: serde_json::Value =
                 serde_json::from_str(&body).context("解析 115 API 响应失败")?;
@@ -477,13 +480,32 @@ impl Cloud115Client {
 
     /// 探测直链是否支持 Range。
     pub fn probe_range(&self, url: &str) -> bool {
-        self.client
+        self.probe_checked(url)
+            .map(|probe| probe.supported)
+            .unwrap_or(false)
+    }
+
+    /// 带错误语义的直链 Range 探测。只有合法 `206 + Content-Range`
+    /// 才会返回 supported=true，认证/WAF/网络错误继续向上游传播。
+    pub fn probe_checked(&self, url: &str) -> std::result::Result<RangeProbe, RemoteScanError> {
+        let response = self
+            .client
             .get(url)
             .header(RANGE, "bytes=0-0")
             .header(USER_AGENT, APP_UA)
             .send()
-            .map(|r| r.status() == StatusCode::PARTIAL_CONTENT)
-            .unwrap_or(false)
+            .map_err(|_| RemoteScanError::TransientNetwork("range_probe_network".into()))?;
+        let status = response.status().as_u16();
+        let content_range = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok());
+        let content_length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        classify_range_probe_response(status, content_range, content_length)
     }
 
     /// 探测直链 Range 支持并返回总大小（bytes=0-0 → 206 + Content-Range: bytes 0-0/{total}）。
@@ -1075,8 +1097,77 @@ pub struct Cloud115WebClient {
     cookie: Mutex<String>,
     root: String,
     gate: RateGate,
+    range_gate: RateGate,
+    /// 取消信号：一旦本会话被 WAF 判定为 405，所有**正在等待**限速许可的 CDN
+    /// 请求立即放弃等待，而不是各自睡满间隔后再发现冷却。
+    cdn_cancel: CancelSignal,
+    /// A 405 from the web endpoint is an account/IP-level WAF response, not
+    /// a file error.  Stop all follow-up requests for a short cooldown so a
+    /// scan cannot keep hammering the same session while the reader retries.
+    waf_cooldown_until: Mutex<Option<Instant>>,
+    /// pick_code -> short-lived direct-link response. The scanner and reader
+    /// can ask for the same link concurrently; caching avoids repeating the
+    /// expensive/WAF-sensitive `chrome/downurl` call for every Range read.
+    downlinks: Mutex<HashMap<String, CachedWebDownloadInfo>>,
+    /// 按 pickcode 合并并发取链。取代了原来的 `downurl_lock: Mutex<()>` ——
+    /// 那把锁是**跨 pickcode** 的，且覆盖限速等待 + 网络往返，会把"后台给 A
+    /// 取链"变成"阅读取 B 也得等"。
+    downurl_flight: SingleFlight<String, std::result::Result<super::quark::DownloadInfo, String>>,
     /// pick_code -> 真实文件名（列表时缓存；下载/封面/历史打开都需要）。
     names: Mutex<HashMap<String, String>>,
+}
+
+const WEB_DOWNLOAD_URL_CACHE_TTL: Duration = Duration::from_secs(300);
+const WEB_DOWNLOAD_URL_CACHE_CAPACITY: usize = 512;
+const WEB_WAF_COOLDOWN: Duration = Duration::from_secs(60);
+/// CDN Range 通道的**持续速率**（请求/秒）。
+///
+/// 这是 P0 冻结的 baseline 档位，默认值保持不变；对照测量可通过
+/// `RCH_CDN_RATE_PER_SEC` 覆盖以试 8 / 12 / 20 等中间档位，无需重新编译。
+///
+/// 注意：改造前这个数字以"固定间隔"方式生效（每 250 ms 才准发一个请求），
+/// 使**请求数量本身**成为延迟下限。改造后它只约束**持续速率**，突发由
+/// `WEB_RANGE_BURST` 单独控制 —— 两者是不同维度。
+const WEB_RANGE_REQUESTS_PER_SEC: f64 = 4.0;
+/// 突发额度：允许一页的预读窗口连续发出而不必逐个等 1/rate 秒。
+///
+/// 默认取"一页 1.5 MiB / 256 KiB 预读 = 6 个窗口"，使单页读取不再被门控
+/// 人为拉长；最终值由真机对照测量决定（见 P0-A 证据文件第 5.4 节）。
+const WEB_RANGE_BURST: f64 = 6.0;
+/// **独立于速率**的在途并发上限：真实同时打开多少个 CDN 请求。
+const WEB_RANGE_MAX_IN_FLIGHT: usize = 2;
+/// 等待超过该毫秒数即提升有效优先级，保证后台不会被前台永久饿死。
+const WEB_RANGE_AGING_MS: u64 = 1_000;
+
+fn env_f64(name: &str, fallback: f64) -> f64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| *value >= 0.0)
+        .unwrap_or(fallback)
+}
+
+fn env_usize(name: &str, fallback: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(fallback)
+}
+
+/// CDN Range 通道的门控参数（可用环境变量覆盖以便对照测量）。
+fn cdn_range_gate_limit() -> super::GateLimit {
+    super::GateLimit {
+        per_sec: env_f64("RCH_CDN_RATE_PER_SEC", WEB_RANGE_REQUESTS_PER_SEC),
+        burst: env_f64("RCH_CDN_BURST", WEB_RANGE_BURST),
+        max_in_flight: env_usize("RCH_CDN_MAX_INFLIGHT", WEB_RANGE_MAX_IN_FLIGHT).max(1),
+        aging_ms: WEB_RANGE_AGING_MS,
+    }
+}
+
+#[derive(Clone)]
+struct CachedWebDownloadInfo {
+    info: super::quark::DownloadInfo,
+    fetched_at: Instant,
 }
 
 impl Cloud115WebClient {
@@ -1089,7 +1180,18 @@ impl Cloud115WebClient {
             } else {
                 root.to_string()
             },
-            gate: RateGate::new(1.5),
+            gate: RateGate::fixed_interval("115web.api", 1.5),
+            range_gate: {
+                let range_gate = RateGate::new("115web.cdn", cdn_range_gate_limit());
+                // 把本轮实际生效的门控档位写进证据流，避免事后无法判断"这组数
+                // 是在哪个档位下测的"。
+                crate::perf::note("cdn.gate.limit", "limit", format!("{:?}", range_gate.limit()));
+                range_gate
+            },
+            cdn_cancel: CancelSignal::new(),
+            waf_cooldown_until: Mutex::new(None),
+            downlinks: Mutex::new(HashMap::new()),
+            downurl_flight: SingleFlight::new(),
             names: Mutex::new(HashMap::new()),
         })
     }
@@ -1107,6 +1209,34 @@ impl Cloud115WebClient {
         self.cookie.lock().unwrap().clone()
     }
 
+    /// Return a stable Chinese error while the session is cooling down after
+    /// a WAF 405.  The check is deliberately in-memory and per session; it
+    /// never persists provider state or credentials.
+    fn ensure_web_request_allowed(&self) -> Result<()> {
+        let mut cooldown = self.waf_cooldown_until.lock().unwrap();
+        let Some(until) = *cooldown else {
+            return Ok(());
+        };
+        let remaining = until.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            *cooldown = None;
+            return Ok(());
+        }
+        let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() != 0);
+        bail!("115 请求暂被风控限流，请约 {seconds} 秒后重试");
+    }
+
+    fn mark_web_waf_blocked(&self) {
+        crate::perf::bump(crate::perf::Counter::WafCooldowns);
+        // 让正在排队等许可的 CDN 请求立即退出，避免它们睡满间隔后再逐个失败。
+        self.cdn_cancel.cancel();
+        let mut cooldown = self.waf_cooldown_until.lock().unwrap();
+        let until = Instant::now() + WEB_WAF_COOLDOWN;
+        if cooldown.is_none_or(|current| current < until) {
+            *cooldown = Some(until);
+        }
+    }
+
     /// 当前会话 Cookie（供 Dart 侧回写 DB）。
     pub fn cookie(&self) -> String {
         self.current_cookie()
@@ -1114,7 +1244,10 @@ impl Cloud115WebClient {
 
     /// 统一 GET：带 Cookie + 浏览器 UA；返回 (HTTP 状态码, 文本)。
     fn get_with_cookie(&self, url: &str, query: &[(&str, String)]) -> Result<(u16, String)> {
-        self.gate.wait();
+        self.ensure_web_request_allowed()?;
+        let gate_guard = self.gate.enter();
+        crate::source::record_gate_wait(self.gate.channel(), gate_guard.waited_us());
+        self.ensure_web_request_allowed()?;
         let resp = self
             .client
             .get(url)
@@ -1151,6 +1284,8 @@ impl Cloud115WebClient {
             ("fc_mix", "0".to_string()),
         ];
         let mut last_err: Option<anyhow::Error> = None;
+        let mut saw_405 = false;
+        let mut saw_non_405_response = false;
         for url in [WEB_API_FILES, WEB_API_FILES_HTTP, WEB_API_NATSORT] {
             let (status, text) = match self.get_with_cookie(url, &query) {
                 Ok(v) => v,
@@ -1160,14 +1295,20 @@ impl Cloud115WebClient {
                 }
             };
             if status == 405 {
+                saw_405 = true;
                 last_err = Some(anyhow!("115 列表接口被风控拦截(HTTP 405)，已尝试备用接口"));
                 continue;
             }
+            saw_non_405_response = true;
             if !(200..300).contains(&status) {
-                last_err = Some(anyhow!(
-                    "115 列表接口 HTTP {status}: {}",
-                    text.chars().take(200).collect::<String>()
-                ));
+                last_err = Some(if matches!(status, 401 | 403) {
+                    anyhow!("115 登录状态已失效或请求被拒绝（HTTP {status}），请重新扫码")
+                } else {
+                    // Keep HTML/WAF diagnostics out of the UI and persisted
+                    // scan status. They are not actionable and can contain
+                    // provider-specific details.
+                    anyhow!("115 列表接口请求失败（HTTP {status}）")
+                });
                 continue;
             }
             match serde_json::from_str::<WebFilesResp>(&text) {
@@ -1185,6 +1326,12 @@ impl Cloud115WebClient {
                     continue;
                 }
             }
+        }
+        // The first webapi host is known to return 405 for some networks;
+        // only trip the session breaker when every HTTP response was 405, so
+        // the documented fallback hosts still get a chance to serve listings.
+        if saw_405 && !saw_non_405_response {
+            self.mark_web_waf_blocked();
         }
         Err(last_err.unwrap_or_else(|| anyhow!("115 列表接口全部不可用")))
     }
@@ -1232,8 +1379,93 @@ impl Cloud115WebClient {
         Ok(all)
     }
 
+    fn cached_downurl(&self, pick_code: &str) -> Option<super::quark::DownloadInfo> {
+        let mut downlinks = self.downlinks.lock().unwrap();
+        let cached = downlinks.get(pick_code).cloned();
+        match cached {
+            Some(cached) if cached.fetched_at.elapsed() < WEB_DOWNLOAD_URL_CACHE_TTL => {
+                Some(cached.info)
+            }
+            Some(_) => {
+                downlinks.remove(pick_code);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn cache_downurl(&self, pick_code: &str, info: &super::quark::DownloadInfo) {
+        let mut downlinks = self.downlinks.lock().unwrap();
+        if downlinks.len() >= WEB_DOWNLOAD_URL_CACHE_CAPACITY && !downlinks.contains_key(pick_code)
+        {
+            if let Some(oldest_key) = downlinks.keys().next().cloned() {
+                downlinks.remove(&oldest_key);
+            }
+        }
+        downlinks.insert(
+            pick_code.to_string(),
+            CachedWebDownloadInfo {
+                info: info.clone(),
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+
+    /// Invalidate a cached direct link after a CDN 403/permission failure.
+    pub fn invalidate_downurl(&self, pick_code: &str) {
+        self.downlinks.lock().unwrap().remove(pick_code);
+    }
+
     /// 取下载直链（chrome/downurl，无 200MB 上限；需 m115 加密）。
+    /// 取下载直链：命中缓存直接返回，否则按 pickcode 合并并发请求。
+    ///
+    /// 与改造前的区别：**不同 pickcode 之间不再互相阻塞**。合并粒度是文件，
+    /// 账号级的限速（`gate`）与风控冷却（`waf_cooldown_until`）仍然共享。
     pub fn downurl(&self, pick_code: &str) -> Result<super::quark::DownloadInfo> {
+        use crate::perf::Counter;
+        crate::perf::bump(Counter::DownUrlRequests);
+        if let Some(info) = self.cached_downurl(pick_code) {
+            crate::perf::bump(Counter::DownUrlCacheHits);
+            return Ok(info);
+        }
+        let outcome = self.downurl_flight.run(pick_code.to_string(), || {
+            // leader 的二次检查：登记的瞬间可能已经有别人填好缓存。
+            if let Some(info) = self.cached_downurl(pick_code) {
+                return Ok(info);
+            }
+            // 错误在这里被折叠成字符串再原样向上抛 —— 与改造前一样只依赖文案
+            // （`scan_error` / `scan_io_error` 都是文本分类），不改变错误语义。
+            self.fetch_downurl(pick_code)
+                .map_err(|error| error.to_string())
+        });
+        // follower 的等待 = 搭同一次取链的车。仍沿用 LockWait 计数器名，
+        // 但含义已从"等一把全局锁"变成"等同键 leader"。
+        crate::perf::observe_us(
+            Counter::DownUrlLockWaitUsTotal,
+            Counter::DownUrlLockWaitUsMax,
+            outcome.waited_us,
+        );
+        if !outcome.leader {
+            crate::perf::bump(Counter::DownUrlCoalesced);
+        }
+        match outcome.value {
+            Ok(info) => {
+                if outcome.leader {
+                    crate::perf::bump(Counter::DownUrlFetched);
+                }
+                Ok(info)
+            }
+            Err(message) => {
+                if outcome.leader {
+                    crate::perf::bump(Counter::DownUrlErrors);
+                }
+                anyhow::bail!("{message}")
+            }
+        }
+    }
+
+    fn fetch_downurl(&self, pick_code: &str) -> Result<super::quark::DownloadInfo> {
+        self.ensure_web_request_allowed()?;
         let mut payload = serde_json::Map::new();
         payload.insert("pickcode".to_string(), pick_code.into());
         if let Some(uid) = user_id_from_cookie(&self.current_cookie()) {
@@ -1243,10 +1475,23 @@ impl Cloud115WebClient {
         }
         let json = serde_json::Value::Object(payload).to_string();
         let enc = m115_encode(&json);
-        self.gate.wait();
+        let gate_guard = self.gate.enter();
+        crate::source::record_gate_wait(self.gate.channel(), gate_guard.waited_us());
+        self.ensure_web_request_allowed()?;
+        // The web endpoint rejects requests without its millisecond cache
+        // buster (currently returned as HTTP 405 by the WAF). Generate it
+        // after the rate-gate wait so a queued request never carries a stale
+        // timestamp, and keep it on the request URL rather than the encrypted
+        // payload.
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_string();
         let resp = self
             .client
             .post(WEB_API_DOWNURL)
+            .query(&[("t", timestamp)])
             .form(&[("data", enc)])
             .header(COOKIE, self.current_cookie())
             .header(USER_AGENT, WEB_DOWNLOAD_UA)
@@ -1256,10 +1501,16 @@ impl Cloud115WebClient {
         let status = resp.status().as_u16();
         let text = resp.text().unwrap_or_default();
         if !(200..300).contains(&status) {
-            bail!(
-                "115 下载直链接口 HTTP {status}: {}",
-                text.chars().take(200).collect::<String>()
-            );
+            if status == 405 {
+                self.mark_web_waf_blocked();
+                bail!("115 下载直链接口被风控拦截（HTTP 405），请稍后重试");
+            }
+            if matches!(status, 401 | 403) {
+                bail!("115 登录状态已失效或请求被拒绝（HTTP {status}），请重新扫码");
+            }
+            // Do not surface an HTML/WAF body (which may contain provider
+            // diagnostics) in the reader UI or scan status.
+            bail!("115 下载直链接口请求失败（HTTP {status}）");
         }
         let parsed: serde_json::Value =
             serde_json::from_str(&text).context("解析 115 直链响应失败")?;
@@ -1288,17 +1539,9 @@ impl Cloud115WebClient {
             .get("data")
             .and_then(|d| d.as_str())
             .ok_or_else(|| anyhow!("115 直链响应缺少 data"))?;
-        let dec = m115_decode(data)
-            .with_context(|| format!("解密 115 直链响应失败，data 完整内容: {}", data))?;
-        let decoded: serde_json::Value = serde_json::from_slice(&dec).with_context(|| {
-            format!(
-                "解析 115 直链数据失败，解密结果前 96 字符: {}",
-                String::from_utf8_lossy(&dec)
-                    .chars()
-                    .take(96)
-                    .collect::<String>()
-            )
-        })?;
+        let dec = m115_decode(data).context("解密 115 直链响应失败")?;
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&dec).context("解析 115 直链数据失败")?;
         let obj = decoded
             .as_object()
             .ok_or_else(|| anyhow!("115 直链数据格式错误"))?;
@@ -1336,7 +1579,9 @@ impl Cloud115WebClient {
                     .insert(pick_code.to_string(), n.clone());
             }
         }
-        Ok(super::quark::DownloadInfo { url, size, name })
+        let info = super::quark::DownloadInfo { url, size, name };
+        self.cache_downurl(pick_code, &info);
+        Ok(info)
     }
 
     /// 解析 pick_code 对应的真实文件名：列表缓存 → 直链响应 → 报错。
@@ -1351,37 +1596,50 @@ impl Cloud115WebClient {
     }
 
     /// 探测直链 Range 支持并返回总大小。
-    pub fn probe(&self, url: &str) -> (bool, u64) {
-        let resp = self
+    pub fn probe_checked(&self, url: &str) -> Result<RangeProbe, RemoteScanError> {
+        self.ensure_web_request_allowed()
+            .map_err(|_| RemoteScanError::RateLimited {
+                retry_after_ms: Some(WEB_WAF_COOLDOWN.as_millis() as u64),
+            })?;
+        let gate_guard = self.range_gate.enter();
+        crate::source::record_gate_wait(self.range_gate.channel(), gate_guard.waited_us());
+        self.ensure_web_request_allowed()
+            .map_err(|_| RemoteScanError::RateLimited {
+                retry_after_ms: Some(WEB_WAF_COOLDOWN.as_millis() as u64),
+            })?;
+        let response = self
             .client
             .get(url)
             .header(RANGE, "bytes=0-0")
             .header(COOKIE, self.current_cookie())
             .header(USER_AGENT, WEB_DOWNLOAD_UA)
             .header(reqwest::header::REFERER, WEB_DOWNLOAD_REFERER)
-            .send();
-        let resp = match resp {
-            Ok(r) => r,
-            Err(_) => return (false, 0),
-        };
-        let content_length = || {
-            resp.headers()
-                .get(reqwest::header::CONTENT_LENGTH)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0)
-        };
-        if resp.status() == StatusCode::PARTIAL_CONTENT {
-            let total = resp
-                .headers()
-                .get(reqwest::header::CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.rsplit('/').next())
-                .and_then(|x| x.trim().parse::<u64>().ok())
-                .filter(|n| *n > 0);
-            (true, total.unwrap_or_else(content_length))
-        } else {
-            (false, content_length())
+            .send()
+            .map_err(|_| RemoteScanError::TransientNetwork("range_probe_network".into()))?;
+        let status = response.status().as_u16();
+        if status == StatusCode::METHOD_NOT_ALLOWED.as_u16() {
+            self.mark_web_waf_blocked();
+        }
+        let content_range = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let content_length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        classify_range_probe_response(status, content_range.as_deref(), content_length)
+    }
+
+    /// Compatibility wrapper for the old bool/size contract.  New code must
+    /// use [`probe_checked`] so protocol failures are not collapsed into a
+    /// false “Range unavailable” result.
+    pub fn probe(&self, url: &str) -> (bool, u64) {
+        match self.probe_checked(url) {
+            Ok(probe) => (probe.supported, probe.total_size.unwrap_or(0)),
+            Err(_) => (false, 0),
         }
     }
 
@@ -1390,16 +1648,67 @@ impl Cloud115WebClient {
         if buf.is_empty() {
             return Ok(0);
         }
+        self.ensure_web_request_allowed()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         let end = offset + buf.len() as u64 - 1;
-        let mut resp = self
+        // P0 埋点：记录一次 CDN Range 请求的入队、门控等待、在途并发与状态码。
+        let span = crate::perf::Span::new("cdn.range")
+            .field_u64("offset", offset)
+            .field_u64("len", buf.len() as u64);
+        let gauge = crate::perf::InFlightGauge::enter_with_peak(
+            crate::perf::Counter::RangeInFlight,
+            crate::perf::Counter::RangeInFlightMax,
+        );
+        crate::perf::bump(crate::perf::Counter::RangeRequests);
+        // 优先级来自当前线程（reader 前台读页 / 预取 / 封面 / 扫描各自标注），
+        // 因此外层优先级能真正决定这一次请求的排队次序。
+        let gate_guard = match self.range_gate.enter_cancellable(&self.cdn_cancel) {
+            Ok(guard) => guard,
+            Err(cancelled) => {
+                crate::perf::bump(crate::perf::Counter::Cancellations);
+                span.field_str("error", "cancelled").end();
+                return Err(io::Error::new(io::ErrorKind::Interrupted, cancelled.to_string()));
+            }
+        };
+        let gate_wait_us = gate_guard.waited_us();
+        crate::source::record_gate_wait(self.range_gate.channel(), gate_wait_us);
+        let span = span.field_u64("gate_wait_us", gate_wait_us);
+        let gate_snapshot = self.range_gate.snapshot();
+        let span = span
+            .field_u64("gate_in_flight", gate_snapshot.in_flight as u64)
+            .field_u64(
+                "gate_queued_background",
+                (gate_snapshot.queued[2] + gate_snapshot.queued[3]) as u64,
+            );
+        let sent = self
             .client
             .get(url)
             .header(RANGE, format!("bytes={}-{}", offset, end))
             .header(COOKIE, self.current_cookie())
             .header(USER_AGENT, WEB_DOWNLOAD_UA)
             .header(reqwest::header::REFERER, WEB_DOWNLOAD_REFERER)
-            .send()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Range 请求失败:{e}")))?;
+            .send();
+        let mut resp = match sent {
+            Ok(resp) => resp,
+            Err(e) => {
+                crate::perf::bump(crate::perf::Counter::RangeErrors);
+                span.field_str("error", "transport").end();
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Range 请求失败:{e}"),
+                ));
+            }
+        };
+        let range_status = resp.status().as_u16();
+        crate::perf::record_range_status(range_status);
+        span.field_u64("status", range_status as u64).end();
+        if resp.status() == StatusCode::METHOD_NOT_ALLOWED {
+            self.mark_web_waf_blocked();
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "115 Range 请求被风控拦截（HTTP 405），请稍后重试",
+            ));
+        }
         if resp.status() == StatusCode::FORBIDDEN {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -1420,6 +1729,9 @@ impl Cloud115WebClient {
                 Err(e) => return Err(e),
             }
         }
+        crate::perf::add(crate::perf::Counter::RangeBytes, filled as u64);
+        drop(gate_guard);
+        drop(gauge);
         Ok(filled)
     }
 
@@ -1465,6 +1777,7 @@ impl Cloud115WebClient {
                 return Ok(file_path);
             }
         }
+        self.ensure_web_request_allowed()?;
         let mut resp = self
             .client
             .get(&info.url)
@@ -1473,8 +1786,14 @@ impl Cloud115WebClient {
             .header(reqwest::header::REFERER, WEB_DOWNLOAD_REFERER)
             .send()
             .map_err(|e| anyhow!("下载失败:{e}"))?;
+        if resp.status() == StatusCode::METHOD_NOT_ALLOWED {
+            self.mark_web_waf_blocked();
+            bail!("115 下载请求被风控拦截（HTTP 405），请稍后重试");
+        }
         if resp.status() == StatusCode::FORBIDDEN {
+            self.invalidate_downurl(pick_code);
             let info2 = self.downurl(pick_code)?;
+            self.ensure_web_request_allowed()?;
             resp = self
                 .client
                 .get(&info2.url)
@@ -1483,17 +1802,13 @@ impl Cloud115WebClient {
                 .header(reqwest::header::REFERER, WEB_DOWNLOAD_REFERER)
                 .send()
                 .map_err(|e| anyhow!("下载失败:{e}"))?;
+            if resp.status() == StatusCode::METHOD_NOT_ALLOWED {
+                self.mark_web_waf_blocked();
+                bail!("115 下载请求被风控拦截（HTTP 405），请稍后重试");
+            }
         }
         if !resp.status().is_success() {
-            bail!(
-                "下载失败:HTTP {} {}",
-                resp.status().as_u16(),
-                resp.text()
-                    .unwrap_or_default()
-                    .chars()
-                    .take(200)
-                    .collect::<String>()
-            );
+            bail!("115 下载请求失败（HTTP {}）", resp.status().as_u16());
         }
         let total = resp.content_length().unwrap_or(info.size.unwrap_or(0));
         if let Some(p) = &progress {
@@ -1559,6 +1874,7 @@ impl ByteSource for Cloud115WebFile {
         match self.client.read_range_url(&url, offset, buf) {
             Ok(n) => Ok(n),
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                self.client.invalidate_downurl(&self.pick_code);
                 *self.url.lock().unwrap() = None;
                 let u2 = self.get_url()?;
                 self.client.read_range_url(&u2, offset, buf).map_err(|_| e)
@@ -1782,6 +2098,143 @@ mod tests {
         assert_eq!(p.data[1].fid, "101");
         assert_eq!(p.data[1].s.as_u64(), 12345);
         assert_eq!(p.data[1].pc, "pc_abc");
+    }
+
+    /// 缓存必须真的按 TTL 过期，而不是"一旦写进去就永远返回"。
+    #[test]
+    fn web_downurl_cache_expires_after_ttl() {
+        let client = Cloud115WebClient::new("UID=12345_abc", "0").unwrap();
+        let info = super::super::quark::DownloadInfo {
+            url: "https://cdn.example.test/stale".into(),
+            size: Some(7),
+            name: Some("stale.cbz".into()),
+        };
+        // 直接写入一条"已过期"的记录（绕过时间流逝，保持用例确定性）。
+        client.downlinks.lock().unwrap().insert(
+            "stale-pick".to_string(),
+            CachedWebDownloadInfo {
+                info: info.clone(),
+                fetched_at: Instant::now() - WEB_DOWNLOAD_URL_CACHE_TTL - Duration::from_secs(1),
+            },
+        );
+        assert!(
+            client.cached_downurl("stale-pick").is_none(),
+            "an entry older than the TTL must not be served"
+        );
+
+        // 未过期的记录仍然可用。
+        client.cache_downurl("fresh-pick", &info);
+        assert_eq!(
+            client.cached_downurl("fresh-pick").map(|value| value.url),
+            Some(info.url)
+        );
+    }
+
+    /// P0-C 的核心：`downurl` 现在只通过 `downurl_flight` 合并，
+    /// **不再有跨 pickcode 的全局锁**。这里直接驱动 `downurl` 实际使用的那条路径
+    /// （用慢速闭包代替网络），证明：同键只跑一次、异键并发不被串行化。
+    #[test]
+    fn web_downurl_coalesces_same_pickcode_without_serialising_other_pickcodes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let client = std::sync::Arc::new(Cloud115WebClient::new("UID=1_a", "0").unwrap());
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+
+        let info = |url: &str| super::super::quark::DownloadInfo {
+            url: url.to_string(),
+            size: Some(1),
+            name: Some("f.cbz".to_string()),
+        };
+
+        // 同键 6 个并发 → 只执行一次。
+        let mut same_key = Vec::new();
+        for _ in 0..6 {
+            let client = std::sync::Arc::clone(&client);
+            let calls = std::sync::Arc::clone(&calls);
+            same_key.push(std::thread::spawn(move || {
+                client
+                    .downurl_flight
+                    .run("shared-pick".to_string(), || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(120));
+                        Ok(info("https://cdn.example.test/shared"))
+                    })
+                    .value
+            }));
+        }
+        for handle in same_key {
+            assert!(handle.join().unwrap().is_ok());
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "six concurrent callers for one pickcode must collapse into one fetch"
+        );
+
+        // 不同键 4 个并发、每个睡 150 ms：若仍被全局锁串行化则 ≥ 600 ms。
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let started = Instant::now();
+        let mut different_keys = Vec::new();
+        for index in 0..4_u32 {
+            let client = std::sync::Arc::clone(&client);
+            let calls = std::sync::Arc::clone(&calls);
+            different_keys.push(std::thread::spawn(move || {
+                client
+                    .downurl_flight
+                    .run(format!("pick-{index}"), || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(150));
+                        Ok(info("https://cdn.example.test/other"))
+                    })
+                    .leader
+            }));
+        }
+        let leaders = different_keys
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|leader| *leader)
+            .count();
+        let elapsed = started.elapsed();
+
+        assert_eq!(leaders, 4, "each distinct pickcode must run its own fetch");
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "different pickcodes must not serialise behind one another; took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn web_downurl_cache_can_be_invalidated_after_cdn_expiry() {
+        let client = Cloud115WebClient::new("UID=12345_abc", "0").unwrap();
+        let info = super::super::quark::DownloadInfo {
+            url: "https://cdn.example.test/file".into(),
+            size: Some(42),
+            name: Some("file.cbz".into()),
+        };
+        client.cache_downurl("pick-code", &info);
+        assert_eq!(
+            client.cached_downurl("pick-code").map(|value| value.url),
+            Some(info.url.clone())
+        );
+        client.invalidate_downurl("pick-code");
+        assert!(client.cached_downurl("pick-code").is_none());
+    }
+
+    #[test]
+    fn web_waf_cooldown_short_circuits_follow_up_requests() {
+        let client = Cloud115WebClient::new("UID=12345_abc", "0").unwrap();
+        client.mark_web_waf_blocked();
+        let error = client.ensure_web_request_allowed().unwrap_err();
+        assert!(error.to_string().contains("风控"));
+        assert!(error.to_string().contains("秒"));
+    }
+
+    #[test]
+    fn expired_web_waf_cooldown_is_cleared() {
+        let client = Cloud115WebClient::new("UID=12345_abc", "0").unwrap();
+        *client.waf_cooldown_until.lock().unwrap() = Some(Instant::now() - Duration::from_secs(1));
+        assert!(client.ensure_web_request_allowed().is_ok());
+        assert!(client.waf_cooldown_until.lock().unwrap().is_none());
     }
 
     #[test]

@@ -523,6 +523,10 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             "ALTER TABLE book_sources ADD COLUMN root_id TEXT",
         ),
         ("cookie", "ALTER TABLE book_sources ADD COLUMN cookie TEXT"),
+        (
+            "credential_ref",
+            "ALTER TABLE book_sources ADD COLUMN credential_ref TEXT",
+        ),
     ] {
         if !src_cols.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
@@ -930,8 +934,9 @@ pub fn migrate_from_library_json(json_path: &str) -> Result<()> {
                 }
                 conn.execute(
                     "INSERT OR IGNORE INTO book_sources
-                     (id, type, name, path, url, username, password, port, note, capability_label)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                     (id, type, name, path, url, username, password, credential_ref, port,
+                      refresh_token, client_id, client_secret, root_id, cookie, note, capability_label)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                     params![
                         id,
                         s["type"].as_str().unwrap_or("local"),
@@ -1100,6 +1105,7 @@ pub struct BookSourceRow {
     pub client_secret: Option<String>,
     pub root_id: Option<String>,
     pub cookie: Option<String>,
+    pub credential_ref: Option<String>,
     pub note: String,
     pub capability_label: String,
     pub remote_only: bool,
@@ -1109,7 +1115,7 @@ pub struct BookSourceRow {
 pub fn load_all_sources() -> Vec<BookSourceRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
-        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label, remote_only, origin_device_id FROM book_sources")
+        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, credential_ref, note, capability_label, remote_only, origin_device_id FROM book_sources")
         .unwrap();
     stmt.query_map([], |row| {
         Ok(BookSourceRow {
@@ -1126,10 +1132,11 @@ pub fn load_all_sources() -> Vec<BookSourceRow> {
             client_secret: row.get(10)?,
             root_id: row.get(11)?,
             cookie: row.get(12)?,
-            note: row.get(13)?,
-            capability_label: row.get(14)?,
-            remote_only: row.get::<_, i64>(15)? != 0,
-            origin_device_id: row.get(16)?,
+            credential_ref: row.get(13)?,
+            note: row.get(14)?,
+            capability_label: row.get(15)?,
+            remote_only: row.get::<_, i64>(16)? != 0,
+            origin_device_id: row.get(17)?,
         })
     })
     .unwrap()
@@ -1324,19 +1331,35 @@ fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
         "SELECT EXISTS(SELECT 1 FROM book_sources WHERE id=?1 AND (
            type IS NOT ?2 OR path IS NOT ?3 OR url IS NOT ?4 OR username IS NOT ?5 OR
            password IS NOT ?6 OR port IS NOT ?7 OR refresh_token IS NOT ?8 OR
-           client_id IS NOT ?9 OR client_secret IS NOT ?10 OR root_id IS NOT ?11 OR cookie IS NOT ?12))",
-        params![s.id, s.r#type, s.path, s.url, s.username, s.password, s.port, s.refresh_token, s.client_id, s.client_secret, s.root_id, s.cookie],
+           client_id IS NOT ?9 OR client_secret IS NOT ?10 OR root_id IS NOT ?11 OR
+           cookie IS NOT ?12 OR credential_ref IS NOT ?13))",
+        params![
+            s.id,
+            s.r#type,
+            s.path,
+            s.url,
+            s.username,
+            s.password,
+            s.port,
+            s.refresh_token,
+            s.client_id,
+            s.client_secret,
+            s.root_id,
+            s.cookie,
+            s.credential_ref
+        ],
         |row| row.get(0),
     )?;
     tx.execute(
         "INSERT INTO book_sources
-         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, note, capability_label, fingerprint, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, credential_ref, note, capability_label, fingerprint, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
             type=excluded.type, name=excluded.name, path=excluded.path, url=excluded.url,
             username=excluded.username, password=excluded.password, port=excluded.port,
             refresh_token=excluded.refresh_token, client_id=excluded.client_id,
-            client_secret=excluded.client_secret, root_id=excluded.root_id, cookie=excluded.cookie,
+             client_secret=excluded.client_secret, root_id=excluded.root_id, cookie=excluded.cookie,
+             credential_ref=excluded.credential_ref,
             note=excluded.note, capability_label=excluded.capability_label,
             fingerprint=excluded.fingerprint, updated_at=excluded.updated_at",
         params![
@@ -1353,6 +1376,7 @@ fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
             s.client_secret,
             s.root_id,
             s.cookie,
+            s.credential_ref,
             s.note,
             s.capability_label,
             fp,
@@ -5186,6 +5210,7 @@ mod tests {
             client_secret: None,
             root_id: None,
             cookie: None,
+            credential_ref: None,
             note: String::new(),
             capability_label: "webdav".into(),
             remote_only: false,
@@ -5273,6 +5298,7 @@ mod tests {
             client_secret: None,
             root_id: None,
             cookie: None,
+            credential_ref: None,
             note: String::new(),
             capability_label: "webdav".into(),
             remote_only: false,
@@ -5325,6 +5351,7 @@ mod tests {
             client_secret: None,
             root_id: None,
             cookie: None,
+            credential_ref: None,
             note: String::new(),
             capability_label: "webdav".into(),
             remote_only: false,
@@ -5760,6 +5787,7 @@ mod tests {
             client_secret: None,
             root_id: None,
             cookie: None,
+            credential_ref: None,
             note: String::new(),
             capability_label: "local".into(),
             remote_only: false,
@@ -5922,6 +5950,7 @@ mod tests {
             client_secret: None,
             root_id: Some("root".into()),
             cookie: None,
+            credential_ref: None,
             note: String::new(),
             capability_label: "quark".into(),
             remote_only: false,
@@ -6095,6 +6124,7 @@ mod tests {
             client_secret: None,
             root_id: None,
             cookie: None,
+            credential_ref: None,
             note: String::new(),
             capability_label: "local".into(),
             remote_only: false,
@@ -6185,6 +6215,7 @@ mod tests {
             client_secret: None,
             root_id: None,
             cookie: None,
+            credential_ref: None,
             note: String::new(),
             capability_label: "local".into(),
             remote_only: false,

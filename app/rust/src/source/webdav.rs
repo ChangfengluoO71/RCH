@@ -5,6 +5,7 @@
 //! 读某页只发该页所需的 Range 请求——远程大文件也能即点即读。
 
 use super::{ByteSource, Entry};
+use crate::remote_scan::adapter::{classify_range_probe_response, RangeProbe, RemoteScanError};
 use anyhow::{anyhow, bail, Context, Result};
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, CONTROLS};
 use reqwest::blocking::Client;
@@ -250,7 +251,10 @@ impl WebDavClient {
         self.propfind(root, "0")?;
 
         // 2. Range 支持探测
-        self.capability.range_supported = self.probe_range(root)?;
+        self.capability.range_supported = self
+            .range_probe_checked(root)
+            .map(|probe| probe.supported)
+            .map_err(|error| anyhow!(error.to_string()))?;
 
         // 3. RTT 探测(发 3 次 HEAD,取平均值)
         self.capability.avg_rtt_ms = self.probe_rtt(root)?;
@@ -265,17 +269,6 @@ impl WebDavClient {
         };
 
         Ok(())
-    }
-
-    fn probe_range(&self, root: &str) -> Result<bool> {
-        let resp = self
-            .client
-            .get(self.url(root))
-            .header(RANGE, "bytes=0-0")
-            .basic_auth(&self.user, Some(&self.pass))
-            .send()
-            .context("Range 探测失败")?;
-        Ok(resp.status() == StatusCode::PARTIAL_CONTENT)
     }
 
     fn probe_rtt(&self, root: &str) -> Result<f64> {
@@ -497,14 +490,34 @@ impl WebDavClient {
 
     /// 探测服务器是否支持 Range(对 bytes=0-0 应返回 206)。
     pub fn range_supported(&self, path: &str) -> Result<bool> {
+        self.range_probe_checked(path)
+            .map(|probe| probe.supported)
+            .map_err(|error| anyhow!(error.to_string()))
+    }
+
+    /// 带统一错误语义的 Range 探测；不读取/记录响应正文。
+    pub fn range_probe_checked(
+        &self,
+        path: &str,
+    ) -> std::result::Result<RangeProbe, RemoteScanError> {
         let resp = self
             .client
             .get(self.url(path))
             .header(RANGE, "bytes=0-0")
             .basic_auth(&self.user, Some(&self.pass))
             .send()
-            .context("Range 探测请求失败")?;
-        Ok(resp.status() == StatusCode::PARTIAL_CONTENT)
+            .map_err(|_| RemoteScanError::TransientNetwork("range_probe_network".into()))?;
+        let status = resp.status().as_u16();
+        let content_range = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok());
+        let content_length = resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        classify_range_probe_response(status, content_range, content_length)
     }
 
     /// 下载完整文件到 raw/ 本地磁盘缓存(用于不支持 Range 的服务器回退)。

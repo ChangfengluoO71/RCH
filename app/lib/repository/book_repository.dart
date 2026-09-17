@@ -6,7 +6,10 @@
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import '../src/rust/api/db.dart';
+import '../store/credential_vault.dart';
 import '../store/models.dart';
 
 class BookRepository {
@@ -15,6 +18,122 @@ class BookRepository {
 
   final List<BookSource> sources = [];
   final Map<String, BookMeta> metas = {};
+
+  CredentialVault? _credentialVault;
+
+  bool get _usesCredentialVault =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  CredentialVault get _vault => _credentialVault ??= platformCredentialVault();
+
+  String _credentialKey(BookSource source) =>
+      source.credentialRef ?? 'source:${source.id}';
+
+  bool _hasSensitive({
+    String? password,
+    String? refreshToken,
+    String? clientSecret,
+    String? cookie,
+  }) =>
+      (password?.isNotEmpty ?? false) ||
+      (refreshToken?.isNotEmpty ?? false) ||
+      (clientSecret?.isNotEmpty ?? false) ||
+      (cookie?.isNotEmpty ?? false);
+
+  String _encodeSourceCredentials(BookSource source) => encodeCredentialBundle({
+    'password': source.password,
+    'refreshToken': source.refreshToken,
+    'clientSecret': source.clientSecret,
+    'cookie': source.cookie,
+  });
+
+  Future<String?> _migrateOrHydrateCredentials(BookSource source) async {
+    if (!_usesCredentialVault) return source.credentialRef;
+
+    final key =
+        source.credentialRef ??
+        (_hasSensitive(
+              password: source.password,
+              refreshToken: source.refreshToken,
+              clientSecret: source.clientSecret,
+              cookie: source.cookie,
+            )
+            ? _credentialKey(source)
+            : null);
+    if (key == null) return null;
+
+    Map<String, String?> bundle = <String, String?>{};
+    var migrated = false;
+    try {
+      final stored = await _vault.get(key);
+      if (stored != null && stored.isNotEmpty) {
+        bundle = decodeCredentialBundleStrict(stored);
+      } else if (_hasSensitive(
+        password: source.password,
+        refreshToken: source.refreshToken,
+        clientSecret: source.clientSecret,
+        cookie: source.cookie,
+      )) {
+        // One-time migration for legacy SQLite/library.json rows. The
+        // read-back is mandatory before clearing SQLite in the next step.
+        final payload = _encodeSourceCredentials(source);
+        await _vault.put(key, payload);
+        final verified = await _vault.get(key);
+        if (verified != payload) {
+          throw StateError('凭据保险库回读校验失败');
+        }
+        bundle = decodeCredentialBundleStrict(verified);
+        migrated = true;
+      }
+    } catch (error, stack) {
+      // Never turn a vault failure into an intentional credential clear. Keep
+      // the legacy values in memory and let the next save retry migration.
+      debugPrint('[BookRepository] credential vault migration failed: $error');
+      debugPrintStack(stackTrace: stack);
+      return source.credentialRef;
+    }
+
+    source.credentialRef = key;
+    source.password = bundle['password'];
+    source.refreshToken = bundle['refreshToken'];
+    source.clientSecret = bundle['clientSecret'];
+    source.cookie = bundle['cookie'];
+
+    if (migrated) {
+      // Clear only after the vault payload was verified. The in-memory source
+      // remains hydrated for the current session.
+      try {
+        await dbUpsertSource(
+          source: BookSourceDto(
+            id: source.id,
+            type: source.type,
+            name: source.name,
+            path: source.path,
+            url: source.url,
+            username: source.username,
+            password: null,
+            port: source.port,
+            refreshToken: null,
+            clientId: source.clientId,
+            clientSecret: null,
+            rootId: source.rootId,
+            cookie: null,
+            credentialRef: source.credentialRef,
+            note: source.note,
+            capabilityLabel: source.capabilityLabel,
+            remoteOnly: source.remoteOnly,
+            originDeviceId: source.originDeviceId,
+          ),
+        );
+      } catch (error, stack) {
+        debugPrint('[BookRepository] credential row redaction failed: $error');
+        debugPrintStack(stackTrace: stack);
+        // Keep hydrated values and let the next save retry. No value was
+        // discarded from the in-memory model.
+      }
+    }
+    return source.credentialRef;
+  }
 
   // ---- Source CRUD ----
 
@@ -35,6 +154,7 @@ class BookRepository {
     String? clientSecret,
     String? rootId,
     String? cookie,
+    String? credentialRef,
     String? note,
   }) {
     for (final s in sources) {
@@ -50,6 +170,7 @@ class BookRepository {
         if (clientSecret != null) s.clientSecret = clientSecret;
         if (rootId != null) s.rootId = rootId;
         if (cookie != null) s.cookie = cookie;
+        if (credentialRef != null) s.credentialRef = credentialRef;
         if (note != null) s.note = note;
       }
     }
@@ -98,27 +219,28 @@ class BookRepository {
     sources.clear();
     final srcDtos = await dbLoadAllSources();
     for (final dto in srcDtos) {
-      sources.add(
-        BookSource(
-          id: dto.id,
-          type: dto.type,
-          name: dto.name,
-          path: dto.path,
-          url: dto.url,
-          username: dto.username,
-          password: dto.password,
-          port: dto.port?.toInt(),
-          refreshToken: dto.refreshToken,
-          clientId: dto.clientId,
-          clientSecret: dto.clientSecret,
-          rootId: dto.rootId,
-          cookie: dto.cookie,
-          note: dto.note,
-          capabilityLabel: dto.capabilityLabel,
-          remoteOnly: dto.remoteOnly,
-          originDeviceId: dto.originDeviceId,
-        ),
+      final source = BookSource(
+        id: dto.id,
+        type: dto.type,
+        name: dto.name,
+        path: dto.path,
+        url: dto.url,
+        username: dto.username,
+        password: dto.password,
+        port: dto.port?.toInt(),
+        refreshToken: dto.refreshToken,
+        clientId: dto.clientId,
+        clientSecret: dto.clientSecret,
+        rootId: dto.rootId,
+        cookie: dto.cookie,
+        credentialRef: dto.credentialRef,
+        note: dto.note,
+        capabilityLabel: dto.capabilityLabel,
+        remoteOnly: dto.remoteOnly,
+        originDeviceId: dto.originDeviceId,
       );
+      await _migrateOrHydrateCredentials(source);
+      sources.add(source);
     }
 
     metas.clear();
@@ -149,6 +271,32 @@ class BookRepository {
     final sourceSnapshot = List<BookSource>.of(sources, growable: false);
     final metaSnapshot = metas.values.toList(growable: false);
     for (final s in sourceSnapshot) {
+      if (_usesCredentialVault) {
+        final key =
+            s.credentialRef ??
+            (_hasSensitive(
+                  password: s.password,
+                  refreshToken: s.refreshToken,
+                  clientSecret: s.clientSecret,
+                  cookie: s.cookie,
+                )
+                ? _credentialKey(s)
+                : null);
+        if (key != null &&
+            _hasSensitive(
+              password: s.password,
+              refreshToken: s.refreshToken,
+              clientSecret: s.clientSecret,
+              cookie: s.cookie,
+            )) {
+          final payload = _encodeSourceCredentials(s);
+          await _vault.put(key, payload);
+          if (await _vault.get(key) != payload) {
+            throw StateError('凭据保险库回读校验失败');
+          }
+          s.credentialRef = key;
+        }
+      }
       await dbUpsertSource(
         source: BookSourceDto(
           id: s.id,
@@ -157,13 +305,14 @@ class BookRepository {
           path: s.path,
           url: s.url,
           username: s.username,
-          password: s.password,
+          password: _usesCredentialVault ? null : s.password,
           port: s.port,
-          refreshToken: s.refreshToken,
+          refreshToken: _usesCredentialVault ? null : s.refreshToken,
           clientId: s.clientId,
-          clientSecret: s.clientSecret,
+          clientSecret: _usesCredentialVault ? null : s.clientSecret,
           rootId: s.rootId,
-          cookie: s.cookie,
+          cookie: _usesCredentialVault ? null : s.cookie,
+          credentialRef: s.credentialRef,
           note: s.note,
           capabilityLabel: s.capabilityLabel,
           remoteOnly: s.remoteOnly,
@@ -195,8 +344,10 @@ class BookRepository {
 
   // ---- JSON ----
 
-  Map<String, dynamic> toJson() => {
-    'sources': sources.map((e) => e.toJson()).toList(),
+  Map<String, dynamic> toJson({bool includeSensitive = true}) => {
+    'sources': sources
+        .map((e) => e.toJson(includeSensitive: includeSensitive))
+        .toList(),
     'metas': metas.map((k, v) => MapEntry(k, v.toJson())),
   };
 

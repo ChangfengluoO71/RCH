@@ -1,6 +1,8 @@
 //! 磁盘缓存管理：五级缓存目录 + 大小计算 + 清理 + 封面缓存读写 + 自定义缓存根目录。
 
 use anyhow::{bail, Context, Result};
+use sha2::{Digest, Sha256};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -147,6 +149,179 @@ pub fn cover_cache_write(
     data.extend_from_slice(&height.to_le_bytes());
     data.extend_from_slice(rgba);
     std::fs::write(&file_path, &data).context("写入封面缓存失败")?;
+    Ok(())
+}
+
+/// Versioned cloud cover cache keyed by source/asset/content/selection/profile.
+/// Unlike the historical path-only cache this cannot alias two providers that
+/// happen to expose the same logical path.  The on-disk payload keeps the
+/// existing compact RGBA header so reads remain allocation-bounded.
+fn remote_cover_cache_key(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    for part in [
+        source_id,
+        asset_id,
+        content_revision,
+        selection_revision,
+        profile,
+    ] {
+        digest.update((part.len() as u64).to_le_bytes());
+        digest.update(part.as_bytes());
+    }
+    format!("{:x}.cover-v2", digest.finalize())
+}
+
+/// Stable filename for a versioned remote-cover payload.  The cache service
+/// uses this for the SQLite blob/ref projection as well as for file I/O; no
+/// caller needs to reconstruct the hashing scheme independently.
+pub fn remote_cover_cache_filename(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> String {
+    remote_cover_cache_key(
+        source_id,
+        asset_id,
+        content_revision,
+        selection_revision,
+        profile,
+    )
+}
+
+pub fn remote_cover_cache_relative_path(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> String {
+    format!(
+        "cache/cover/{}",
+        remote_cover_cache_filename(
+            source_id,
+            asset_id,
+            content_revision,
+            selection_revision,
+            profile,
+        )
+    )
+}
+
+/// Remove one versioned cloud-cover payload.  Deleting an already missing
+/// file is idempotent and returns zero, which keeps tombstone cleanup safe
+/// after a manual cache purge.
+pub fn remote_cover_cache_delete(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> Result<u64> {
+    let path = CacheDir::Cover.path().join(remote_cover_cache_key(
+        source_id,
+        asset_id,
+        content_revision,
+        selection_revision,
+        profile,
+    ));
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(1),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub fn remote_cover_cache_read(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> Option<(Vec<u8>, u32, u32)> {
+    let path = CacheDir::Cover.path().join(remote_cover_cache_key(
+        source_id,
+        asset_id,
+        content_revision,
+        selection_revision,
+        profile,
+    ));
+    let length = std::fs::metadata(&path).ok()?.len();
+    if length < 8 || length > (8 + 16 * 1024 * 1024) as u64 {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    if data.len() < 8 {
+        return None;
+    }
+    let width = u32::from_le_bytes(data[0..4].try_into().ok()?);
+    let height = u32::from_le_bytes(data[4..8].try_into().ok()?);
+    let expected = usize::try_from(width)
+        .ok()?
+        .checked_mul(usize::try_from(height).ok()?)?
+        .checked_mul(4)?;
+    let rgba = data.get(8..)?.to_vec();
+    (rgba.len() == expected).then_some((rgba, width, height))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn remote_cover_cache_write(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<()> {
+    if width == 0 || height == 0 {
+        bail!("封面尺寸无效");
+    }
+    let expected = usize::try_from(width)
+        .ok()
+        .and_then(|w| usize::try_from(height).ok().and_then(|h| w.checked_mul(h)))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| anyhow::anyhow!("封面尺寸无效"))?;
+    // Keep corrupt/malicious profile values from turning a cover request into
+    // an unbounded allocation. The UI profiles are much smaller; this is a
+    // generous hard ceiling for a persisted thumbnail.
+    if expected > 16 * 1024 * 1024 {
+        bail!("封面像素过大");
+    }
+    if rgba.len() != expected {
+        bail!("封面像素长度与尺寸不一致");
+    }
+    let dir = CacheDir::Cover.ensure()?;
+    let filename = remote_cover_cache_key(
+        source_id,
+        asset_id,
+        content_revision,
+        selection_revision,
+        profile,
+    );
+    let target = dir.join(filename);
+    let temp = dir.join(format!(
+        ".{}.part-{}",
+        target.file_name().unwrap().to_string_lossy(),
+        std::process::id()
+    ));
+    let mut data = Vec::with_capacity(8 + rgba.len());
+    data.extend_from_slice(&width.to_le_bytes());
+    data.extend_from_slice(&height.to_le_bytes());
+    data.extend_from_slice(rgba);
+    let mut file = std::fs::File::create(&temp).context("创建封面临时文件失败")?;
+    file.write_all(&data).context("写入封面缓存失败")?;
+    file.sync_all().context("同步封面缓存失败")?;
+    drop(file);
+    std::fs::rename(&temp, &target).context("发布封面缓存失败")?;
     Ok(())
 }
 

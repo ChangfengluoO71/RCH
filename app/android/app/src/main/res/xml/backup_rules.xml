@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Keystore ciphertext is device-bound and must not be restored onto a
+         device that cannot unwrap the original Android Keystore key. -->
+    <exclude domain="file" path="rch_credentials_v1.enc" />
+    <exclude domain="file" path="rch_credentials_v1.enc.bak" />
+</full-backup-content>

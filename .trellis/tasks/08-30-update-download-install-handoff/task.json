@@ -1,0 +1,32 @@
+{
+  "id": "update-download-install-handoff",
+  "name": "update-download-install-handoff",
+  "title": "应用内更新下载与安装交接优化",
+  "description": "让更新弹窗、下载进度与安装交接形成连续体验；Windows 自动拉起安装器，Android 自动拉起系统安装确认界面。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-post-release-feedback-remediation",
+  "relatedFiles": [
+    "app/lib/store/update_manager.dart",
+    "app/test/update_handoff_test.dart"
+  ],
+  "notes": "Atomic .part commit, single-flight download, verified-package reuse, and retry-preserving platform handoff are covered by automated tests. Real Windows UAC and Android installer smoke remain pending.",
+  "meta": {
+    "executionBatch": "cover-and-update",
+    "pairedTask": "08-02-cover-loading-perf"
+  }
+}

@@ -90,3 +90,46 @@ LibraryCatalogStore.instance.loadTree(); // save is still debounced
 await store.updateSource(id, rootId: editedRoot);
 // updateSource waits for persistence and refreshes the catalog projection.
 ```
+
+## Superseding Addendum — Remote Cloud Scan Proof and Retention (2026-09-14)
+
+This additive section supersedes only conflicting remote-scan cleanup details;
+the source CRUD and compatibility rules above remain unchanged.
+
+### Authoritative refresh boundary
+
+- WebDAV, SFTP, Baidu, 115, and Quark refreshes write an authoritative Rust
+  manifest. The Flutter snapshot is a UI cache and is never deletion proof.
+  Directory metadata preserves nullable `size`/`mtime`; missing `mtime` is
+  unknown rather than zero.
+- Each generation is bound to the source fingerprint, effective root, and a
+  non-empty provider-session epoch. All staged directory rows, cover
+  dependencies, and terminal status updates must match that generation and
+  epoch. A newer session invalidates delayed writes from an older one.
+- A directory becomes complete only after all pagination pages succeed. New
+  rows, cover dependencies, and tombstones are committed atomically when the
+  complete generation is published. Partial, failed, cancelled, paused, or
+  stale refreshes retain the previous successful listing and do not infer
+  deletion from an empty/partial response.
+
+### Safe deletion and cover retention
+
+- `replace_verified_children` can mark only missing direct children of a
+  complete, current, session-proven directory. A 403, 404, auth expiry, 429,
+  network error, cursor truncation, one-file error, or root mismatch is not a
+  tombstone. `load_verified_remote_tombstones` returns only rows that also
+  have a succeeded current scan proof and exact source identity.
+- Reader/content cleanup is separate from verified remote deletion: completion
+  removes page/raw content while retaining covers, aliases, metadata, tags,
+  history, completion state, and custom-cover parameters for live books.
+  Verified deletion may remove the deleted book/folder cover and its recorded
+  image dependencies, but never an unrelated source/path.
+- Both remote kill switches stop new background/cover network work without
+  deleting existing cache or metadata. Status/error text is provider-labelled
+  and redacted; credentials, cookies, tokens, authorization headers, and full
+  private URLs are not persisted or rendered.
+
+The executable provider matrix and Flutter fake coordinator/status contracts
+under `app/rust/tests/remote_scan_contract.rs` and
+`app/test/remote_scan_provider_contract_test.dart` are the current regression
+boundary for these invariants.

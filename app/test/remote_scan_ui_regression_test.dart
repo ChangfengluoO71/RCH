@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:app/src/rust/api/library.dart' as frb;
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/source_browser.dart';
+import 'package:app/ui/source_tree.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -29,6 +32,77 @@ void main() {
       );
     },
   );
+
+  test(
+    'offline non-root reconnect triggers automatic scan instead of root handoff',
+    () {
+      expect(
+        shouldTriggerRemoteScanAfterReconnect(
+          currentLogicalPath: '/books/series',
+          effectiveRootPath: '/books',
+        ),
+        isTrue,
+      );
+      expect(
+        shouldTriggerRemoteScanAfterReconnect(
+          currentLogicalPath: '/books',
+          effectiveRootPath: '/books',
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test('source tree explains when background scanning is disabled', () {
+    final source = frb.SourceAvailabilityDto(
+      sourceId: 'source-tree',
+      fingerprint: 'fingerprint',
+      name: '云端书源',
+      type: '115',
+      path: '/',
+      hasLocalSource: true,
+      hasLocalResource: false,
+      hasCredentials: true,
+      deviceId: 'device',
+      deviceName: 'device',
+      isRemote: false,
+      offlineIndexCount: PlatformInt64Util.from(0),
+      canBrowseOffline: true,
+      requiresNetwork: true,
+      status: 'read',
+    );
+
+    expect(
+      remoteScanIdleMessageFor(source, backgroundScanEnabled: false),
+      '后台扫描已关闭',
+    );
+    expect(
+      remoteScanIdleMessageFor(source, backgroundScanEnabled: true),
+      '等待扫描',
+    );
+
+    final offlineSource = frb.SourceAvailabilityDto(
+      sourceId: 'offline-source-tree',
+      fingerprint: 'fingerprint',
+      name: '离线书源',
+      type: '115',
+      path: '/',
+      hasLocalSource: false,
+      hasLocalResource: false,
+      hasCredentials: false,
+      deviceId: 'device',
+      deviceName: 'device',
+      isRemote: true,
+      offlineIndexCount: PlatformInt64Util.from(1),
+      canBrowseOffline: true,
+      requiresNetwork: true,
+      status: 'index_only',
+    );
+    expect(
+      remoteScanIdleMessageFor(offlineSource, backgroundScanEnabled: false),
+      '仅离线索引，不执行在线扫描',
+    );
+  });
 
   test(
     'deferred root listing is handed to the first scan exactly once',

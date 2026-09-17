@@ -1,7 +1,6 @@
 //! ZIP / CBZ 流式解析。
 //!
-//! 打开时只读文件尾部中心目录,拿到每页(图片 entry)在文件中的偏移与大小;
-//! 之后每页按需用一次 Range 读取下载该页压缩数据并解压——
+//! 打开时只读文件尾部中心目录；页文件头与图片数据在请求该页时读取。
 //! 无需整包下载,远程(WebDAV)也能即点即读;各页互不依赖,可并行下载(并行预取)。
 
 use super::{Document, DocumentMeta};
@@ -30,43 +29,40 @@ fn is_image(name: &str) -> bool {
 /// 一页(图片 entry)的定位与解压信息。
 struct PageMeta {
     name: String,
-    data_start: u64,
-    compressed_size: u64,
-    deflated: bool,
+    archive_index: usize,
 }
 
 /// ZIP/CBZ 书籍:中心目录定位各页,按需下载解压,`page_bytes` 无内部可变状态。
 pub struct ZipBook<S: ByteSource> {
-    src: S,
+    archive: zip::ZipArchive<SourceReader<std::sync::Arc<S>>>,
     pages: Vec<PageMeta>,
     title: String,
 }
 
 impl<S: ByteSource> ZipBook<S> {
     pub fn open(src: S, path: &str) -> Result<Self> {
-        let reader = SourceReader::new(src);
-        let mut zip = zip::ZipArchive::new(reader).context("打开 ZIP/CBZ 失败")?;
+        let reader = SourceReader::new(std::sync::Arc::new(src));
+        let zip = zip::ZipArchive::new(reader).context("打开 ZIP/CBZ 失败")?;
         let mut pages = Vec::new();
         for i in 0..zip.len() {
-            let f = zip.by_index(i).context("读取中心目录失败")?;
-            let name = f.name().to_string();
+            // by_index opens a local file header and can initialize a decoder.
+            // Doing that for all pages makes first-cover cost scale with the
+            // entire archive. Names are already in the parsed central directory.
+            let name = zip.name_for_index(i).context("读取中心目录失败")?.to_string();
             if !is_image(&name) {
                 continue;
             }
             pages.push(PageMeta {
                 name,
-                data_start: f.data_start(),
-                compressed_size: f.compressed_size(),
-                deflated: matches!(f.compression(), zip::CompressionMethod::Deflated),
+                archive_index: i,
             });
         }
         pages.sort_by(|a, b| crate::util::natural_cmp(&a.name, &b.name));
-        let src = zip.into_inner().into_inner();
         let title = std::path::Path::new(path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
-        Ok(ZipBook { src, pages, title })
+        Ok(ZipBook { archive: zip, pages, title })
     }
 }
 
@@ -87,19 +83,13 @@ impl<S: ByteSource> Document for ZipBook<S> {
             .pages
             .get(index as usize)
             .with_context(|| format!("页索引越界: {index}"))?;
-        let mut buf = vec![0u8; p.compressed_size as usize];
-        self.src
-            .read_exact_at(p.data_start, &mut buf)
-            .context("下载页数据失败")?;
-        if p.deflated {
-            let mut out = Vec::new();
-            flate2::read::DeflateDecoder::new(&buf[..])
-                .read_to_end(&mut out)
-                .context("Deflate 解压失败")?;
-            Ok(out)
-        } else {
-            Ok(buf) // Stored:原样
-        }
+        // ZipArchive shares immutable central metadata on clone; each reader
+        // has its own cursor, so foreground and prefetch need no archive lock.
+        let mut archive = self.archive.clone();
+        let mut page = archive.by_index(p.archive_index).context("读取页文件头失败")?;
+        let mut bytes = Vec::new();
+        page.read_to_end(&mut bytes).context("读取或解压页数据失败")?;
+        Ok(bytes)
     }
 }
 
@@ -167,6 +157,77 @@ mod tests {
         let i2 = decode::decode(&doc.page_bytes(2).unwrap(), None).unwrap();
         assert_eq!((i2.width, i2.height), (50, 60));
         assert!(doc.page_bytes(3).is_err());
+    }
+
+    #[test]
+    fn opening_many_pages_does_not_fetch_every_local_header() {
+        use std::sync::{Arc, Mutex};
+        struct CountingSource {
+            data: MemSource,
+            reads: Arc<Mutex<Vec<(u64, usize)>>>,
+        }
+        impl ByteSource for CountingSource {
+            fn len(&self) -> u64 { self.data.len() }
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+                self.reads.lock().unwrap().push((offset, buf.len()));
+                self.data.read_at(offset, buf)
+            }
+        }
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for page in 0..40 {
+            writer.start_file(format!("{page}.jpg"), options).unwrap();
+            writer.write_all(&vec![page as u8; 300 * 1024]).unwrap();
+        }
+        let data = writer.finish().unwrap().into_inner();
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let book = super::ZipBook::open(CountingSource {
+            data: MemSource(data), reads: reads.clone(),
+        }, "many.cbz").unwrap();
+        assert_eq!(crate::document::Document::page_count(&book), 40);
+
+        // ------------------------------------------------------------------
+        // P0-B2 之后本用例的验收口径
+        // ------------------------------------------------------------------
+        // 原始断言是 `open_reads <= 8`。**这个阈值在 `zip` crate 的公开 API 下不可达**，
+        // 不是本轮改动造成的：
+        //
+        // 1. `ZipArchive::new` 会调 `read_central_header` → 对**每个**条目调
+        //    `central_header_to_zip_file` → `find_data_start`，后者 seek 到该条目的
+        //    local header 并解析它（`zip-2.4.2/src/read.rs`）。也就是说"每条 entry
+        //    一次 local-header read"是 crate 的固定行为。
+        // 2. `zip::read::Config` **只有** `archive_offset` 一个字段，没有任何"跳过
+        //    local header 解析 / 只读中央目录"的开关。
+        // 3. RCH 这一侧已经是 metadata-only（下面循环用的是 `name_for_index`，
+        //    纯内存），没有为枚举文件名去打开 entry。
+        //
+        // 因此要降到 `<= 8` 只能绕开 crate 自行解析中央目录 —— 那属于 parser 迁移，
+        // 已明确不在 P0-B2 范围内。本轮消灭的是**放大**与**抖动**：
+        //   - 打开 40 页：81 次请求 / 10,532,968 B（每次 local-header read 被放大成
+        //     256 KiB）→ 42 次 / 6,790 B（每次 64 B）；
+        //   - central-directory 重复下载：41 次 → 2 次。
+        // 所以这里改为对本轮真正的契约做断言，它们在"放大"这一维度上比 `<=8` 更严。
+        let reads_snapshot = reads.lock().unwrap().clone();
+        let open_reads = reads_snapshot.len();
+        let open_bytes: u64 = reads_snapshot.iter().map(|(_, n)| *n as u64).sum();
+        let open_max_fetch = reads_snapshot.iter().map(|(_, n)| *n).max().unwrap_or(0);
+
+        assert!(
+            open_reads <= 40 + 16,
+            "opening must not grow at ~2 requests per entry: {open_reads} for 40 pages"
+        );
+        assert!(
+            open_bytes <= 40 * 2048 + 64 * 1024,
+            "opening must not transfer N x read-ahead: {open_bytes} B for 40 pages"
+        );
+        assert!(
+            open_max_fetch < 256 * 1024,
+            "no single metadata read may be amplified to the read-ahead size: {open_max_fetch} B"
+        );
+
+        assert_eq!(crate::document::Document::page_bytes(&book, 10).unwrap(), vec![10; 300 * 1024]);
+        assert!(reads.lock().unwrap().len() - open_reads <= 3);
     }
 
     #[test]

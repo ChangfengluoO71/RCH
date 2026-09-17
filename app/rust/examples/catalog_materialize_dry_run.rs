@@ -40,8 +40,8 @@ fn main() -> Result<()> {
     let mut sync_dirty_count = 0_i64;
     let mut eligible_count = 0_i64;
     for proposal in proposals {
-        let conflicts = serde_json::from_str::<Value>(&proposal.conflicts_json)
-            .unwrap_or_else(|_| json!([]));
+        let conflicts =
+            serde_json::from_str::<Value>(&proposal.conflicts_json).unwrap_or_else(|_| json!([]));
         let eligible = proposal.state == "ready"
             && conflicts.as_array().is_some_and(|items| items.is_empty())
             && !proposal.input_revision.trim().is_empty();

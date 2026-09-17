@@ -1,0 +1,42 @@
+{
+  "id": "post-release-feedback-remediation",
+  "name": "post-release-feedback-remediation",
+  "title": "8月29日反馈：阅读、更新与云端体验整改",
+  "description": "将 2026-08-29 用户反馈拆为条漫稳定性、更新交接和云端阅读/封面请求治理三个可独立验收的交付；封面与更新在同一实施批次执行，但保留独立回滚与发布判断。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-30-webtoon-page-stability",
+    "08-30-update-download-install-handoff",
+    "08-02-cover-loading-perf"
+  ],
+  "parent": null,
+  "relatedFiles": [
+    "app/lib/ui/reader_page.dart",
+    "app/lib/ui/comic_cover.dart",
+    "app/lib/store/update_manager.dart",
+    "app/rust/src/downloader/mod.rs",
+    "docs/reports/rch-stability-remote-download-batch-2026-09-11.md"
+  ],
+  "notes": "Batch checkpoint: implementation and automated coverage are present, but full-suite evidence and real-device/provider smoke are still release gates. Online smart scraping, E-site scraping, and 115 automation remain future-plugin scope.",
+  "meta": {
+    "executionBatch": "cover-and-update",
+    "batchChildren": [
+      "08-02-cover-loading-perf",
+      "08-30-update-download-install-handoff"
+    ]
+  }
+}

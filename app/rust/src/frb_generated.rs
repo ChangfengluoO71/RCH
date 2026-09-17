@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 47961298;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -138957268;
 
 // Section: executor
 
@@ -4900,6 +4900,222 @@ fn wire__crate__api__package__rchpkg_import_with_credentials_impl(
         },
     )
 }
+fn wire__crate__api__remote_cover__remote_cover_read_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_cover_read",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            let api_asset_id = <String>::sse_decode(&mut deserializer);
+            let api_selection =
+                <crate::api::remote_cover::CoverSelectionDto>::sse_decode(&mut deserializer);
+            let api_profile =
+                <crate::api::remote_cover::CoverProfileDto>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::remote_cover::remote_cover_read(
+                            api_source_id,
+                            api_asset_id,
+                            api_selection,
+                            api_profile,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_cover__remote_cover_release_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_cover_release",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_consumer_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::remote_cover::remote_cover_release(api_consumer_id)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_cover__remote_cover_request_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_cover_request",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_asset_id = <String>::sse_decode(&mut deserializer);
+            let api_consumer_id = <String>::sse_decode(&mut deserializer);
+            let api_selection =
+                <crate::api::remote_cover::CoverSelectionDto>::sse_decode(&mut deserializer);
+            let api_profile =
+                <crate::api::remote_cover::CoverProfileDto>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::remote_cover::remote_cover_request(
+                            api_source_id,
+                            api_session,
+                            api_asset_id,
+                            api_consumer_id,
+                            api_selection,
+                            api_profile,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_cover__remote_cover_retry_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_cover_retry",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_asset_ids = <Vec<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::remote_cover::remote_cover_retry(
+                        api_source_id,
+                        api_session,
+                        api_asset_ids,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_cover__remote_directory_view_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_directory_view",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            let api_logical_path = <String>::sse_decode(&mut deserializer);
+            let api_offset = <u32>::sse_decode(&mut deserializer);
+            let api_limit = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::remote_cover::remote_directory_view(
+                            api_source_id,
+                            api_logical_path,
+                            api_offset,
+                            api_limit,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__source__remote_image_folder_manifest_complete_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -5087,6 +5303,55 @@ fn wire__crate__api__remote_scan__remote_scan_start_impl(
         },
     )
 }
+fn wire__crate__api__remote_scan__remote_scan_start_manual_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_scan_start_manual",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_type = <String>::sse_decode(&mut deserializer);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_root_path = <String>::sse_decode(&mut deserializer);
+            let api_mode = <String>::sse_decode(&mut deserializer);
+            let api_initial_listing_json = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::remote_scan::remote_scan_start_manual(
+                            api_source_type,
+                            api_source_id,
+                            api_session,
+                            api_root_path,
+                            api_mode,
+                            api_initial_listing_json,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__remote_scan__remote_scan_status_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -5116,6 +5381,39 @@ fn wire__crate__api__remote_scan__remote_scan_status_impl(
                     let output_ok = Result::<_, ()>::Ok(
                         crate::api::remote_scan::remote_scan_status(api_source_id),
                     )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__remote_cover__remote_view_revision_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "remote_view_revision",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::remote_cover::remote_view_revision(api_source_id)?;
                     Ok(output_ok)
                 })())
             }
@@ -6411,6 +6709,7 @@ impl SseDecode for crate::api::db::BookSourceDto {
         let mut var_clientSecret = <Option<String>>::sse_decode(deserializer);
         let mut var_rootId = <Option<String>>::sse_decode(deserializer);
         let mut var_cookie = <Option<String>>::sse_decode(deserializer);
+        let mut var_credentialRef = <Option<String>>::sse_decode(deserializer);
         let mut var_note = <String>::sse_decode(deserializer);
         let mut var_capabilityLabel = <String>::sse_decode(deserializer);
         let mut var_remoteOnly = <bool>::sse_decode(deserializer);
@@ -6429,6 +6728,7 @@ impl SseDecode for crate::api::db::BookSourceDto {
             client_secret: var_clientSecret,
             root_id: var_rootId,
             cookie: var_cookie,
+            credential_ref: var_credentialRef,
             note: var_note,
             capability_label: var_capabilityLabel,
             remote_only: var_remoteOnly,
@@ -6566,6 +6866,36 @@ impl SseDecode for crate::api::source::Cloud115SessionInfo {
             root: var_root,
             capability_label: var_capabilityLabel,
             refresh_token: var_refreshToken,
+        };
+    }
+}
+
+impl SseDecode for crate::api::remote_cover::CoverProfileDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_width = <u32>::sse_decode(deserializer);
+        let mut var_height = <u32>::sse_decode(deserializer);
+        let mut var_decoderVersion = <u32>::sse_decode(deserializer);
+        return crate::api::remote_cover::CoverProfileDto {
+            width: var_width,
+            height: var_height,
+            decoder_version: var_decoderVersion,
+        };
+    }
+}
+
+impl SseDecode for crate::api::remote_cover::CoverSelectionDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_page = <u32>::sse_decode(deserializer);
+        let mut var_crop = <Option<crate::api::book::CropRect>>::sse_decode(deserializer);
+        let mut var_explicitAssetId = <Option<String>>::sse_decode(deserializer);
+        let mut var_revision = <String>::sse_decode(deserializer);
+        return crate::api::remote_cover::CoverSelectionDto {
+            page: var_page,
+            crop: var_crop,
+            explicit_asset_id: var_explicitAssetId,
+            revision: var_revision,
         };
     }
 }
@@ -6919,6 +7249,20 @@ impl SseDecode for Vec<(String, i64)> {
     }
 }
 
+impl SseDecode for Vec<crate::api::remote_cover::RemoteDirectoryEntryDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(
+                <crate::api::remote_cover::RemoteDirectoryEntryDto>::sse_decode(deserializer),
+            );
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::scraper::ScrapeProposalDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7127,6 +7471,17 @@ impl SseDecode for Option<i64> {
     }
 }
 
+impl SseDecode for Option<crate::api::book::PageImage> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::book::PageImage>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<(String, String)> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7171,6 +7526,17 @@ impl SseDecode for Option<crate::api::db::SourceSnapshotDto> {
             return Some(<crate::api::db::SourceSnapshotDto>::sse_decode(
                 deserializer,
             ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<u64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u64>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -7269,6 +7635,72 @@ impl SseDecode for (u64, u64) {
     }
 }
 
+impl SseDecode for crate::api::remote_cover::RemoteCoverStateDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_state = <String>::sse_decode(deserializer);
+        let mut var_revision = <i64>::sse_decode(deserializer);
+        let mut var_ready = <bool>::sse_decode(deserializer);
+        let mut var_errorCode = <Option<String>>::sse_decode(deserializer);
+        let mut var_retryAt = <Option<i64>>::sse_decode(deserializer);
+        let mut var_isPreviousRevision = <bool>::sse_decode(deserializer);
+        return crate::api::remote_cover::RemoteCoverStateDto {
+            state: var_state,
+            revision: var_revision,
+            ready: var_ready,
+            error_code: var_errorCode,
+            retry_at: var_retryAt,
+            is_previous_revision: var_isPreviousRevision,
+        };
+    }
+}
+
+impl SseDecode for crate::api::remote_cover::RemoteDirectoryEntryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_assetId = <String>::sse_decode(deserializer);
+        let mut var_logicalPath = <String>::sse_decode(deserializer);
+        let mut var_providerPath = <Option<String>>::sse_decode(deserializer);
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_assetKind = <String>::sse_decode(deserializer);
+        let mut var_size = <Option<u64>>::sse_decode(deserializer);
+        let mut var_representativeAssetId = <Option<String>>::sse_decode(deserializer);
+        let mut var_cover =
+            <crate::api::remote_cover::RemoteCoverStateDto>::sse_decode(deserializer);
+        return crate::api::remote_cover::RemoteDirectoryEntryDto {
+            asset_id: var_assetId,
+            logical_path: var_logicalPath,
+            provider_path: var_providerPath,
+            name: var_name,
+            asset_kind: var_assetKind,
+            size: var_size,
+            representative_asset_id: var_representativeAssetId,
+            cover: var_cover,
+        };
+    }
+}
+
+impl SseDecode for crate::api::remote_cover::RemoteDirectoryViewDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_sourceId = <String>::sse_decode(deserializer);
+        let mut var_logicalPath = <String>::sse_decode(deserializer);
+        let mut var_revision = <i64>::sse_decode(deserializer);
+        let mut var_listingComplete = <bool>::sse_decode(deserializer);
+        let mut var_hasMore = <bool>::sse_decode(deserializer);
+        let mut var_entries =
+            <Vec<crate::api::remote_cover::RemoteDirectoryEntryDto>>::sse_decode(deserializer);
+        return crate::api::remote_cover::RemoteDirectoryViewDto {
+            source_id: var_sourceId,
+            logical_path: var_logicalPath,
+            revision: var_revision,
+            listing_complete: var_listingComplete,
+            has_more: var_hasMore,
+            entries: var_entries,
+        };
+    }
+}
+
 impl SseDecode for crate::api::remote_scan::RemoteScanJobDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7299,6 +7731,18 @@ impl SseDecode for crate::api::remote_scan::RemoteScanStatusDto {
         let mut var_errorCode = <Option<String>>::sse_decode(deserializer);
         let mut var_processed = <u64>::sse_decode(deserializer);
         let mut var_total = <u64>::sse_decode(deserializer);
+        let mut var_listingPhase = <String>::sse_decode(deserializer);
+        let mut var_directoriesChecked = <u64>::sse_decode(deserializer);
+        let mut var_discoveredBooks = <u64>::sse_decode(deserializer);
+        let mut var_discoveryComplete = <bool>::sse_decode(deserializer);
+        let mut var_readyBooks = <u64>::sse_decode(deserializer);
+        let mut var_activeBooks = <u64>::sse_decode(deserializer);
+        let mut var_pendingBooks = <u64>::sse_decode(deserializer);
+        let mut var_retryBooks = <u64>::sse_decode(deserializer);
+        let mut var_blockedBooks = <u64>::sse_decode(deserializer);
+        let mut var_unsupportedBooks = <u64>::sse_decode(deserializer);
+        let mut var_failedBooks = <u64>::sse_decode(deserializer);
+        let mut var_viewRevision = <i64>::sse_decode(deserializer);
         return crate::api::remote_scan::RemoteScanStatusDto {
             source_id: var_sourceId,
             status: var_status,
@@ -7309,6 +7753,18 @@ impl SseDecode for crate::api::remote_scan::RemoteScanStatusDto {
             error_code: var_errorCode,
             processed: var_processed,
             total: var_total,
+            listing_phase: var_listingPhase,
+            directories_checked: var_directoriesChecked,
+            discovered_books: var_discoveredBooks,
+            discovery_complete: var_discoveryComplete,
+            ready_books: var_readyBooks,
+            active_books: var_activeBooks,
+            pending_books: var_pendingBooks,
+            retry_books: var_retryBooks,
+            blocked_books: var_blockedBooks,
+            unsupported_books: var_unsupportedBooks,
+            failed_books: var_failedBooks,
+            view_revision: var_viewRevision,
         };
     }
 }
@@ -8096,79 +8552,121 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        134 => wire__crate__api__source__remote_image_folder_manifest_complete_impl(
+        134 => wire__crate__api__remote_cover__remote_cover_read_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        135 => wire__crate__api__remote_scan__remote_scan_cancel_impl(
+        135 => wire__crate__api__remote_cover__remote_cover_release_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        136 => {
+        136 => wire__crate__api__remote_cover__remote_cover_request_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        137 => wire__crate__api__remote_cover__remote_cover_retry_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        138 => wire__crate__api__remote_cover__remote_directory_view_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        139 => wire__crate__api__source__remote_image_folder_manifest_complete_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        140 => wire__crate__api__remote_scan__remote_scan_cancel_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        141 => {
             wire__crate__api__remote_scan__remote_scan_pause_impl(port, ptr, rust_vec_len, data_len)
         }
-        137 => wire__crate__api__remote_scan__remote_scan_resume_impl(
+        142 => wire__crate__api__remote_scan__remote_scan_resume_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        138 => {
+        143 => {
             wire__crate__api__remote_scan__remote_scan_start_impl(port, ptr, rust_vec_len, data_len)
         }
-        139 => wire__crate__api__remote_scan__remote_scan_status_impl(
+        144 => wire__crate__api__remote_scan__remote_scan_start_manual_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        140 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
-        141 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        142 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
-        143 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
-        144 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
-        145 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        146 => {
+        145 => wire__crate__api__remote_scan__remote_scan_status_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        146 => wire__crate__api__remote_cover__remote_view_revision_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        147 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        148 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        149 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
+        150 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
+        151 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
+        152 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        153 => {
             wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
         }
-        147 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
-        148 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
-        149 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        150 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        151 => {
+        154 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
+        155 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
+        156 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        157 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        158 => {
             wire__crate__api__sync__sync_clear_last_error_impl(port, ptr, rust_vec_len, data_len)
         }
-        152 => wire__crate__api__sync__sync_devices_list_impl(port, ptr, rust_vec_len, data_len),
-        153 => wire__crate__api__sync__sync_history_recent_impl(port, ptr, rust_vec_len, data_len),
-        154 => wire__crate__api__sync__sync_local_counts_impl(port, ptr, rust_vec_len, data_len),
-        155 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
-        156 => wire__crate__api__sync__sync_remote_revision_impl(port, ptr, rust_vec_len, data_len),
-        157 => wire__crate__api__sync__sync_set_last_error_impl(port, ptr, rust_vec_len, data_len),
-        158 => wire__crate__api__sync__sync_status_impl(port, ptr, rust_vec_len, data_len),
-        159 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        160 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        161 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        162 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
-        163 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        164 => {
+        159 => wire__crate__api__sync__sync_devices_list_impl(port, ptr, rust_vec_len, data_len),
+        160 => wire__crate__api__sync__sync_history_recent_impl(port, ptr, rust_vec_len, data_len),
+        161 => wire__crate__api__sync__sync_local_counts_impl(port, ptr, rust_vec_len, data_len),
+        162 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
+        163 => wire__crate__api__sync__sync_remote_revision_impl(port, ptr, rust_vec_len, data_len),
+        164 => wire__crate__api__sync__sync_set_last_error_impl(port, ptr, rust_vec_len, data_len),
+        165 => wire__crate__api__sync__sync_status_impl(port, ptr, rust_vec_len, data_len),
+        166 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        167 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        168 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        169 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
+        170 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        171 => {
             wire__crate__api__source__webdav_download_file_impl(port, ptr, rust_vec_len, data_len)
         }
-        165 => wire__crate__api__source__webdav_download_progress_impl(
+        172 => wire__crate__api__source__webdav_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        166 => {
+        173 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        167 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
-        168 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
-        169 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
+        174 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        175 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
+        176 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -8354,6 +8852,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::db::BookSourceDto {
             self.client_secret.into_into_dart().into_dart(),
             self.root_id.into_into_dart().into_dart(),
             self.cookie.into_into_dart().into_dart(),
+            self.credential_ref.into_into_dart().into_dart(),
             self.note.into_into_dart().into_dart(),
             self.capability_label.into_into_dart().into_dart(),
             self.remote_only.into_into_dart().into_dart(),
@@ -8542,6 +9041,51 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::source::Cloud115SessionInfo>
     for crate::api::source::Cloud115SessionInfo
 {
     fn into_into_dart(self) -> crate::api::source::Cloud115SessionInfo {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::remote_cover::CoverProfileDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.width.into_into_dart().into_dart(),
+            self.height.into_into_dart().into_dart(),
+            self.decoder_version.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::remote_cover::CoverProfileDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::remote_cover::CoverProfileDto>
+    for crate::api::remote_cover::CoverProfileDto
+{
+    fn into_into_dart(self) -> crate::api::remote_cover::CoverProfileDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::remote_cover::CoverSelectionDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.page.into_into_dart().into_dart(),
+            self.crop.into_into_dart().into_dart(),
+            self.explicit_asset_id.into_into_dart().into_dart(),
+            self.revision.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::remote_cover::CoverSelectionDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::remote_cover::CoverSelectionDto>
+    for crate::api::remote_cover::CoverSelectionDto
+{
+    fn into_into_dart(self) -> crate::api::remote_cover::CoverSelectionDto {
         self
     }
 }
@@ -8795,6 +9339,83 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::db::ReadRecordDto>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::remote_cover::RemoteCoverStateDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.state.into_into_dart().into_dart(),
+            self.revision.into_into_dart().into_dart(),
+            self.ready.into_into_dart().into_dart(),
+            self.error_code.into_into_dart().into_dart(),
+            self.retry_at.into_into_dart().into_dart(),
+            self.is_previous_revision.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::remote_cover::RemoteCoverStateDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::remote_cover::RemoteCoverStateDto>
+    for crate::api::remote_cover::RemoteCoverStateDto
+{
+    fn into_into_dart(self) -> crate::api::remote_cover::RemoteCoverStateDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::remote_cover::RemoteDirectoryEntryDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.asset_id.into_into_dart().into_dart(),
+            self.logical_path.into_into_dart().into_dart(),
+            self.provider_path.into_into_dart().into_dart(),
+            self.name.into_into_dart().into_dart(),
+            self.asset_kind.into_into_dart().into_dart(),
+            self.size.into_into_dart().into_dart(),
+            self.representative_asset_id.into_into_dart().into_dart(),
+            self.cover.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::remote_cover::RemoteDirectoryEntryDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::remote_cover::RemoteDirectoryEntryDto>
+    for crate::api::remote_cover::RemoteDirectoryEntryDto
+{
+    fn into_into_dart(self) -> crate::api::remote_cover::RemoteDirectoryEntryDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::remote_cover::RemoteDirectoryViewDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.source_id.into_into_dart().into_dart(),
+            self.logical_path.into_into_dart().into_dart(),
+            self.revision.into_into_dart().into_dart(),
+            self.listing_complete.into_into_dart().into_dart(),
+            self.has_more.into_into_dart().into_dart(),
+            self.entries.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::remote_cover::RemoteDirectoryViewDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::remote_cover::RemoteDirectoryViewDto>
+    for crate::api::remote_cover::RemoteDirectoryViewDto
+{
+    fn into_into_dart(self) -> crate::api::remote_cover::RemoteDirectoryViewDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::remote_scan::RemoteScanJobDto {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -8831,6 +9452,18 @@ impl flutter_rust_bridge::IntoDart for crate::api::remote_scan::RemoteScanStatus
             self.error_code.into_into_dart().into_dart(),
             self.processed.into_into_dart().into_dart(),
             self.total.into_into_dart().into_dart(),
+            self.listing_phase.into_into_dart().into_dart(),
+            self.directories_checked.into_into_dart().into_dart(),
+            self.discovered_books.into_into_dart().into_dart(),
+            self.discovery_complete.into_into_dart().into_dart(),
+            self.ready_books.into_into_dart().into_dart(),
+            self.active_books.into_into_dart().into_dart(),
+            self.pending_books.into_into_dart().into_dart(),
+            self.retry_books.into_into_dart().into_dart(),
+            self.blocked_books.into_into_dart().into_dart(),
+            self.unsupported_books.into_into_dart().into_dart(),
+            self.failed_books.into_into_dart().into_dart(),
+            self.view_revision.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -9434,6 +10067,7 @@ impl SseEncode for crate::api::db::BookSourceDto {
         <Option<String>>::sse_encode(self.client_secret, serializer);
         <Option<String>>::sse_encode(self.root_id, serializer);
         <Option<String>>::sse_encode(self.cookie, serializer);
+        <Option<String>>::sse_encode(self.credential_ref, serializer);
         <String>::sse_encode(self.note, serializer);
         <String>::sse_encode(self.capability_label, serializer);
         <bool>::sse_encode(self.remote_only, serializer);
@@ -9524,6 +10158,25 @@ impl SseEncode for crate::api::source::Cloud115SessionInfo {
         <String>::sse_encode(self.root, serializer);
         <String>::sse_encode(self.capability_label, serializer);
         <String>::sse_encode(self.refresh_token, serializer);
+    }
+}
+
+impl SseEncode for crate::api::remote_cover::CoverProfileDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.width, serializer);
+        <u32>::sse_encode(self.height, serializer);
+        <u32>::sse_encode(self.decoder_version, serializer);
+    }
+}
+
+impl SseEncode for crate::api::remote_cover::CoverSelectionDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.page, serializer);
+        <Option<crate::api::book::CropRect>>::sse_encode(self.crop, serializer);
+        <Option<String>>::sse_encode(self.explicit_asset_id, serializer);
+        <String>::sse_encode(self.revision, serializer);
     }
 }
 
@@ -9789,6 +10442,16 @@ impl SseEncode for Vec<(String, i64)> {
     }
 }
 
+impl SseEncode for Vec<crate::api::remote_cover::RemoteDirectoryEntryDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::remote_cover::RemoteDirectoryEntryDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::scraper::ScrapeProposalDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -9952,6 +10615,16 @@ impl SseEncode for Option<i64> {
     }
 }
 
+impl SseEncode for Option<crate::api::book::PageImage> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::book::PageImage>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<(String, String)> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -9988,6 +10661,16 @@ impl SseEncode for Option<crate::api::db::SourceSnapshotDto> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::db::SourceSnapshotDto>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<u64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u64>::sse_encode(value, serializer);
         }
     }
 }
@@ -10059,6 +10742,47 @@ impl SseEncode for (u64, u64) {
     }
 }
 
+impl SseEncode for crate::api::remote_cover::RemoteCoverStateDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.state, serializer);
+        <i64>::sse_encode(self.revision, serializer);
+        <bool>::sse_encode(self.ready, serializer);
+        <Option<String>>::sse_encode(self.error_code, serializer);
+        <Option<i64>>::sse_encode(self.retry_at, serializer);
+        <bool>::sse_encode(self.is_previous_revision, serializer);
+    }
+}
+
+impl SseEncode for crate::api::remote_cover::RemoteDirectoryEntryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.asset_id, serializer);
+        <String>::sse_encode(self.logical_path, serializer);
+        <Option<String>>::sse_encode(self.provider_path, serializer);
+        <String>::sse_encode(self.name, serializer);
+        <String>::sse_encode(self.asset_kind, serializer);
+        <Option<u64>>::sse_encode(self.size, serializer);
+        <Option<String>>::sse_encode(self.representative_asset_id, serializer);
+        <crate::api::remote_cover::RemoteCoverStateDto>::sse_encode(self.cover, serializer);
+    }
+}
+
+impl SseEncode for crate::api::remote_cover::RemoteDirectoryViewDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.source_id, serializer);
+        <String>::sse_encode(self.logical_path, serializer);
+        <i64>::sse_encode(self.revision, serializer);
+        <bool>::sse_encode(self.listing_complete, serializer);
+        <bool>::sse_encode(self.has_more, serializer);
+        <Vec<crate::api::remote_cover::RemoteDirectoryEntryDto>>::sse_encode(
+            self.entries,
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::api::remote_scan::RemoteScanJobDto {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -10082,6 +10806,18 @@ impl SseEncode for crate::api::remote_scan::RemoteScanStatusDto {
         <Option<String>>::sse_encode(self.error_code, serializer);
         <u64>::sse_encode(self.processed, serializer);
         <u64>::sse_encode(self.total, serializer);
+        <String>::sse_encode(self.listing_phase, serializer);
+        <u64>::sse_encode(self.directories_checked, serializer);
+        <u64>::sse_encode(self.discovered_books, serializer);
+        <bool>::sse_encode(self.discovery_complete, serializer);
+        <u64>::sse_encode(self.ready_books, serializer);
+        <u64>::sse_encode(self.active_books, serializer);
+        <u64>::sse_encode(self.pending_books, serializer);
+        <u64>::sse_encode(self.retry_books, serializer);
+        <u64>::sse_encode(self.blocked_books, serializer);
+        <u64>::sse_encode(self.unsupported_books, serializer);
+        <u64>::sse_encode(self.failed_books, serializer);
+        <i64>::sse_encode(self.view_revision, serializer);
     }
 }
 

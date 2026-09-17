@@ -453,16 +453,24 @@ pub(crate) fn purge_verified_remote_asset_on(
 
     let dependency_rows = conn
         .prepare(
-            "SELECT book_key,dependency_path FROM remote_cover_dependency \
+            "SELECT book_key,dependency_path,status FROM remote_cover_dependency \
              WHERE substr(book_key,1,length(?1))=?1",
         )
         .map_err(|error| error.to_string())?
         .query_map([format!("{}|{source_id}|", source.source_type)], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })
         .map_err(|error| error.to_string())?
         .filter_map(|row| row.ok())
         .collect::<Vec<_>>();
+    let dependency_matches = |raw_path: &str| {
+        dependencies.contains(raw_path)
+            || dependencies.contains(&crate::remote_scan::model::normalize_path(raw_path))
+    };
     let logical_book_key = crate::db::book_key_of(&source.source_type, source_id, &logical_path);
     let has_live_alias = conn
         .prepare("SELECT path FROM library_index WHERE source_id=?1 AND deleted=0")
@@ -481,14 +489,17 @@ pub(crate) fn purge_verified_remote_asset_on(
     if !has_live_alias {
         affected_book_keys.insert(logical_book_key.clone());
     }
-    for (book_key, dependency_path) in &dependency_rows {
-        let dependency_path = crate::remote_scan::model::normalize_path(dependency_path);
+    for (book_key, dependency_path, _status) in &dependency_rows {
+        let normalized_dependency_path = crate::remote_scan::model::normalize_path(dependency_path);
         if !has_live_alias
-            && (dependencies.contains(&dependency_path)
-                || path_is_within(&dependency_path, &logical_path))
+            && (dependency_matches(dependency_path)
+                || path_is_within(&normalized_dependency_path, &logical_path))
         {
             affected_book_keys.insert(book_key.clone());
-            physical_paths.insert(dependency_path);
+            // Keep an opaque provider id byte-for-byte. The cache hash uses
+            // the raw id, while canonical logical paths are normalized above
+            // only for subtree matching.
+            physical_paths.insert(dependency_path.clone());
         }
     }
 
@@ -507,6 +518,58 @@ pub(crate) fn purge_verified_remote_asset_on(
         }
     }
 
+    // Capture versioned cover variants before invalidating them.  The route
+    // table uses logical paths, so provider aliases in `dependency_rows` do
+    // not accidentally delete another source's cache.
+    let route_assets = conn
+        .prepare("SELECT asset_id,logical_path FROM remote_asset_route WHERE source_id=?1")
+        .ok()
+        .and_then(|mut stmt| {
+            stmt.query_map([source_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .ok()
+            .map(|rows| rows.filter_map(|row| row.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, path)| {
+            path_is_within(
+                &crate::remote_scan::model::normalize_path(path),
+                &logical_path,
+            ) || dependencies.contains(path)
+                || dependencies.contains(&crate::remote_scan::model::normalize_path(path))
+        })
+        .map(|(asset_id, _)| asset_id)
+        .collect::<std::collections::HashSet<_>>();
+    let versioned_variants = if route_assets.is_empty() {
+        Vec::new()
+    } else {
+        conn.prepare(
+            "SELECT asset_id,content_revision,selection_revision,profile,blob_key
+             FROM remote_cover_variant WHERE source_id=?1",
+        )
+        .ok()
+        .and_then(|mut stmt| {
+            stmt.query_map([source_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })
+            .ok()
+            .map(|rows| {
+                rows.filter_map(|row| row.ok())
+                    .filter(|(asset_id, _, _, _, _)| route_assets.contains(asset_id))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap_or_default()
+    };
+
     let mut freed = 0;
     for path in physical_paths {
         freed += purge_stale_book_cache(
@@ -524,11 +587,12 @@ pub(crate) fn purge_verified_remote_asset_on(
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| error.to_string())?;
-    for (book_key, dependency_path) in dependency_rows {
-        let dependency_path = crate::remote_scan::model::normalize_path(&dependency_path);
+    for (book_key, dependency_path, _status) in dependency_rows {
+        let normalized_dependency_path =
+            crate::remote_scan::model::normalize_path(&dependency_path);
         if !has_live_alias
-            && (dependencies.contains(&dependency_path)
-                || path_is_within(&dependency_path, &logical_path))
+            && (dependency_matches(&dependency_path)
+                || path_is_within(&normalized_dependency_path, &logical_path))
         {
             tx.execute(
                 "DELETE FROM remote_cover_dependency WHERE book_key=?1 AND dependency_path=?2",
@@ -544,7 +608,66 @@ pub(crate) fn purge_verified_remote_asset_on(
         )
         .map_err(|error| error.to_string())?;
     }
+    for asset_id in &route_assets {
+        tx.execute(
+            "UPDATE remote_cover_job SET state='cancelled',error_code='assetDeleted',
+                 lease_owner=NULL,lease_until=NULL,next_attempt_at=NULL,updated_at=?2
+             WHERE source_id=?1 AND asset_id=?3",
+            params![source_id, crate::db::now_ms(), asset_id],
+        )
+        .map_err(|error| error.to_string())?;
+        tx.execute(
+            "DELETE FROM remote_cover_ref WHERE source_id=?1 AND asset_id=?2",
+            params![source_id, asset_id],
+        )
+        .map_err(|error| error.to_string())?;
+        tx.execute(
+            "DELETE FROM remote_cover_variant WHERE source_id=?1 AND asset_id=?2",
+            params![source_id, asset_id],
+        )
+        .map_err(|error| error.to_string())?;
+        tx.execute(
+            "DELETE FROM remote_directory_cover WHERE source_id=?1 AND
+                 (directory_asset_id=?2 OR representative_asset_id=?2)",
+            params![source_id, asset_id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
     tx.commit().map_err(|error| error.to_string())?;
+    let blob_keys = versioned_variants
+        .iter()
+        .filter_map(|(_, _, _, _, blob_key)| blob_key.clone())
+        .collect::<std::collections::HashSet<_>>();
+    for (asset_id, content_revision, selection_revision, profile, _blob_key) in versioned_variants {
+        freed += crate::cache::remote_cover_cache_delete(
+            source_id,
+            &asset_id,
+            &content_revision,
+            &selection_revision,
+            &profile,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    // A blob may be shared by multiple variants. Remove its metadata only
+    // after the reference rows have been deleted and a short query confirms
+    // that no other owner still points at it.
+    if !blob_keys.is_empty() {
+        for blob_key in blob_keys {
+            let referenced: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM remote_cover_ref WHERE blob_key=?1",
+                    [blob_key.as_str()],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            if referenced == 0 {
+                let _ = conn.execute(
+                    "DELETE FROM remote_cover_blob WHERE blob_key=?1",
+                    [blob_key.as_str()],
+                );
+            }
+        }
+    }
     Ok(freed)
 }
 
@@ -659,7 +782,7 @@ mod verified_remote_asset_cleanup_tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO remote_listing_state VALUES('source','/','root-v2',2,1)",
+            "INSERT INTO remote_listing_state(source_id,logical_path,content_fingerprint,scan_generation,listing_complete) VALUES('source','/','root-v2',2,1)",
             [],
         )
         .unwrap();
@@ -698,6 +821,16 @@ mod verified_remote_asset_cleanup_tests {
         .unwrap();
         conn.execute(
             "INSERT INTO remote_cover_dependency VALUES(?1,'/Series/new.jpg','image-v2','default','queued')",
+            [&book_key],
+        )
+        .unwrap();
+        // Opaque providers expose a stable file id to the browser while the
+        // scanner stores the canonical logical path. Keep that alias in the
+        // dependency projection so verified deletion can remove both cover
+        // cache keys after the provider session is gone. The raw id spelling
+        // is intentional: provider cache hashes do not add a leading slash.
+        conn.execute(
+            "INSERT INTO remote_cover_dependency VALUES(?1,'opaque-fid','book-v1','default','cache_alias')",
             [&book_key],
         )
         .unwrap();
@@ -745,6 +878,7 @@ mod verified_remote_asset_cleanup_tests {
             "/Series/book.zip",
             "/Series/book.cbz",
             "/Series/001.jpg",
+            "opaque-fid",
             "/book.zip",
             "/book.cbz",
             "/Other/book.cbz",
@@ -768,6 +902,7 @@ mod verified_remote_asset_cleanup_tests {
             "/Series/book.zip",
             "/Series/book.cbz",
             "/Series/001.jpg",
+            "opaque-fid",
         ] {
             assert!(
                 cache::cover_cache_read(path, 0, 1, 1, None).is_none(),
@@ -849,7 +984,7 @@ mod verified_remote_asset_cleanup_tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO remote_listing_state VALUES('source','/Series','series-v2',2,1)",
+            "INSERT INTO remote_listing_state(source_id,logical_path,content_fingerprint,scan_generation,listing_complete) VALUES('source','/Series','series-v2',2,1)",
             [],
         )
         .unwrap();
@@ -978,7 +1113,7 @@ mod verified_remote_asset_cleanup_tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO remote_listing_state VALUES('source%','/','root-v2',2,1)",
+            "INSERT INTO remote_listing_state(source_id,logical_path,content_fingerprint,scan_generation,listing_complete) VALUES('source%','/','root-v2',2,1)",
             [],
         )
         .unwrap();

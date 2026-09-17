@@ -332,9 +332,7 @@ pub fn parse_catalog(
     let normalized_ancestors = ancestors
         .iter()
         .enumerate()
-        .map(|(index, ancestor)| {
-            normalize_ancestor_title_candidate(ancestor, index, &mut proposal)
-        })
+        .map(|(index, ancestor)| normalize_ancestor_title_candidate(ancestor, index, &mut proposal))
         .collect::<Vec<_>>();
     adjust_sequence_from_context(&mut sequence, &core, ancestors, snapshot, &mut proposal);
     apply_sequence(&sequence, &mut proposal);
@@ -1142,10 +1140,8 @@ fn classify_resource_label(value: &str, proposal: &mut NameRoleProposal) -> bool
     {
         push_tag(proposal, "high_quality");
         matched = true;
-    } else if matches!(
-        lower.as_str(),
-        "digital" | "ebook" | "electronic"
-    ) || matches!(value, "デジタル版" | "数字版" | "电子版" | "電子版")
+    } else if matches!(lower.as_str(), "digital" | "ebook" | "electronic")
+        || matches!(value, "デジタル版" | "数字版" | "电子版" | "電子版")
     {
         matched = true;
     }
@@ -3119,13 +3115,7 @@ fn is_bilingual_metadata_text(value: &str) -> bool {
         )
         || matches!(
             value.trim(),
-            "DL版"
-                | "デジタル版"
-                | "数字版"
-                | "电子版"
-                | "電子版"
-                | "高画質"
-                | "高清"
+            "DL版" | "デジタル版" | "数字版" | "电子版" | "電子版" | "高画質" | "高清"
         )
         || contains_any(
             value,

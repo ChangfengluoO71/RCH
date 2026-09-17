@@ -7,6 +7,7 @@
 //!
 //! 契约细节见 `.trellis/tasks/08-03-m6-netdisk-official-api/research/baidu-openapi-contract.md`。
 use super::{ByteSource, Entry, RateGate};
+use crate::remote_scan::adapter::{classify_range_probe_response, RangeProbe, RemoteScanError};
 use crate::source::webdav::DownloadProgress;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::blocking::Client;
@@ -172,7 +173,7 @@ impl BaiduClient {
             } else {
                 root.to_string()
             },
-            gate: RateGate::new(5.0), // 百度接口有频率限制，5 r/s 保守节流
+            gate: RateGate::fixed_interval("baidu.api", 5.0), // 百度接口有频率限制，5 r/s 保守节流
         })
     }
 
@@ -256,7 +257,9 @@ impl BaiduClient {
     fn get(&self, url: &str, params: &[(&str, String)]) -> Result<(i64, String)> {
         let mut attempts = 0;
         loop {
-            self.gate.wait();
+            // 许可按"每次尝试"持有：失败重试时必须重新排队，且不跨尝试占名额。
+            let g = self.gate.enter();
+            crate::source::record_gate_wait(self.gate.channel(), g.waited_us());
             let token = self.ensure_token()?;
             let req = self
                 .client
@@ -401,9 +404,28 @@ impl BaiduClient {
 
     /// 探测 dlink 是否支持 Range（bytes=0-0 → 206）。
     pub fn probe_range(&self, dlink: &str) -> bool {
-        self.dlink_get(dlink, Some("bytes=0-0"))
-            .map(|r| r.status() == StatusCode::PARTIAL_CONTENT)
+        self.probe_range_checked(dlink)
+            .map(|probe| probe.supported)
             .unwrap_or(false)
+    }
+
+    /// 带错误语义的 Range 探测。只有合法 `206 + Content-Range` 才算支持；
+    /// 认证、限流和畸形响应由调用方分别处理，不再折叠成 false。
+    pub fn probe_range_checked(&self, dlink: &str) -> Result<RangeProbe, RemoteScanError> {
+        let response = self
+            .dlink_get(dlink, Some("bytes=0-0"))
+            .map_err(|_| RemoteScanError::TransientNetwork("range_probe_network".into()))?;
+        let status = response.status().as_u16();
+        let content_range = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok());
+        let content_length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        classify_range_probe_response(status, content_range, content_length)
     }
 
     /// Range 读：GET dlink + Range；dlink 失效（403）时重取一次。

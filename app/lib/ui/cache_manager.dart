@@ -5,6 +5,7 @@ import 'package:app/src/rust/api/cache.dart';
 import 'package:app/src/rust/api/db.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
+import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
 import 'package:file_selector/file_selector.dart';
@@ -101,6 +102,9 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       msg.write('、阅读统计');
     }
     final freed = await clearAllCaches();
+    // 目录快照是缓存根下的可重建索引；清空全部缓存时同步清掉内存和
+    // 磁盘副本，避免下一次浏览继续使用已失效的远程文件夹条目。
+    await FolderSnapshotStore.instance.clear();
     ComicCover.clear();
     if (mounted) _snack('$msg (释放 ${fmtSize(freed)})');
     await _refresh();

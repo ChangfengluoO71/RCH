@@ -7,11 +7,13 @@
 import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/api/package.dart';
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/store/credential_vault.dart';
 import 'package:flutter/foundation.dart';
 
 const _kWebdavUrl = 'sync_webdav_url';
 const _kWebdavUsername = 'sync_webdav_username';
 const _kWebdavPassword = 'sync_webdav_password';
+const _kWebdavPasswordRef = 'sync_webdav_password_ref';
 const _kWebdavDir = 'sync_webdav_dir';
 const _kDeviceName = 'sync_device_name';
 const _kCrossDeviceSearch = 'sync_cross_device_search';
@@ -19,6 +21,13 @@ const _kCrossDeviceSearch = 'sync_cross_device_search';
 /// 清理不可见控制字符：复制粘贴 WebDAV 地址/目录时可能带入 \x00-\x1F
 /// （实测：MuMu 上目录变成 `RCH<0x14>同步` → 坚果云 409 AncestorsNotFound）。
 String sanitizeConfig(String s) => s.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
+
+/// Normalize a persisted vault reference without allowing control characters
+/// or an empty value to cross the storage boundary.
+String? normalizeCredentialRef(String? value) {
+  final normalized = value == null ? '' : sanitizeConfig(value).trim();
+  return normalized.isEmpty ? null : normalized;
+}
 
 /// 同步配置 + 备份管理（单例）。
 class SyncManager extends ChangeNotifier {
@@ -35,6 +44,14 @@ class SyncManager extends ChangeNotifier {
   bool busy = false;
   bool crossDeviceSearch = true;
   BigInt? _webdavSession;
+  CredentialVault? _credentialVault;
+  String? _webdavPasswordRef;
+  bool _credentialVaultReady = false;
+
+  bool get _usesCredentialVault =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  CredentialVault get _vault => _credentialVault ??= platformCredentialVault();
 
   /// 设备 id → 名称（幽灵书源来源展示；Phase 6 起由 syncDevicesList 提供主数据）。
   final Map<String, String> deviceNames = {};
@@ -49,7 +66,33 @@ class SyncManager extends ChangeNotifier {
       final map = {for (final e in entries) e.key: e.value};
       webdavUrl = sanitizeConfig(map[_kWebdavUrl] ?? '').trim();
       webdavUsername = sanitizeConfig(map[_kWebdavUsername] ?? '').trim();
-      webdavPassword = sanitizeConfig(map[_kWebdavPassword] ?? '');
+      final legacyPassword = sanitizeConfig(map[_kWebdavPassword] ?? '');
+      _webdavPasswordRef = normalizeCredentialRef(map[_kWebdavPasswordRef]);
+      webdavPassword = legacyPassword;
+      _credentialVaultReady = false;
+      if (_usesCredentialVault) {
+        final ref = _webdavPasswordRef ?? 'sync:webdav-password';
+        try {
+          final stored = await _vault.get(ref);
+          if (stored != null) {
+            webdavPassword = stored;
+          } else if (legacyPassword.isNotEmpty) {
+            // One-time migration from the old app_settings row. Verify the
+            // read-back before save() redacts that row.
+            await _vault.put(ref, legacyPassword);
+            if (await _vault.get(ref) != legacyPassword) {
+              throw StateError('同步凭据保险库回读校验失败');
+            }
+          }
+          _webdavPasswordRef = ref;
+          _credentialVaultReady = true;
+        } catch (error, stack) {
+          // Keep the legacy value in memory and leave the DB row intact; a
+          // vault failure must never silently erase the sync password.
+          debugPrint('[SyncManager] credential vault migration failed: $error');
+          debugPrintStack(stackTrace: stack);
+        }
+      }
       webdavDir = sanitizeConfig(map[_kWebdavDir] ?? 'RCH/sync').trim();
       deviceName = map[_kDeviceName] ?? '';
       lastAt = int.tryParse(map['sync_last_at'] ?? '') ?? 0;
@@ -71,7 +114,23 @@ class SyncManager extends ChangeNotifier {
   Future<void> save() async {
     await dbSaveSetting(key: _kWebdavUrl, value: webdavUrl);
     await dbSaveSetting(key: _kWebdavUsername, value: webdavUsername);
-    await dbSaveSetting(key: _kWebdavPassword, value: webdavPassword);
+    var persistedPassword = webdavPassword;
+    if (_usesCredentialVault && _credentialVaultReady) {
+      final ref = _webdavPasswordRef ?? 'sync:webdav-password';
+      if (webdavPassword.isNotEmpty) {
+        await _vault.put(ref, webdavPassword);
+        if (await _vault.get(ref) != webdavPassword) {
+          throw StateError('同步凭据保险库回读校验失败');
+        }
+        _webdavPasswordRef = ref;
+        persistedPassword = '';
+      } else {
+        await _vault.delete(ref);
+        _webdavPasswordRef = ref;
+      }
+      await dbSaveSetting(key: _kWebdavPasswordRef, value: ref);
+    }
+    await dbSaveSetting(key: _kWebdavPassword, value: persistedPassword);
     await dbSaveSetting(key: _kWebdavDir, value: webdavDir);
     await dbSaveSetting(key: _kDeviceName, value: deviceName);
     await dbSaveSetting(key: 'sync_last_at', value: '$lastAt');
@@ -138,12 +197,18 @@ class SyncManager extends ChangeNotifier {
   }
 
   /// 从任意 `.rchpkg` 文件恢复，并应用包内的加密书源凭据（需导出时设置的口令）。
-  Future<String> restoreFromWithCredentials(String path, String passphrase) async {
+  Future<String> restoreFromWithCredentials(
+    String path,
+    String passphrase,
+  ) async {
     if (busy) return '正在处理，请稍候';
     busy = true;
     notifyListeners();
     try {
-      final stats = await rchpkgImportWithCredentials(path: path, passphrase: passphrase);
+      final stats = await rchpkgImportWithCredentials(
+        path: path,
+        passphrase: passphrase,
+      );
       final msg =
           '恢复成功（${stats.sources.toInt()} 书源 / ${stats.metas.toInt()} 详情 / ${stats.tags.toInt()} 标签）· 加密凭据已应用';
       await _finish(msg);
@@ -164,8 +229,12 @@ class SyncManager extends ChangeNotifier {
     busy = true;
     notifyListeners();
     try {
-      final info = await rchpkgExportSnapshot(path: path, passphrase: passphrase);
-      final msg = '导出成功：${info.sources.toInt()} 书源 / ${info.metas.toInt()} 详情 / '
+      final info = await rchpkgExportSnapshot(
+        path: path,
+        passphrase: passphrase,
+      );
+      final msg =
+          '导出成功：${info.sources.toInt()} 书源 / ${info.metas.toInt()} 详情 / '
           '${info.tags.toInt()} 标签${passphrase.isNotEmpty ? '（含加密凭据）' : ''}';
       await _finish(msg);
       return msg;

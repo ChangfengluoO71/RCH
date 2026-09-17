@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <exclude domain="file" path="rch_credentials_v1.enc" />
+        <exclude domain="file" path="rch_credentials_v1.enc.bak" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="rch_credentials_v1.enc" />
+        <exclude domain="file" path="rch_credentials_v1.enc.bak" />
+    </device-transfer>
+</data-extraction-rules>

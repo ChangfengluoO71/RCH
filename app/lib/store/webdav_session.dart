@@ -10,7 +10,6 @@ final Map<String, BigInt> _webdavSessions = {};
 Future<BigInt> webdavSessionFor(BookSource source) async {
   final cached = _webdavSessions[source.id];
   if (cached != null) {
-    remoteSessionSuccessHub.emit(source, cached);
     return cached;
   }
   final s = await webdavConnect(

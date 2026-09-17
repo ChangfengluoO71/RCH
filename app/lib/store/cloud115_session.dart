@@ -10,6 +10,12 @@ import 'package:app/ui/cloud115_qr_scan.dart';
 /// 分两种模式：官方 APP ID（refresh_token）与网页扫码（Cookie）。
 final Map<String, BigInt> _cloud115OpenSessions = {};
 final Map<String, BigInt> _cloud115CookieSessions = {};
+// A poster-wall rebuild and SourceBrowser can request the same provider
+// session in the same frame. Keep one connection attempt per source so that
+// concurrent callers do not create several Rust clients (and each run its own
+// connectivity/list request) before the first result is cached.
+final Map<String, Future<BigInt>> _cloud115OpenSessionFlights = {};
+final Map<String, Future<BigInt>> _cloud115CookieSessionFlights = {};
 
 /// 正在自动续期（弹扫码框）的 115 书源，避免并发请求重复弹窗。
 final Set<String> _refreshing115Cookie = {};
@@ -62,53 +68,96 @@ Future<BigInt> cloud115SessionFor(BookSource source) {
 }
 
 /// 官方 APP ID 模式：连接成功后回写刷新后的 refresh_token。
-Future<BigInt> cloud115OpenSessionFor(BookSource source) async {
+Future<BigInt> cloud115OpenSessionFor(BookSource source) {
   final cached = _cloud115OpenSessions[source.id];
   if (cached != null) {
-    remoteSessionSuccessHub.emit(source, cached);
-    return cached;
+    return Future.value(cached);
   }
-  final s = await cloud115Connect(
-    refreshToken: source.refreshToken ?? '',
-    appId: source.clientId ?? '',
-    rootId: source.rootId ?? '0',
-  );
-  _cloud115OpenSessions[source.id] = s.id;
-  if (s.refreshToken.isNotEmpty && s.refreshToken != source.refreshToken) {
-    source.refreshToken = s.refreshToken;
-    await LibraryStore.instance.updateSource(
-      source.id,
-      refreshToken: s.refreshToken,
-    );
-  }
-  remoteSessionSuccessHub.emit(source, s.id);
-  return s.id;
+  final existing = _cloud115OpenSessionFlights[source.id];
+  if (existing != null) return existing;
+  final requestedRefreshToken = source.refreshToken ?? '';
+  final requestedClientId = source.clientId ?? '';
+  final requestedRootId = source.rootId ?? '0';
+  late final Future<BigInt> flight;
+  flight =
+      () async {
+        final s = await cloud115Connect(
+          refreshToken: requestedRefreshToken,
+          appId: requestedClientId,
+          rootId: requestedRootId,
+        );
+        // A source edit may invalidate this flight while the native connect
+        // is still in progress. Do not repopulate the cache or overwrite the
+        // newer credentials with that stale result.
+        if ((source.refreshToken ?? '') == requestedRefreshToken &&
+            (source.clientId ?? '') == requestedClientId &&
+            (source.rootId ?? '0') == requestedRootId) {
+          _cloud115OpenSessions[source.id] = s.id;
+          if (s.refreshToken.isNotEmpty &&
+              s.refreshToken != source.refreshToken) {
+            source.refreshToken = s.refreshToken;
+            await LibraryStore.instance.updateSource(
+              source.id,
+              refreshToken: s.refreshToken,
+            );
+          }
+          remoteSessionSuccessHub.emit(source, s.id);
+        }
+        return s.id;
+      }().whenComplete(() {
+        if (identical(_cloud115OpenSessionFlights[source.id], flight)) {
+          _cloud115OpenSessionFlights.remove(source.id);
+        }
+      });
+  _cloud115OpenSessionFlights[source.id] = flight;
+  return flight;
 }
 
 /// 网页扫码 Cookie 模式（无需 APP ID）：连接成功后回写 Cookie（如已变化）。
-Future<BigInt> cloud115CookieSessionFor(BookSource source) async {
+Future<BigInt> cloud115CookieSessionFor(BookSource source) {
   final cached = _cloud115CookieSessions[source.id];
   if (cached != null) {
-    remoteSessionSuccessHub.emit(source, cached);
-    return cached;
+    return Future.value(cached);
   }
-  final s = await cloud115CookieConnect(
-    cookie: source.cookie ?? '',
-    rootId: source.rootId ?? '0',
-  );
-  _cloud115CookieSessions[source.id] = s.id;
-  if (s.cookie.isNotEmpty && s.cookie != source.cookie) {
-    source.cookie = s.cookie;
-    await LibraryStore.instance.updateSource(source.id, cookie: s.cookie);
-  }
-  remoteSessionSuccessHub.emit(source, s.id);
-  return s.id;
+  final existing = _cloud115CookieSessionFlights[source.id];
+  if (existing != null) return existing;
+  final requestedCookie = source.cookie ?? '';
+  final requestedRootId = source.rootId ?? '0';
+  late final Future<BigInt> flight;
+  flight =
+      () async {
+        final s = await cloud115CookieConnect(
+          cookie: requestedCookie,
+          rootId: requestedRootId,
+        );
+        if ((source.cookie ?? '') == requestedCookie &&
+            (source.rootId ?? '0') == requestedRootId) {
+          _cloud115CookieSessions[source.id] = s.id;
+          if (s.cookie.isNotEmpty && s.cookie != source.cookie) {
+            source.cookie = s.cookie;
+            await LibraryStore.instance.updateSource(
+              source.id,
+              cookie: s.cookie,
+            );
+          }
+          remoteSessionSuccessHub.emit(source, s.id);
+        }
+        return s.id;
+      }().whenComplete(() {
+        if (identical(_cloud115CookieSessionFlights[source.id], flight)) {
+          _cloud115CookieSessionFlights.remove(source.id);
+        }
+      });
+  _cloud115CookieSessionFlights[source.id] = flight;
+  return flight;
 }
 
 /// 书源被编辑/删除后使会话失效（下次自动重连）。
 void clearCloud115Session(String sourceId) {
   _cloud115OpenSessions.remove(sourceId);
   _cloud115CookieSessions.remove(sourceId);
+  _cloud115OpenSessionFlights.remove(sourceId);
+  _cloud115CookieSessionFlights.remove(sourceId);
 }
 
 // ------------------------------------------------------------

@@ -1641,10 +1641,8 @@ class _HomePageState extends State<HomePage> {
         style: Theme.of(context).textTheme.bodySmall,
       ),
       SwitchListTile(
-        title: const Text('Background remote scan'),
-        subtitle: const Text(
-          'Automatically scans cloud roots after authorization or root open.',
-        ),
+        title: const Text('后台扫描远程书源'),
+        subtitle: const Text('授权或打开云端根目录后自动扫描。'),
         dense: true,
         contentPadding: EdgeInsets.zero,
         value: s.remoteBackgroundScanEnabled,
@@ -1655,10 +1653,8 @@ class _HomePageState extends State<HomePage> {
         },
       ),
       SwitchListTile(
-        title: const Text('Remote cover network fetch'),
-        subtitle: const Text(
-          'When off, existing covers stay visible but new remote cover I/O is skipped.',
-        ),
+        title: const Text('联网获取远程封面'),
+        subtitle: const Text('关闭后保留已有封面，但不再请求新的远程封面。'),
         dense: true,
         contentPadding: EdgeInsets.zero,
         value: s.remoteCoverFetchEnabled,

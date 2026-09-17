@@ -19,6 +19,9 @@ pub struct ScanDirectoryTask {
     pub generation: i64,
     pub session_epoch: String,
     pub incremental: bool,
+    /// Manual incremental scans bypass the normal directory TTL once, while
+    /// automatic/background scans continue to reuse a fresh listing.
+    pub force_recheck: bool,
 }
 
 impl ScanDirectoryTask {
@@ -33,6 +36,7 @@ impl ScanDirectoryTask {
             generation,
             session_epoch: String::new(),
             incremental: false,
+            force_recheck: false,
         }
     }
 
@@ -43,6 +47,11 @@ impl ScanDirectoryTask {
 
     pub fn incremental(mut self) -> Self {
         self.incremental = true;
+        self
+    }
+
+    pub fn force_recheck(mut self) -> Self {
+        self.force_recheck = true;
         self
     }
 }
@@ -79,6 +88,18 @@ pub trait ScanCommitSink: Send + Sync {
         _logical_path: &str,
     ) -> Result<Option<String>, RemoteScanError> {
         Ok(None)
+    }
+    /// Whether an unchanged directory should be listed again during an
+    /// incremental walk.  Providers rarely expose a trustworthy recursive
+    /// version, so descendants are revisited once their local TTL expires.
+    /// Implementations may override this with a durable `recheck_after`
+    /// lookup; the default keeps older test/fake sinks conservative.
+    fn should_recheck_directory(
+        &self,
+        _source_id: &str,
+        _logical_path: &str,
+    ) -> Result<bool, RemoteScanError> {
+        Ok(true)
     }
     fn stage_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError>;
     fn enqueue_cover(&self, task: CoverTask) -> Result<(), RemoteScanError>;
@@ -308,10 +329,13 @@ impl RemoteScanEngine {
         let _permit = governor
             .acquire(RequestPriority::Scan)
             .map_err(|_| RemoteScanError::Provider("request_queue_full".into()))?;
-        let entries = match initial_entries {
-            Some(entries) => self.normalize_entries(entries)?,
-            None => self.list_complete(&task.source_id, &task.logical_path)?,
-        };
+        // 目录发现标注 Scan（最低优先级），保证它不会与当前阅读页抢许可。
+        let entries = crate::source::gate::with_priority(RequestPriority::Scan, || {
+            match initial_entries {
+                Some(entries) => self.normalize_entries(entries),
+                None => self.list_complete(&task.source_id, &task.logical_path),
+            }
+        })?;
         if self.token.is_cancelled() {
             return Err(RemoteScanError::Cancelled);
         }
@@ -337,12 +361,27 @@ impl RemoteScanEngine {
         }
 
         for entry in &entries {
-            if entry.is_dir && (!task.incremental || changed) {
+            let child_due = if task.incremental && !changed && entry.is_dir {
+                if task.force_recheck {
+                    true
+                } else {
+                    self.sink
+                        .should_recheck_directory(&task.source_id, &entry.logical_path)?
+                }
+            } else {
+                false
+            };
+            if entry.is_dir && (!task.incremental || changed || child_due) {
                 let child =
                     ScanDirectoryTask::new(&task.source_id, &entry.logical_path, task.generation)
                         .with_session_epoch(task.session_epoch.clone());
                 self.enqueue_directory(if task.incremental {
-                    child.incremental()
+                    let child = child.incremental();
+                    if task.force_recheck {
+                        child.force_recheck()
+                    } else {
+                        child
+                    }
                 } else {
                     child
                 })?;

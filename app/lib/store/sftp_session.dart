@@ -9,7 +9,6 @@ final Map<String, BigInt> _sftpSessions = {};
 Future<BigInt> sftpSessionFor(BookSource source) async {
   final cached = _sftpSessions[source.id];
   if (cached != null) {
-    remoteSessionSuccessHub.emit(source, cached);
     return cached;
   }
   final (host, port) = _parseHostPort(source);

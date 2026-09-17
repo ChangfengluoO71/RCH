@@ -1,0 +1,31 @@
+{
+  "id": "webtoon-page-stability",
+  "name": "webtoon-page-stability",
+  "title": "条漫快速翻页稳定性与页码回跳修复",
+  "description": "修复条漫异步测高与快速翻页互相覆盖导致的页码卡住、回跳和阅读进度错误，并建立回归测试。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-08-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "08-30-post-release-feedback-remediation",
+  "relatedFiles": [
+    "app/lib/ui/webtoon_navigation.dart",
+    "app/lib/ui/reader_page.dart",
+    "app/test/webtoon_navigation_test.dart",
+    "app/test/reader_swipe_webtoon_test.dart"
+  ],
+  "notes": "Automated model/widget coverage passes. A ScrollEndNotification race was fixed; real Windows/Android variable-height webtoon smoke remains pending.",
+  "meta": {}
+}

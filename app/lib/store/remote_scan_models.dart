@@ -8,6 +8,18 @@ class RemoteScanStatus {
   final String? errorCode;
   final int processed;
   final int total;
+  final String listingPhase;
+  final int directoriesChecked;
+  final int discoveredBooks;
+  final bool discoveryComplete;
+  final int readyBooks;
+  final int activeBooks;
+  final int pendingBooks;
+  final int retryBooks;
+  final int blockedBooks;
+  final int unsupportedBooks;
+  final int failedBooks;
+  final int viewRevision;
 
   const RemoteScanStatus({
     required this.sourceId,
@@ -19,6 +31,18 @@ class RemoteScanStatus {
     this.errorCode,
     this.processed = 0,
     this.total = 0,
+    this.listingPhase = 'pending',
+    this.directoriesChecked = 0,
+    this.discoveredBooks = 0,
+    this.discoveryComplete = false,
+    this.readyBooks = 0,
+    this.activeBooks = 0,
+    this.pendingBooks = 0,
+    this.retryBooks = 0,
+    this.blockedBooks = 0,
+    this.unsupportedBooks = 0,
+    this.failedBooks = 0,
+    this.viewRevision = 0,
   });
 
   RemoteScanStatus copyWith({String? status, String? errorCode}) {
@@ -32,6 +56,18 @@ class RemoteScanStatus {
       errorCode: errorCode ?? this.errorCode,
       processed: processed,
       total: total,
+      listingPhase: listingPhase,
+      directoriesChecked: directoriesChecked,
+      discoveredBooks: discoveredBooks,
+      discoveryComplete: discoveryComplete,
+      readyBooks: readyBooks,
+      activeBooks: activeBooks,
+      pendingBooks: pendingBooks,
+      retryBooks: retryBooks,
+      blockedBooks: blockedBooks,
+      unsupportedBooks: unsupportedBooks,
+      failedBooks: failedBooks,
+      viewRevision: viewRevision,
     );
   }
 }
@@ -45,6 +81,17 @@ class RemoteScanViewState {
   final DateTime? lastSuccess;
   final String? errorCode;
   final bool coverFetchPaused;
+  final String listingPhase;
+  final int directoriesChecked;
+  final int discoveredBooks;
+  final bool discoveryComplete;
+  final int readyBooks;
+  final int activeBooks;
+  final int pendingBooks;
+  final int retryBooks;
+  final int blockedBooks;
+  final int unsupportedBooks;
+  final int failedBooks;
 
   const RemoteScanViewState({
     required this.sourceId,
@@ -55,6 +102,17 @@ class RemoteScanViewState {
     this.lastSuccess,
     this.errorCode,
     this.coverFetchPaused = false,
+    this.listingPhase = 'pending',
+    this.directoriesChecked = 0,
+    this.discoveredBooks = 0,
+    this.discoveryComplete = false,
+    this.readyBooks = 0,
+    this.activeBooks = 0,
+    this.pendingBooks = 0,
+    this.retryBooks = 0,
+    this.blockedBooks = 0,
+    this.unsupportedBooks = 0,
+    this.failedBooks = 0,
   });
 
   factory RemoteScanViewState.fromStatus(
@@ -70,6 +128,56 @@ class RemoteScanViewState {
       lastSuccess: status.lastSuccess,
       errorCode: status.errorCode,
       coverFetchPaused: coverFetchPaused,
+      listingPhase: status.listingPhase,
+      directoriesChecked: status.directoriesChecked,
+      discoveredBooks: status.discoveredBooks,
+      discoveryComplete: status.discoveryComplete,
+      readyBooks: status.readyBooks,
+      activeBooks: status.activeBooks,
+      pendingBooks: status.pendingBooks,
+      retryBooks: status.retryBooks,
+      blockedBooks: status.blockedBooks,
+      unsupportedBooks: status.unsupportedBooks,
+      failedBooks: status.failedBooks,
     );
   }
+}
+
+/// Convert provider/native errors into short Chinese UI messages. The raw
+/// exception may contain an endpoint, HTML response, cookie or token, so it
+/// must never be rendered directly in a browser/snackbar.
+String remoteErrorMessage(Object error, {String fallback = '远程请求失败，请稍后重试'}) {
+  final raw = error.toString().toLowerCase();
+  if (raw.contains('登录状态') ||
+      raw.contains('auth') ||
+      raw.contains('unauthorized') ||
+      raw.contains('cookie 过期') ||
+      raw.contains('重新扫码')) {
+    return '登录状态已失效，请重新授权';
+  }
+  if (raw.contains('403') ||
+      raw.contains('forbidden') ||
+      raw.contains('拒绝访问')) {
+    return '远程服务拒绝访问，请检查授权或权限';
+  }
+  if (raw.contains('404') || raw.contains('notfound') || raw.contains('不存在')) {
+    return '远程文件不存在或已被删除';
+  }
+  if (raw.contains('405') || raw.contains('method not allowed')) {
+    return '远程服务暂不支持此请求';
+  }
+  if (raw.contains('rangeunavailable') ||
+      raw.contains('range 不可用') ||
+      raw.contains('range_probe')) {
+    return '该文件不支持分段读取，已使用占位封面';
+  }
+  if (raw.contains('timeout') ||
+      raw.contains('timed out') ||
+      raw.contains('network') ||
+      raw.contains('connection') ||
+      raw.contains('断网') ||
+      raw.contains('网络')) {
+    return '网络连接失败，请稍后重试';
+  }
+  return fallback;
 }

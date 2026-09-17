@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_book_query`, `cloud_has_credentials`, `run_book_query`, `source_status`
+// These functions are ignored because they are not marked as `pub`: `build_book_query`, `cloud_has_credentials`, `normalized_library_path_sql`, `run_book_query`, `source_status`
 
 /// 某书源离线索引总数（浏览模式判定：有索引 → 离线优先）。
 Future<PlatformInt64> dbSourceIndexCount({required String sourceId}) =>

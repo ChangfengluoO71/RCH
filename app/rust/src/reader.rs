@@ -8,6 +8,7 @@ use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::Instant;
 
 /// L1 内存缓存容量(原始页字节)。
 const CACHE_CAP: usize = 24;
@@ -18,30 +19,13 @@ const REQUEST_GOVERNOR_QUEUE_CAPACITY: usize = 64;
 
 /// Priority for blocking work that might make a remote document request.
 ///
+/// 唯一定义在 `source::gate`，这里只做再导出：粒度较粗的 governor（跨整段任务）
+/// 与粒度较细的 `RateGate`（每次网络请求）必须共用同一个优先级取值，否则外层
+/// 优先级无法贯通到底层请求。
+///
 /// The governor only chooses which queued work may start. Once the permit is
 /// held, the underlying synchronous I/O remains non-cancellable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestPriority {
-    Foreground,
-    Prefetch,
-    Cover,
-    Scan,
-}
-
-impl RequestPriority {
-    const fn queue_index(self) -> usize {
-        match self {
-            Self::Foreground => 0,
-            Self::Prefetch => 1,
-            Self::Cover => 2,
-            Self::Scan => 3,
-        }
-    }
-
-    const fn is_background(self) -> bool {
-        !matches!(self, Self::Foreground)
-    }
-}
+pub use crate::source::gate::RequestPriority;
 
 /// Fair, bounded coordinator for blocking remote work.
 ///
@@ -265,13 +249,18 @@ impl Reader {
 
     /// 获取一页:先 L1 内存,未命中则等待/认领唯一一次实际生成;完成后触发周边预取。
     pub fn get_page(self: &Arc<Self>, index: u32) -> Result<Arc<Vec<u8>>> {
+        // P0 埋点：单页端到端 wall time（含等 inflight、等许可、等门控、网络）。
+        let span = crate::perf::Span::new("reader.get_page").field_u64("index", index as u64);
         let cached = { self.cache.lock().unwrap().get(&index) };
         if let Some(bytes) = cached {
+            crate::perf::bump(crate::perf::Counter::PageMemoryHits);
+            span.field_str("source", "l1").end();
             self.spawn_prefetch(index);
             return Ok(bytes);
         }
 
         let bytes = self.load_or_wait(index)?;
+        span.field_str("source", "load").end();
         self.spawn_prefetch(index);
         Ok(bytes)
     }
@@ -315,10 +304,41 @@ impl Reader {
 
     /// 已认领页的唯一实际读取路径。无论成功、失败还是 panic 都释放 inflight 并唤醒等待者。
     fn load_claimed(&self, index: u32, priority: RequestPriority) -> Result<Arc<Vec<u8>>> {
+        use crate::perf::{add, bump, observe_us, Counter};
+        let span = crate::perf::Span::new("reader.load_claimed")
+            .field_u64("index", index as u64)
+            .field_str("priority", format!("{priority:?}"));
+        let governor_enter = Instant::now();
+        let mut disk_hit = false;
+        let mut governor_wait_us = 0_u64;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Local cache hits must not queue behind remote requests.
+            if let Some(bytes) = self.disk_get(index) {
+                disk_hit = true;
+                return Ok(Arc::new(bytes));
+            }
             let _permit = self.governor.acquire(priority)?;
-            self.read_page(index)
+            governor_wait_us = governor_enter.elapsed().as_micros() as u64;
+            // 把优先级标注到本线程，使底层每一次网络请求（CDN Range / 取链）
+            // 都能按同一个优先级排队 —— 这是"外层优先级贯通到底层"的落点。
+            crate::source::gate::with_priority(priority, || self.read_page(index))
         }));
+        bump(Counter::PageLoads);
+        if disk_hit {
+            bump(Counter::PageDiskHits);
+        }
+        observe_us(Counter::PageLoadUsTotal, Counter::PageLoadUsMax, span.elapsed_us());
+        observe_us(
+            Counter::GovernorWaitUsTotal,
+            Counter::GovernorWaitUsMax,
+            governor_wait_us,
+        );
+        if priority.is_background() {
+            add(Counter::GovernorWaitUsTotalBackground, governor_wait_us);
+        }
+        span.field_u64("disk_hit", u64::from(disk_hit))
+            .field_u64("governor_wait_us", governor_wait_us)
+            .end();
 
         match outcome {
             Ok(result) => {
@@ -486,6 +506,40 @@ mod tests {
         page1_calls: Arc<AtomicUsize>,
         page1_started: mpsc::Sender<()>,
         release_page1: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    #[test]
+    fn disk_hit_does_not_wait_for_network_permits() {
+        let (started_tx, _) = mpsc::channel();
+        let disk_dir = std::env::temp_dir().join(format!(
+            "rch_reader_disk_priority_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        std::fs::write(disk_dir.join("0.bin"), [42]).unwrap();
+        let governor = Arc::new(BlockingRequestGovernor::new(2, 8));
+        let first = governor.acquire(RequestPriority::Foreground).unwrap();
+        let second = governor.acquire(RequestPriority::Foreground).unwrap();
+        let reader = Arc::new(Reader {
+            book: Box::new(BlockingDoc {
+                page1_calls: Arc::new(AtomicUsize::new(0)),
+                page1_started: started_tx,
+                release_page1: Arc::new((Mutex::new(true), Condvar::new())),
+            }),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+            governor: Arc::clone(&governor),
+        });
+        let (tx, rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || tx.send(reader.load_or_wait(0)).unwrap());
+        let cached = rx.recv_timeout(Duration::from_secs(2));
+        // Always release/join before asserting so a failure cannot leak a blocked worker.
+        drop(first);
+        drop(second);
+        handle.join().unwrap();
+        std::fs::remove_dir_all(disk_dir).unwrap();
+        assert_eq!(&**cached.expect("disk hit queued behind network I/O").unwrap(), &[42]);
     }
 
     impl Document for BlockingDoc {

@@ -13,6 +13,7 @@ use crate::source::sftp::{self as sftp_source, SftpClient};
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
+use std::io;
 use std::sync::{Arc, Mutex, OnceLock};
 
 static SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<WebDavClient>>>> = OnceLock::new();
@@ -359,7 +360,12 @@ fn retry_after_ms(text: &str) -> Option<u64> {
 
 fn scan_error(error: anyhow::Error) -> RemoteScanError {
     let text = error.to_string().to_ascii_lowercase();
-    if text.contains("401")
+    if text.contains("http 405") || text.contains("http: 405") {
+        RemoteScanError::HttpStatus {
+            stage: "downurl".into(),
+            status: 405,
+        }
+    } else if text.contains("401")
         || text.contains("登录")
         || text.contains("token")
         || text.contains("认证")
@@ -381,6 +387,41 @@ fn scan_error(error: anyhow::Error) -> RemoteScanError {
         RemoteScanError::TransientNetwork("provider_unavailable".into())
     } else {
         RemoteScanError::Provider("provider_error".into())
+    }
+}
+
+/// Preserve protocol categories from provider Range reads.  The provider
+/// clients expose `io::Result` for their streaming API, so only a sanitized
+/// classification crosses the adapter boundary; response bodies and URLs
+/// are never persisted or shown to the user.
+fn scan_io_error(error: io::Error) -> RemoteScanError {
+    let text = error.to_string().to_ascii_lowercase();
+    if text.contains("http 405") || text.contains("http: 405") {
+        RemoteScanError::HttpStatus {
+            stage: "range_read".into(),
+            status: 405,
+        }
+    } else if text.contains("401") || text.contains("unauthorized") {
+        RemoteScanError::Unauthorized
+    } else if text.contains("403") || text.contains("forbidden") {
+        RemoteScanError::Forbidden
+    } else if text.contains("404") || text.contains("not found") {
+        RemoteScanError::NotFound
+    } else if text.contains("429") || text.contains("rate") || text.contains("频繁") {
+        RemoteScanError::RateLimited {
+            retry_after_ms: retry_after_ms(&text),
+        }
+    } else if text.contains("200") && text.contains("range") {
+        RemoteScanError::RangeUnavailable
+    } else if text.contains("timeout")
+        || text.contains("timed out")
+        || text.contains("连接")
+        || text.contains("network")
+        || text.contains("请求失败")
+    {
+        RemoteScanError::TransientNetwork("range_read_failed".into())
+    } else {
+        RemoteScanError::Provider("range_read_failed".into())
     }
 }
 
@@ -424,6 +465,7 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
                     asset_kind: classify(&entry.name, entry.is_dir),
                     name: entry.name,
                     logical_path,
+                    provider_path: Some(entry.path.clone()),
                     is_dir: entry.is_dir,
                     size: (entry.size != 0).then_some(entry.size),
                     mtime: (entry.mtime != 0).then_some(entry.mtime),
@@ -463,7 +505,7 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
                 c.read_range_url(&info.url, offset, &mut bytes)
             }
         }
-        .map_err(|_| RemoteScanError::TransientNetwork("range_read_failed".into()))?;
+        .map_err(scan_io_error)?;
         bytes.truncate(read);
         Ok(bytes)
     }
@@ -494,6 +536,18 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
     }
 
     #[flutter_rust_bridge::frb(ignore)]
+    fn cache_path(&self, logical_path: &str) -> Option<String> {
+        if !self.opaque_paths {
+            return Some(normalize_path(logical_path));
+        }
+        self.path_ids
+            .lock()
+            .unwrap()
+            .get(&normalize_path(logical_path))
+            .cloned()
+    }
+
+    #[flutter_rust_bridge::frb(ignore)]
     fn capabilities(
         &self,
         _path: &str,
@@ -501,24 +555,24 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
     ) -> std::result::Result<RemoteCapabilities, RemoteScanError> {
         let provider_path = self.provider_path(_path);
         let range_read = match &self.client {
-            RemoteSessionClient::WebDav(c) => c.range_supported(&provider_path).unwrap_or(false),
+            RemoteSessionClient::WebDav(c) => c.range_probe_checked(&provider_path)?.supported,
             RemoteSessionClient::Sftp(_) => true,
-            RemoteSessionClient::Baidu(c) => c
-                .dlink(&provider_path)
-                .map(|(url, _)| c.probe_range(&url))
-                .unwrap_or(false),
-            RemoteSessionClient::Cloud115(c) => c
-                .downurl(&provider_path)
-                .map(|(url, _)| c.probe_range(&url))
-                .unwrap_or(false),
-            RemoteSessionClient::Cloud115Cookie(c) => c
-                .downurl(&provider_path)
-                .map(|info| c.probe(&info.url).0)
-                .unwrap_or(false),
-            RemoteSessionClient::Quark(c) => c
-                .downlink(&provider_path)
-                .map(|info| c.probe(&info.url).0)
-                .unwrap_or(false),
+            RemoteSessionClient::Baidu(c) => {
+                let (url, _) = c.dlink(&provider_path).map_err(scan_error)?;
+                c.probe_range_checked(&url)?.supported
+            }
+            RemoteSessionClient::Cloud115(c) => {
+                let (url, _) = c.downurl(&provider_path).map_err(scan_error)?;
+                c.probe_checked(&url)?.supported
+            }
+            RemoteSessionClient::Cloud115Cookie(c) => {
+                let info = c.downurl(&provider_path).map_err(scan_error)?;
+                c.probe_checked(&info.url)?.supported
+            }
+            RemoteSessionClient::Quark(c) => {
+                let info = c.downlink(&provider_path).map_err(scan_error)?;
+                c.probe_checked(&info.url)?.supported
+            }
         };
         Ok(RemoteCapabilities {
             range_read,
@@ -1337,12 +1391,7 @@ pub async fn cloud115_cookie_cover(
         let info = client_clone.downurl(&path_clone)?;
         let (supports, size) = client_clone.probe(&info.url);
         if !supports {
-            let local_path = client_clone.download_to_raw_cache(&path_clone, None)?;
-            let src = crate::source::local::LocalFile::open(&local_path)?;
-            let book = document::open_document(src, &name)?;
-            let bytes = book.page_bytes(page)?;
-            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
-            return crate::decode::decode_cover(&bytes, width, height, crop);
+            anyhow::bail!("远程封面需要 Range 支持");
         }
         let src =
             cloud115_source::Cloud115WebFile::new(client_clone, path_clone.clone(), size, info.url);
@@ -1573,12 +1622,7 @@ pub async fn quark_cover(
         let info = client_clone.downlink(&path_clone)?;
         let (supports, size) = client_clone.probe(&info.url);
         if !supports {
-            let local_path = client_clone.download_to_raw_cache(&path_clone, None)?;
-            let src = crate::source::local::LocalFile::open(&local_path)?;
-            let book = document::open_document(src, &name)?;
-            let bytes = book.page_bytes(page)?;
-            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
-            return crate::decode::decode_cover(&bytes, width, height, crop);
+            anyhow::bail!("远程封面需要 Range 支持");
         }
         let src = quark_source::QuarkFile::new(client_clone, path_clone.clone(), size, info.url);
         let book = document::open_document(src, &name)?;
@@ -1913,12 +1957,7 @@ pub async fn baidu_cover(
         }
         let (link, size) = client_clone.dlink(&path_clone)?;
         if !client_clone.probe_range(&link) {
-            let local_path = client_clone.download_to_raw_cache(&path_clone, None)?;
-            let src = crate::source::local::LocalFile::open(&local_path)?;
-            let book = document::open_document(src, &path_clone)?;
-            let bytes = book.page_bytes(page)?;
-            let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
-            return crate::decode::decode_cover(&bytes, width, height, crop);
+            anyhow::bail!("远程封面需要 Range 支持");
         }
         let src = baidu_source::BaiduFile::new(client_clone, path_clone.clone(), size, link);
         let book = document::open_document(src, &path_clone)?;
@@ -2187,15 +2226,7 @@ pub async fn cloud115_cover(
         let (url, _) = client_clone.downurl(&path_clone)?;
         let size = match client_clone.probe_size(&url) {
             Some(s) => s,
-            None => {
-                let local_path =
-                    client_clone.download_to_raw_cache(&path_clone, &path_clone, None)?;
-                let src = crate::source::local::LocalFile::open(&local_path)?;
-                let book = document::open_document(src, &path_clone)?;
-                let bytes = book.page_bytes(page)?;
-                let crop = crop.map(|r| (r.x, r.y, r.w, r.h));
-                return crate::decode::decode_cover(&bytes, width, height, crop);
-            }
+            None => anyhow::bail!("远程封面需要 Range 支持"),
         };
         let src = cloud115_source::Cloud115File::new(client_clone, path_clone.clone(), size, url);
         let book = document::open_document(src, &path_clone)?;

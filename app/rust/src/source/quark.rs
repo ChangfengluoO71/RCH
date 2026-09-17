@@ -9,7 +9,9 @@
 //!   `open_document` 扩展名分发，规避 115 用提取码当 path 导致的探测失败隐患。
 //!
 //! 契约细节见 `.trellis/tasks/08-04-quark-book-source/research/quark-api-contract.md`（步骤 0 冒烟产出）。
+use super::singleflight::SingleFlight;
 use super::{ByteSource, Entry, RateGate};
+use crate::remote_scan::adapter::{classify_range_probe_response, RangeProbe, RemoteScanError};
 use crate::source::webdav::DownloadProgress;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::blocking::Client;
@@ -19,9 +21,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const API_BASE: &str = "https://drive.quark.cn/1/clouddrive";
 const API_CONFIG: &str = "/config";
@@ -33,6 +35,20 @@ const QUARK_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/53
 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 \
 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch";
 const PAGE_SIZE: i64 = 100;
+
+/// 直链缓存 TTL。
+///
+/// **代码里没有任何证据说明夸克直链的有效期**（P0-D 前置审计已确认：全仓库唯一
+/// 的直链 TTL 常量是 115 的 300 s，夸克侧只有"403 后重取一次"的反应式处理）。
+/// 因此这里取保守值，并配合两道自愈机制：
+///
+/// - HTTP 403 → 立即失效并重取一次（`QuarkFile::read_at` / `download_to_raw_cache`）；
+/// - cookie 代际变化 → 整个缓存对该代际不复用（见 `cookie_epoch`）。
+///
+/// TTL 偏长是自愈的，偏短只会损失收益；最终值应由真机测量校正。
+const QUARK_DLINK_CACHE_TTL: Duration = Duration::from_secs(120);
+/// 直链缓存容量上限。超过后按 **LRU** 淘汰（不是 115 那种 HashMap 任意键淘汰）。
+const QUARK_DLINK_CACHE_CAPACITY: usize = 256;
 
 /// 列表响应（`data.list[]` + `metadata._total`）。
 #[derive(Debug, Deserialize)]
@@ -144,6 +160,81 @@ pub struct QuarkClient {
     gate: RateGate,
     /// fid -> 真实文件名（列表时填充；用于格式探测与 raw 缓存命名）。
     names: Mutex<HashMap<String, String>>,
+    /// fid -> 直链（受 TTL / cookie 代际 / LRU 容量约束）。
+    ///
+    /// 改造前夸克**完全没有直链缓存**：adapter 的每次 `read_range` 都会重新调用
+    /// `file/download`（见 `api/source.rs`）。一次封面提取因此要发 3~6 次取链。
+    dlinks: Mutex<DlinkCache>,
+    /// 按 fid 合并并发取链；取代"无缓存 + 2 r/s 串行"。
+    dlink_flight: SingleFlight<String, std::result::Result<DownloadInfo, String>>,
+    /// `__puus` 代际。只有真正发生变化时才自增，避免被无变化的 Set-Cookie 误伤。
+    cookie_epoch: AtomicU64,
+}
+
+/// 直链缓存（带 LRU 次序戳）。
+#[derive(Default)]
+struct DlinkCache {
+    entries: HashMap<String, CachedDlink>,
+    seq: u64,
+}
+
+#[derive(Clone)]
+struct CachedDlink {
+    info: DownloadInfo,
+    fetched_at: Instant,
+    /// 取链时生效的 `__puus` 代际；不同代际一律不复用。
+    cookie_epoch: u64,
+    /// LRU 次序戳（单调递增，越大越新）。
+    seq: u64,
+}
+
+impl DlinkCache {
+    fn get(&mut self, fid: &str, epoch: u64) -> Option<DownloadInfo> {
+        let expired = {
+            let entry = self.entries.get(fid)?;
+            entry.cookie_epoch != epoch || entry.fetched_at.elapsed() >= QUARK_DLINK_CACHE_TTL
+        };
+        if expired {
+            self.entries.remove(fid);
+            return None;
+        }
+        let info = self.entries.get(fid)?.info.clone();
+        self.seq += 1;
+        let seq = self.seq;
+        if let Some(entry) = self.entries.get_mut(fid) {
+            entry.seq = seq;
+        }
+        Some(info)
+    }
+
+    fn put(&mut self, fid: &str, info: DownloadInfo, epoch: u64) {
+        self.seq += 1;
+        let seq = self.seq;
+        self.entries.insert(
+            fid.to_string(),
+            CachedDlink {
+                info,
+                fetched_at: Instant::now(),
+                cookie_epoch: epoch,
+                seq,
+            },
+        );
+        while self.entries.len() > QUARK_DLINK_CACHE_CAPACITY {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.seq)
+                .map(|(fid, _)| fid.clone())
+            else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+    }
+
+    fn invalidate(&mut self, fid: &str) {
+        self.entries.remove(fid);
+    }
 }
 
 impl QuarkClient {
@@ -156,8 +247,11 @@ impl QuarkClient {
             } else {
                 root.to_string()
             },
-            gate: RateGate::new(2.0),
+            gate: RateGate::fixed_interval("quark.api", 2.0),
             names: Mutex::new(HashMap::new()),
+            dlinks: Mutex::new(DlinkCache::default()),
+            dlink_flight: SingleFlight::new(),
+            cookie_epoch: AtomicU64::new(0),
         })
     }
 
@@ -188,7 +282,8 @@ impl QuarkClient {
         query: &[(&str, String)],
         body: Option<serde_json::Value>,
     ) -> Result<String> {
-        self.gate.wait();
+        let gate_guard = self.gate.enter();
+        crate::source::record_gate_wait(self.gate.channel(), gate_guard.waited_us());
         let cookie = self.current_cookie();
         let url = format!("{API_BASE}{path}");
         let mut builder = match method {
@@ -226,7 +321,13 @@ impl QuarkClient {
             })
         }) {
             let mut c = self.cookie.lock().unwrap();
-            *c = upsert_cookie(&c, "__puus", &puus);
+            let updated = upsert_cookie(&c, "__puus", &puus);
+            // 只有 `__puus` 真的变了才推进代际：无变化的 Set-Cookie 不该让整个
+            // 直链缓存作废（否则缓存几乎永远不命中）。
+            if updated != *c {
+                self.cookie_epoch.fetch_add(1, Ordering::SeqCst);
+            }
+            *c = updated;
         }
         if !status.is_success() {
             bail!(
@@ -304,8 +405,41 @@ impl QuarkClient {
         Ok(all)
     }
 
-    /// 取下载直链。
+    /// 直链缓存查询（受 TTL 与 cookie 代际约束）。
+    pub fn cached_dlink(&self, fid: &str) -> Option<DownloadInfo> {
+        let epoch = self.cookie_epoch.load(Ordering::SeqCst);
+        self.dlinks.lock().unwrap().get(fid, epoch)
+    }
+
+    /// 主动失效某个 fid 的直链（403 后调用）。
+    pub fn invalidate_dlink(&self, fid: &str) {
+        self.dlinks.lock().unwrap().invalidate(fid);
+    }
+
+    /// 取下载直链：命中缓存直接返回，否则按 fid 合并并发请求。
+    ///
+    /// 合并粒度是**文件**：不同 fid 互不阻塞；账号级的 2 r/s 门控仍然共享。
     pub fn downlink(&self, fid: &str) -> Result<DownloadInfo> {
+        if let Some(info) = self.cached_dlink(fid) {
+            return Ok(info);
+        }
+        let outcome = self.dlink_flight.run(fid.to_string(), || {
+            // leader 的二次检查：登记的瞬间可能已经有别人填好缓存。
+            if let Some(info) = self.cached_dlink(fid) {
+                return Ok(info);
+            }
+            self.fetch_downlink(fid).map_err(|error| error.to_string())
+        });
+        // 只缓存**成功**结果：把瞬时错误（超时/429）缓存下来会把整个会话的该
+        // fid 钉死（P0-D 前置审计风险 3）。
+        match outcome.value {
+            Ok(info) => Ok(info),
+            Err(message) => anyhow::bail!("{message}"),
+        }
+    }
+
+    /// 真正发起取链请求，并在成功后写入缓存。
+    fn fetch_downlink(&self, fid: &str) -> Result<DownloadInfo> {
         let body = self.request(
             API_FILE_DOWNLOAD,
             Method::POST,
@@ -329,11 +463,18 @@ impl QuarkClient {
                     .insert(fid.to_string(), name.clone());
             }
         }
-        Ok(DownloadInfo {
+        let info = DownloadInfo {
             url: item.download_url,
             size: item.size,
             name: item.file_name,
-        })
+        };
+        // 只缓存成功结果。瞬时错误（网络超时 / 风控）绝不进缓存。
+        let epoch = self.cookie_epoch.load(Ordering::SeqCst);
+        self.dlinks
+            .lock()
+            .unwrap()
+            .put(fid, info.clone(), epoch);
+        Ok(info)
     }
 
     /// 解析 fid 对应的真实文件名：列表缓存 → download 响应 → 报错。
@@ -349,6 +490,14 @@ impl QuarkClient {
 
     /// 探测直链 Range 支持并返回总大小（206 + Content-Range / Content-Length）。
     pub fn probe(&self, url: &str) -> (bool, u64) {
+        match self.probe_checked(url) {
+            Ok(probe) => (probe.supported, probe.total_size.unwrap_or(0)),
+            Err(_) => (false, 0),
+        }
+    }
+
+    /// 带错误语义的直链 Range 探测。
+    pub fn probe_checked(&self, url: &str) -> Result<RangeProbe, RemoteScanError> {
         let resp = self
             .client
             .get(url)
@@ -356,30 +505,19 @@ impl QuarkClient {
             .header(COOKIE, self.current_cookie())
             .header(REFERER, QUARK_REFERER)
             .header(USER_AGENT, QUARK_UA)
-            .send();
-        let resp = match resp {
-            Ok(r) => r,
-            Err(_) => return (false, 0),
-        };
-        let content_length = || {
-            resp.headers()
-                .get(reqwest::header::CONTENT_LENGTH)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0)
-        };
-        if resp.status() == StatusCode::PARTIAL_CONTENT {
-            let total = resp
-                .headers()
-                .get(reqwest::header::CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.rsplit('/').next())
-                .and_then(|x| x.trim().parse::<u64>().ok())
-                .filter(|n| *n > 0);
-            (true, total.unwrap_or_else(content_length))
-        } else {
-            (false, content_length())
-        }
+            .send()
+            .map_err(|_| RemoteScanError::TransientNetwork("range_probe_network".into()))?;
+        let status = resp.status().as_u16();
+        let content_range = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok());
+        let content_length = resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        classify_range_probe_response(status, content_range, content_length)
     }
 
     /// Range 读直链（带三件套头）；403 视为直链失效，由调用方重取一次。
@@ -471,6 +609,8 @@ impl QuarkClient {
             .send()
             .map_err(|e| anyhow!("下载失败:{e}"))?;
         if resp.status() == StatusCode::FORBIDDEN {
+            // 同上：先失效共享缓存，否则这里会拿回同一条已失效的直链。
+            self.invalidate_dlink(fid);
             let info2 = self.downlink(fid)?;
             resp = self
                 .client
@@ -556,7 +696,10 @@ impl ByteSource for QuarkFile {
         match self.client.read_range_url(&url, offset, buf) {
             Ok(n) => Ok(n),
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                // 直链失效：清缓存重取一次。
+                // 直链失效：先失效**共享**缓存再重取一次。
+                // 只清本实例的 `dlink` 是不够的 —— 扫描/封面走的是 adapter 路径，
+                // 它们读的是 `QuarkClient` 上的共享缓存（前置审计风险 9）。
+                self.client.invalidate_dlink(&self.fid);
                 *self.dlink.lock().unwrap() = None;
                 let url2 = self.get_dlink()?;
                 self.client
@@ -649,6 +792,209 @@ mod tests {
         let c2 = upsert_cookie(&c, "__puus", "y");
         assert!(c2.contains("__puus=y"));
         assert!(!c2.contains("__puus=x"));
+    }
+
+    fn sample(fid: &str) -> DownloadInfo {
+        DownloadInfo {
+            url: format!("https://cdn.example.test/{fid}"),
+            size: Some(1),
+            name: Some("f.cbz".to_string()),
+        }
+    }
+
+    /// P0-D：直链缓存必须命中、必须过期、必须可主动失效。
+    #[test]
+    fn dlink_cache_hits_expires_and_invalidates() {
+        let client = QuarkClient::new("__puus=a", "0").unwrap();
+        let epoch = client.cookie_epoch.load(Ordering::SeqCst);
+
+        // 命中
+        client.dlinks.lock().unwrap().put("fid-a", sample("fid-a"), epoch);
+        assert_eq!(
+            client.cached_dlink("fid-a").map(|value| value.url),
+            Some("https://cdn.example.test/fid-a".to_string())
+        );
+
+        // 主动失效（403 路径会走这里）
+        client.invalidate_dlink("fid-a");
+        assert!(client.cached_dlink("fid-a").is_none());
+
+        // 过期：直接写入一条超出 TTL 的记录，保持用例确定性。
+        client.dlinks.lock().unwrap().entries.insert(
+            "fid-old".to_string(),
+            CachedDlink {
+                info: sample("fid-old"),
+                fetched_at: Instant::now() - QUARK_DLINK_CACHE_TTL - Duration::from_secs(1),
+                cookie_epoch: epoch,
+                seq: 1,
+            },
+        );
+        assert!(
+            client.cached_dlink("fid-old").is_none(),
+            "an entry older than the TTL must not be served"
+        );
+    }
+
+    /// `__puus` 轮换后旧直链必须不复用。
+    ///
+    /// 审计已确认"直链签名究竟绑定 cookie 的哪一部分"在代码里**没有依据**，因此
+    /// 这里采取保守策略：代际变了就不复用。也正因为保守，必须验证"没有变化的
+    /// Set-Cookie 不会推进代际"，否则缓存几乎永远不命中。
+    #[test]
+    fn dlink_cache_is_discarded_when_the_cookie_epoch_changes() {
+        let client = QuarkClient::new("__puus=a", "0").unwrap();
+        let epoch = client.cookie_epoch.load(Ordering::SeqCst);
+        client.dlinks.lock().unwrap().put("fid-a", sample("fid-a"), epoch);
+        assert!(client.cached_dlink("fid-a").is_some());
+
+        // 代际推进（等价于 `__puus` 真的变了）。
+        client.cookie_epoch.fetch_add(1, Ordering::SeqCst);
+        assert!(
+            client.cached_dlink("fid-a").is_none(),
+            "a link fetched under another cookie generation must not be reused"
+        );
+
+        // 无变化的 Set-Cookie 不得推进代际：这里模拟 upsert_cookie 返回同值。
+        let before = client.cookie_epoch.load(Ordering::SeqCst);
+        {
+            let mut cookie = client.cookie.lock().unwrap();
+            let updated = upsert_cookie(&cookie, "__puus", "a");
+            if updated != *cookie {
+                client.cookie_epoch.fetch_add(1, Ordering::SeqCst);
+            }
+            *cookie = updated;
+        }
+        assert_eq!(
+            client.cookie_epoch.load(Ordering::SeqCst),
+            before,
+            "an unchanged Set-Cookie must not invalidate the whole cache"
+        );
+    }
+
+    /// 容量必须有界，且按 LRU 淘汰最旧而不是任意键。
+    #[test]
+    fn dlink_cache_is_lru_bounded() {
+        let client = QuarkClient::new("__puus=a", "0").unwrap();
+        let epoch = client.cookie_epoch.load(Ordering::SeqCst);
+        for index in 0..QUARK_DLINK_CACHE_CAPACITY + 10 {
+            client
+                .dlinks
+                .lock()
+                .unwrap()
+                .put(&format!("fid-{index}"), sample("x"), epoch);
+        }
+        assert_eq!(
+            client.dlinks.lock().unwrap().entries.len(),
+            QUARK_DLINK_CACHE_CAPACITY,
+            "the cache must stay bounded"
+        );
+        assert!(
+            client.cached_dlink("fid-0").is_none(),
+            "the oldest entry must be evicted first"
+        );
+        assert!(
+            client
+                .cached_dlink(&format!("fid-{}", QUARK_DLINK_CACHE_CAPACITY + 9))
+                .is_some(),
+            "the newest entry must survive"
+        );
+    }
+
+    /// 同 fid 并发只发一次取链；不同 fid 互不阻塞。
+    #[test]
+    fn dlink_coalesces_same_fid_without_serialising_other_fids() {
+        use std::sync::atomic::AtomicUsize;
+        let client = Arc::new(QuarkClient::new("__puus=a", "0").unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let mut same = Vec::new();
+        for _ in 0..6 {
+            let client = Arc::clone(&client);
+            let calls = Arc::clone(&calls);
+            same.push(std::thread::spawn(move || {
+                client
+                    .dlink_flight
+                    .run("fid-shared".to_string(), || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(120));
+                        Ok(sample("fid-shared"))
+                    })
+                    .value
+            }));
+        }
+        for handle in same {
+            assert!(handle.join().unwrap().is_ok());
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Instant::now();
+        let mut different = Vec::new();
+        for index in 0..4_u32 {
+            let client = Arc::clone(&client);
+            let calls = Arc::clone(&calls);
+            different.push(std::thread::spawn(move || {
+                client
+                    .dlink_flight
+                    .run(format!("fid-{index}"), || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(150));
+                        Ok(sample("x"))
+                    })
+                    .leader
+            }));
+        }
+        let leaders = different
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|leader| *leader)
+            .count();
+        let elapsed = started.elapsed();
+        assert_eq!(leaders, 4);
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "different fids must not serialise behind one another; took {elapsed:?}"
+        );
+    }
+
+    /// leader 失败：错误一致传播、不重试成风暴、**不写缓存**。
+    #[test]
+    fn failed_dlink_leader_propagates_without_stampede_or_poisoning() {
+        use std::sync::atomic::AtomicUsize;
+        let client = Arc::new(QuarkClient::new("__puus=a", "0").unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..5 {
+            let client = Arc::clone(&client);
+            let calls = Arc::clone(&calls);
+            handles.push(std::thread::spawn(move || {
+                client
+                    .dlink_flight
+                    .run("fid-bad".to_string(), || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(60));
+                        Err("夸克 API 错误(41017): 请求过于频繁".to_string())
+                    })
+                    .value
+            }));
+        }
+        let results: Vec<std::result::Result<DownloadInfo, String>> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        assert!(
+            results.iter().all(|value| value.is_err()),
+            "every caller must observe the leader failure"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "a failing leader must not cause followers to retry"
+        );
+        assert!(
+            client.cached_dlink("fid-bad").is_none(),
+            "a failed fetch must never be cached"
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These functions are ignored because they are not marked as `pub`: `next_id`, `register_book`, `sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `BookSession`
 
-/// 打开本地书籍(ZIP/CBZ/EPUB),返回会话句柄与信息;并预取开头若干页。
+/// 打开本地书籍(ZIP/CBZ/EPUB),返回会话句柄与信息。
 /// 若 path 为目录,则走 Folder 格式(枚举目录下图片)。
 Future<BookInfo> openLocalBook({required String path}) =>
     RustLib.instance.api.crateApiBookOpenLocalBook(path: path);

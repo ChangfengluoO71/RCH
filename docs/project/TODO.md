@@ -44,6 +44,16 @@
 
 ## Backlog(待办)
 
+### P1 后续改进（2026-09-18 登记）
+
+- [ ] **持久化 115-web / Quark 的远程 raw-cache 身份**（provider 返回的文件名）。
+      这是让 `Family 2`（115-web / Quark 历史 raw-key 封面）从 *known unrecoverable*
+      变为可恢复的**唯一**路径；未持久化前，raw 文件被删即不可恢复。
+- [ ] **ZIP 依赖升级 / 仅中心目录打开归档的可行性调研**（当前需读中央目录；升级后可能支持流式打开）。
+- [ ] **SFTP source authority 归属整合**（cache authority 与 endpoint 解析的职责边界收口）。
+- [ ] **Cover cache identity 统一**（远程 raw cache 与 cover blob 的身份/路径规则统一）。
+
+
 ### 规划完成(待开工) — 2026-08-02 批量规划
 - [ ] `08-02-m5-book-sources` — M5 书源扩展(SMB / SFTP)
 - [ ] `08-02-tag-meta-hierarchy` — 元数据标签按作者/类别/系列/状态分层折叠

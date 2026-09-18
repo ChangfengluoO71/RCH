@@ -983,9 +983,33 @@ SELECT ... FROM library_index WHERE source_id = ?1 AND deleted = 0   -- 只返�
 **验证**：Flutter Analyze 无问题；Flutter 全量测试 76 项通过；Rust 文件夹识别测试通过。
 
 **发布**：`v0.5.5`（补丁号递增）——更新 pubspec、Release Notes、CHANGELOG、README，创建 annotated tag 并推送触发 GitHub Actions 双端构建。
-## 2026-09-18｜第47轮：P1-E/P1-F 实现闭环（事件驱动封面 + 进度聚合语义）
+## 2026-08-28｜历史对账（release record）：v0.5.6 / v0.5.7
 
-**范围**：P1-E（事件驱动卡片状态、窄 stream、只读 state API、删除轮询）与 P1-F（可用性语义与不变量）。
+> **说明**：本条目是**事后对账**，不是当时的实时开发日志。LOG 在 2026-08-25 第 46 轮（v0.5.5）
+> 之后出现记录缺口，而 `v0.5.6` / `v0.5.7` 已实际发布。此处**只登记可核对的事实**（release notes
+> 与 annotated tag 均已存在），不倒填不存在的开发过程。
+
+- `v0.5.6`：`docs/releases/release_notes_v0.5.6.md`（RCH v0.5.6）；tag `v0.5.6` 已存在于 origin。
+  该 notes **未记录日期** ⇒ 本条目不为其断言日期；标题日期取自 `v0.5.7` 的 release 日期。
+- `v0.5.7`：`docs/releases/release_notes_v0.5.7.md`（RCH v0.5.7）；tag `v0.5.7` 已存在于 origin。
+- 当前 `app/pubspec.yaml` 版本：`0.5.7+100507`。
+
+**影响**：LOG 与发布物料的这一段时间缺口已在本次对账中显式标注；后续发布必须回到
+"发布即登记"的节奏（见 `docs/reports/p1/2026-09-18-p1-final.md` 的 RC 冻结节）。
+
+---
+
+## 2026-09-18｜第47轮：P1 全量闭环（A–F）——cover 状态机 · source-level wake · 6h 补偿 ·
+disk-first · 事件驱动封面 · 进度聚合语义（提交 fcb83bc）
+
+**范围**：**P1 全量 A–F**（本次提交 `fcb83bc` 同时承载此前各轮未提交的成果）：
+
+- **P1-A** cover job 状态转移矩阵（`resolve_upsert_state` 单一规则表）；
+- **P1-B** source-level wake（ready 但字节缺失 → 对账 → 确有消费者）；
+- **P1-C** session-ready 生命周期 + 6h 一次性长期补偿（session-event-driven，额度在 claim 时消耗）；
+- **P1-D / P1-D2** 统一 disk-first 封面 + legacy/local offline disk-first 与 cache authority；
+- **P1-E** 事件驱动卡片状态（9 个 transition 的 post-commit wake、窄 stream、只读 state API、删除轮询）；
+- **P1-F** 进度聚合语义（available/waiting/other + 不变量 + 精确分母）。
 
 **修改**：
 
@@ -1007,7 +1031,7 @@ changed-file analyze 无问题；clippy 仅既有 `reader.rs:277`。
 
 **沉淀**：`docs/reports/p1/2026-09-18-p1ef-implementation.md`。
 
-**遗留**：Release Gate PENDING（真实 115/Quark、P0 S1–S5、20/100/300 MiB Range 等）；
+**遗留**：Release Gate 已按 RG-A（可自动化）/ RG-B（真实 provider）拆分，详见 `docs/reports/p1/2026-09-18-p1-final.md`；
 基线例外未修（6 个既有 Flutter 测试失败、121 条 analyze、clippy `reader.rs:277`、
 `cover_service.rs` HEAD 已 dirty 的 rustfmt 偏差）。
 

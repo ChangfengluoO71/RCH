@@ -408,3 +408,34 @@
 - **背景**：同步系统复杂度已超过普通导出/导入，用户需要能回答"为什么我的漫画没同步"。
 - **决策**：新增 `sync_history` 表，每次同步记一条：start/end、revision_before/after、pull/push/merge/conflict 计数、error、实体变更摘要 JSON；失败也记录；FRB 暴露最近 N 条。
 - **影响**：设置页"同步历史"展示；排查问题不再靠猜。
+
+## ADR-028 cover 版本语义：等价 upsert 属 observable change（U-B）
+
+- **日期**：2026-09-18
+- **状态**：已定（P1）
+- **背景**：`upsert_job_on` 的 `ON CONFLICT … DO UPDATE` 即使所有 lifecycle 字段等价，也**无条件**写入
+  `updated_at`；而进度聚合按 `updated_at` 取 **latest-per-asset**。曾考虑 U-A（在 SQL 上加 `WHERE`
+  抑制等价写入），但那会改变"把该 job 提升为 current"的既有语义。
+- **决策**：采用 **U-B**。等价 upsert **属于** observable durable change ⇒ `revision +1 / wake +1`。
+  判定标准是"下游可观察的 durable cover truth 是否变化"，而非 SQL 的 `affected_rows`。
+  **禁止**为让测试变绿而在 upsert SQL 上加抑制条件、或改变 latest-per-asset 选择。
+- **影响**：契约测试 `UPSERT-OBS-1/2` 固定该语义；`STREAM-2` 的 0/0 仅适用于**真正**无可观察变化的
+  路径（竞争失败 / wrong owner）。
+
+## ADR-029 revision 与 wake：粒度归事务 owner（U-α）
+
+- **日期**：2026-09-18
+- **状态**：已定（P1）
+- **背景**：一个事务内可能创建/修改 N 个 cover job（如补偿批次、缺失补齐、staged 发布）。
+  若每个 inner 写各自 bump，`remote_view_revision` 会退化成 changed-row counter。
+- **决策**：
+  1. `remote_view_revision` = **monotonic source-generation token for an atomic durable view
+     change**；数值增量**不**编码改动行数或类别（一个事务最多 `+1`）。
+  2. **U-α**：revision/wake 的粒度所有权属于**拥有该事务的那一层**。`upsert_job_on` 仅在
+     `owned_tx.is_some()`（autocommit）时 bump；**借用外层事务时只 mutate，不 bump、不 emit**，
+     由 outer transaction owner 在 commit 之后决定 bump/wake 一次。
+  3. **emit 必须在 COMMIT 成功之后**（禁止事务内 send）；同一事务内若 listing publication 已
+     bump 过 revision，cover 侧**不再**叠加 bump，但 cover wake **仍需发出一次**（revision token
+     可共用，transport wake 表达 cover 语义）。
+- **影响**：契约测试 `REV-*` / `STREAM-1F` / `NW-1~1c` 固定该模型；后续新增 batch owner 必须遵守
+  同样的 ownership 规则，不得在 inner helper 内 emit。

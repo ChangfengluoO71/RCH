@@ -51,4 +51,4 @@
 | 2026-08-21 | 第 44 轮：修复「清理失效漫画数据」无效（远程删除漫画后缓存与数据库残留） | 714 | 931 | 9474F2D8 |
 | 2026-08-28 | 历史对账（release record）：v0.5.6 / v0.5.7（非实时日志） | 986 | 1000 | — |
 | 2026-09-18 | 第 47 轮：P1 全量闭环（A–F：cover 状态机 / wake / 补偿 / disk-first / 事件驱动 / 进度语义） | 1002 | 1038 | fcb83bc |
-| 2026-09-18 | 第 48 轮：RG-A（Release Gate A 类自动化）—— Range fallback / atomic raw-cache / HTTP 语义 | 1039 | 1085 | (pending) |
+| 2026-09-18 | 第 48 轮：RG-A（Release Gate A 类自动化）—— Range fallback / atomic raw-cache / HTTP 语义 | 1039 | 1085 | 03a4be7 |

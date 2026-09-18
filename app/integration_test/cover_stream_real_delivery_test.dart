@@ -209,7 +209,8 @@ void main() {
 
       // ---- production 源 + session ----
       final source = BookSource(
-        id: 'b1-real-delivery',
+        // 每次运行唯一 id：避免上一次运行残留在真实 DB 中的源/扫描状态干扰本次证据。
+        id: 'b1-real-delivery-${DateTime.now().microsecondsSinceEpoch}',
         type: 'webdav',
         name: 'B1 Real Delivery',
         url: fixture.baseUrl,
@@ -244,7 +245,13 @@ void main() {
       }
 
       // ---- production 扫描，等到 terminal（不是 cover polling）----
-      await RemoteScanCoordinator.instance.rescanFull(source, session);
+      try {
+        await RemoteScanCoordinator.instance.rescanFull(source, session);
+      } catch (error) {
+        // ignore: avoid_print
+        print('RG_B1_SCAN_START_FAILED=$error;requests=${fixture.requestLog}');
+        rethrow;
+      }
       final deadline = DateTime.now().add(const Duration(seconds: 60));
       var terminal = false;
       await tester.runAsync(() async {
@@ -377,7 +384,7 @@ void main() {
       // 可机读证据行（product commit 固定；harness commit 由报告记录）。
       // ignore: avoid_print
       print(
-        'RG_B1_FRB_DELIVERY=PASS;candidate=0.5.8+100508;product_commit=b8b64de;'
+        'RG_B1_FRB_DELIVERY=PASS;candidate=0.5.8+100508;product_commit=9cbc840;'
         'source=${source.id};asset=${series.assetId};'
         'requests=${fixture.requestLog.length};injected_stream=false',
       );

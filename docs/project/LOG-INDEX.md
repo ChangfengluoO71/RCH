@@ -53,3 +53,4 @@
 | 2026-09-18 | 第 47 轮：P1 全量闭环（A–F：cover 状态机 / wake / 补偿 / disk-first / 事件驱动 / 进度语义） | 1002 | 1038 | fcb83bc |
 | 2026-09-18 | 第 48 轮：RG-A（Release Gate A 类自动化）—— Range fallback / atomic raw-cache / HTTP 语义 | 1039 | 1085 | 03a4be7 |
 | 2026-09-18 | 第 49 轮：RG-B B-0/B-0.1/B-1 —— RC 身份冻结与真实 FRB 跨桥 delivery | 1086 | 1119 | 12c8fb6 |
+| 2026-09-19 | 第 50 轮：性能缺陷修复（封面进度 fs 扫描）—— 启动卡顿 / 刮削慢 | 1120 | 1154 | 9cbc840 |

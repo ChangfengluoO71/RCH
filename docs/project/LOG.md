@@ -1117,3 +1117,38 @@ A-4 Dart focused 13/13。
 - backlog 未动（stale `.part-*` 清理、死代码 downloader、封面 writer、不可达 2^10 cap）。
 
 ---
+## 2026-09-19｜第50轮：性能缺陷修复（封面进度 fs 扫描）—— 启动卡顿 / 刮削慢
+
+**现象**：用户反馈启动卡顿、封面刮削慢且失败率高、流式加载（尤其双页）变慢。
+
+**原因（静态定位）**：P1-F 把 `available_books` 的判定（每个 ready 封面调用
+`cache::remote_cover_cache_read` = **整文件读取 + 头校验**）挂在状态读取出口；而
+`remoteScanStatus` 被 progress timer **每 500ms** 调用，且在封面抓取期间持续运行
+⇒ 单 tick 成本 `O(ready 数 × 整文件读取)`，主 isolate I/O 饱和。
+
+**修改内容**（方案 B）：
+
+- `cache.rs`：`remote_cover_cache_present(...)`（`metadata` + `len > 0`，不整文件读取）。
+- `cover_service.rs`：`cover_material_present(...)`（统计用）；保留严格的
+  `cover_material_available(...)` 供字节级确认场景。
+- `cover_progress.rs`：`available_books` 按 `(source_id, view_revision, cache_root)` **记忆化**
+  ⇒ 同一 revision 内**零文件系统访问**；revision 前进 / 缓存根变更时重算。
+- 新增契约（同 revision 内删除字节仍返回缓存值 = 结构性证明不再触 fs；revision 前进后重算）。
+
+**影响范围**：`cache.rs` / `cover_service.rs` / `cover_progress.rs` / 进度契约测试。
+**语义边界**（已断言并记录）：字节在无 revision 变化时消失 ⇒ `available_books` 保持上次结果，
+直到下一次 durable cover 变化或缓存根变更。
+
+**是否完成**：完成。契约 7/7；全量 `cargo test --locked -j 2` → EXIT=0（24 targets / 484 passed）。
+因属生产改动，B-1 的既有证据按两层身份规则失效并在新 product commit `9cbc840` 上重验通过
+（EXIT=0；`flipped=true`；`durable_state=ready`）。
+
+**遗留问题**：
+
+- 第二因未处理：删除卡片重试轮询后**瞬时失败不再被重试**（wake 只覆盖成功变更）——
+  可选"事件驱动恢复"，属产品取舍。
+- 双页 / 流式加载速度：本阶段**未改**该路径；先复测，仍慢则列入下阶段重点排查清单。
+- harness 缺陷已修：B-1 原先复用同一 `source id`，受上次运行残留状态干扰
+  （表现为 `nativeStartFailed`），改为每次唯一 id。
+
+---

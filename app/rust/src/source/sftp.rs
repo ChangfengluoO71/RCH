@@ -90,11 +90,8 @@ impl SftpClient {
                 .await
                 .map_err(|_| anyhow!("连接 SFTP 服务器超时(20s)"))?
                 .map_err(|e: anyhow::Error| e)?;
-            let endpoint = if port == 22 {
-                host.clone()
-            } else {
-                format!("{host}:{port}")
-            };
+            // authority 由共享 helper 产出（纯函数），writer / reader 同源。
+            let endpoint = endpoint_for(&host, port);
             Ok::<_, anyhow::Error>((conn, sftp, endpoint))
         })?;
         Ok(SftpClient {
@@ -305,13 +302,20 @@ pub fn cache_hash(endpoint: &str, path: &str) -> String {
 }
 
 /// 探测 raw/ 缓存文件（非空视为已缓存）。
-pub fn raw_cache_path(endpoint: &str, path: &str) -> Option<PathBuf> {
+/// raw/ 缓存的**确定性候选路径**（P1-D-2，Family 1）。
+///
+/// 复用既有 `cache_hash`，逐字保持 hash / 目录 / 文件名，**零 filesystem probe**。
+pub fn raw_cache_candidate_path(endpoint: &str, path: &str) -> PathBuf {
     let name = path.rsplit('/').next().unwrap_or("file.cbz");
-    let file_path = crate::cache::CacheDir::Raw
-        .ensure()
-        .ok()?
+    crate::cache::CacheDir::Raw
+        .path()
         .join(cache_hash(endpoint, path))
-        .join(name);
+        .join(name)
+}
+
+pub fn raw_cache_path(endpoint: &str, path: &str) -> Option<PathBuf> {
+    crate::cache::CacheDir::Raw.ensure().ok()?;
+    let file_path = raw_cache_candidate_path(endpoint, path);
     match std::fs::metadata(&file_path) {
         Ok(meta) if meta.len() > 0 => Some(file_path),
         _ => None,
@@ -319,6 +323,26 @@ pub fn raw_cache_path(endpoint: &str, path: &str) -> Option<PathBuf> {
 }
 
 /// 解析 `host` / `host:port` / `[ipv6]:port` / 裸 IPv6 → (host, port)，默认 22。
+/// raw/ 缓存命名空间的 authority（P1-D-2）。
+///
+/// 这是从 `SftpClient::connect` **原样抽取**的历史规则（extraction，**不是**
+/// normalization redesign），writer 与此 helper 必须产出逐字相同的字符串，
+/// 否则磁盘上已存在的旧缓存会静默 miss：
+///   * `port == 22` → `host` 原样；
+///   * 其它端口      → `{host}:{port}`。
+///
+/// 刻意**不**做任何规范化：不小写 host、不去尾点、不改 IPv6 方括号表达、
+/// 不做 IDNA、不 normalize localhost、不参与 username。
+///
+/// 纯函数、零副作用、零网络。
+pub fn endpoint_for(host: &str, port: u16) -> String {
+    if port == 22 {
+        host.to_string()
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 pub fn parse_endpoint(addr: &str) -> (String, u16) {
     let a = addr.trim();
     if let Some(rest) = a.strip_prefix('[') {
@@ -368,5 +392,85 @@ mod tests {
         assert_eq!(parse_endpoint("[::1]"), ("::1".into(), 22));
         assert_eq!(parse_endpoint("::1"), ("::1".into(), 22));
         assert_eq!(parse_endpoint("  nas:22  "), ("nas".into(), 22));
+    }
+
+    // ------------------------------------------------------------------
+    // P1-D-2 cache authority：SFTP endpoint extraction 的兼容性冻结
+    // ------------------------------------------------------------------
+
+    /// SFTP-CA-1/2/3：`endpoint_for` 必须**逐字**复现当前 `connect()` 的历史规则。
+    ///
+    /// 这些字面量就是抽取前 `SftpClient::connect` 会产出的字符串：
+    /// `if port == 22 { host.clone() } else { format!("{host}:{port}") }`。
+    /// **这是 extraction，不是 normalization redesign**：不做任何规范化。
+    #[test]
+    fn sftp_ca_endpoint_freezes_historical_rules_without_normalization() {
+        // SFTP-CA-1 默认端口：host 原样，不做任何规范化。
+        assert_eq!(endpoint_for("nas.local", 22), "nas.local");
+        assert_eq!(endpoint_for("NAS.LOCAL", 22), "NAS.LOCAL", "不得小写 host");
+        assert_eq!(endpoint_for("nas.local.", 22), "nas.local.", "不得去尾点");
+        assert_eq!(endpoint_for("[::1]", 22), "[::1]", "不得改 IPv6 方括号表达");
+        assert_eq!(endpoint_for("", 22), "", "空 host 也必须原样保留");
+        assert_eq!(endpoint_for(" nas ", 22), " nas ", "不得 trim（Dart 侧已 trim）");
+
+        // SFTP-CA-2 非默认端口：`{host}:{port}`。
+        assert_eq!(endpoint_for("nas.local", 2222), "nas.local:2222");
+        assert_eq!(endpoint_for("[::1]", 2222), "[::1]:2222");
+        assert_eq!(endpoint_for("NAS.LOCAL", 2222), "NAS.LOCAL:2222");
+
+        // SFTP-CA-3 当前 Dart `_parseHostPort` 实际可能传进来的形式。
+        // `[::1]:2222` → Dart 的 lastIndexOf(':') 切分 → host 保留方括号。
+        assert_eq!(endpoint_for("[::1]", 2222), "[::1]:2222");
+        // url 为空、端口取自 source.port 时 Dart 传空 host。
+        assert_eq!(endpoint_for("", 2222), ":2222");
+    }
+
+    /// SFTP-CA-4：writer authority 与 helper 产出的 authority 让 **existing key helper**
+    /// 得到**完全相同**的 raw cache identity（因此磁盘上的旧缓存依旧可寻址）。
+    ///
+    /// 注意：这里**没有手拼 cache path**，两侧都调用 production 的
+    /// `cache_hash` / `raw_cache_path`。
+    #[test]
+    fn sftp_ca_raw_cache_identity_is_unchanged_by_the_extraction() {
+        let path = "/books/demo.cbz";
+        // (host, port, 抽取前 connect() 会产出的历史 endpoint 字面量)
+        let cases = [
+            ("nas.local", 22u16, "nas.local"),
+            ("nas.local", 2222, "nas.local:2222"),
+            ("[::1]", 22, "[::1]"),
+            ("[::1]", 2222, "[::1]:2222"),
+        ];
+        for (host, port, historical) in cases {
+            let via_helper = endpoint_for(host, port);
+            assert_eq!(
+                via_helper, historical,
+                "helper 必须与历史 endpoint 逐字一致（host={host} port={port}）"
+            );
+            assert_eq!(
+                cache_hash(&via_helper, path),
+                cache_hash(historical, path),
+                "raw cache identity 必须完全相同（host={host} port={port}）"
+            );
+            assert_eq!(
+                raw_cache_path(&via_helper, path),
+                raw_cache_path(historical, path),
+                "raw cache path 必须完全相同（host={host} port={port}）"
+            );
+        }
+    }
+
+    /// 防回归：`parse_endpoint` 是**死代码**（生产零调用者），且它的规范化会剥离
+    /// IPv6 方括号 —— 一旦有人把它接成 authority，就会产出不同的 endpoint，
+    /// 导致磁盘上的旧缓存**静默 miss**。此测试把这条边界钉住。
+    #[test]
+    fn sftp_ca_parse_endpoint_must_not_become_the_cache_authority() {
+        let (host, port) = parse_endpoint("[::1]:2222");
+        assert_eq!((host.as_str(), port), ("::1", 2222));
+        assert_eq!(endpoint_for(&host, port), "::1:2222");
+        assert_ne!(
+            endpoint_for(&host, port),
+            endpoint_for("[::1]", 2222),
+            "两条派生路径对 IPv6 输入并不等价；authority 只能是 Dart parser + endpoint_for"
+        );
     }
 }

@@ -1,7 +1,10 @@
 pub mod adapter;
 pub mod catalog;
 pub mod cover_model;
+pub mod cover_progress;
+pub mod cover_revision_stream;
 pub mod cover_service;
+pub mod cover_state;
 pub mod cover_store;
 pub mod engine;
 pub mod model;

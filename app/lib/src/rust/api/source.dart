@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `canonical_child_path`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_cookie_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `next_id`, `parse_strategy`, `prime_remote_folder_locator`, `provider_path`, `quark_downloads`, `quark_sessions`, `remote_folder_cache_ns`, `remote_provider_adapter`, `retry_after_ms`, `scan_error`, `scan_io_error`, `sessions`, `sftp_downloads`, `sftp_sessions`, `supports_remote_scan`
+// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `canonical_child_path`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `get_baidu_session`, `get_cloud115_cookie_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `legacy_cover_authority`, `next_id`, `parse_strategy`, `prime_remote_folder_locator`, `provider_path`, `quark_downloads`, `quark_sessions`, `remote_folder_cache_ns`, `remote_provider_adapter`, `retry_after_ms`, `scan_error`, `scan_io_error`, `sessions`, `sftp_downloads`, `sftp_sessions`, `supports_remote_scan`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`, `RemoteSessionClient`, `SessionRemoteAdapter`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `cache_path`, `capabilities`, `list`, `normalize_path`, `read_file_limited`, `read_range`, `register_path`
@@ -350,9 +350,24 @@ Future<PageImage> quarkCover({
   crop: crop,
 );
 
-/// 生成 WebDAV 书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
-/// 封面结果写入磁盘缓存（cover/）供后续秒开。
-/// 优先走磁盘缓存 → raw/ 本地缓存 → HTTP Range 流式。
+/// **纯本地 cover 缓存查找**（P1-D-2）。
+///
+/// 硬契约：不建 session、不连接、不刷新凭据、不访问 provider、不建 job、不 wake worker、
+/// 不 scan、不改 retry、不改任何 durable cover state。只做：
+/// `logical fields → authority → current key → (可恢复时) alternate historical key → cover_cache_read`。
+///
+/// 双历史 key 规则（冻结）：
+/// * **Family 1**（webdav / sftp / baidu / 115）：raw 当前存在 → current = 实际 raw path，
+///   alternate = logical path；raw 当前不存在 → current = logical path，
+///   alternate = **确定性候选 raw path**（由 production 算法精确重建，故历史 raw-key cover 仍可读）。
+/// * **Family 2**（115web / quark）：raw 当前存在 → current = 扫描出的实际 raw path，
+///   alternate = logical path；raw 当前不存在 → current = logical path，**alternate = 无**，
+///   直接 clean miss —— 因为文件名来自 provider 网络响应且从未持久化，
+///   历史 raw-key cover 属**已证明不可恢复**状态（禁止猜测补齐）。
+Future<PageImage?> readLegacyCoverLocal({
+  required LegacyCoverLocalLookupDto lookup,
+}) => RustLib.instance.api.crateApiSourceReadLegacyCoverLocal(lookup: lookup);
+
 Future<PageImage> webdavCover({
   required BigInt session,
   required String path,
@@ -731,6 +746,92 @@ class Cloud115SessionInfo {
           root == other.root &&
           capabilityLabel == other.capabilityLabel &&
           refreshToken == other.refreshToken;
+}
+
+/// 生成 WebDAV 书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
+/// 封面结果写入磁盘缓存（cover/）供后续秒开。
+/// 优先走磁盘缓存 → raw/ 本地缓存 → HTTP Range 流式。
+/// P1-D-2：legacy 封面缓存的**纯本地**查找身份。
+///
+/// Dart 只传它本来就在用的 logical source fields —— **不得**传 origin / endpoint /
+/// raw path / cache key / hash。`kind` 取值与仓库既有的
+/// `open_cached_remote_book(kind, ..)` 保持一致：
+/// `"webdav" | "sftp" | "baidu" | "115" | "115web" | "quark"`。
+class LegacyCoverLocalLookupDto {
+  final String kind;
+
+  /// WebDAV：书源 URL（authority 由 production 构造函数派生的 origin 决定）。
+  final String url;
+
+  /// SFTP：logical host / port。
+  final String host;
+  final int port;
+
+  /// Baidu：app_key（client_id）与 root。
+  final String appKey;
+
+  /// 115 app：app_id 与 root_id。
+  final String appId;
+  final String rootId;
+
+  /// Baidu / 115-web / Quark 的 root（语义随 kind 而定）。
+  final String root;
+  final String logicalPath;
+  final int page;
+  final int width;
+  final int height;
+  final CropRect? crop;
+
+  const LegacyCoverLocalLookupDto({
+    required this.kind,
+    required this.url,
+    required this.host,
+    required this.port,
+    required this.appKey,
+    required this.appId,
+    required this.rootId,
+    required this.root,
+    required this.logicalPath,
+    required this.page,
+    required this.width,
+    required this.height,
+    this.crop,
+  });
+
+  @override
+  int get hashCode =>
+      kind.hashCode ^
+      url.hashCode ^
+      host.hashCode ^
+      port.hashCode ^
+      appKey.hashCode ^
+      appId.hashCode ^
+      rootId.hashCode ^
+      root.hashCode ^
+      logicalPath.hashCode ^
+      page.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      crop.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LegacyCoverLocalLookupDto &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          url == other.url &&
+          host == other.host &&
+          port == other.port &&
+          appKey == other.appKey &&
+          appId == other.appId &&
+          rootId == other.rootId &&
+          root == other.root &&
+          logicalPath == other.logicalPath &&
+          page == other.page &&
+          width == other.width &&
+          height == other.height &&
+          crop == other.crop;
 }
 
 /// 夸克网盘会话信息。

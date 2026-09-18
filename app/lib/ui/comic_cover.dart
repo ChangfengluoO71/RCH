@@ -205,6 +205,36 @@ class _QueuedTask {
 /// - 内存缓存命中立即返回，不经过队列。
 /// - 滚动时 Widget dispose 自动取消队列中的等待任务。
 /// - WebDAV 封面懒加载：未打开过的漫画不主动请求封面。
+/// P1-D-2：legacy provider → local-only API 的 `kind`。
+///
+/// 115 的 **app 模式与 web 模式必须区分**（authority 分别是
+/// `115:{app_id}:{root_id}` 与 `115web:{root}`），因此不能映射成同一个 kind。
+/// 判定依据沿用仓库既有语义：APP 模式需要 clientId，缺失即为网页 Cookie 模式。
+String? legacyCoverKindOf(BookSource source) {
+  if (source.isWebDav) return 'webdav';
+  if (source.isSftp) return 'sftp';
+  if (source.isBaidu) return 'baidu';
+  if (source.is115) {
+    return (source.clientId ?? '').trim().isEmpty ? '115web' : '115';
+  }
+  if (source.isQuark) return 'quark';
+  return null;
+}
+
+/// P1-D-2：legacy 的**既有** session + provider 获取路径（可注入，默认即原实现）。
+///
+/// 它只负责"local 未命中之后"的联网部分；顺序不变量由 `ComicCover` 的
+/// `_load` 保证（local lookup 严格早于本 loader）。
+typedef LegacyRemoteCoverLoader =
+    Future<ui.Image> Function({
+      required BookSource source,
+      required String path,
+      required int page,
+      required int width,
+      required int height,
+      CropRect? crop,
+    });
+
 class ComicCover extends StatefulWidget {
   final BookSource source;
   final String path;
@@ -221,6 +251,19 @@ class ComicCover extends StatefulWidget {
   final String? remoteAssetId;
   final BigInt? remoteSession;
 
+  /// Cover repository seam. Tests inject a fake repository so the disk-first
+  /// ordering can be asserted without a provider session or network service.
+  /// Defaults to the shared [RemoteCoverRepository.instance].
+  final RemoteCoverRepository? repository;
+
+  /// P1-D-2：legacy 的 sessionless local-only 查找（默认走 Rust FRB API）。
+  /// 测试可注入；生产路径下它**不建 session、不触 provider、不受网络开关影响**。
+  final Future<PageImage?> Function(LegacyCoverLocalLookupDto lookup)?
+  legacyLocalCoverReader;
+
+  /// P1-D-2：legacy 的既有 session/provider 获取（默认走 `_loadLegacyRemoteCover`）。
+  final LegacyRemoteCoverLoader? legacyRemoteCoverLoader;
+
   const ComicCover({
     super.key,
     required this.source,
@@ -230,7 +273,13 @@ class ComicCover extends StatefulWidget {
     this.preferUnifiedRemote = false,
     this.remoteAssetId,
     this.remoteSession,
+    this.repository,
+    this.legacyLocalCoverReader,
+    this.legacyRemoteCoverLoader,
   });
+
+  RemoteCoverRepository get coverRepository =>
+      repository ?? RemoteCoverRepository.instance;
 
   @override
   State<ComicCover> createState() => _ComicCoverState();
@@ -277,7 +326,6 @@ class _ComicCoverState extends State<ComicCover> {
   bool _loadFailed = false;
   int? _lastRetriedScanGeneration;
   Timer? _remoteRetryTimer;
-  int _remoteRetryAttempts = 0;
 
   /// 上一次使用的缓存 key；封面页/裁切/画质等元数据变化时用于触发重载。
   String? _lastCacheKey;
@@ -323,6 +371,50 @@ class _ComicCoverState extends State<ComicCover> {
     _maybeLoad();
   }
 
+  ValueListenable<int>? _coverRevision;
+  int _lastCoverRevision = 0;
+  String? _coverState;
+  /// P1-E：本卡片是否**已经发出过** requestCover。
+  /// 首次 miss 只 request 一次；此后 wake 驱动的刷新只重读 durable state。
+  bool _coverRequestIssued = false;
+
+  /// P1-E：订阅 source-level cover revision（wake-up）。事件不携带状态，
+  /// 收到后只**重读** durable state（`readCover` 命中即显示）。
+  void _attachCoverRevision() {
+    if (widget.remoteAssetId == null) return;
+    final listenable = RemoteScanCoordinator.instance.coverRevisionFor(
+      widget.source.id,
+    );
+    _coverRevision = listenable;
+    _lastCoverRevision = listenable.value;
+    listenable.addListener(_onCoverRevisionChanged);
+    // missed-event recovery：首次观察该 source 时主动读一次 durable revision
+    // （无 timer）。若期间漏过事件，这里会补上并刷新。
+    unawaited(
+      RemoteScanCoordinator.instance
+          .catchUpCoverRevision(widget.source.id)
+          .catchError((Object _) {}),
+    );
+  }
+
+  void _detachCoverRevision() {
+    _coverRevision?.removeListener(_onCoverRevisionChanged);
+    _coverRevision = null;
+  }
+
+  void _onCoverRevisionChanged() {
+    final value = _coverRevision?.value ?? 0;
+    if (value == _lastCoverRevision) return;
+    _lastCoverRevision = value;
+    if (!mounted || widget.remoteAssetId == null) return;
+    // durable cover truth 可能变了 ⇒ 重读一次（**不** request、**不** 轮询）。
+    _future = null;
+    _loadFailed = false;
+    _coverState = null;
+    _maybeLoad();
+    if (mounted) setState(() {});
+  }
+
   void _attachRemoteScanStatus() {
     if (!widget.source.needsSession) return;
     final listenable = RemoteScanCoordinator.instance.statusFor(
@@ -330,11 +422,13 @@ class _ComicCoverState extends State<ComicCover> {
     );
     _remoteScanStatus = listenable;
     listenable.addListener(_onRemoteScanStatusChanged);
+    _attachCoverRevision();
   }
 
   void _detachRemoteScanStatus() {
     _remoteScanStatus?.removeListener(_onRemoteScanStatusChanged);
     _remoteScanStatus = null;
+    _detachCoverRevision();
   }
 
   void _onRemoteScanStatusChanged() {
@@ -351,7 +445,6 @@ class _ComicCoverState extends State<ComicCover> {
     _lease = null;
     _future = null;
     _loadFailed = false;
-    _remoteRetryAttempts = 0;
     _remoteRetryTimer?.cancel();
     _remoteRetryTimer = null;
     _maybeLoad();
@@ -372,8 +465,7 @@ class _ComicCoverState extends State<ComicCover> {
       _lease = null;
       _future = null;
       _loadFailed = false;
-      _remoteRetryAttempts = 0;
-      _remoteRetryTimer?.cancel();
+        _remoteRetryTimer?.cancel();
       _remoteRetryTimer = null;
       _lastCacheKey = newKey;
       _maybeLoad();
@@ -408,7 +500,7 @@ class _ComicCoverState extends State<ComicCover> {
         // old consumer before attaching the new demand so stale viewport
         // ownership cannot accumulate in the process registry.
         unawaited(
-          RemoteCoverRepository.instance
+          widget.coverRepository
               .release(consumerId: _remoteConsumerId)
               .catchError((_) {}),
         );
@@ -417,8 +509,7 @@ class _ComicCoverState extends State<ComicCover> {
       _lease = null;
       _future = null;
       _loadFailed = false;
-      _remoteRetryAttempts = 0;
-      _remoteRetryTimer?.cancel();
+        _remoteRetryTimer?.cancel();
       _remoteRetryTimer = null;
       _lastCacheKey = newKey;
       _maybeLoad();
@@ -435,7 +526,7 @@ class _ComicCoverState extends State<ComicCover> {
     _lease?.dispose();
     if (widget.remoteAssetId != null) {
       unawaited(
-        RemoteCoverRepository.instance
+        widget.coverRepository
             .release(consumerId: _remoteConsumerId)
             .catchError((_) {}),
       );
@@ -443,17 +534,54 @@ class _ComicCoverState extends State<ComicCover> {
     super.dispose();
   }
 
+  /// 磁盘优先：先读已落地的本地封面（内存 / cover 磁盘缓存 / 原始本地缓存），
+  /// 命中即立即返回；只有未命中时才允许联网开关决定是否发起远程请求。
+  ///
+  /// 因此关闭联网开关不会隐藏磁盘上已存在的封面。
+  Future<ui.Image?> _readLocalDiskCover({
+    required int page,
+    required CropRect? crop,
+    required int width,
+    required int height,
+  }) async {
+    final remoteAssetId = widget.remoteAssetId;
+    if (remoteAssetId == null || !widget.source.needsSession) return null;
+    final cached = await widget.coverRepository.readLocalCover(
+      sourceId: widget.source.id,
+      assetId: remoteAssetId,
+      selection: rust.CoverSelectionDto(
+        page: page,
+        crop: crop,
+        revision: _selectionRevision(page, crop),
+      ),
+      profile: rust.CoverProfileDto(
+        width: width,
+        height: height,
+        decoderVersion: 1,
+      ),
+    );
+    if (cached == null) return null;
+    return rgbaToImage(cached.rgba, cached.width, cached.height);
+  }
+
   void _maybeLoad() {
     if (_future != null) return;
     final key = _cacheKey;
 
-    // 内存缓存命中 → 立即完成
+    // 1) 内存缓存命中 → 立即完成
     final cached = ComicCover._cache[key];
     if (cached != null) {
       _future = Future.value(cached);
       return;
     }
-    if (_remoteCoverNetworkPaused) return;
+    // 2) 磁盘优先：**先读本地证据**，只有本地未命中才轮到联网开关。
+    //
+    //    P1-D-2：这里**不再**按联网开关提前 return —— 那会把"已经存在于本地的
+    //    封面"也一并隐藏，并让 custom/local(`bookCover`) 这种**根本不触网**的路径
+    //    无法执行。offline 的控制改在 `_load` 内**本地未命中之后**进行：
+    //    · legacy：local miss + offline → 直接抛 `_RemoteCoverFetchDisabled`（不取 session）
+    //    · local/custom：无网络能力，直接执行
+    //    · unified：本地读在 `_loadUnifiedRemoteCover` 内部先于开关判定
     if (widget.preferUnifiedRemote &&
         widget.source.needsSession &&
         widget.remoteAssetId == null) {
@@ -466,41 +594,43 @@ class _ComicCoverState extends State<ComicCover> {
     // 入队：并发控制在队列内部
     _lease = _CoverLoadQueue.scheduler.acquire(key, _load);
     _future = _lease!.future;
+    _attachLoadResult(key);
+  }
+
+  void _attachLoadResult(String key) {
     _future!
         .then((img) {
           ComicCover._cache[key] = img;
-          _remoteRetryAttempts = 0;
-          _remoteRetryTimer?.cancel();
+                _remoteRetryTimer?.cancel();
           _remoteRetryTimer = null;
         })
-        .catchError((_) {
+        .catchError((Object error) {
           _loadFailed = true;
+          // P1-E：把 `requestCover` 返回的 **durable state** 落回 UI 状态。
+          // 这一步必须在错误路径里做 —— `FutureBuilder` 看到 error 会走
+          // `_placeholder()`，若此时不带上 state，`running` 就会丢失它的 spinner，
+          // `pending`/`failed`/... 也会丢失各自文案。
+          if (error is _RemoteCoverStateException && error.state.isNotEmpty) {
+            _coverState = error.state;
+          }
           // The scan completion notification and a failed visible-cover
           // request can arrive in either order. Re-check here so the cache
           // retry is not lost when the notification won the race.
           _onRemoteScanStatusChanged();
           _scheduleUnifiedRetry();
+          if (mounted) setState(() {});
         });
   }
 
   /// 扫描器可能先发布目录终态，封面 worker 随后才完成。这里仅重读本地
   /// 缓存并在必要时重新提交同一持久任务键，次数有界，不为每张卡片创建
   /// 独立的 provider 请求。
-  void _scheduleUnifiedRetry() {
-    if (!mounted || widget.remoteAssetId == null || _remoteCoverNetworkPaused) {
-      return;
-    }
-    if (_remoteRetryAttempts >= 8 || _remoteRetryTimer != null) return;
-    _remoteRetryAttempts++;
-    _remoteRetryTimer = Timer(const Duration(milliseconds: 900), () {
-      _remoteRetryTimer = null;
-      if (!mounted || widget.remoteAssetId == null) return;
-      _future = null;
-      _loadFailed = false;
-      _maybeLoad();
-      if (mounted) setState(() {});
-    });
-  }
+  /// P1-E：**删除 8 × 900ms 的"保险式"重复 request**。
+  ///
+  /// 状态推进改由 source-level cover revision wake 驱动
+  ///（`_onCoverRevisionChanged`）。这里不再有任何 Timer，也绝不重复
+  /// `requestCover` —— 人工 retry 属另一条显式操作，不受此限。
+  void _scheduleUnifiedRetry() {}
 
   /// 实际的封面加载逻辑（不包含队列调度）。
   Future<ui.Image> _load() async {
@@ -517,6 +647,15 @@ class _ComicCoverState extends State<ComicCover> {
           )
         : null;
 
+    // 磁盘优先：本地已存在的封面立即返回，联网开关对此没有否决权。
+    final localCover = await _readLocalDiskCover(
+      page: meta.coverPage,
+      crop: crop,
+      width: w,
+      height: h,
+    );
+    if (localCover != null) return localCover;
+
     final remoteAssetId = widget.remoteAssetId;
     if (remoteAssetId != null && widget.source.needsSession) {
       return _loadUnifiedRemoteCover(
@@ -529,78 +668,168 @@ class _ComicCoverState extends State<ComicCover> {
       );
     }
 
-    if (widget.source.isWebDav) {
+    // P1-D-2：**需要 session 的 legacy 源**才做 local-only 查找；
+    // 纯本地源（kind == null，最终走 bookCover）没有网络能力，直接放行不受开关阻止。
+    if (legacyCoverKindOf(widget.source) != null) {
+      final legacyLocalCover = await _readLegacyCoverLocal(meta.coverPage, w, h, crop);
+      if (legacyLocalCover != null) return legacyLocalCover;
+
+      // 本地未命中：offline 时**直接停止**，不去 session helper 里换一个异常
+      // （这样 session=0 / provider=0 是清晰的控制流结论，而不是异常副作用），
+      // 也绝不因此建立 session。表现为普通 placeholder。
+      if (_remoteCoverNetworkPaused) {
+        throw const _RemoteCoverFetchDisabled();
+      }
+    }
+
+    // online：走**既有** session getter → 既有 provider cover path（不新增网络入口）。
+    return await (widget.legacyRemoteCoverLoader ?? _loadLegacyRemoteCover)(
+      source: widget.source,
+      path: widget.path,
+      page: meta.coverPage,
+      width: w,
+      height: h,
+      crop: crop,
+    );
+  }
+
+  /// P1-D-2：调用 sessionless local-only 查找；miss 返回 null（**不是错误**）。
+  Future<ui.Image?> _readLegacyCoverLocal(
+    int page,
+    int w,
+    int h,
+    CropRect? crop,
+  ) async {
+    final lookup = _legacyLocalLookup(page, w, h, crop);
+    if (lookup == null) return null;
+    final reader =
+        widget.legacyLocalCoverReader ??
+        (LegacyCoverLocalLookupDto value) => readLegacyCoverLocal(lookup: value);
+    final image = await reader(lookup);
+    if (image == null) return null;
+    return rgbaToImage(image.rgba, image.width, image.height);
+  }
+
+  /// Dart **只填 logical fields**：不构造 endpoint / origin / raw cache path /
+  /// cover path / hash —— 这些全部由 Rust 作为 cache authority owner 派生。
+  LegacyCoverLocalLookupDto? _legacyLocalLookup(
+    int page,
+    int w,
+    int h,
+    CropRect? crop,
+  ) {
+    final kind = legacyCoverKindOf(widget.source);
+    if (kind == null) return null;
+    // host/port 复用**同一个** Dart parser（薄包装），不复制解析逻辑。
+    final (host, port) = kind == 'sftp' ? sftpHostPortOf(widget.source) : ('', 22);
+    final String root;
+    switch (kind) {
+      case 'baidu':
+        root = widget.source.path;
+      case '115web':
+      case 'quark':
+        root = widget.source.rootId ?? '0';
+      default:
+        root = '';
+    }
+    return LegacyCoverLocalLookupDto(
+      kind: kind,
+      url: widget.source.url ?? '',
+      host: host,
+      port: port,
+      appKey: widget.source.clientId ?? '',
+      appId: widget.source.clientId ?? '',
+      rootId: widget.source.rootId ?? '',
+      root: root,
+      logicalPath: widget.path,
+      page: page,
+      width: w,
+      height: h,
+      crop: crop,
+    );
+  }
+
+  /// P1-D-2：legacy 的**既有** session + provider 获取路径（原样搬迁，语义不变）。
+  Future<ui.Image> _loadLegacyRemoteCover({
+    required BookSource source,
+    required String path,
+    required int page,
+    required int width,
+    required int height,
+    CropRect? crop,
+  }) async {
+    if (source.isWebDav) {
       final session = await _guardRemoteCoverIo(
-        () => webdavSessionFor(widget.source),
+        () => webdavSessionFor(source),
       );
       final p = await _guardRemoteCoverIo(
         () => webdavCover(
           session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
+          path: path,
+          page: page,
+          width: width,
+          height: height,
           crop: crop,
         ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
-    } else if (widget.source.isSftp) {
+    } else if (source.isSftp) {
       final session = await _guardRemoteCoverIo(
-        () => sftpSessionFor(widget.source),
+        () => sftpSessionFor(source),
       );
       final p = await _guardRemoteCoverIo(
         () => sftpCover(
           session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
+          path: path,
+          page: page,
+          width: width,
+          height: height,
           crop: crop,
         ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
-    } else if (widget.source.isBaidu) {
+    } else if (source.isBaidu) {
       final session = await _guardRemoteCoverIo(
-        () => baiduSessionFor(widget.source),
+        () => baiduSessionFor(source),
       );
       final p = await _guardRemoteCoverIo(
         () => baiduCover(
           session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
+          path: path,
+          page: page,
+          width: width,
+          height: height,
           crop: crop,
         ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
-    } else if (widget.source.is115) {
+    } else if (source.is115) {
       final session = await _guardRemoteCoverIo(
-        () => cloud115SessionFor(widget.source),
+        () => cloud115SessionFor(source),
       );
       final p = await _guardRemoteCoverIo(
         () => cloud115CoverFor(
-          widget.source,
+          source,
           session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
+          path: path,
+          page: page,
+          width: width,
+          height: height,
           crop: crop,
         ),
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
-    } else if (widget.source.isQuark) {
+    } else if (source.isQuark) {
       final session = await _guardRemoteCoverIo(
-        () => quarkSessionFor(widget.source),
+        () => quarkSessionFor(source),
       );
       final p = await _guardRemoteCoverIo(
         () => quarkCover(
           session: session,
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
+          path: path,
+          page: page,
+          width: width,
+          height: height,
           crop: crop,
         ),
       );
@@ -608,10 +837,10 @@ class _ComicCoverState extends State<ComicCover> {
     } else {
       final p = await _guardRemoteCoverIo(
         () => bookCover(
-          path: widget.path,
-          page: meta.coverPage,
-          width: w,
-          height: h,
+          path: path,
+          page: page,
+          width: width,
+          height: height,
           crop: crop,
         ),
       );
@@ -637,7 +866,7 @@ class _ComicCoverState extends State<ComicCover> {
       height: height,
       decoderVersion: 1,
     );
-    final repository = RemoteCoverRepository.instance;
+    final repository = widget.coverRepository;
     final cached = await repository.readCover(
       sourceId: widget.source.id,
       assetId: assetId,
@@ -649,7 +878,24 @@ class _ComicCoverState extends State<ComicCover> {
     }
     if (_remoteCoverNetworkPaused) throw const _RemoteCoverFetchDisabled();
     final liveSession = session ?? await _createRemoteSession();
-    await repository.requestCover(
+    // P1-E：**删除 30 × 350ms 轮询**。`requestCover` 只负责"首次确保任务存在"；
+    // 之后的状态推进一律由 source-level cover revision wake 驱动
+    //（`RemoteScanCoordinator.coverRevisionFor` → `_onCoverRevisionChanged`），
+    // 绝不再轮询、也绝不重复 request。这里只渲染它返回的 durable state。
+    if (_coverRequestIssued) {
+      // P1-E：wake 驱动的刷新**只重读** durable state，绝不重复 requestCover。
+      final current = await repository.readState(
+        sourceId: widget.source.id,
+        assetId: assetId,
+      );
+      _coverState = current?.state;
+      throw _RemoteCoverStateException(
+        current?.state ?? '',
+        current?.errorCode,
+      );
+    }
+    _coverRequestIssued = true;
+    final durable = await repository.requestCover(
       source: widget.source,
       session: liveSession,
       assetId: assetId,
@@ -657,16 +903,8 @@ class _ComicCoverState extends State<ComicCover> {
       selection: selection,
       profile: profile,
     );
-    // Request is intentionally non-blocking on the Rust side. Polling only
-    // the local cache keeps provider I/O in one queue and lets a background
-    // scan publish the same result without duplicate extraction.
-    for (var attempt = 0; attempt < 30; attempt++) {
-      if (_remoteCoverNetworkPaused) {
-        throw const _RemoteCoverFetchDisabled();
-      }
-      if (attempt > 0) {
-        await Future<void>.delayed(const Duration(milliseconds: 350));
-      }
+    _coverState = durable.state;
+    if (durable.ready) {
       final image = await repository.readCover(
         sourceId: widget.source.id,
         assetId: assetId,
@@ -677,7 +915,7 @@ class _ComicCoverState extends State<ComicCover> {
         return rgbaToImage(image.rgba, image.width, image.height);
       }
     }
-    throw StateError('封面仍在队列中');
+    throw _RemoteCoverStateException(durable.state, durable.errorCode);
   }
 
   Future<BigInt> _createRemoteSession() async {
@@ -700,7 +938,8 @@ class _ComicCoverState extends State<ComicCover> {
 
   @override
   Widget build(BuildContext context) {
-    if (_remoteCoverNetworkPaused && _future == null) return _placeholder();
+    // P1-E：**只有 `running` 显示 spinner**；其余非 ready 状态渲染各自文案。
+    if (_coverState == 'running') return _loading();
     if (_future == null) return _loading();
 
     return FutureBuilder<ui.Image>(
@@ -728,11 +967,41 @@ class _ComicCoverState extends State<ComicCover> {
     ),
   );
 
-  Widget _placeholder() => ComicCover.uncachedPlaceholder();
+  Widget _placeholder() {
+    final label = switch (_coverState) {
+      'pending' => '等待获取',
+      'retry_wait' => '等待重试',
+      'failed' => '获取失败',
+      'unsupported' => '暂不支持',
+      'blocked' => '暂不可用',
+      _ => null,
+    };
+    if (label == null) return ComicCover.uncachedPlaceholder();
+    return Container(
+      color: Colors.black26,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(4),
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
+      ),
+    );
+  }
 }
 
 class _RemoteCoverFetchDisabled implements Exception {
   const _RemoteCoverFetchDisabled();
+}
+
+/// P1-E：把 `requestCover` 返回的 **durable state** 交给 UI 渲染。
+///
+/// 它**不是**错误语义、更不改动任何 durable state —— Dart 不猜状态、不写 failed。
+/// `running` 由 `build()` 渲染为 spinner，其余映射为对应等待/失败文案。
+class _RemoteCoverStateException implements Exception {
+  const _RemoteCoverStateException(this.state, this.errorCode);
+  final String state;
+  final String? errorCode;
 }
 
 /// 漫画卡片：封面 + 标题 + 副标题，海报墙通用。

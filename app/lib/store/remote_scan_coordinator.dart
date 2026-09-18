@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app/src/rust/api/remote_cover.dart' as rust_cover;
 import 'package:app/src/rust/api/remote_scan.dart' as rust;
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
@@ -37,15 +38,47 @@ class RemoteSessionSuccess {
   final BigInt session;
 }
 
+/// 把"某书源已获得/更新为当前有效 session"这一**事实**交给 Rust（P1-C）。
+typedef RemoteSessionReadyNotifier =
+    Future<void> Function(String sourceId, BigInt session);
+
+/// 生产实现：调用 Rust 的 source-session lifecycle API。
+///
+/// 这是 best-effort 通知：失败不得影响会话获取本身，也**不**在这里做任何
+/// retry / 6 小时 / unsupported / blocked / worker 决策 —— 那些全部归 Rust 拥有。
+Future<void> _nativeNotifySourceSessionReady(
+  String sourceId,
+  BigInt session,
+) async {
+  try {
+    await rust.notifySourceSessionReady(sourceId: sourceId, session: session);
+  } catch (_) {
+    // 生命周期通知是尽力而为，绝不向上抛。
+  }
+}
+
 class RemoteSessionSuccessHub {
+  RemoteSessionSuccessHub({RemoteSessionReadyNotifier? notifyReady})
+    : _notifyReady = notifyReady ?? _nativeNotifySourceSessionReady;
+
   // Session callbacks can originate while a widget is being built (for
   // example, a cover that hits a cached provider session). Delivering those
   // callbacks asynchronously prevents the scan coordinator from mutating a
   // ValueNotifier during the build phase.
   final _events = StreamController<RemoteSessionSuccess>.broadcast();
+  final RemoteSessionReadyNotifier _notifyReady;
   Stream<RemoteSessionSuccess> get events => _events.stream;
-  void emit(BookSource source, BigInt session) =>
-      _events.add(RemoteSessionSuccess(source, session));
+
+  /// 由各 provider 的 session manager 在**确实建立/更新了当前有效 session**
+  /// 之后调用（缓存命中路径不会走到这里）。
+  void emit(BookSource source, BigInt session) {
+    _events.add(RemoteSessionSuccess(source, session));
+    // P1-C：同一个 lifecycle fact 交给 Rust，由 Rust 负责验证绑定、做
+    // bounded 的 source-scoped reconciliation，并在有可 claim 工作时唤醒 worker。
+    // 契约上就是 best-effort：即使注入口实现自己抛错，也不得影响会话投递。
+    unawaited(_notifyReady(source.id, session).catchError((Object _) {}));
+  }
+
   Future<void> dispose() => _events.close();
 }
 
@@ -124,10 +157,88 @@ class RemoteScanCoordinator {
   final Map<String, DateTime> _completedAt = {};
   final Map<String, RemoteScanStatus> _lastCompleted = {};
   final Set<String> _recoveringSources = {};
+  // --- P1-E：cover durable-truth wake-up bridge -------------------------
+  //
+  // 语义（冻结）：事件只表示«该 source 的 cover durable truth 可能变了»，**不携带**
+  //           authoritative 状态；consumer 收到后必须自己重读 durable state。
+  // 去重：durable revision token（remoteViewRevision）—— <= lastSeen 视为重复。
+  // 禁止：periodic timer 轮询 revision。
+  final Map<String, int> _lastSeenCoverRevision = {};
+  final Map<String, ValueNotifier<int>> _coverRevisions = {};
+  StreamSubscription<rust_cover.CoverRevisionEvent>? _coverSubscription;
+  /// 测试注入点：默认走真实 FRB（subscribeCoverRevisions / remoteViewRevision）。
+  Stream<rust_cover.CoverRevisionEvent>? debugCoverRevisionStream;
+  Future<int> Function(String sourceId)? debugCoverRevisionReader;
+  Future<void> Function(String sourceId)? debugCoverAggregateRefresh;
   final Set<String> _deferredRootListings = {};
   final Map<String, Timer> _progressTimers = {};
   final Set<String> _progressPollInFlight = {};
   bool _disposed = false;
+
+  /// 某 source 的 cover revision（单调递增 durable token；**仅用于 wake-up**）。
+  ValueListenable<int> coverRevisionFor(String sourceId) =>
+      _coverRevisions.putIfAbsent(sourceId, () => ValueNotifier(0));
+
+  int lastSeenCoverRevision(String sourceId) =>
+      _lastSeenCoverRevision[sourceId] ?? 0;
+
+  /// 订阅**唯一**的 cover revision stream（进程级只建立一次）。
+  void startCoverRevisionWatch() {
+    if (_disposed || _coverSubscription != null) return;
+    final stream =
+        debugCoverRevisionStream ?? rust_cover.subscribeCoverRevisions();
+    _coverSubscription = stream.listen(
+      (event) {
+        // best-effort：消费失败不得影响 durable state 或其它消费者。
+        unawaited(_applyCoverRevision(event.sourceId));
+      },
+      onError: (Object _) {},
+      cancelOnError: false,
+    );
+  }
+
+  Future<int> _readCoverRevision(String sourceId) async {
+    final reader = debugCoverRevisionReader;
+    if (reader != null) return reader(sourceId);
+    return (await rust_cover.remoteViewRevision(sourceId: sourceId)).toInt();
+  }
+
+  /// missed-event recovery：只在**首次观察 / stream 重建 / source 重新 attach /
+  /// 上下文切到此前未观察的 source** 时主动读一次 durable revision（无 timer）。
+  Future<void> catchUpCoverRevision(String sourceId) =>
+      _applyCoverRevision(sourceId);
+
+  /// 收到 wake（或 catch-up）后：读 durable token → 去重 → 推进 notifier → 刷新聚合。
+  Future<void> _applyCoverRevision(String sourceId) async {
+    if (_disposed || sourceId.isEmpty) return;
+    final durable = await _readCoverRevision(sourceId);
+    if (_disposed) return;
+    final lastSeen = _lastSeenCoverRevision[sourceId] ?? 0;
+    if (durable <= lastSeen) return; // duplicate wake：忽略，绝不重复刷新
+    _lastSeenCoverRevision[sourceId] = durable;
+    _coverRevisions.putIfAbsent(sourceId, () => ValueNotifier(0)).value = durable;
+    await _refreshCoverAggregate(sourceId);
+  }
+
+  /// 本地只读聚合刷新：绝不触 provider / 不建 session / 不起 timer。
+  Future<void> _refreshCoverAggregate(String sourceId) async {
+    if (_disposed) return;
+    final injected = debugCoverAggregateRefresh;
+    if (injected != null) {
+      await injected(sourceId);
+      return;
+    }
+    // best-effort：wake 驱动的本地聚合刷新**绝不允许**把异常抛给 stream 消费者
+    //（否则一次读取失败会污染整个 wake 处理链路）。失败即静默返回，
+    // durable state 与 worker 均不受影响。
+    try {
+      final status = await _status(sourceId);
+      if (_disposed || status == null) return;
+      _setStatus(sourceId, status);
+    } catch (_) {
+      return;
+    }
+  }
 
   ValueListenable<RemoteScanStatus?> statusFor(String sourceId) =>
       _statuses.putIfAbsent(sourceId, () => ValueNotifier(null));
@@ -567,6 +678,13 @@ class RemoteScanCoordinator {
     if (_disposed) return;
     _disposed = true;
     await _sessionSubscription.cancel();
+    await _coverSubscription?.cancel();
+    _coverSubscription = null;
+    for (final notifier in _coverRevisions.values) {
+      notifier.dispose();
+    }
+    _coverRevisions.clear();
+    _lastSeenCoverRevision.clear();
     _settingsListenable.removeListener(_onSettingsChanged);
     for (final timer in _progressTimers.values) {
       timer.cancel();
@@ -605,6 +723,9 @@ class RemoteScanCoordinator {
       blockedBooks: dto.blockedBooks.toInt(),
       unsupportedBooks: dto.unsupportedBooks.toInt(),
       failedBooks: dto.failedBooks.toInt(),
+      availableBooks: dto.availableBooks.toInt(),
+      waitingBooks: dto.waitingBooks.toInt(),
+      otherBooks: dto.otherBooks.toInt(),
       viewRevision: dto.viewRevision.toInt(),
     );
   }

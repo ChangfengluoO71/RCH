@@ -6,8 +6,10 @@
 
 use crate::api::book::{CropRect, PageImage};
 use crate::db;
+use crate::frb_generated::StreamSink;
 use crate::remote_scan::catalog::{self, CatalogEntryKind};
 use crate::remote_scan::cover_model::{CoverJobKey, CoverJobState};
+use crate::remote_scan::cover_state::CoverJobUpsertCause;
 use crate::remote_scan::{cover_service, cover_store};
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
@@ -438,6 +440,7 @@ pub async fn remote_cover_request(
         generation,
         &session_epoch,
         db::now_ms(),
+        CoverJobUpsertCause::Demand,
     )
     .map_err(|e| e.to_string())?;
     cover_service::consumers().attach(&consumer_id, &key);
@@ -462,6 +465,16 @@ pub async fn remote_cover_read(
     let profile_key = profile_key(&profile);
     let cached =
         cover_service::read_cached_cover(&source_id, &asset_id, &selection_revision, &profile_key)?;
+    if cached.is_none() {
+        // P1-B：只读路径探测到"bytes 缺失"时，`read_cached_cover` 可能刚刚把一条
+        // `ready` 记录对账回 `pending`。此处必须保证**确实存在消费者**，否则这本漫画
+        // 的封面会永久停在 pending，直到下一次全量扫描才可能被重试。
+        //
+        // 用 source-level wake：调用方只需要稳定的 source identity，不需要持有
+        // runtime session token。当前没有可用 session 时它是 no-op（pending 保持
+        // 持久化、不伪造 session、不做任何远程访问）。
+        crate::api::remote_scan::wake_cover_worker_for_source(&source_id);
+    }
     Ok(cached.map(|(rgba, width, height)| PageImage {
         rgba,
         width,
@@ -543,6 +556,76 @@ pub fn remote_cover_retry(
     drop(conn);
     crate::api::remote_scan::wake_remote_cover_worker(source_id, session);
     Ok(())
+}
+
+/// P1-E：cover durable truth 可能变化的**事实**。
+///
+/// 刻意**不含** authoritative 状态：没有 state / error_code / retry 信息 /
+/// authoritative revision；consumer 收到后必须自己重读 durable state。
+pub struct CoverRevisionEvent {
+    /// 发生变化的 source。
+    pub source_id: String,
+    /// transition 天然知道时才带；无法确定唯一 asset（例如一次 compensation
+    /// batch 改了多本）时为 None，由 Dart 让该 source 的 mounted cards 各自 reread。
+    pub asset_id: Option<String>,
+}
+
+/// P1-E：Dart coordinator 订阅 cover revision wake-up。
+///
+/// **单 subscriber**：再次调用**替换**当前 sink（resubscribe），不做 broadcast
+/// registry；send 失败只清掉失效 sink，不影响 worker / durable state。
+/// 传输是 best-effort，且事件只在 durable mutation **提交成功之后**发出。
+pub fn subscribe_cover_revisions(sink: StreamSink<CoverRevisionEvent>) {
+    crate::remote_scan::cover_revision_stream::install_sink(sink);
+}
+
+/// P1-E：**只读**读取某 asset 当前的 durable cover state。
+///
+/// 契约（硬）：
+/// * read only —— **不** enqueue、**不** wake、**不** 建 session、**不** 访问 provider、
+///   **不** 修改任何 durable state，也**不** bump revision；
+/// * 直接复用内部 `catalog::cover_state_for` 与既有 `cover_dto`，不另建平行状态 enum；
+/// * `Ok(None)` 表示该 asset **没有**任何 job/variant 记录（UI 语义 = "no job"）。
+///
+/// 这是 UI 消费 durable truth 的唯一读入口 —— 禁止用 `remote_cover_request`（它会 enqueue）
+/// 代替本函数。
+pub fn remote_cover_state(
+    source_id: String,
+    asset_id: String,
+) -> Result<Option<RemoteCoverStateDto>, String> {
+    let source_id = source_id.trim().to_string();
+    let asset_id = asset_id.trim().to_string();
+    if source_id.is_empty() || asset_id.is_empty() {
+        return Ok(None);
+    }
+    let conn = db::get().lock().map_err(|error| error.to_string())?;
+    // "no job" 必须按**是否存在任何相关 durable 记录**判定，而不是猜测某个 state 字符串。
+    // 谓词与读路径自身使用的 default-profile 选择完全一致（只读 EXISTS，无副作用）。
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM remote_cover_job
+                  WHERE source_id=?1 AND asset_id=?2
+                    AND selection_revision=?3 AND profile=?4
+                 UNION ALL
+                 SELECT 1 FROM remote_cover_variant
+                  WHERE source_id=?1 AND asset_id=?2
+                    AND selection_revision=?3 AND profile=?4)",
+            params![
+                source_id,
+                asset_id,
+                crate::remote_scan::cover_store::DEFAULT_SELECTION_REVISION,
+                crate::remote_scan::cover_store::DEFAULT_COVER_PROFILE
+            ],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if !exists {
+        return Ok(None);
+    }
+    let state = catalog::cover_state_for(&conn, &source_id, Some(&asset_id))
+        .map_err(|error| error.to_string())?;
+    Ok(Some(cover_dto(state)))
 }
 
 pub fn remote_view_revision(source_id: String) -> Result<i64, String> {

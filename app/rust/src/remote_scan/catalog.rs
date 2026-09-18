@@ -310,7 +310,8 @@ fn representative_for(
     Ok(result)
 }
 
-fn cover_state_for(
+/// P1-E：只读读取某 asset 的 durable cover state（供 api 层最薄 wrapper 复用）。
+pub(crate) fn cover_state_for(
     conn: &Connection,
     source_id: &str,
     asset_id: Option<&str>,

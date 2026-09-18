@@ -1,3 +1,4 @@
+use super::cover_state::CoverJobUpsertCause;
 use super::engine::{CoverTask, ScanDirectoryTask};
 use super::model::{
     fingerprint as entry_fingerprint, RemoteAssetKind, RemoteEntry, RemoteScanState,
@@ -84,6 +85,7 @@ mod session_rebind_tests {
             2,
             &old_epoch,
             1,
+            CoverJobUpsertCause::Demand,
         )
         .unwrap();
 
@@ -1172,6 +1174,10 @@ pub fn publish_staged_generation(
     if !current_generation_is_active(conn, source_id, generation, "Running")? {
         return Err(rusqlite::Error::InvalidQuery);
     }
+    // P1-E/U-α（§6 防叠加）：记录进入本事务前的 durable revision。若同一事务内的
+    // listing/view publication 已经 bump 过，则在下面**不再**为 cover 变更二次 bump ——
+    // revision 表示"原子 durable view changed"，不是"listing +1 再加 cover +1"。
+    let revision_before_tx = super::cover_store::view_revision(conn, source_id)?;
     let tx = conn.unchecked_transaction()?;
     loop {
         let staged: Option<(String, String, String, String)> = tx.query_row(
@@ -1234,6 +1240,11 @@ pub fn publish_staged_generation(
         .flatten()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| source_id.to_string());
+    // P1-E/U-α：本批次是否发生过 observable cover upsert。
+    // U-B 已冻结：即使 lifecycle 字段等价，upsert 也刷新 updated_at ⇒ 属 observable
+    // change，因此"发生过成功 upsert"就是当前最小可用的 changed gate
+    //（不能只看新建数 jobs_created）。
+    let mut cover_changed_any = false;
     let session_epoch: String = tx
         .query_row(
             "SELECT COALESCE(session_epoch,'') FROM remote_scan_epoch WHERE source_id=?1 AND generation=?2",
@@ -1263,6 +1274,7 @@ pub fn publish_staged_generation(
             selection_revision: "default".into(),
             profile: "340x480@1".into(),
         };
+        cover_changed_any = true;
         super::cover_store::upsert_job_on(
             &tx,
             &key,
@@ -1272,6 +1284,7 @@ pub fn publish_staged_generation(
             generation,
             &session_epoch,
             crate::db::now_ms(),
+            CoverJobUpsertCause::Demand,
         )
         .map_err(|error| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(
@@ -1283,6 +1296,12 @@ pub fn publish_staged_generation(
         "DELETE FROM remote_scan_pending WHERE source_id=?1 AND generation=?2",
         params![source_id, generation],
     )?;
+    // P1-E/U-α：一次原子事务只 bump 一次（N 本仍 +1）；若 listing publication 在同
+    // 一事务内已经 bump 过，则此处**不再** bump，避免 revision +2。
+    if cover_changed_any && super::cover_store::view_revision(&tx, source_id)? == revision_before_tx
+    {
+        super::cover_store::bump_view_revision_on(&tx, source_id, generation, crate::db::now_ms())?;
+    }
     // Once the staged generation is authoritative, its preview rows are no
     // longer needed. The materialized library/route rows now carry the same
     // identities and cover jobs continue against that generation.
@@ -1290,7 +1309,13 @@ pub fn publish_staged_generation(
         "DELETE FROM remote_scan_preview WHERE source_id=?1 AND generation=?2",
         params![source_id, generation],
     )?;
-    tx.commit()
+    tx.commit()?;
+    if cover_changed_any {
+        // P1-E：revision token 可以共用，但 transport wake 仍需 cover 语义 ——
+        // 即使本事务已因 listing publication bump 过 revision，也要发这一次 cover wake。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(source_id, None);
+    }
+    Ok(())
 }
 
 pub fn discard_staged_generation(

@@ -141,10 +141,12 @@ class RemoteScanStatusPanel extends StatelessWidget {
     final listing = state.discoveryComplete
         ? '目录：已检查 ${state.directoriesChecked} 个，已发现 ${state.discoveredBooks} 本'
         : '目录：已检查 ${state.directoriesChecked} 个，已发现 ${state.discoveredBooks} 本，仍在发现';
+    // P1-F：主文案以 **available / discovered** 为准（source scope，不新增 folder progress）。
     final cover =
-        '封面：可用 ${state.readyBooks}，处理中 ${state.activeBooks}，'
-        '等待 ${state.pendingBooks}，待重试 ${state.retryBooks}，'
-        '暂停 ${state.blockedBooks}，不支持 ${state.unsupportedBooks}，失败 ${state.failedBooks}';
+        '封面：可用 ${state.availableBooks} / 共 ${state.discoveredBooks} 本，'
+        '等待 ${state.waitingBooks}，进行中 ${state.activeBooks}，'
+        '失败 ${state.failedBooks}，暂不支持 ${state.unsupportedBooks}，'
+        '暂不可用 ${state.blockedBooks}';
     return '$listing\n$cover';
   }
 

@@ -23,6 +23,14 @@ Future<BigInt> sftpSessionFor(BookSource source) async {
   return s.id;
 }
 
+/// P1-D-2：把 host/port 解析暴露给其它调用方（**薄包装**）。
+///
+/// 内部只调用既有的 `_parseHostPort`：不复制解析逻辑、不新增 normalization、
+/// 不改变其行为。目的是让 production writer 与新的 sessionless local-only reader
+/// 共享**同一个** Dart parser：
+/// same Dart parser → Rust `endpoint_for` → same cache identity。
+(String, int) sftpHostPortOf(BookSource source) => _parseHostPort(source);
+
 /// 解析服务器地址：`host` / `host:port`，端口缺省取 source.port 或 22。
 (String, int) _parseHostPort(BookSource source) {
   final addr = (source.url ?? '').trim();

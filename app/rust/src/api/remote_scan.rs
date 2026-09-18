@@ -2,6 +2,7 @@ use crate::api::source::remote_provider_adapter;
 use crate::db;
 use crate::reader::{blocking_request_governor, RequestPriority};
 use crate::remote_scan::adapter::RemoteScanError;
+use crate::remote_scan::cover_state::CoverJobUpsertCause;
 use crate::remote_scan::engine::{
     CancellationToken, CommittedDirectory, CoverTask, RemoteScanEngine, RetryPolicy,
     ScanCommitSink, ScanDirectoryTask,
@@ -53,6 +54,12 @@ pub struct RemoteScanStatusDto {
     pub blocked_books: u64,
     pub unsupported_books: u64,
     pub failed_books: u64,
+    /// P1-F：`ready` **且字节真的可用**的漫画数（缓存/文件系统校验，锁外计算）。
+    pub available_books: u64,
+    /// P1-F：等待中的漫画数 = pending + retry + stale-ready + no-job。
+    pub waiting_books: u64,
+    /// P1-F：真实未知 durable state 的漫画数（默认 0；不变量违例也会在此显式暴露）。
+    pub other_books: u64,
     pub view_revision: i64,
 }
 
@@ -147,6 +154,187 @@ pub(crate) fn wake_remote_cover_worker(source_id: String, session: u64) {
         run_remote_cover_worker(&source_id, session);
         cover_workers().lock().unwrap().remove(&worker_key);
     });
+}
+
+/// Source-level 唤醒原语（P1-B）。
+///
+/// 调用方只需要**稳定的 source identity**，不需要持有或传播 runtime session
+/// token —— token 由本函数从 `remote_scan_epoch` 解析。当前没有可用 session 时
+/// 什么都不做（不伪造 session、不新建无权限 session、不做任何远程访问），
+/// pending 工作保持持久化，等待后续 session/source attach 触发的下一次唤醒。
+///
+/// 复用既有 `wake_remote_cover_worker`：同一套 in-process single-flight、
+/// 同一套「队空可退出、再有 pending 可重新启动」语义，不新建第二套 registry。
+pub(crate) fn wake_cover_worker_for_source(source_id: &str) {
+    let source_id = source_id.trim();
+    if source_id.is_empty() {
+        return;
+    }
+    // 联网开关关闭时不得产生新的网络工作；pending 保持持久化。
+    if !current_cover_fetch_enabled() {
+        return;
+    }
+    let token = {
+        let Ok(conn) = db::get().lock() else {
+            return;
+        };
+        match crate::remote_scan::cover_store::resolve_cover_wake_session(
+            &conn,
+            source_id,
+            db::now_ms(),
+        ) {
+            Ok(token) => token,
+            Err(_) => None,
+        }
+    };
+    // 没有可用 session：不伪造 session、不新建无权限 session、不做任何远程访问。
+    let Some(token) = token else {
+        return;
+    };
+    wake_remote_cover_worker(source_id.to_string(), token);
+}
+
+/// 长期补偿的 retryable 判定。
+///
+/// **不引入任何错误字符串推断**：这里复用的正是既有短退避处理的那一个错误集合
+/// （`TransientNetwork | RateLimited`）。当短预算耗尽（`attempt >= 3`）时，这类失败
+/// 会落入 `cover_job_failure_state` 的 `_ => Failed` 分支 —— 那就是 retryable terminal
+/// failure，可获得一次 6h 长期补偿资格。其余错误一律视为永久失败。
+fn long_retry_is_retryable(error: &RemoteScanError) -> bool {
+    matches!(
+        error,
+        RemoteScanError::TransientNetwork(_) | RemoteScanError::RateLimited { .. }
+    )
+}
+
+/// `notify_source_session_ready` 的返回：只描述本次 reconciliation 做了什么。
+#[derive(Debug, Default, Clone)]
+pub struct RemoteCoverReconcileDto {
+    /// 该 source 当前是否存在可信的 source/session 绑定。false 表示本次什么都没做。
+    pub binding_available: bool,
+    /// 被推进为可 claim 的长期补偿 job 数。
+    pub compensation_promoted: u32,
+    /// 因 auth/session blocker 解除而回到候选队列的 job 数。
+    pub blocker_cleared: u32,
+    /// 因 library 缺口而新建的 pending job 数。
+    pub jobs_created: u32,
+    /// 本次是否产生了可 claim 的工作（Rust 侧据此已复用 P1-B 的 worker wake）。
+    pub claimable: bool,
+    /// 是否因预算上限提前结束（剩余工作留给后续 session 事件）。
+    pub truncated: bool,
+}
+
+/// **source-session lifecycle 事实通知**（P1-C）。
+///
+/// Dart 只报告一个它本来就掌握的事实：某个 source 已成功获得/更新为当前有效 session。
+/// Dart **不**查 failed job、**不**算 6 小时、**不**改 retry state、**不**决定
+/// unsupported/blocked、**不**决定 worker 是否启动 —— 这些全部由 Rust 拥有。
+///
+/// Rust 侧职责：
+/// 1. 验证该 source/session 关系（source 必须存在）；
+/// 2. 复用既有可信路径 `rebind_completed_generation_session`，让已完成的 generation
+///    绑定到当前有效 session；
+/// 3. 验证现在确实存在该 session 的绑定；**取不到就什么都不做**（不猜、不伪造）；
+/// 4. 对该 source 执行 **bounded、source-scoped** 的 reconciliation；
+/// 5. 如产生 claimable work，复用 P1-B 的 `wake_cover_worker_for_source`。
+///
+/// 幂等：重复通知不会重复生成 job、不会重复消耗长期补偿、不会重复 spawn consumer。
+/// 本函数自身**不做任何 provider 网络请求**。
+pub async fn notify_source_session_ready(
+    source_id: String,
+    session: u64,
+) -> std::result::Result<RemoteCoverReconcileDto, String> {
+    use crate::remote_scan::cover_store::{
+        reconcile_cover_compensation_for_source_on, reconcile_missing_covers_for_source_on,
+        ReconcileBudget,
+    };
+    let source_id = source_id.trim().to_string();
+    if source_id.is_empty() {
+        return Err("书源无效".into());
+    }
+    if session == 0 {
+        return Err("登录状态已失效".into());
+    }
+    let mut report = RemoteCoverReconcileDto::default();
+    // 联网开关关闭时不产生新的网络工作；durable 工作保留，等开关恢复后的下一次事件。
+    if !current_cover_fetch_enabled() {
+        return Ok(report);
+    }
+    let claimable = {
+        let conn = db::get().lock().map_err(|error| error.to_string())?;
+        let known: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM book_sources WHERE id=?1)",
+                [&source_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if !known {
+            return Err("书源不存在".into());
+        }
+        // 已完成 generation 重绑到当前 session（复用既有可信路径；非 complete 代际会被
+        // 该函数自身拒绝，因此这里逐个尝试是安全的）。
+        let generations: Vec<i64> = conn
+            .prepare("SELECT generation FROM remote_scan_epoch WHERE source_id=?1 ORDER BY generation DESC")
+            .map_err(|error| error.to_string())?
+            .query_map([&source_id], |row| row.get(0))
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<i64>>>()
+            .map_err(|error| error.to_string())?;
+        for generation in generations {
+            let _ = crate::remote_scan::persistence::rebind_completed_generation_session(
+                &conn, &source_id, generation, session,
+            );
+        }
+        // 验证绑定；拿不到可信绑定就什么都不做。
+        let session_token = i64::try_from(session).map_err(|_| "登录状态已失效".to_string())?;
+        let bound: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM remote_scan_epoch
+                                WHERE source_id=?1 AND session_token=?2 AND session_epoch<>'')",
+                rusqlite::params![source_id, session_token],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if !bound {
+            false
+        } else {
+            report.binding_available = true;
+            let now = db::now_ms();
+            let budget = ReconcileBudget::default();
+            let compensation =
+                reconcile_cover_compensation_for_source_on(&conn, &source_id, session, now, budget)
+                    .map_err(|error| error.to_string())?;
+            report.compensation_promoted = compensation.compensation_promoted as u32;
+            report.blocker_cleared = compensation.blocker_cleared as u32;
+            report.truncated = compensation.truncated;
+            let spent = compensation.compensation_promoted + compensation.blocker_cleared;
+            let remaining = budget.max_jobs.saturating_sub(spent);
+            let mut missing_created = 0;
+            if remaining > 0 {
+                let gap = reconcile_missing_covers_for_source_on(
+                    &conn,
+                    &source_id,
+                    session,
+                    now,
+                    ReconcileBudget {
+                        max_jobs: remaining,
+                        ..budget
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                missing_created = gap.jobs_created;
+                report.jobs_created = gap.jobs_created as u32;
+                report.truncated = report.truncated || gap.truncated;
+            }
+            compensation.claimable_work || missing_created > 0
+        }
+    };
+    report.claimable = claimable;
+    if claimable {
+        wake_cover_worker_for_source(&source_id);
+    }
+    Ok(report)
 }
 
 fn cover_job_failure_state(
@@ -496,13 +684,28 @@ fn run_remote_cover_worker(source_id: &str, session: u64) {
                             code.as_deref(),
                         );
                     } else {
-                        let _ = crate::remote_scan::cover_store::mark_job_state_owned_on(
+                        // P1-C：终态失败必须记录 failure episode。retryable（沿用既有短退避
+                        // 的同一错误集合）在短预算耗尽后获得一次 6h 长期补偿资格；永久失败
+                        // 传 None（保持 long_retry_not_before 为 NULL，不参与补偿）。
+                        let now = db::now_ms();
+                        let episode = if state
+                            == crate::remote_scan::cover_model::CoverJobState::Failed
+                            && long_retry_is_retryable(&error)
+                        {
+                            Some(now.saturating_add(
+                                crate::remote_scan::cover_store::LONG_RETRY_DELAY_MS,
+                            ))
+                        } else {
+                            None
+                        };
+                        let _ = crate::remote_scan::cover_store::mark_job_failure_owned_on(
                             &conn,
                             &job.key,
                             &owner,
                             state,
                             code.as_deref(),
-                            db::now_ms(),
+                            now,
+                            episode,
                         );
                     }
                 }
@@ -700,6 +903,7 @@ impl ScanCommitSink for SqliteScanSink {
             task.generation,
             &task.session_epoch,
             crate::db::now_ms(),
+            CoverJobUpsertCause::Demand,
         )
         .map_err(|_| RemoteScanError::Io("cover_queue_commit_failed".into()))?;
         self.wake_cover_worker(&task.source_id);
@@ -1084,6 +1288,8 @@ fn refresh_cover_progress(status: &mut RemoteScanStatusDto, generation: i64) {
         }
         refresh_status_counts(status, &conn, generation);
     }
+    // P1-F：锁已释放 ⇒ 在此做缓存可用性校验。
+    crate::remote_scan::cover_progress::apply_cover_availability(status);
 }
 
 /// Populate the comic-level counters from the durable index/job projection.
@@ -1131,26 +1337,38 @@ fn refresh_status_counts(
 
     let mut counts = [0_u64; 7];
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT asset_id,state,updated_at FROM remote_cover_job
-         WHERE source_id=?1 AND generation=?2",
+        "SELECT asset_id,state,updated_at,content_revision,selection_revision,profile
+           FROM remote_cover_job
+          WHERE source_id=?1 AND generation=?2",
     ) {
         if let Ok(rows) = stmt.query_map(params![source_id, generation], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
             ))
         }) {
-            let mut latest_by_asset: HashMap<String, (String, i64)> = HashMap::new();
+            // P1-F：latest-per-asset（与 UI 的"当前 job"语义一致），
+            // 并保留 cover 身份供**锁外**做缓存可用性校验。
+            let mut latest_by_asset: HashMap<String, (String, i64, String, String, String)> =
+                HashMap::new();
             for row in rows.flatten() {
                 let replace = latest_by_asset
                     .get(&row.0)
-                    .is_none_or(|(_, updated_at)| row.2 >= *updated_at);
+                    .is_none_or(|(_, updated_at, _, _, _)| row.2 >= *updated_at);
                 if replace {
-                    latest_by_asset.insert(row.0, (row.1, row.2));
+                    latest_by_asset.insert(row.0, (row.1, row.2, row.3, row.4, row.5));
                 }
             }
-            for (state, _) in latest_by_asset.into_values() {
+            let tracked_distinct = latest_by_asset.len() as u64;
+            let mut other_unknown = 0_u64;
+            let mut ready_identities: Vec<(String, String, String, String)> = Vec::new();
+            for (asset_id, (state, _, content_revision, selection_revision, profile)) in
+                latest_by_asset.into_iter()
+            {
                 let index = match state.as_str() {
                     "ready" => Some(0),
                     "running" => Some(1),
@@ -1159,12 +1377,27 @@ fn refresh_status_counts(
                     "blocked" => Some(4),
                     "unsupported" => Some(5),
                     "failed" => Some(6),
+                    // P1-F：真实未知 durable state **不得静默丢弃**。
                     _ => None,
                 };
-                if let Some(index) = index {
-                    counts[index] = counts[index].saturating_add(1);
+                match index {
+                    Some(index) => counts[index] = counts[index].saturating_add(1),
+                    None => other_unknown = other_unknown.saturating_add(1),
+                }
+                if state == "ready" {
+                    ready_identities.push((
+                        asset_id,
+                        content_revision,
+                        selection_revision,
+                        profile,
+                    ));
                 }
             }
+            crate::remote_scan::cover_progress::publish_cover_availability_inputs(
+                tracked_distinct,
+                other_unknown,
+                ready_identities,
+            );
         }
     }
     status.ready_books = counts[0];
@@ -1190,6 +1423,10 @@ fn refresh_status_counts(
         && status.failed_books == 0
     {
         status.pending_books = staged_unmaterialized;
+        // P1-F：这批 staged-only 漫画已被 pending 代表 ⇒ 通知语义层从 no_job 扣除。
+        crate::remote_scan::cover_progress::publish_staged_pending_represented(
+            staged_unmaterialized,
+        );
     }
     status.view_revision =
         crate::remote_scan::cover_store::view_revision(conn, source_id).unwrap_or(0);
@@ -1399,6 +1636,9 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
         blocked_books: 0,
         unsupported_books: 0,
         failed_books: 0,
+        available_books: 0,
+        waiting_books: 0,
+        other_books: 0,
         view_revision: 0,
     };
     persist_terminal(&status);
@@ -1775,6 +2015,8 @@ pub fn remote_scan_status(source_id: String) -> Option<RemoteScanStatusDto> {
             let generation = status.generation;
             refresh_status_counts(&mut status, &conn, generation);
         }
+        // P1-F：锁已释放 ⇒ 在此做缓存可用性校验。
+        crate::remote_scan::cover_progress::apply_cover_availability(&mut status);
         return Some(status);
     }
     let conn = db::get().lock().ok()?;
@@ -1804,6 +2046,7 @@ pub fn remote_scan_status(source_id: String) -> Option<RemoteScanStatusDto> {
                 ready_books: 0, active_books: 0, pending_books: 0,
                 retry_books: 0, blocked_books: 0, unsupported_books: 0,
                 failed_books: 0, view_revision: 0,
+                available_books: 0, waiting_books: 0, other_books: 0,
             })
         },
     ).optional().ok().flatten()?;
@@ -1849,6 +2092,9 @@ pub fn remote_scan_status(source_id: String) -> Option<RemoteScanStatusDto> {
     status.processed = durable_processed;
     let generation = status.generation;
     refresh_status_counts(&mut status, &conn, generation);
+    // P1-F：先释放 DB 锁，再做缓存/文件系统校验。
+    drop(conn);
+    crate::remote_scan::cover_progress::apply_cover_availability(&mut status);
     Some(status)
 }
 
@@ -2327,5 +2573,586 @@ mod tests {
         )
         .unwrap();
         assert_eq!((decoded.width, decoded.height), (340, 480));
+    }
+}
+
+#[cfg(test)]
+mod wake_tests {
+    use super::*;
+    use crate::remote_scan::cover_model::{CoverJobKey, CoverJobState};
+    use crate::remote_scan::cover_state::CoverJobUpsertCause;
+    use crate::remote_scan::cover_store;
+    use rusqlite::params;
+
+    /// 每个用例使用独立 source id：全局 DB 与 worker registry 都是进程级的。
+    /// 需要 `--test-threads=1`（项目全量门禁即如此运行）。
+    fn prepare(source_id: &str, session_token: i64) {
+        let conn = db::get().lock().unwrap();
+        let _ = crate::remote_scan::persistence::migrate(&conn);
+        let _ = cover_store::migrate(&conn);
+        conn.execute(
+            "DELETE FROM remote_cover_job WHERE source_id=?1",
+            [source_id],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM remote_scan_epoch WHERE source_id=?1",
+            [source_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO book_sources(id,type,name) VALUES(?1,'115','wake-test')",
+            [source_id],
+        )
+        .unwrap();
+        bind_source_epoch(&conn, source_id, session_token);
+    }
+
+    fn bind_source_epoch(conn: &rusqlite::Connection, source_id: &str, token: i64) {
+        conn.execute(
+            "INSERT OR REPLACE INTO remote_scan_epoch(
+                 source_id,generation,source_fingerprint,root_path,session_epoch,session_token)
+             VALUES(?1,1,'fp','/','epoch-1',?2)",
+            params![source_id, token],
+        )
+        .unwrap();
+    }
+
+    fn set_session_token(source_id: &str, token: i64) {
+        let conn = db::get().lock().unwrap();
+        conn.execute(
+            "UPDATE remote_scan_epoch SET session_token=?1 WHERE source_id=?2",
+            params![token, source_id],
+        )
+        .unwrap();
+    }
+
+    fn key(source_id: &str, asset_id: &str) -> CoverJobKey {
+        CoverJobKey {
+            source_id: source_id.into(),
+            asset_id: asset_id.into(),
+            content_revision: "v1".into(),
+            selection_revision: "default".into(),
+            profile: "340x480@1".into(),
+        }
+    }
+
+    fn seed_pending(source_id: &str, asset_id: &str) {
+        let conn = db::get().lock().unwrap();
+        cover_store::upsert_job_on(
+            &conn,
+            &key(source_id, asset_id),
+            CoverJobState::Pending,
+            "background",
+            10,
+            1,
+            "epoch-1",
+            db::now_ms(),
+            CoverJobUpsertCause::Demand,
+        )
+        .unwrap();
+    }
+
+    /// 造一个**未来的** retry_wait 期限：worker 会为它保持存活（睡眠切片 <= 30s），
+    /// 这给出一个确定的"worker 正在运行"窗口，而无需长 sleep。
+    fn seed_future_retry_wait(source_id: &str, asset_id: &str, in_ms: i64) {
+        let conn = db::get().lock().unwrap();
+        let job = key(source_id, asset_id);
+        cover_store::upsert_job_on(
+            &conn,
+            &job,
+            CoverJobState::RetryWait,
+            "background",
+            10,
+            1,
+            "epoch-1",
+            db::now_ms(),
+            CoverJobUpsertCause::Demand,
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE remote_cover_job SET next_attempt_at=?1 WHERE job_key=?2",
+            params![db::now_ms() + in_ms, job.encode()],
+        )
+        .unwrap();
+    }
+
+    fn job_row(source_id: &str, asset_id: &str) -> Option<(String, i64, Option<String>)> {
+        let conn = db::get().lock().unwrap();
+        conn.query_row(
+            "SELECT state,attempt,error_code FROM remote_cover_job WHERE job_key=?1",
+            [key(source_id, asset_id).encode()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .ok()
+    }
+
+    fn is_pending(source_id: &str, asset_id: &str) -> bool {
+        job_row(source_id, asset_id).map(|(state, _, _)| state == "pending") == Some(true)
+    }
+
+    fn keys_for(source_id: &str) -> usize {
+        let prefix = format!("{source_id}:");
+        cover_workers()
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|existing| existing.starts_with(&prefix))
+            .count()
+    }
+
+    fn wait_until<F: Fn() -> bool>(predicate: F, timeout_ms: u64) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            if predicate() {
+                return true;
+            }
+            if started.elapsed().as_millis() >= u128::from(timeout_ms) {
+                return predicate();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// A：worker 正在运行（被未来 retry 期限留住）+ 新的 pending
+    /// -> 唤醒正常、不出现第二个 worker、每个 job 恰好被 claim 一次。
+    #[test]
+    fn source_wake_drains_pending_without_duplicating_the_worker() {
+        let source = "wake-a-source";
+        prepare(source, 42);
+        // 未来 retry 期限必须先就位：它让 worker 消费完 pending 后仍保持存活，
+        // 从而给出一个确定的"worker 正在运行"窗口（否则 worker 会立刻退出）。
+        seed_future_retry_wait(source, "asset-hold", 1_200);
+        seed_pending(source, "asset-1");
+        wake_cover_worker_for_source(source);
+
+        assert!(
+            wait_until(|| !is_pending(source, "asset-1"), 3_000),
+            "the source wake must start a consumer that drains the pending job"
+        );
+        assert!(
+            wait_until(|| keys_for(source) == 1, 1_000),
+            "worker must stay alive for the future retry deadline"
+        );
+
+        seed_pending(source, "asset-2");
+        let observed = keys_for(source);
+        wake_cover_worker_for_source(source);
+        assert!(
+            observed <= 1 && keys_for(source) <= 1,
+            "no duplicate worker may be spawned by a second wake"
+        );
+
+        assert!(
+            wait_until(|| !is_pending(source, "asset-2"), 3_000),
+            "the already-running worker must pick up the new pending job"
+        );
+        assert_eq!(
+            job_row(source, "asset-2").unwrap().1,
+            1,
+            "a job must be claimed exactly once"
+        );
+    }
+
+    /// B：worker 已退出之后，新的 pending + 可用 session -> 通过 source-level wake 重新启动。
+    #[test]
+    fn exited_worker_is_restarted_by_a_source_wake() {
+        let source = "wake-b-source";
+        prepare(source, 42);
+        seed_pending(source, "asset-1");
+        wake_cover_worker_for_source(source);
+        assert!(wait_until(|| !is_pending(source, "asset-1"), 3_000));
+        assert!(
+            wait_until(|| keys_for(source) == 0, 2_000),
+            "a drained worker must exit and release its single-flight key"
+        );
+
+        seed_pending(source, "asset-2");
+        wake_cover_worker_for_source(source);
+        assert!(
+            wait_until(|| !is_pending(source, "asset-2"), 3_000),
+            "a restarted worker must consume the new pending job"
+        );
+    }
+
+    /// C：没有可用 session 时 -- 不消费、pending 不丢、不启动任何 worker
+    /// （因此没有任何网络 I/O）；session attach 后再唤醒即可被处理。
+    #[test]
+    fn pending_without_a_session_survives_until_a_session_is_attached() {
+        let source = "wake-c-source";
+        prepare(source, 0);
+        seed_pending(source, "asset-1");
+
+        wake_cover_worker_for_source(source);
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        assert_eq!(
+            keys_for(source),
+            0,
+            "without a session the coordinator must not spawn a worker"
+        );
+        assert!(
+            is_pending(source, "asset-1"),
+            "pending work must stay durable when no session is available"
+        );
+        assert_eq!(
+            job_row(source, "asset-1").unwrap().1,
+            0,
+            "must not be claimed"
+        );
+
+        set_session_token(source, 42);
+        wake_cover_worker_for_source(source);
+        assert!(
+            wait_until(|| !is_pending(source, "asset-1"), 3_000),
+            "after the session is attached the durable pending job must be consumed"
+        );
+    }
+
+    /// D：连续多次 source wake -- single-flight 仍成立，只被消费一次。
+    #[test]
+    fn repeated_source_wakes_do_not_duplicate_consumption() {
+        let source = "wake-d-source";
+        prepare(source, 42);
+        seed_pending(source, "asset-1");
+        for _ in 0..5 {
+            wake_cover_worker_for_source(source);
+            assert!(
+                keys_for(source) <= 1,
+                "single-flight must never hold 2 keys"
+            );
+        }
+        assert!(wait_until(|| !is_pending(source, "asset-1"), 3_000));
+        assert_eq!(
+            job_row(source, "asset-1").unwrap().1,
+            1,
+            "five wakes must still produce exactly one claim"
+        );
+    }
+}
+
+#[cfg(test)]
+mod session_ready_tests {
+    use super::*;
+    use crate::remote_scan::cover_model::{CoverJobKey, CoverJobState};
+    use crate::remote_scan::cover_state::CoverJobUpsertCause;
+    use crate::remote_scan::cover_store::{self, LONG_RETRY_DELAY_MS};
+    use rusqlite::params;
+
+    const SESSION: u64 = 77;
+
+    fn key(source_id: &str, asset_id: &str) -> CoverJobKey {
+        CoverJobKey {
+            source_id: source_id.into(),
+            asset_id: asset_id.into(),
+            content_revision: "v1".into(),
+            selection_revision: cover_store::DEFAULT_SELECTION_REVISION.into(),
+            profile: cover_store::DEFAULT_COVER_PROFILE.into(),
+        }
+    }
+
+    /// 建 source + 一个已绑定的 epoch，并放一条 overdue、未消耗的 retryable 终态失败。
+    fn prepare_overdue_failure(source_id: &str, generation: i64, session_epoch: &str) {
+        let conn = db::get().lock().unwrap();
+        let _ = crate::remote_scan::persistence::migrate(&conn);
+        let _ = cover_store::migrate(&conn);
+        conn.execute(
+            "DELETE FROM remote_cover_job WHERE source_id=?1",
+            [source_id],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM remote_scan_epoch WHERE source_id=?1",
+            [source_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO book_sources(id,type,name) VALUES(?1,'115','ready-test')",
+            [source_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO remote_scan_epoch(
+                 source_id,generation,source_fingerprint,root_path,session_epoch,session_token)
+             VALUES(?1,?2,'fp','/',?3,?4)",
+            params![
+                source_id,
+                generation,
+                session_epoch,
+                i64::try_from(SESSION).unwrap()
+            ],
+        )
+        .unwrap();
+        let job = key(source_id, "asset");
+        cover_store::upsert_job_on(
+            &conn,
+            &job,
+            CoverJobState::Failed,
+            "background",
+            10,
+            generation,
+            session_epoch,
+            0,
+            CoverJobUpsertCause::Demand,
+        )
+        .unwrap();
+        // 一个已经过期、尚未消耗的 failure episode。
+        conn.execute(
+            "UPDATE remote_cover_job
+                SET long_retry_not_before=?1,long_retry_consumed=0,long_retry_pending=0
+              WHERE job_key=?2",
+            params![db::now_ms() - LONG_RETRY_DELAY_MS, job.encode()],
+        )
+        .unwrap();
+    }
+
+    fn job_row(source_id: &str, asset_id: &str) -> Option<(String, i64, i64, i64, Option<i64>)> {
+        let conn = db::get().lock().unwrap();
+        conn.query_row(
+            "SELECT state,attempt,long_retry_consumed,long_retry_pending,long_retry_not_before
+               FROM remote_cover_job WHERE job_key=?1",
+            [key(source_id, asset_id).encode()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .ok()
+    }
+
+    fn wait_until<F: Fn() -> bool>(predicate: F, timeout_ms: u64) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            if predicate() {
+                return true;
+            }
+            if started.elapsed().as_millis() >= u128::from(timeout_ms) {
+                return predicate();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn notify(source_id: &str) -> RemoteCoverReconcileDto {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("tokio runtime");
+        runtime
+            .block_on(notify_source_session_ready(source_id.to_string(), SESSION))
+            .expect("lifecycle notification must not fail")
+    }
+
+    /// 给该 source 补一个 library 缺口（用于验证补齐器经 lifecycle 事件生效）。
+    fn seed_gap(source_id: &str, path: &str) {
+        let conn = db::get().lock().unwrap();
+        let asset_id = crate::db::library_index_id("fp", path);
+        conn.execute(
+            "INSERT OR REPLACE INTO library_index(
+                 id,source_id,name,path,entry_type,asset_kind,content_fingerprint,
+                 listing_complete,deleted,updated_at)
+             VALUES(?1,?2,'book.cbz',?3,'file','ArchiveFile','fp',1,0,1)",
+            params![asset_id, source_id, path],
+        )
+        .unwrap();
+    }
+
+    /// L1：新有效 session 建立 → overdue retryable failed 被推进 → worker 可消费。
+    #[test]
+    fn l1_session_creation_promotes_overdue_compensation_and_wakes_a_consumer() {
+        let source = "ready-l1-source";
+        prepare_overdue_failure(source, 3, "epoch-l1");
+
+        let report = notify(source);
+        assert!(
+            report.binding_available,
+            "the session binding must be recognized"
+        );
+        assert_eq!(report.compensation_promoted, 1);
+        assert!(report.claimable, "promotion must report claimable work");
+
+        // worker 必须真的把它领走（该源没有 route，因此是零网络的 route-missing 分支）。
+        assert!(
+            wait_until(
+                || job_row(source, "asset").map(|r| r.0 != "pending") == Some(true),
+                3_000
+            ),
+            "the lifecycle event must leave a live consumer behind"
+        );
+        let (_, attempt, consumed, pending, _) = job_row(source, "asset").unwrap();
+        assert_eq!(attempt, 1, "claimed exactly once");
+        assert_eq!(
+            consumed, 1,
+            "the claim is what consumes the compensation budget"
+        );
+        assert_eq!(
+            pending, 0,
+            "the compensation-pending marker must be cleared"
+        );
+    }
+
+    /// L2：只是重复读取同一个已有 session（或重复通知）→ 不重复 job / 不重复 claim / 不多 consumer。
+    #[test]
+    fn l2_repeated_identical_notifications_do_not_duplicate_anything() {
+        let source = "ready-l2-source";
+        prepare_overdue_failure(source, 3, "epoch-l2");
+        seed_gap(source, "/l2-book.cbz");
+
+        let first = notify(source);
+        assert_eq!(first.compensation_promoted, 1);
+        assert_eq!(first.jobs_created, 1);
+        assert!(wait_until(
+            || job_row(source, "asset").map(|r| r.0 != "pending") == Some(true),
+            3_000
+        ));
+
+        // 连续重复通知：不得重复生成 job、不得重复消耗、不得多起 consumer。
+        for _ in 0..4 {
+            let again = notify(source);
+            assert_eq!(
+                again.compensation_promoted, 0,
+                "an open episode must not re-promote"
+            );
+            assert_eq!(again.jobs_created, 0, "no duplicate job may be created");
+        }
+        let count: i64 = db::get()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_job WHERE source_id=?1",
+                [source],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "one promoted job + one replenished gap, never more"
+        );
+        assert_eq!(
+            job_row(source, "asset").map(|r| r.1),
+            Some(1),
+            "no extra claim may happen"
+        );
+    }
+
+    /// L3：session renewal —— 已完成的 generation 能绑定到当前有效 session，且补偿可恢复。
+    #[test]
+    fn l3_a_renewed_session_rebinds_a_completed_generation_and_recovers_compensation() {
+        let source = "ready-l3-source";
+        // 关键差异：epoch 里**没有**当前 session 的绑定（session_token=0，代表旧会话已失效）。
+        {
+            let conn = db::get().lock().unwrap();
+            let _ = crate::remote_scan::persistence::migrate(&conn);
+            let _ = cover_store::migrate(&conn);
+            conn.execute("DELETE FROM remote_cover_job WHERE source_id=?1", [source])
+                .unwrap();
+            conn.execute("DELETE FROM remote_scan_epoch WHERE source_id=?1", [source])
+                .unwrap();
+            conn.execute("DELETE FROM remote_scan_state WHERE source_id=?1", [source])
+                .unwrap();
+            // 重绑的前置条件：book_sources 的身份必须与 epoch 的身份一致。
+            conn.execute(
+                "INSERT OR REPLACE INTO book_sources(id,type,name,fingerprint,path)
+                 VALUES(?1,'115','ready-test','fp','/')",
+                [source],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO remote_scan_epoch(
+                     source_id,generation,source_fingerprint,root_path,session_epoch,session_token)
+                 VALUES(?1,4,'fp','/','epoch-old',0)",
+                [source],
+            )
+            .unwrap();
+            // 该 generation 已经成功完成 —— 只有 Succeeded 代际允许被新 session 重绑。
+            conn.execute(
+                "INSERT OR REPLACE INTO remote_scan_state(source_id,status,mode,generation)
+                 VALUES(?1,'Succeeded','Snapshot',4)",
+                [source],
+            )
+            .unwrap();
+        }
+        // 载入一条 overdue 的 failed（挂在旧 epoch 上）。
+        {
+            let conn = db::get().lock().unwrap();
+            let job = key(source, "asset");
+            cover_store::upsert_job_on(
+                &conn,
+                &job,
+                CoverJobState::Failed,
+                "background",
+                10,
+                4,
+                "epoch-old",
+                0,
+                CoverJobUpsertCause::Demand,
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE remote_cover_job
+                    SET long_retry_not_before=?1,long_retry_consumed=0,long_retry_pending=0
+                  WHERE job_key=?2",
+                params![db::now_ms() - LONG_RETRY_DELAY_MS, job.encode()],
+            )
+            .unwrap();
+        }
+
+        // 续期/新会话就绪：必须重绑并恢复补偿。
+        let report = notify(source);
+        assert!(
+            report.binding_available,
+            "a completed generation must be rebindable to the renewed session"
+        );
+        assert_eq!(report.compensation_promoted, 1);
+        assert!(wait_until(
+            || job_row(source, "asset").map(|r| r.0 != "pending") == Some(true),
+            3_000
+        ));
+        assert_eq!(job_row(source, "asset").map(|r| r.2), Some(1));
+    }
+
+    /// L4：相邻/重复事件下长期补偿最多消费一次，且不会把已消耗的 failed 重新变 pending、
+    ///     也不会多 spawn worker。
+    #[test]
+    fn l4_adjacent_events_consume_the_long_retry_budget_at_most_once() {
+        let source = "ready-l4-source";
+        prepare_overdue_failure(source, 3, "epoch-l4");
+
+        // 第一次通知：推进 + 消费。
+        let first = notify(source);
+        assert_eq!(first.compensation_promoted, 1);
+        assert!(wait_until(
+            || job_row(source, "asset").map(|r| r.0 != "pending") == Some(true),
+            3_000
+        ));
+        let (_, attempt, consumed, _, not_before) = job_row(source, "asset").unwrap();
+        assert_eq!(attempt, 1);
+        assert_eq!(consumed, 1);
+        assert!(not_before.is_some(), "the exhausted episode stays recorded");
+
+        // 之后无论来多少次事件：都不得再自动补偿这一条。
+        for _ in 0..3 {
+            let again = notify(source);
+            assert_eq!(again.compensation_promoted, 0);
+        }
+        assert_eq!(
+            job_row(source, "asset").map(|r| r.1),
+            Some(1),
+            "still exactly one claim"
+        );
+
+        // 且不得出现第二个 worker 键。
+        let prefix = format!("{source}:");
+        let workers = cover_workers()
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|existing| existing.starts_with(&prefix))
+            .count();
+        assert!(workers <= 1, "single-flight must hold");
     }
 }

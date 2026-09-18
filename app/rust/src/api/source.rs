@@ -1653,6 +1653,184 @@ pub async fn quark_cover(
 /// 生成 WebDAV 书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
 /// 封面结果写入磁盘缓存（cover/）供后续秒开。
 /// 优先走磁盘缓存 → raw/ 本地缓存 → HTTP Range 流式。
+/// P1-D-2：legacy 封面缓存的**纯本地**查找身份。
+///
+/// Dart 只传它本来就在用的 logical source fields —— **不得**传 origin / endpoint /
+/// raw path / cache key / hash。`kind` 取值与仓库既有的
+/// `open_cached_remote_book(kind, ..)` 保持一致：
+/// `"webdav" | "sftp" | "baidu" | "115" | "115web" | "quark"`。
+pub struct LegacyCoverLocalLookupDto {
+    pub kind: String,
+    /// WebDAV：书源 URL（authority 由 production 构造函数派生的 origin 决定）。
+    pub url: String,
+    /// SFTP：logical host / port。
+    pub host: String,
+    pub port: u32,
+    /// Baidu：app_key（client_id）与 root。
+    pub app_key: String,
+    /// 115 app：app_id 与 root_id。
+    pub app_id: String,
+    pub root_id: String,
+    /// Baidu / 115-web / Quark 的 root（语义随 kind 而定）。
+    pub root: String,
+    pub logical_path: String,
+    pub page: u32,
+    pub width: u32,
+    pub height: u32,
+    pub crop: Option<CropRect>,
+}
+
+/// 由 durable logical fields 派生 cache authority（**不触网、不建 session**）。
+///
+/// 每个分支都复用该 provider **现有的不触网构造函数 / 纯 helper**，
+/// 不复制任何 authority 算法（SFTP 走共享 `endpoint_for`）。
+fn legacy_cover_authority(lookup: &LegacyCoverLocalLookupDto) -> Option<String> {
+    use crate::source::baidu::BaiduClient;
+    use crate::source::cloud115::{Cloud115Client, Cloud115WebClient};
+    use crate::source::quark::QuarkClient;
+    use crate::source::webdav::WebDavClient;
+    match lookup.kind.as_str() {
+        "webdav" => WebDavClient::new(&lookup.url, "", "")
+            .ok()
+            .map(|(client, _)| client.origin().to_string()),
+        "sftp" => Some(crate::source::sftp::endpoint_for(
+            &lookup.host,
+            u16::try_from(lookup.port).unwrap_or(22),
+        )),
+        "baidu" => BaiduClient::new(&lookup.app_key, "", "", &lookup.root)
+            .ok()
+            .map(|client| client.origin()),
+        "115" => Cloud115Client::new(&lookup.app_id, "", &lookup.root_id)
+            .ok()
+            .map(|client| client.origin()),
+        "115web" => Cloud115WebClient::new("", &lookup.root)
+            .ok()
+            .map(|client| client.origin()),
+        "quark" => QuarkClient::new("", &lookup.root)
+            .ok()
+            .map(|client| client.origin()),
+        _ => None,
+    }
+}
+
+/// **纯本地 cover 缓存查找**（P1-D-2）。
+///
+/// 硬契约：不建 session、不连接、不刷新凭据、不访问 provider、不建 job、不 wake worker、
+/// 不 scan、不改 retry、不改任何 durable cover state。只做：
+/// `logical fields → authority → current key → (可恢复时) alternate historical key → cover_cache_read`。
+///
+/// 双历史 key 规则（冻结）：
+/// * **Family 1**（webdav / sftp / baidu / 115）：raw 当前存在 → current = 实际 raw path，
+///   alternate = logical path；raw 当前不存在 → current = logical path，
+///   alternate = **确定性候选 raw path**（由 production 算法精确重建，故历史 raw-key cover 仍可读）。
+/// * **Family 2**（115web / quark）：raw 当前存在 → current = 扫描出的实际 raw path，
+///   alternate = logical path；raw 当前不存在 → current = logical path，**alternate = 无**，
+///   直接 clean miss —— 因为文件名来自 provider 网络响应且从未持久化，
+///   历史 raw-key cover 属**已证明不可恢复**状态（禁止猜测补齐）。
+pub fn read_legacy_cover_local(lookup: LegacyCoverLocalLookupDto) -> Option<PageImage> {
+    use std::path::PathBuf;
+    let authority = legacy_cover_authority(&lookup)?;
+    let logical = lookup.logical_path.as_str();
+    let crop = lookup
+        .crop
+        .as_ref()
+        .map(|rect| (rect.x, rect.y, rect.w, rect.h));
+
+    let logical_path_buf = PathBuf::from(logical);
+    let (current, alternate): (PathBuf, Option<PathBuf>) = match lookup.kind.as_str() {
+        // Family 2：无文件级候选（目录虽确定，但文件名不可推导）。
+        "115web" => match crate::source::cloud115::web_raw_cache_path(&authority, logical) {
+            Some(raw) => (raw, Some(logical_path_buf)),
+            None => (logical_path_buf, None),
+        },
+        "quark" => match crate::source::quark::raw_cache_path(&authority, logical) {
+            Some(raw) => (raw, Some(logical_path_buf)),
+            None => (logical_path_buf, None),
+        },
+        // Family 1：raw 缺失时可由 production 算法精确重建历史 raw path。
+        "webdav" => {
+            let raw = crate::source::webdav::raw_cache_path(&authority, logical);
+            match raw {
+                Some(raw) => (raw, Some(logical_path_buf)),
+                None => (
+                    logical_path_buf,
+                    Some(crate::source::webdav::raw_cache_candidate_path(
+                        &authority, logical,
+                    )),
+                ),
+            }
+        }
+        "sftp" => {
+            let raw = crate::source::sftp::raw_cache_path(&authority, logical);
+            match raw {
+                Some(raw) => (raw, Some(logical_path_buf)),
+                None => (
+                    logical_path_buf,
+                    Some(crate::source::sftp::raw_cache_candidate_path(
+                        &authority, logical,
+                    )),
+                ),
+            }
+        }
+        "baidu" => {
+            let raw = crate::source::baidu::raw_cache_path(&authority, logical);
+            match raw {
+                Some(raw) => (raw, Some(logical_path_buf)),
+                None => (
+                    logical_path_buf,
+                    Some(crate::source::baidu::raw_cache_candidate_path(
+                        &authority, logical,
+                    )),
+                ),
+            }
+        }
+        "115" => {
+            let raw = crate::source::cloud115::raw_cache_path(&authority, logical);
+            match raw {
+                Some(raw) => (raw, Some(logical_path_buf)),
+                None => (
+                    logical_path_buf,
+                    Some(crate::source::cloud115::raw_cache_candidate_path(
+                        &authority, logical,
+                    )),
+                ),
+            }
+        }
+        _ => return None,
+    };
+
+    if let Some((rgba, width, height)) = crate::cache::cover_cache_read(
+        &current.to_string_lossy(),
+        lookup.page,
+        lookup.width,
+        lookup.height,
+        crop,
+    ) {
+        return Some(PageImage {
+            rgba,
+            width,
+            height,
+        });
+    }
+    if let Some(alternate) = alternate {
+        if let Some((rgba, width, height)) = crate::cache::cover_cache_read(
+            &alternate.to_string_lossy(),
+            lookup.page,
+            lookup.width,
+            lookup.height,
+            crop,
+        ) {
+            return Some(PageImage {
+                rgba,
+                width,
+                height,
+            });
+        }
+    }
+    // clean miss：**绝不** fallback 到 provider（网络回退属上层 Flutter control flow）。
+    None
+}
+
 pub async fn webdav_cover(
     session: u64,
     path: String,
@@ -2252,4 +2430,399 @@ pub async fn cloud115_cover(
         width: img.width,
         height: img.height,
     })
+}
+
+
+#[cfg(test)]
+mod d2_cache_authority_tests {
+    //! P1-D-2：legacy cover 的**双历史 key** 兼容契约（CA 套件）。
+    //!
+    //! 冻结的 per-family 能力（审阅通过）：
+    //! * **Family 1**（webdav / sftp / baidu / 115）：raw 文件删除后，历史 raw path 可由
+    //!   production 算法**精确重建** → `present→absent` 必须 HIT。
+    //! * **Family 2**（115web / quark）：raw 文件名来自 provider 网络响应 `info.name`
+    //!   且**从未持久化** → `present→absent` 属**已证明不可恢复的历史状态**，
+    //!   必须 clean MISS，**禁止猜测补齐**。
+    //!
+    //! 注意：需要 `--test-threads=1`（`cache::set_custom_cache_root` 是进程级全局）。
+
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    const PAGE: u32 = 0;
+    const W: u32 = 4;
+    const H: u32 = 4;
+
+    struct Fixture {
+        kind: &'static str,
+        /// Family 2：raw 文件名由 provider 决定，测试用任意"远端文件名"模拟 writer。
+        family2: bool,
+        expected_authority: &'static str,
+        dto: LegacyCoverLocalLookupDto,
+    }
+
+    fn base_dto(kind: &str) -> LegacyCoverLocalLookupDto {
+        LegacyCoverLocalLookupDto {
+            kind: kind.to_string(),
+            url: String::new(),
+            host: String::new(),
+            port: 22,
+            app_key: String::new(),
+            app_id: String::new(),
+            root_id: String::new(),
+            root: String::new(),
+            logical_path: "/books/demo.cbz".to_string(),
+            page: PAGE,
+            width: W,
+            height: H,
+            crop: None,
+        }
+    }
+
+    /// 六条 authority 路径的 fixture（115 app / web 必须分别覆盖）。
+    fn fixtures() -> Vec<Fixture> {
+        let mut webdav = base_dto("webdav");
+        webdav.url = "https://dav.example.com/dav".to_string();
+        let mut sftp22 = base_dto("sftp");
+        sftp22.host = "nas.local".to_string();
+        sftp22.port = 22;
+        let mut sftp_custom = base_dto("sftp");
+        sftp_custom.host = "nas.local".to_string();
+        sftp_custom.port = 2222;
+        let mut baidu = base_dto("baidu");
+        baidu.app_key = "appkey".to_string();
+        let mut c115 = base_dto("115");
+        c115.app_id = "appid".to_string();
+        let c115web = base_dto("115web");
+        let quark = base_dto("quark");
+
+        vec![
+            Fixture {
+                kind: "webdav",
+                family2: false,
+                expected_authority: "https://dav.example.com",
+                dto: webdav,
+            },
+            Fixture {
+                kind: "sftp(22)",
+                family2: false,
+                expected_authority: "nas.local",
+                dto: sftp22,
+            },
+            Fixture {
+                kind: "sftp(2222)",
+                family2: false,
+                expected_authority: "nas.local:2222",
+                dto: sftp_custom,
+            },
+            Fixture {
+                kind: "baidu",
+                family2: false,
+                expected_authority: "baidu:appkey:/",
+                dto: baidu,
+            },
+            Fixture {
+                kind: "115",
+                family2: false,
+                expected_authority: "115:appid:0",
+                dto: c115,
+            },
+            Fixture {
+                kind: "115web",
+                family2: true,
+                expected_authority: "115web:0",
+                dto: c115web,
+            },
+            Fixture {
+                kind: "quark",
+                family2: true,
+                expected_authority: "quark:0",
+                dto: quark,
+            },
+        ]
+    }
+
+    fn dto_copy(dto: &LegacyCoverLocalLookupDto) -> LegacyCoverLocalLookupDto {
+        LegacyCoverLocalLookupDto {
+            kind: dto.kind.clone(),
+            url: dto.url.clone(),
+            host: dto.host.clone(),
+            port: dto.port,
+            app_key: dto.app_key.clone(),
+            app_id: dto.app_id.clone(),
+            root_id: dto.root_id.clone(),
+            root: dto.root.clone(),
+            logical_path: dto.logical_path.clone(),
+            page: dto.page,
+            width: dto.width,
+            height: dto.height,
+            crop: None,
+        }
+    }
+
+    fn logical(dto: &LegacyCoverLocalLookupDto) -> &str {
+        dto.logical_path.as_str()
+    }
+
+    /// 确定性 raw 路径：Family 1 用 candidate；Family 2 只有目录（文件名不可推导）。
+    fn raw_path_for(fixture: &Fixture, authority: &str) -> Option<PathBuf> {
+        let dto = &fixture.dto;
+        match dto.kind.as_str() {
+            "webdav" => Some(crate::source::webdav::raw_cache_candidate_path(
+                authority,
+                logical(dto),
+            )),
+            "sftp" => Some(crate::source::sftp::raw_cache_candidate_path(
+                authority,
+                logical(dto),
+            )),
+            "baidu" => Some(crate::source::baidu::raw_cache_candidate_path(
+                authority,
+                logical(dto),
+            )),
+            "115" => Some(crate::source::cloud115::raw_cache_candidate_path(
+                authority,
+                logical(dto),
+            )),
+            _ => None,
+        }
+    }
+
+    fn raw_dir_for(fixture: &Fixture, authority: &str) -> PathBuf {
+        let dto = &fixture.dto;
+        match dto.kind.as_str() {
+            "115web" => crate::source::cloud115::web_raw_cache_dir(authority, logical(dto)),
+            "quark" => crate::source::quark::raw_cache_dir(authority, logical(dto)),
+            _ => raw_path_for(fixture, authority)
+                .and_then(|p| p.parent().map(Path::to_path_buf))
+                .expect("family 1 candidate must have a parent"),
+        }
+    }
+
+    /// 按"当前 raw 文件是否存在"复刻 production 的 current key 表达式。
+    fn current_key(fixture: &Fixture, authority: &str) -> PathBuf {
+        let dto = &fixture.dto;
+        let logical_buf = PathBuf::from(logical(dto));
+        match dto.kind.as_str() {
+            "115web" => crate::source::cloud115::web_raw_cache_path(authority, logical(dto))
+                .unwrap_or(logical_buf),
+            "quark" => {
+                crate::source::quark::raw_cache_path(authority, logical(dto)).unwrap_or(logical_buf)
+            }
+            "webdav" => crate::source::webdav::raw_cache_path(authority, logical(dto))
+                .unwrap_or(logical_buf),
+            "sftp" => crate::source::sftp::raw_cache_path(authority, logical(dto))
+                .unwrap_or(logical_buf),
+            "baidu" => crate::source::baidu::raw_cache_path(authority, logical(dto))
+                .unwrap_or(logical_buf),
+            "115" => crate::source::cloud115::raw_cache_path(authority, logical(dto))
+                .unwrap_or(logical_buf),
+            other => panic!("unknown kind {other}"),
+        }
+    }
+
+    /// 模拟 production writer 写出 raw 文件（内容非空），返回其路径。
+    fn create_raw(fixture: &Fixture, authority: &str) -> PathBuf {
+        let dir = raw_dir_for(fixture, authority);
+        std::fs::create_dir_all(&dir).expect("raw dir");
+        // Family 2 的文件名来自 provider（任意值）；Family 1 用确定性名。
+        let path = if fixture.family2 {
+            dir.join("provider-returned-name.cbz")
+        } else {
+            raw_path_for(fixture, authority).expect("family 1 raw path")
+        };
+        std::fs::write(&path, b"raw-bytes").expect("raw write");
+        path
+    }
+
+    fn remove_raw(path: &Path) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn fresh_root(name: &str) {
+        let root = std::env::temp_dir().join(format!("rch_p1d2_ca_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        crate::cache::set_custom_cache_root(root.to_str().unwrap());
+    }
+
+    fn write_cover(key: &Path) {
+        let rgba = vec![7u8; (W * H * 4) as usize];
+        crate::cache::cover_cache_write(&key.to_string_lossy(), PAGE, W, H, None, &rgba).unwrap();
+    }
+
+    /// 保证测试结束时恢复默认 cache root（即使 panic），
+    /// 否则会污染同进程内其它测试（曾导致 cache::tests::cache_root_defaults_to_appdata 失败）。
+    struct CacheRootGuard;
+    impl Drop for CacheRootGuard {
+        fn drop(&mut self) {
+            crate::cache::set_custom_cache_root("");
+        }
+    }
+
+    /// CA-4：冻结六条 authority 的现有字面规则（**不定义任何新 normalization**）。
+    #[test]
+    fn d2_ca4_authority_literals_are_frozen() {
+        let _guard = CacheRootGuard;
+        fresh_root("ca4");
+        for fixture in fixtures() {
+            let authority = legacy_cover_authority(&fixture.dto)
+                .unwrap_or_else(|| panic!("authority must derive for {}", fixture.kind));
+            assert_eq!(
+                authority, fixture.expected_authority,
+                "authority literal changed for {}",
+                fixture.kind
+            );
+        }
+    }
+
+    /// CA-2 / CA-1：**完全没有 runtime session** 时，六条路径当前可恢复的旧缓存都能被读到。
+    ///
+    /// 这里没有任何 session/registry/epoch 参与 —— reader 只用 logical fields。
+    #[test]
+    fn d2_ca1_ca2_sessionless_lookup_reads_existing_caches() {
+        let _guard = CacheRootGuard;
+        fresh_root("ca12");
+        for fixture in fixtures() {
+            let authority = legacy_cover_authority(&fixture.dto).unwrap();
+            // 当前状态：raw 存在（production writer 会以 raw path 为键写 cover）
+            let raw = create_raw(&fixture, &authority);
+            let key = current_key(&fixture, &authority);
+            assert_eq!(key, raw, "current key must be the probed raw path");
+            write_cover(&key);
+
+            let hit = read_legacy_cover_local(dto_copy(&fixture.dto)).expect("sessionless hit");
+            assert_eq!(hit.width, W);
+            assert_eq!(hit.height, H);
+            assert_eq!(hit.rgba.len(), (W * H * 4) as usize);
+        }
+    }
+
+    /// CA-STATE-1 / 2 / 3 / 4：raw 状态转换矩阵。
+    ///
+    /// Family 1 四种全 HIT；Family 2 的 `present→absent` 为已证明不可恢复 → MISS。
+    #[test]
+    fn d2_ca_state_transition_matrix() {
+        let _guard = CacheRootGuard;
+        let mut failures: Vec<String> = Vec::new();
+        for (index, fixture) in fixtures().into_iter().enumerate() {
+            fresh_root(&format!("state{index}"));
+            let authority = legacy_cover_authority(&fixture.dto).unwrap();
+            for (transition, (write_present, read_present)) in
+                [(true, true), (false, false), (true, false), (false, true)]
+                    .into_iter()
+                    .enumerate()
+            {
+                // 每个状态转换都必须从**干净的 cover 缓存**开始，否则上一轮写在
+                // 另一个 key 下的 .cover 会造成假命中（测试自身的状态泄漏）。
+                fresh_root(&format!("state{index}_{transition}"));
+                // 每次转换都从干净的 raw 状态开始。
+                let raw = create_raw(&fixture, &authority);
+                if !write_present {
+                    remove_raw(&raw);
+                }
+                let write_key = current_key(&fixture, &authority);
+                write_cover(&write_key);
+
+                // 调整到"读取时"的 raw 状态。
+                match read_present {
+                    true => {
+                        let _ = create_raw(&fixture, &authority);
+                    }
+                    false => remove_raw(&raw),
+                }
+
+                let hit = read_legacy_cover_local(dto_copy(&fixture.dto)).is_some();
+                let unrecoverable = fixture.family2 && write_present && !read_present;
+                let expected = !unrecoverable;
+                if hit != expected {
+                    failures.push(format!(
+                        "{} write_raw_present={write_present} read_raw_present={read_present} => got hit={hit} want hit={expected}",
+                        fixture.kind
+                    ));
+                }
+                // 清理，保证下一次转换从确定状态开始。
+                remove_raw(&raw);
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "CA state matrix violated in {} case(s):\n  {}",
+            failures.len(),
+            failures.join("\n  ")
+        );
+    }
+
+    /// CA-STATE-3-UNRECOVERABLE（冻结已证明的局限，**不是失败**）：
+    ///
+    /// 115-web / Quark：raw 存在时以 raw-key 写入 cover → 删除 raw → 保留 `.cover`
+    /// → sessionless lookup 必须 **clean MISS**。
+    ///
+    /// 原因：`remote filename was not durably persisted; historical raw key cannot be
+    /// reconstructed`（文件名来自 provider 网络响应的 `info.name`）。
+    /// 禁止任何猜测补齐（不扫 `.cover` 目录、不枚举 hash、不调 provider、不建 session）。
+    #[test]
+    fn d2_ca_state3_unrecoverable_for_family2_is_a_clean_miss() {
+        let _guard = CacheRootGuard;
+        fresh_root("state3");
+        for fixture in fixtures().into_iter().filter(|f| f.family2) {
+            let authority = legacy_cover_authority(&fixture.dto).unwrap();
+            let raw = create_raw(&fixture, &authority);
+            let write_key = current_key(&fixture, &authority);
+            write_cover(&write_key);
+            // 该 `.cover` 确实存在（证明是"不可达"而不是"没写过"）。
+            assert!(
+                crate::cache::cover_cache_read(&write_key.to_string_lossy(), PAGE, W, H, None)
+                    .is_some(),
+                "the historical raw-key cover must really exist on disk"
+            );
+            remove_raw(&raw);
+
+            assert!(
+                read_legacy_cover_local(dto_copy(&fixture.dto)).is_none(),
+                "{} must be a clean MISS when the historical raw filename is gone",
+                fixture.kind
+            );
+        }
+    }
+
+    /// CA-3：miss 时完全无副作用（无 session / 无 provider / 不产生额外文件）。
+    #[test]
+    fn d2_ca3_miss_is_side_effect_free() {
+        let _guard = CacheRootGuard;
+        fresh_root("ca3");
+        for (index, fixture) in fixtures().into_iter().enumerate() {
+            let before: Option<usize> = None;
+            let _ = before;
+            let cover_dir = crate::cache::CacheDir::Cover.path();
+            let count_files = |dir: &Path| -> usize {
+                std::fs::read_dir(dir)
+                    .map(|it| it.flatten().count())
+                    .unwrap_or(0)
+            };
+            let before_cover = count_files(&cover_dir);
+            // 无任何 raw、无任何 cover。
+            assert!(
+                read_legacy_cover_local(dto_copy(&fixture.dto)).is_none(),
+                "fixture {index} must miss"
+            );
+            assert_eq!(
+                count_files(&cover_dir),
+                before_cover,
+                "a miss must not create cache files (fixture {index})"
+            );
+        }
+    }
+
+    /// R5：local-only lookup **永不** fallback 到 provider —— 它不接受 session、
+    /// 也不返回任何"需要联网"的信号；miss 就是 `None`。
+    #[test]
+    fn d2_r5_local_lookup_never_falls_back_to_provider() {
+        let _guard = CacheRootGuard;
+        fresh_root("r5");
+        // 即便传进来的 kind 完全未知，也只是 None，不会尝试任何网络路径。
+        let mut unknown = base_dto("unknown-provider");
+        unknown.url = "https://dav.example.com/dav".to_string();
+        assert!(read_legacy_cover_local(unknown).is_none());
+    }
 }

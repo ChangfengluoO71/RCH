@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
 use rust_lib_app::remote_scan::cover_service::ConsumerRegistry;
 use rust_lib_app::remote_scan::cover_store;
+use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;
 
 #[test]
 fn ordinary_visible_demand_does_not_bypass_backoff_or_terminal_errors() {
@@ -12,8 +13,8 @@ fn ordinary_visible_demand_does_not_bypass_backoff_or_terminal_errors() {
             source_id: "source".into(), asset_id: state.as_str().into(),
             content_revision: "v1".into(), selection_revision: "default".into(), profile: "170x240@1".into(),
         };
-        cover_store::upsert_job_on(&conn, &key, state, "background", 10, 1, "epoch", 1).unwrap();
-        let demanded = cover_store::upsert_job_on(&conn, &key, CoverJobState::Pending, "visible", 300, 1, "epoch", 2).unwrap();
+        cover_store::upsert_job_on(&conn, &key, state, "background", 10, 1, "epoch", 1, CoverJobUpsertCause::Demand).unwrap();
+        let demanded = cover_store::upsert_job_on(&conn, &key, CoverJobState::Pending, "visible", 300, 1, "epoch", 2, CoverJobUpsertCause::Demand).unwrap();
         assert_eq!(demanded.state, state, "visible demand must not restart {}", state.as_str());
         assert_eq!(demanded.priority, 300);
     }
@@ -39,7 +40,8 @@ fn identical_jobs_are_upserted_once_and_consumer_release_is_scoped() {
         1,
         "session-a",
         10,
-    )
+        CoverJobUpsertCause::Demand,
+)
     .unwrap();
     let second = cover_store::upsert_job_on(
         &conn,
@@ -50,7 +52,8 @@ fn identical_jobs_are_upserted_once_and_consumer_release_is_scoped() {
         1,
         "session-a",
         11,
-    )
+        CoverJobUpsertCause::Demand,
+)
     .unwrap();
     assert_eq!(first.key, second.key);
     assert_eq!(second.priority, 10);
@@ -94,7 +97,8 @@ fn claim_is_short_lived_prioritized_and_recovery_requeues_expired_leases() {
         1,
         "epoch",
         100,
-    )
+        CoverJobUpsertCause::Demand,
+)
     .unwrap();
     cover_store::upsert_job_on(
         &conn,
@@ -105,7 +109,8 @@ fn claim_is_short_lived_prioritized_and_recovery_requeues_expired_leases() {
         1,
         "epoch",
         101,
-    )
+        CoverJobUpsertCause::Demand,
+)
     .unwrap();
     let claimed = cover_store::claim_next_job_on(&conn, "worker-a", 200, 1_000)
         .unwrap()
@@ -144,7 +149,8 @@ fn retry_wait_is_not_claimed_before_next_attempt() {
         1,
         "epoch",
         100,
-    )
+        CoverJobUpsertCause::Demand,
+)
     .unwrap();
     conn.execute(
         "UPDATE remote_cover_job SET next_attempt_at=500 WHERE job_key=?1",
@@ -179,7 +185,8 @@ fn ready_publish_records_blob_metadata_and_reference_atomically() {
         1,
         "epoch",
         1,
-    )
+        CoverJobUpsertCause::Demand,
+)
     .unwrap();
     cover_store::claim_next_job_on(&conn, "worker", 2, 1_000)
         .unwrap()

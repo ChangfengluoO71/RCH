@@ -19,6 +19,12 @@ class RemoteScanStatus {
   final int blockedBooks;
   final int unsupportedBooks;
   final int failedBooks;
+  /// P1-F：`ready` 且字节真的可用（缓存/文件系统校验）。
+  final int availableBooks;
+  /// P1-F：等待中 = pending + retry + stale-ready + no-job。
+  final int waitingBooks;
+  /// P1-F：真实未知 durable state（默认 0）。
+  final int otherBooks;
   final int viewRevision;
 
   const RemoteScanStatus({
@@ -42,6 +48,9 @@ class RemoteScanStatus {
     this.blockedBooks = 0,
     this.unsupportedBooks = 0,
     this.failedBooks = 0,
+    this.availableBooks = 0,
+    this.waitingBooks = 0,
+    this.otherBooks = 0,
     this.viewRevision = 0,
   });
 
@@ -67,6 +76,9 @@ class RemoteScanStatus {
       blockedBooks: blockedBooks,
       unsupportedBooks: unsupportedBooks,
       failedBooks: failedBooks,
+      availableBooks: availableBooks,
+      waitingBooks: waitingBooks,
+      otherBooks: otherBooks,
       viewRevision: viewRevision,
     );
   }
@@ -92,6 +104,12 @@ class RemoteScanViewState {
   final int blockedBooks;
   final int unsupportedBooks;
   final int failedBooks;
+  /// P1-F：`ready` 且字节真的可用（缓存/文件系统校验）。
+  final int availableBooks;
+  /// P1-F：等待中 = pending + retry + stale-ready + no-job。
+  final int waitingBooks;
+  /// P1-F：真实未知 durable state（默认 0）。
+  final int otherBooks;
 
   const RemoteScanViewState({
     required this.sourceId,
@@ -113,6 +131,9 @@ class RemoteScanViewState {
     this.blockedBooks = 0,
     this.unsupportedBooks = 0,
     this.failedBooks = 0,
+    this.availableBooks = 0,
+    this.waitingBooks = 0,
+    this.otherBooks = 0,
   });
 
   factory RemoteScanViewState.fromStatus(
@@ -139,6 +160,9 @@ class RemoteScanViewState {
       blockedBooks: status.blockedBooks,
       unsupportedBooks: status.unsupportedBooks,
       failedBooks: status.failedBooks,
+      availableBooks: status.availableBooks,
+      waitingBooks: status.waitingBooks,
+      otherBooks: status.otherBooks,
     );
   }
 }

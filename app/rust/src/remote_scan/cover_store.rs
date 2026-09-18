@@ -5,6 +5,7 @@
 //! run while a SQLite transaction is held.
 
 use super::cover_model::{CoverJobKey, CoverJobState, RemoteCoverJob};
+use super::cover_state::{resolve_upsert_state, CoverJobUpsertCause};
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -130,6 +131,18 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     // to the first table creation; newly added compatibility columns use a
     // safe default and never rewrite existing rows.
     for (table, columns) in [
+        (
+            // P1-C 长期补偿（long compensation）：
+            //   long_retry_not_before : NULL=无长期自动补偿资格；非空=retryable failure，值即 earliest eligibility。
+            //   long_retry_consumed   : 当前 failure episode 的一次长期补偿是否已被真正 claim。
+            //   long_retry_pending    : 该 pending 由长期补偿 reconciliation 产生、尚未 claim。
+            "remote_cover_job",
+            vec![
+                ("long_retry_not_before", "INTEGER"),
+                ("long_retry_consumed", "INTEGER NOT NULL DEFAULT 0"),
+                ("long_retry_pending", "INTEGER NOT NULL DEFAULT 0"),
+            ],
+        ),
         (
             "remote_asset_route",
             vec![
@@ -308,6 +321,29 @@ pub fn upsert_route_on(
     Ok(())
 }
 
+/// P1-E：在一次**真实**的 durable cover-state transition 之后推进 durable revision。
+///
+/// * 必须在与 state mutation **相同**的事务内调用（调用者持有 conn 或 tx）。
+/// *  取该 job **自身**的 generation —— 绝不拿“当前最新 generation”猜，
+///   否则旧 generation 的 worker 完成会污染新 generation 的 revision。
+fn bump_cover_revision_for_job_on(
+    conn: &Connection,
+    key: &CoverJobKey,
+    now: i64,
+) -> rusqlite::Result<()> {
+    let row = conn
+        .query_row(
+            "SELECT source_id,generation FROM remote_cover_job WHERE job_key=?1",
+            [key.encode()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+    if let Some((source_id, generation)) = row {
+        bump_view_revision_on(conn, &source_id, generation, now)?;
+    }
+    Ok(())
+}
+
 pub fn bump_view_revision_on(
     conn: &Connection,
     source_id: &str,
@@ -351,16 +387,45 @@ pub fn mark_job_state_on(
     if !job_session_is_current(conn, key)? {
         return Ok(());
     }
-    let changed = conn.execute(
+    // P1-E：state mutation 与 revision bump 必须**原子提交**（crash 不得漏 bump）。
+    // 调用者已持有事务时复用当前 conn；否则本函数自持一个事务
+    //（沿用 P1-A 的 is_autocommit 模式，避免 nested transaction 错误）。
+    let owned_tx = if conn.is_autocommit() {
+        Some(conn.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let scope: &Connection = match owned_tx.as_ref() {
+        Some(tx) => tx,
+        None => conn,
+    };
+    let changed = scope.execute(
         "UPDATE remote_cover_job SET state=?1,error_code=?2,next_attempt_at=NULL,
-                lease_owner=NULL,lease_until=NULL,updated_at=?3
+                lease_owner=NULL,lease_until=NULL,updated_at=?3,
+                long_retry_not_before=CASE WHEN ?1='ready' THEN NULL ELSE long_retry_not_before END,
+                long_retry_consumed=CASE WHEN ?1='ready' THEN 0 ELSE long_retry_consumed END,
+                long_retry_pending=CASE WHEN ?1='ready' THEN 0 ELSE long_retry_pending END
          WHERE job_key=?4 AND state='running'",
         params![state.as_str(), error_code, now, key.encode()],
     )?;
     if changed == 0 {
+        if let Some(tx) = owned_tx {
+            tx.rollback()?;
+        }
         return Ok(());
     }
-    publish_variant_on(conn, key, state, now)
+    publish_variant_on(scope, key, state, now)?;
+    // P1-E：真实的 durable cover-state transition ⇒ 同一事务内推进 revision。
+    bump_cover_revision_for_job_on(scope, key, now)?;
+    if let Some(tx) = owned_tx {
+        tx.commit()?;
+        // P1-E：commit-after-emit（仅在自己拥有事务时才能确定已提交）。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(
+            &key.source_id,
+            Some(&key.asset_id),
+        );
+    }
+    Ok(())
 }
 
 /// Publish a result only when the same worker still owns the running lease.
@@ -376,16 +441,44 @@ pub fn mark_job_state_owned_on(
     if !job_session_is_current(conn, key)? || !owner_session_is_current(conn, key, owner)? {
         return Ok(false);
     }
-    let changed = conn.execute(
+    // P1-E：state mutation 与 revision bump 必须**原子提交**（crash 不得漏 bump）。
+    // 调用者已持有事务时复用当前 conn；否则本函数自持一个事务
+    //（沿用 P1-A 的 is_autocommit 模式，避免 nested transaction 错误）。
+    let owned_tx = if conn.is_autocommit() {
+        Some(conn.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let scope: &Connection = match owned_tx.as_ref() {
+        Some(tx) => tx,
+        None => conn,
+    };
+    let changed = scope.execute(
         "UPDATE remote_cover_job SET state=?1,error_code=?2,next_attempt_at=NULL,
-                lease_owner=NULL,lease_until=NULL,updated_at=?3
+                lease_owner=NULL,lease_until=NULL,updated_at=?3,
+                long_retry_not_before=CASE WHEN ?1='ready' THEN NULL ELSE long_retry_not_before END,
+                long_retry_consumed=CASE WHEN ?1='ready' THEN 0 ELSE long_retry_consumed END,
+                long_retry_pending=CASE WHEN ?1='ready' THEN 0 ELSE long_retry_pending END
          WHERE job_key=?4 AND state='running' AND lease_owner=?5",
         params![state.as_str(), error_code, now, key.encode(), owner],
     )?;
     if changed == 0 {
+        if let Some(tx) = owned_tx {
+            tx.rollback()?;
+        }
         return Ok(false);
     }
-    publish_variant_on(conn, key, state, now)?;
+    publish_variant_on(scope, key, state, now)?;
+    // P1-E：真实的 durable cover-state transition ⇒ 同一事务内推进 revision。
+    bump_cover_revision_for_job_on(scope, key, now)?;
+    if let Some(tx) = owned_tx {
+        tx.commit()?;
+        // P1-E：commit-after-emit（仅在自己拥有事务时才能确定已提交）。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(
+            &key.source_id,
+            Some(&key.asset_id),
+        );
+    }
     Ok(true)
 }
 
@@ -412,8 +505,11 @@ pub fn mark_job_ready_owned_on(
     }
     let tx = conn.unchecked_transaction()?;
     let changed = tx.execute(
+        // 成功进入 ready 即结束当前 failure episode：清空长期补偿三列，使将来真正新形成的
+        // failure episode 拥有自己独立的一次补偿额度。
         "UPDATE remote_cover_job SET state='ready',error_code=NULL,
-                next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,updated_at=?1
+                next_attempt_at=NULL,lease_owner=NULL,lease_until=NULL,updated_at=?1,
+                long_retry_not_before=NULL,long_retry_consumed=0,long_retry_pending=0
          WHERE job_key=?2 AND state='running' AND lease_owner=?3",
         params![now, key.encode(), owner],
     )?;
@@ -447,6 +543,8 @@ pub fn mark_job_ready_owned_on(
         ],
     )?;
     publish_variant_on(&tx, key, CoverJobState::Ready, now)?;
+    // P1-E/REV-3：running → ready 是真实 durable transition ⇒ 同一事务内推进 revision。
+    bump_cover_revision_for_job_on(&tx, key, now)?;
     tx.execute(
         "INSERT INTO remote_cover_ref(
              owner_key,blob_key,role,source_id,asset_id,dependency_revision)
@@ -463,6 +561,12 @@ pub fn mark_job_ready_owned_on(
         ],
     )?;
     tx.commit()?;
+    // P1-E：commit-after-emit —— running → ready 是 E-SCAN-TERMINAL-READY 的核心
+    // 生产事件，必须在提交成功之后唤醒消费者。
+    crate::remote_scan::cover_revision_stream::notify_cover_revision(
+        &key.source_id,
+        Some(&key.asset_id),
+    );
     Ok(true)
 }
 
@@ -566,9 +670,31 @@ pub fn upsert_job_on(
     generation: i64,
     session_epoch: &str,
     now: i64,
+    cause: CoverJobUpsertCause,
 ) -> Result<RemoteCoverJob> {
     let job_key = key.encode();
-    conn.execute(
+    // P1-A：状态由 `resolve_upsert_state` 的**唯一规则表**决定，不再无条件保留旧状态。
+    // 改造前这里是 `state=remote_cover_job.state`，于是 failed / unsupported /
+    // blocked / retry_wait 一旦进入就再没有任何路径能恢复，即使原因早已消失。
+    //
+    // 只在调用方**没有**事务时才自己开一个：本函数也会被 `publish_staged_generation`
+    // 这类已持有事务的调用方复用，嵌套 BEGIN 会被 SQLite 拒绝。
+    let owned_tx = if conn.is_autocommit() {
+        Some(conn.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let scope: &Connection = match owned_tx.as_ref() {
+        Some(tx) => tx,
+        None => conn,
+    };
+    let existing = load_job_on(scope, &job_key)?.map(|job| job.state);
+    let resolved = resolve_upsert_state(existing, state, cause);
+    // 被显式拉回候选队列的任务获得全新的短重试预算（attempt / 退避 / lease）。
+    // 注意：长期补偿的额度**不在这里重置**（见 mark_job_failure_owned_on 的 episode 语义）。
+    let revival = resolved == CoverJobState::Pending
+        && existing.is_some_and(|previous| previous != CoverJobState::Pending);
+    scope.execute(
         "INSERT INTO remote_cover_job(
              job_key,source_id,asset_id,content_revision,selection_revision,profile,
              state,demand_kind,priority,attempt,generation,session_epoch,updated_at)
@@ -578,7 +704,12 @@ pub fn upsert_job_on(
              priority=MAX(remote_cover_job.priority,excluded.priority),
              generation=MAX(remote_cover_job.generation,excluded.generation),
              session_epoch=CASE WHEN excluded.session_epoch <> '' THEN excluded.session_epoch ELSE remote_cover_job.session_epoch END,
-             state=remote_cover_job.state,
+             state=excluded.state,
+             attempt=CASE WHEN ?13=1 THEN 0 ELSE remote_cover_job.attempt END,
+             next_attempt_at=CASE WHEN ?13=1 THEN NULL ELSE remote_cover_job.next_attempt_at END,
+             lease_owner=CASE WHEN ?13=1 THEN NULL ELSE remote_cover_job.lease_owner END,
+             lease_until=CASE WHEN ?13=1 THEN NULL ELSE remote_cover_job.lease_until END,
+             error_code=CASE WHEN ?13=1 THEN NULL ELSE remote_cover_job.error_code END,
              updated_at=excluded.updated_at",
         params![
             job_key,
@@ -587,15 +718,502 @@ pub fn upsert_job_on(
             key.content_revision,
             key.selection_revision,
             key.profile,
-            state.as_str(),
+            resolved.as_str(),
             demand_kind,
             priority,
             generation,
             session_epoch,
-            now
+            now,
+            i64::from(revival)
         ],
     )?;
-    load_job_on(conn, &job_key)?.ok_or_else(|| anyhow::anyhow!("cover job disappeared"))
+    let job =
+        load_job_on(scope, &job_key)?.ok_or_else(|| anyhow::anyhow!("cover job disappeared"))?;
+    // P1-E/REV-1 + U-α：revision 的**粒度所有权**属于"拥有该事务的那一层"。
+    //  • 自己拥有事务（autocommit ⇒ owned_tx = Some）：一个逻辑 transition = 一次 bump。
+    //  • 借用外层事务（owned_tx = None）：**只 mutate，不 bump 也不 emit** —— 否则
+    //    一个批次创建 N 个 job 会把 revision 变成 changed-row counter，违反
+    //    "remote_view_revision is a monotonic source-generation token for an atomic
+    //     durable view change"。
+    if let Some(tx) = owned_tx.as_ref() {
+        bump_view_revision_on(tx, &key.source_id, generation, now)?;
+    }
+    if let Some(tx) = owned_tx {
+        tx.commit()?;
+        // P1-E：commit-after-emit —— 仅在自己拥有事务时才能确定已提交；
+        // 调用者持有事务时不在此提前 emit（由其外层 transaction owner 负责）。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(
+            &key.source_id,
+            Some(&key.asset_id),
+        );
+    }
+    Ok(job)
+}
+
+/// 解析"真正能 claim 该 source 持久工作"的运行时 session token（P1-B）。
+///
+/// 只返回**已经存在**的 token：`remote_scan_epoch.session_token` 与待处理 job 的
+/// `(generation, session_epoch)` 三元组匹配且非 0。没有任何可用 session 时返回
+/// `None` —— 调用方据此**不伪造 session、不远程访问**，pending 保持持久化。
+pub fn resolve_cover_wake_session(
+    conn: &Connection,
+    source_id: &str,
+    now: i64,
+) -> Result<Option<u64>> {
+    let source_id = source_id.trim();
+    if source_id.is_empty() {
+        return Ok(None);
+    }
+    let token: Option<i64> = conn
+        .query_row(
+            "SELECT MAX(epoch.session_token)
+               FROM remote_cover_job job
+               JOIN remote_scan_epoch epoch
+                 ON epoch.source_id=job.source_id
+                AND epoch.generation=job.generation
+                AND epoch.session_epoch=job.session_epoch
+              WHERE job.source_id=?1 AND epoch.session_token<>0
+                AND (job.state='pending' OR (job.state='retry_wait' AND
+                     (job.next_attempt_at IS NULL OR job.next_attempt_at<=?2)))",
+            params![source_id, now],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(token
+        .and_then(|value| u64::try_from(value).ok())
+        .filter(|value| *value != 0))
+}
+
+/// 默认封面选择 / 画质档位：必须与扫描与卡片请求路径逐字一致，否则 job key 不同、去重失效。
+pub const DEFAULT_SELECTION_REVISION: &str = "default";
+pub const DEFAULT_COVER_PROFILE: &str = "340x480@1";
+
+/// 只有这些 blocker 属于"auth/session 类"——新的有效 session 可以解除它们。
+///
+/// 这是对**代码自身写入的明确 blocker 码**做类型判断（`error_code()` 中
+/// `Unauthorized → "authExpired"`），不是从字符串反推 retryability。
+/// 其余 blocker（`forbidden` 权限、网络关闭、provider cooldown）一律不因 session-ready 解除。
+pub const SESSION_BLOCKER_CODES: &[&str] = &["authExpired"];
+
+/// 长期补偿的最短等待：`failed` 后满 6 小时才获得自动补偿**资格**。
+///
+/// 这是 **earliest eligibility**，不是 exact timer deadline：补偿由 source-session
+/// lifecycle 事件驱动，而不是 wall-clock 驱动。本仓库不存在 timer / scheduler。
+pub const LONG_RETRY_DELAY_MS: i64 = 6 * 60 * 60 * 1_000;
+
+/// 一次 source-scoped reconciliation 的预算（必须 bounded）。
+#[derive(Debug, Clone, Copy)]
+pub struct ReconcileBudget {
+    /// 本次最多推进/创建的 job 数。
+    pub max_jobs: usize,
+    /// 本次最多占用的墙上时间（毫秒）。reconciler 只碰 durable state，**不做 provider 请求**。
+    pub max_wall_time_ms: i64,
+}
+
+impl Default for ReconcileBudget {
+    fn default() -> Self {
+        Self {
+            max_jobs: 64,
+            max_wall_time_ms: 250,
+        }
+    }
+}
+
+/// 一次 reconciliation 的结果（供日志与测试断言；不含任何 provider 细节）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ReconcileReport {
+    /// 被推进为可 claim 的长期补偿 job 数。
+    pub compensation_promoted: usize,
+    /// 因阻塞原因解除（auth/session 恢复）而回到候选队列的 job 数。
+    pub blocker_cleared: usize,
+    /// 因 library 缺口而新建的 pending job 数。
+    pub jobs_created: usize,
+    /// 本次是否产生了可 claim 的工作（调用方据此决定是否 wake worker）。
+    pub claimable_work: bool,
+    /// 是否因预算上限提前结束（剩余工作留给后续事件）。
+    pub truncated: bool,
+}
+
+/// 记录一次终态失败，并在需要时开启一个**新的 failure episode**。
+///
+/// `long_retry_not_before`：retryable failure 传 `Some(now + 6h)`；永久失败传 `None`。
+/// **同一 episode 内不会刷新** eligibility，也不会复位 `long_retry_consumed` ——
+/// 这就从结构上杜绝了"每 6 小时无限自动重试"。episode 只在成功进入 `ready` 时结束。
+pub fn mark_job_failure_owned_on(
+    conn: &Connection,
+    key: &CoverJobKey,
+    owner: &str,
+    state: CoverJobState,
+    error_code: Option<&str>,
+    now: i64,
+    long_retry_not_before: Option<i64>,
+) -> rusqlite::Result<bool> {
+    // P1-E：state mutation 与 revision bump 必须**原子提交**（crash 不得漏 bump）。
+    // 调用者已持有事务时复用当前 conn；否则本函数自持一个事务
+    //（沿用 P1-A 的 is_autocommit 模式，避免 nested transaction 错误）。
+    let owned_tx = if conn.is_autocommit() {
+        Some(conn.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let scope: &Connection = match owned_tx.as_ref() {
+        Some(tx) => tx,
+        None => conn,
+    };
+    let changed = scope.execute(
+        "UPDATE remote_cover_job SET
+             state=?1,error_code=?2,lease_owner=NULL,lease_until=NULL,updated_at=?3,
+             long_retry_not_before=CASE
+                 WHEN long_retry_not_before IS NULL THEN ?4
+                 ELSE long_retry_not_before END,
+             long_retry_consumed=CASE
+                 WHEN long_retry_not_before IS NULL THEN 0
+                 ELSE long_retry_consumed END,
+             long_retry_pending=0
+         WHERE job_key=?5 AND state='running' AND lease_owner=?6",
+        params![
+            state.as_str(),
+            error_code,
+            now,
+            long_retry_not_before,
+            key.encode(),
+            owner
+        ],
+    )?;
+    if changed == 0 {
+        if let Some(tx) = owned_tx {
+            tx.rollback()?;
+        }
+        return Ok(false);
+    }
+    publish_variant_on(scope, key, state, now)?;
+    // P1-E：真实的 durable cover-state transition ⇒ 同一事务内推进 revision。
+    bump_cover_revision_for_job_on(scope, key, now)?;
+    if let Some(tx) = owned_tx {
+        tx.commit()?;
+        // P1-E：commit-after-emit（仅在自己拥有事务时才能确定已提交）。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(
+            &key.source_id,
+            Some(&key.asset_id),
+        );
+    }
+    Ok(true)
+}
+
+/// 该 source / 该 session 当前是否确实有可 claim 的工作（与 claim 谓词逐字一致）。
+fn has_claimable_work_on(
+    conn: &Connection,
+    source_id: &str,
+    session_token: i64,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM remote_cover_job job
+             JOIN remote_scan_epoch epoch
+               ON epoch.source_id=job.source_id
+              AND epoch.generation=job.generation
+              AND epoch.session_epoch=job.session_epoch
+              AND epoch.session_token=?2
+             WHERE job.source_id=?1
+               AND (job.state='pending' OR (job.state='retry_wait'
+                    AND (job.next_attempt_at IS NULL OR job.next_attempt_at<=?3))))",
+        params![source_id, session_token, now],
+        |row| row.get(0),
+    )
+}
+
+/// source-scoped 长期补偿 reconciliation。
+///
+/// 只做两件事，全部针对**单个 source**、全部只碰 durable state：
+/// 1. 把已过期、本 episode 未消耗、且该 session 真能 claim 的 `failed` job 推进为
+///    `pending` + `long_retry_pending=1`（**不消耗额度**，额度在 claim 时才消耗）；
+/// 2. 把 blocker 属于 [`SESSION_BLOCKER_CODES`] 的 `blocked` job 解回候选队列。
+///
+/// 不触碰 `unsupported`（只有真实 capability change 才能重估），也不触碰非 session 类 blocker。
+pub fn reconcile_cover_compensation_for_source_on(
+    conn: &Connection,
+    source_id: &str,
+    session: u64,
+    now: i64,
+    budget: ReconcileBudget,
+) -> Result<ReconcileReport> {
+    let source_id = source_id.trim();
+    let mut report = ReconcileReport::default();
+    if source_id.is_empty() || budget.max_jobs == 0 {
+        return Ok(report);
+    }
+    let Ok(session_token) = i64::try_from(session) else {
+        return Ok(report);
+    };
+    if session_token == 0 {
+        return Ok(report);
+    }
+    let started = std::time::Instant::now();
+    let tx = conn.unchecked_transaction()?;
+    let mut spent = 0usize;
+
+    // (1) 长期补偿：episode 已过期且未被消耗；且该 session 真的能 claim（否则只会把 job
+    //     变成没人能领的 pending，并错误占用 crash-safety 标记）。
+    let remaining = budget.max_jobs - spent;
+    let mut candidates: Vec<String> = tx
+        .prepare(
+            "SELECT job.job_key FROM remote_cover_job job
+              WHERE job.source_id=?1 AND job.state='failed'
+                AND job.long_retry_not_before IS NOT NULL
+                AND job.long_retry_not_before<=?2
+                AND job.long_retry_consumed=0
+                AND job.long_retry_pending=0
+                AND EXISTS (SELECT 1 FROM remote_scan_epoch epoch
+                             WHERE epoch.source_id=job.source_id
+                               AND epoch.generation=job.generation
+                               AND epoch.session_token=?3)
+              ORDER BY job.long_retry_not_before,job.job_key
+              LIMIT ?4",
+        )?
+        .query_map(
+            params![source_id, now, session_token, (remaining + 1) as i64],
+            |row| row.get(0),
+        )?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    if candidates.len() > remaining {
+        report.truncated = true;
+        candidates.truncate(remaining);
+    }
+    for job_key in candidates {
+        let changed = tx.execute(
+            "UPDATE remote_cover_job
+                SET state='pending',long_retry_pending=1,updated_at=?1,
+                    session_epoch=(SELECT epoch.session_epoch FROM remote_scan_epoch epoch
+                                    WHERE epoch.source_id=remote_cover_job.source_id
+                                      AND epoch.generation=remote_cover_job.generation
+                                      AND epoch.session_token=?3)
+              WHERE job_key=?2 AND state='failed'
+                AND long_retry_consumed=0 AND long_retry_pending=0",
+            params![now, job_key, session_token],
+        )?;
+        if changed == 1 {
+            report.compensation_promoted += 1;
+            spent += 1;
+        }
+        if started.elapsed().as_millis() as i64 > budget.max_wall_time_ms {
+            report.truncated = true;
+            break;
+        }
+    }
+
+    // (2) 阻塞解除：仅限 auth/session 类 blocker。码值来自本模块常量（非外部输入），
+    //     因此直接内联进 IN 列表，避免动态绑定参数。
+    if spent < budget.max_jobs && started.elapsed().as_millis() as i64 <= budget.max_wall_time_ms {
+        let codes = SESSION_BLOCKER_CODES
+            .iter()
+            .map(|code| format!("'{code}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let remaining = budget.max_jobs - spent;
+        let sql = format!(
+            "SELECT job.job_key FROM remote_cover_job job
+              WHERE job.source_id=?1 AND job.state='blocked'
+                AND job.error_code IN ({codes})
+                AND EXISTS (SELECT 1 FROM remote_scan_epoch epoch
+                             WHERE epoch.source_id=job.source_id
+                               AND epoch.generation=job.generation
+                               AND epoch.session_token=?2)
+              ORDER BY job.updated_at,job.job_key
+              LIMIT ?3"
+        );
+        let mut blocked: Vec<String> = tx
+            .prepare(&sql)?
+            .query_map(
+                params![source_id, session_token, (remaining + 1) as i64],
+                |row| row.get(0),
+            )?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        if blocked.len() > remaining {
+            report.truncated = true;
+            blocked.truncate(remaining);
+        }
+        for job_key in blocked {
+            let changed = tx.execute(
+                "UPDATE remote_cover_job SET state='pending',updated_at=?1,
+                        session_epoch=(SELECT epoch.session_epoch FROM remote_scan_epoch epoch
+                                        WHERE epoch.source_id=remote_cover_job.source_id
+                                          AND epoch.generation=remote_cover_job.generation
+                                          AND epoch.session_token=?3)
+                  WHERE job_key=?2 AND state='blocked'",
+                params![now, job_key, session_token],
+            )?;
+            if changed == 1 {
+                report.blocker_cleared += 1;
+            }
+        }
+    }
+
+    report.claimable_work = has_claimable_work_on(&tx, source_id, session_token, now)?;
+    // P1-E/REV-8：只有本批次真正改变了 durable cover truth 才推进 revision。
+    // 粒度按 **source/generation 的成功事务**：一次 batch 最多 +1（不要求 +N，
+    // 避免 batch size 与 revision 数值语义绑定；stream 只发一个 source wake）。
+    // generation 取本批次所针对的 epoch generation（与上面 EXISTS 谓词同源），
+    // 不拿“当前最新 generation”猜。
+    if report.compensation_promoted > 0 || report.blocker_cleared > 0 {
+        let generation: Option<i64> = tx
+            .query_row(
+                "SELECT generation FROM remote_scan_epoch WHERE source_id=?1 AND session_token=?2",
+                params![source_id, session_token],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(generation) = generation {
+            bump_view_revision_on(&tx, source_id, generation, now)?;
+        }
+    }
+    tx.commit()?;
+
+    // P1-E：一次 compensation batch 只发**一次** source-level wake（asset = None）——
+    // durable revision 是 source-generation change token（不是 row counter）。
+    // mounted cards 收到后按自己的 assetId reread durable state。
+    crate::remote_scan::cover_revision_stream::notify_cover_revision(source_id, None);
+    Ok(report)
+}
+
+/// source-scoped 缺口补齐：只用 durable `library_index` 信息，**不遍历远端目录树**。
+///
+/// 只补"完全没有对应 cover job 行"的资产。已有 `pending`/`running`/`retry_wait`/`ready`
+/// 一律不动；`failed`/`blocked`/`unsupported` 等终态也不在这里复活 —— 它们只由各自的
+/// 显式原因（见 P1-A 的统一矩阵）解除。`ready` 但字节缺失的情形走 P1-B 已验证的对账路径。
+pub fn reconcile_missing_covers_for_source_on(
+    conn: &Connection,
+    source_id: &str,
+    session: u64,
+    now: i64,
+    budget: ReconcileBudget,
+) -> Result<ReconcileReport> {
+    // P1-E/U-α：整批补齐必须发生**同一个**事务里，这样 inner upsert 不自行 bump，
+    // revision 由本函数按批次粒度推进一次（N=1 与 N=100 都是 +1）。
+    // 沿用 P1-A 的 is_autocommit 模式：调用者已持有事务时直接复用。
+    let owned_tx = if conn.is_autocommit() {
+        Some(conn.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let scope: &Connection = match owned_tx.as_ref() {
+        Some(tx) => tx,
+        None => conn,
+    };
+    let source_id = source_id.trim();
+    let mut report = ReconcileReport::default();
+    if source_id.is_empty() || budget.max_jobs == 0 {
+        return Ok(report);
+    }
+    let Ok(session_token) = i64::try_from(session) else {
+        return Ok(report);
+    };
+    if session_token == 0 {
+        return Ok(report);
+    }
+    // 必须知道该 session 当前绑定的 (generation, session_epoch)：否则新建的 job 无法被
+    // 这个 session claim（claim 要求三元组匹配）。
+    let binding: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT generation,session_epoch FROM remote_scan_epoch
+              WHERE source_id=?1 AND session_token=?2
+              ORDER BY generation DESC LIMIT 1",
+            params![source_id, session_token],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((generation, session_epoch)) = binding else {
+        return Ok(report);
+    };
+    let started = std::time::Instant::now();
+    let mut gaps: Vec<(String, Option<String>)> = conn
+        .prepare(
+            "SELECT li.id,li.content_fingerprint FROM library_index li
+              WHERE li.source_id=?1 AND li.deleted=0
+                AND ((li.entry_type='file' AND li.asset_kind='ArchiveFile')
+                  OR (li.entry_type='dir' AND li.asset_kind='ImageFolder'))
+                AND NOT EXISTS (SELECT 1 FROM remote_cover_job job
+                                 WHERE job.source_id=li.source_id AND job.asset_id=li.id
+                                   AND job.selection_revision=?2 AND job.profile=?3)
+              ORDER BY li.path
+              LIMIT ?4",
+        )?
+        .query_map(
+            params![
+                source_id,
+                DEFAULT_SELECTION_REVISION,
+                DEFAULT_COVER_PROFILE,
+                (budget.max_jobs + 1) as i64
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+        .collect::<rusqlite::Result<Vec<(String, Option<String>)>>>()?;
+    if gaps.len() > budget.max_jobs {
+        report.truncated = true;
+        gaps.truncate(budget.max_jobs);
+    }
+    for (asset_id, content_fingerprint) in gaps {
+        if started.elapsed().as_millis() as i64 > budget.max_wall_time_ms {
+            report.truncated = true;
+            break;
+        }
+        // content_revision 必须与卡片请求路径逐字一致（library_index → preview → epoch），
+        // 否则会为该资产生成第二个 job key，去重失效。
+        let content_revision = content_fingerprint
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                conn.query_row(
+                    "SELECT content_fingerprint FROM remote_scan_preview
+                      WHERE source_id=?1 AND asset_id=?2
+                      ORDER BY generation DESC LIMIT 1",
+                    params![source_id, asset_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .ok()
+                .flatten()
+                .flatten()
+                .filter(|value| !value.is_empty())
+            })
+            .unwrap_or_else(|| session_epoch.clone());
+        let key = CoverJobKey {
+            source_id: source_id.to_string(),
+            asset_id,
+            content_revision,
+            selection_revision: DEFAULT_SELECTION_REVISION.to_string(),
+            profile: DEFAULT_COVER_PROFILE.to_string(),
+        };
+        upsert_job_on(
+            scope,
+            &key,
+            CoverJobState::Pending,
+            "background",
+            10,
+            generation,
+            &session_epoch,
+            now,
+            CoverJobUpsertCause::Demand,
+        )?;
+        report.jobs_created += 1;
+    }
+    if report.jobs_created > 0 {
+        report.claimable_work = true;
+    }
+    // P1-E/U-α：本函数只对"完全没有 job 行"的 asset 调用 upsert，因此
+    // `jobs_created > 0` 就是它自己的 changed gate（不外推到别的 batch owner）。
+    if report.jobs_created > 0 {
+        bump_view_revision_on(scope, source_id, generation, now)?;
+    }
+    if let Some(tx) = owned_tx {
+        tx.commit()?;
+        if report.jobs_created > 0 {
+            // 仅在**自己拥有事务**时才能确定已提交；借用外层事务时不得 emit
+            // （否则外层 rollback 后 wake 已经发出）。
+            crate::remote_scan::cover_revision_stream::notify_cover_revision(source_id, None);
+        }
+    }
+    Ok(report)
 }
 
 pub fn load_job_on(conn: &Connection, job_key: &str) -> Result<Option<RemoteCoverJob>> {
@@ -663,6 +1281,8 @@ pub fn claim_next_job_on(
     let changed = tx.execute(
         "UPDATE remote_cover_job SET state='running',lease_owner=?1,
              lease_until=?2,attempt=attempt+1,next_attempt_at=NULL,
+             long_retry_consumed=CASE WHEN long_retry_pending=1 THEN 1 ELSE long_retry_consumed END,
+             long_retry_pending=0,
              updated_at=?3
          WHERE job_key=?4 AND
                (state='pending' OR (state='retry_wait' AND
@@ -674,7 +1294,20 @@ pub fn claim_next_job_on(
     } else {
         None
     };
+    if let Some(ref claimed) = job {
+        // P1-E/REV-2：claim 是真实 durable transition
+        //（pending/retry_wait → running）⇒ 同一事务内推进 revision。
+        // 竞争失败（job = None）**不** bump，禁止制造假 revision。
+        bump_view_revision_on(&tx, &claimed.key.source_id, claimed.generation, now)?;
+    }
     tx.commit()?;
+    if let Some(ref claimed) = job {
+        // P1-E：commit-after-emit —— wake-up 只能在提交成功之后发出。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(
+            &claimed.key.source_id,
+            Some(&claimed.key.asset_id),
+        );
+    }
     Ok(job)
 }
 
@@ -707,6 +1340,8 @@ pub fn claim_next_job_for_source_on(
     let changed = tx.execute(
         "UPDATE remote_cover_job SET state='running',lease_owner=?1,
              lease_until=?2,attempt=attempt+1,next_attempt_at=NULL,
+             long_retry_consumed=CASE WHEN long_retry_pending=1 THEN 1 ELSE long_retry_consumed END,
+             long_retry_pending=0,
              updated_at=?3 WHERE job_key=?4 AND source_id=?5 AND
              (state='pending' OR (state='retry_wait' AND
                (next_attempt_at IS NULL OR next_attempt_at<=?3)))",
@@ -717,7 +1352,20 @@ pub fn claim_next_job_for_source_on(
     } else {
         None
     };
+    if let Some(ref claimed) = job {
+        // P1-E/REV-2：claim 是真实 durable transition
+        //（pending/retry_wait → running）⇒ 同一事务内推进 revision。
+        // 竞争失败（job = None）**不** bump，禁止制造假 revision。
+        bump_view_revision_on(&tx, &claimed.key.source_id, claimed.generation, now)?;
+    }
     tx.commit()?;
+    if let Some(ref claimed) = job {
+        // P1-E：commit-after-emit —— wake-up 只能在提交成功之后发出。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(
+            &claimed.key.source_id,
+            Some(&claimed.key.asset_id),
+        );
+    }
     Ok(job)
 }
 
@@ -763,6 +1411,8 @@ pub fn claim_next_job_for_source_session_on(
     let changed = tx.execute(
         "UPDATE remote_cover_job SET state='running',lease_owner=?1,
              lease_until=?2,attempt=attempt+1,next_attempt_at=NULL,
+             long_retry_consumed=CASE WHEN long_retry_pending=1 THEN 1 ELSE long_retry_consumed END,
+             long_retry_pending=0,
              updated_at=?3
          WHERE job_key=?4 AND source_id=?5 AND
            EXISTS(SELECT 1 FROM remote_scan_epoch epoch
@@ -786,7 +1436,20 @@ pub fn claim_next_job_for_source_session_on(
     } else {
         None
     };
+    if let Some(ref claimed) = job {
+        // P1-E/REV-2：claim 是真实 durable transition
+        //（pending/retry_wait → running）⇒ 同一事务内推进 revision。
+        // 竞争失败（job = None）**不** bump，禁止制造假 revision。
+        bump_view_revision_on(&tx, &claimed.key.source_id, claimed.generation, now)?;
+    }
     tx.commit()?;
+    if let Some(ref claimed) = job {
+        // P1-E：commit-after-emit —— wake-up 只能在提交成功之后发出。
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(
+            &claimed.key.source_id,
+            Some(&claimed.key.asset_id),
+        );
+    }
     Ok(job)
 }
 
@@ -805,7 +1468,9 @@ pub fn lease_job_on(
     }
     let changed = conn.execute(
         "UPDATE remote_cover_job SET state='running',lease_owner=?1,
-             lease_until=?2,attempt=attempt+1,next_attempt_at=NULL,updated_at=?3
+             lease_until=?2,attempt=attempt+1,next_attempt_at=NULL,
+             long_retry_consumed=CASE WHEN long_retry_pending=1 THEN 1 ELSE long_retry_consumed END,
+             long_retry_pending=0,updated_at=?3
          WHERE job_key=?4 AND state IN ('pending','retry_wait')",
         params![owner, now.saturating_add(lease_ms), now, key.encode()],
     )?;

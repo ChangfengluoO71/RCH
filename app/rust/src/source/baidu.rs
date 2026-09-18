@@ -630,7 +630,11 @@ impl ByteSource for BaiduFile {
 }
 
 /// raw/ 缓存路径（沿用 WebDAV 的 hash 命名模式）。
-pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
+/// raw/ 缓存的**确定性候选路径**（P1-D-2，Family 1）。
+///
+/// 从 `raw_cache_path` 原样抽取的纯计算部分：hash / 目录 / 文件名逐字保持，
+/// **零 filesystem probe**。用于在 raw 文件被删除后重建历史 raw-path cover 键。
+pub fn raw_cache_candidate_path(origin: &str, path: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let name = path.rsplit('/').next().unwrap_or("file.cbz");
     let hash = {
@@ -638,11 +642,12 @@ pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
         format!("{}{}", origin, path).hash(&mut h);
         format!("{:016x}", h.finish())
     };
-    let file_path = crate::cache::CacheDir::Raw
-        .ensure()
-        .ok()?
-        .join(&hash)
-        .join(name);
+    crate::cache::CacheDir::Raw.path().join(&hash).join(name)
+}
+
+pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
+    crate::cache::CacheDir::Raw.ensure().ok()?;
+    let file_path = raw_cache_candidate_path(origin, path);
     match std::fs::metadata(&file_path) {
         Ok(meta) if meta.len() > 0 => Some(file_path),
         _ => None,

@@ -718,7 +718,15 @@ impl ByteSource for Cloud115File {
 }
 
 /// raw/ 缓存路径。
-pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
+/// raw/ 缓存的**确定性候选路径**（P1-D-2，Family 1）。
+///
+/// 从 `raw_cache_path` 原样抽取的纯计算部分：hash / 目录 / 文件名逐字保持，
+/// **零 filesystem probe**。用于在 raw 文件被删除后重建历史 raw-path cover 键。
+///
+/// 注意：**115-web** 的 `web_raw_cache_path` 属 Family 2（文件名来自 provider
+/// 网络响应 `info.name`，未持久化），因此**不提供**候选路径；其 raw-key cover
+/// 在 raw 文件删除后属已证明不可恢复的历史状态。
+pub fn raw_cache_candidate_path(origin: &str, path: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let name = path.rsplit('/').next().unwrap_or("file.cbz");
     let hash = {
@@ -726,11 +734,12 @@ pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
         format!("{}{}", origin, path).hash(&mut h);
         format!("{:016x}", h.finish())
     };
-    let file_path = crate::cache::CacheDir::Raw
-        .ensure()
-        .ok()?
-        .join(&hash)
-        .join(name);
+    crate::cache::CacheDir::Raw.path().join(&hash).join(name)
+}
+
+pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
+    crate::cache::CacheDir::Raw.ensure().ok()?;
+    let file_path = raw_cache_candidate_path(origin, path);
     match std::fs::metadata(&file_path) {
         Ok(meta) if meta.len() > 0 => Some(file_path),
         _ => None,
@@ -1885,14 +1894,24 @@ impl ByteSource for Cloud115WebFile {
 }
 
 /// 115 网页版 raw/ 缓存路径（`115web:{root}:{pick_code}` hash 目录）。
-pub fn web_raw_cache_path(origin: &str, pick_code: &str) -> Option<PathBuf> {
+/// raw/ 缓存的**确定性目录**（P1-D-2，Family 2 / 115-web）。
+///
+/// 目录可由 `(authority, pick_code)` 精确推导；但**文件名**来自 provider 网络响应
+/// （`downurl` 的 `info.name`）且未持久化，因此这里**只给目录**，
+/// 不提供文件级 candidate、也不返回任何猜测值。
+pub fn web_raw_cache_dir(origin: &str, pick_code: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let hash = {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         format!("{}{}", origin, pick_code).hash(&mut h);
         format!("{:016x}", h.finish())
     };
-    let dir = crate::cache::CacheDir::Raw.ensure().ok()?.join(&hash);
+    crate::cache::CacheDir::Raw.path().join(&hash)
+}
+
+pub fn web_raw_cache_path(origin: &str, pick_code: &str) -> Option<PathBuf> {
+    crate::cache::CacheDir::Raw.ensure().ok()?;
+    let dir = web_raw_cache_dir(origin, pick_code);
     for entry in std::fs::read_dir(&dir).ok()?.flatten() {
         if let Ok(meta) = entry.metadata() {
             if meta.len() > 0 {

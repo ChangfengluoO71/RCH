@@ -124,7 +124,12 @@ impl DownloadProgress {
 
 /// 根据 origin + path 计算出 raw/ 缓存路径并检查是否存在。
 /// 若已存在（非空文件），返回其本地路径；否则返回 None。
-pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
+/// raw/ 缓存的**确定性候选路径**（P1-D-2，Family 1）。
+///
+/// 这是从 `raw_cache_path` **原样抽取**的纯计算部分：hash / 目录 / 文件名逐字保持，
+/// 但**不做任何 filesystem probe**。用途：当 raw 文件已被删除时，仍能重建
+/// "历史上它原本位于哪里"，从而重建 raw-key 的 cover 缓存键。
+pub fn raw_cache_candidate_path(origin: &str, path: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let name = path.rsplit('/').next().unwrap_or("file.cbz");
     let hash = {
@@ -132,11 +137,13 @@ pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
         format!("{}{}", origin, path).hash(&mut h);
         format!("{:016x}", h.finish())
     };
-    let file_path = crate::cache::CacheDir::Raw
-        .ensure()
-        .ok()?
-        .join(&hash)
-        .join(name);
+    crate::cache::CacheDir::Raw.path().join(&hash).join(name)
+}
+
+pub fn raw_cache_path(origin: &str, path: &str) -> Option<PathBuf> {
+    // 保持既有副作用（创建 raw/ 目录）与失败即 None 的语义不变。
+    crate::cache::CacheDir::Raw.ensure().ok()?;
+    let file_path = raw_cache_candidate_path(origin, path);
     match std::fs::metadata(&file_path) {
         Ok(meta) if meta.len() > 0 => Some(file_path),
         _ => None,

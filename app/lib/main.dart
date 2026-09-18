@@ -86,7 +86,10 @@ Future<void> _initializeAfterFirstFrame() async {
   await RemoteScanCoordinator.instance.restoreStatuses(
     LibraryStore.instance.sources,
   );
-  await SyncManager.instance.init();
+
+  // P1-E：启动**唯一**的 cover revision stream 订阅（进程级一次）。
+  // 事件只是 wake-up，coordinator 收到后会重读 durable revision 并刷新本地聚合。
+  RemoteScanCoordinator.instance.startCoverRevisionWatch();  await SyncManager.instance.init();
   await AiUpscaleManager.instance.init();
   await AutomationCoordinator.instance.init();
 }

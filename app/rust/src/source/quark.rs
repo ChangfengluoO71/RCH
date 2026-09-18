@@ -712,14 +712,24 @@ impl ByteSource for QuarkFile {
 }
 
 /// raw/ 缓存路径：hash 目录（`quark:{root}:{fid}`）内的任意非空文件即命中。
-pub fn raw_cache_path(origin: &str, fid: &str) -> Option<PathBuf> {
+/// raw/ 缓存的**确定性目录**（P1-D-2，Family 2）。
+///
+/// 目录可由 `(authority, fid)` 精确推导；但**文件名**来自 provider 网络响应
+/// （`downlink` 的 `info.name`）且未持久化，因此这里**只给目录**，
+/// 不提供文件级 candidate、也不返回任何猜测值。
+pub fn raw_cache_dir(origin: &str, fid: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let hash = {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         format!("{}{}", origin, fid).hash(&mut h);
         format!("{:016x}", h.finish())
     };
-    let dir = crate::cache::CacheDir::Raw.ensure().ok()?.join(&hash);
+    crate::cache::CacheDir::Raw.path().join(&hash)
+}
+
+pub fn raw_cache_path(origin: &str, fid: &str) -> Option<PathBuf> {
+    crate::cache::CacheDir::Raw.ensure().ok()?;
+    let dir = raw_cache_dir(origin, fid);
     for entry in std::fs::read_dir(&dir).ok()?.flatten() {
         if let Ok(meta) = entry.metadata() {
             if meta.len() > 0 {

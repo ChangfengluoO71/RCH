@@ -22,6 +22,18 @@ typedef RemoteCoverReadLoader =
       required rust.CoverProfileDto profile,
     });
 
+/// Reads a cover that is already materialized locally (memory, cover-disk, or
+/// raw-local cache) without creating a session or touching the network.  The
+/// disk-first caller uses it to settle the local question before consulting
+/// the remote network gate, so a disabled gate never hides a local cover.
+typedef RemoteCoverLocalReadLoader =
+    Future<PageImage?> Function({
+      required String sourceId,
+      required String assetId,
+      required rust.CoverSelectionDto selection,
+      required rust.CoverProfileDto profile,
+    });
+
 typedef RemoteCoverRequestLoader =
     Future<rust.RemoteCoverStateDto> Function({
       required String sourceId,
@@ -30,6 +42,13 @@ typedef RemoteCoverRequestLoader =
       required String consumerId,
       required rust.CoverSelectionDto selection,
       required rust.CoverProfileDto profile,
+    });
+
+/// P1-E：只读读取 durable cover state（返回 null = 该 asset 无任何记录）。
+typedef RemoteCoverStateLoader =
+    Future<rust.RemoteCoverStateDto?> Function({
+      required String sourceId,
+      required String assetId,
     });
 
 typedef RemoteCoverReleaseLoader =
@@ -42,19 +61,25 @@ class RemoteCoverRepository {
   RemoteCoverRepository({
     RemoteDirectoryViewLoader? directoryLoader,
     RemoteCoverReadLoader? readLoader,
+    RemoteCoverLocalReadLoader? localReadLoader,
     RemoteCoverRequestLoader? requestLoader,
     RemoteCoverReleaseLoader? releaseLoader,
+    RemoteCoverStateLoader? stateLoader,
   }) : _directoryLoader = directoryLoader ?? _defaultDirectoryLoader,
        _readLoader = readLoader ?? _defaultReadLoader,
+       _localReadLoader = localReadLoader ?? readLoader ?? _defaultReadLoader,
        _requestLoader = requestLoader ?? _defaultRequestLoader,
-       _releaseLoader = releaseLoader ?? _defaultReleaseLoader;
+       _releaseLoader = releaseLoader ?? _defaultReleaseLoader,
+       _stateLoader = stateLoader ?? _defaultStateLoader;
 
   static final instance = RemoteCoverRepository();
 
   final RemoteDirectoryViewLoader _directoryLoader;
   final RemoteCoverReadLoader _readLoader;
+  final RemoteCoverLocalReadLoader _localReadLoader;
   final RemoteCoverRequestLoader _requestLoader;
   final RemoteCoverReleaseLoader _releaseLoader;
+  final RemoteCoverStateLoader _stateLoader;
 
   Future<rust.RemoteDirectoryViewDto> directoryView({
     required BookSource source,
@@ -79,6 +104,37 @@ class RemoteCoverRepository {
     selection: selection,
     profile: profile,
   );
+
+  /// Returns a cover that already exists locally, or null on a local miss.
+  ///
+  /// This is the disk-first read: it never creates a session, never requests a
+  /// downlink, and never consults the remote network gate, so an existing
+  /// local/disk cover stays displayable while remote fetching is disabled.
+  Future<PageImage?> readLocalCover({
+    required String sourceId,
+    required String assetId,
+    required rust.CoverSelectionDto selection,
+    required rust.CoverProfileDto profile,
+  }) => _localReadLoader(
+    sourceId: sourceId,
+    assetId: assetId,
+    selection: selection,
+    profile: profile,
+  );
+
+  /// P1-E：**只读**读取某 asset 的 durable cover state。
+  ///
+  /// 不 enqueue、不 request、不建 session、不访问 provider、不改 durable state ——
+  /// 这是"后续 wake 只重读、绝不重复 request"所依赖的读入口。
+  Future<rust.RemoteCoverStateDto?> readState({
+    required String sourceId,
+    required String assetId,
+  }) => _stateLoader(sourceId: sourceId, assetId: assetId);
+
+  static Future<rust.RemoteCoverStateDto?> _defaultStateLoader({
+    required String sourceId,
+    required String assetId,
+  }) => rust.remoteCoverState(sourceId: sourceId, assetId: assetId);
 
   Future<rust.RemoteCoverStateDto> requestCover({
     required BookSource source,

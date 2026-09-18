@@ -39,6 +39,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Map<String, PlatformInt64> dco_decode_Map_String_i_64_None(dynamic raw);
 
   @protected
+  RustStreamSink<CoverRevisionEvent>
+  dco_decode_StreamSink_cover_revision_event_Sse(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
@@ -99,6 +103,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
+  LegacyCoverLocalLookupDto
+  dco_decode_box_autoadd_legacy_cover_local_lookup_dto(dynamic raw);
+
+  @protected
   PageImage dco_decode_box_autoadd_page_image(dynamic raw);
 
   @protected
@@ -106,6 +114,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, String) dco_decode_box_autoadd_record_string_string(dynamic raw);
+
+  @protected
+  RemoteCoverStateDto dco_decode_box_autoadd_remote_cover_state_dto(
+    dynamic raw,
+  );
 
   @protected
   RemoteScanStatusDto dco_decode_box_autoadd_remote_scan_status_dto(
@@ -148,6 +161,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CoverProfileDto dco_decode_cover_profile_dto(dynamic raw);
 
   @protected
+  CoverRevisionEvent dco_decode_cover_revision_event(dynamic raw);
+
+  @protected
   CoverSelectionDto dco_decode_cover_selection_dto(dynamic raw);
 
   @protected
@@ -173,6 +189,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   IndexEntryInput dco_decode_index_entry_input(dynamic raw);
+
+  @protected
+  LegacyCoverLocalLookupDto dco_decode_legacy_cover_local_lookup_dto(
+    dynamic raw,
+  );
 
   @protected
   LibEntryDto dco_decode_lib_entry_dto(dynamic raw);
@@ -298,6 +319,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RemoteCoverStateDto? dco_decode_opt_box_autoadd_remote_cover_state_dto(
+    dynamic raw,
+  );
+
+  @protected
   RemoteScanStatusDto? dco_decode_opt_box_autoadd_remote_scan_status_dto(
     dynamic raw,
   );
@@ -333,6 +359,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) dco_decode_record_u_64_u_64(dynamic raw);
+
+  @protected
+  RemoteCoverReconcileDto dco_decode_remote_cover_reconcile_dto(dynamic raw);
 
   @protected
   RemoteCoverStateDto dco_decode_remote_cover_state_dto(dynamic raw);
@@ -426,6 +455,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RustStreamSink<CoverRevisionEvent>
+  sse_decode_StreamSink_cover_revision_event_Sse(SseDeserializer deserializer);
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
@@ -496,6 +529,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
+  LegacyCoverLocalLookupDto
+  sse_decode_box_autoadd_legacy_cover_local_lookup_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   PageImage sse_decode_box_autoadd_page_image(SseDeserializer deserializer);
 
   @protected
@@ -505,6 +544,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (String, String) sse_decode_box_autoadd_record_string_string(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RemoteCoverStateDto sse_decode_box_autoadd_remote_cover_state_dto(
     SseDeserializer deserializer,
   );
 
@@ -563,6 +607,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CoverProfileDto sse_decode_cover_profile_dto(SseDeserializer deserializer);
 
   @protected
+  CoverRevisionEvent sse_decode_cover_revision_event(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CoverSelectionDto sse_decode_cover_selection_dto(
     SseDeserializer deserializer,
   );
@@ -590,6 +639,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   IndexEntryInput sse_decode_index_entry_input(SseDeserializer deserializer);
+
+  @protected
+  LegacyCoverLocalLookupDto sse_decode_legacy_cover_local_lookup_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   LibEntryDto sse_decode_lib_entry_dto(SseDeserializer deserializer);
@@ -745,6 +799,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RemoteCoverStateDto? sse_decode_opt_box_autoadd_remote_cover_state_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RemoteScanStatusDto? sse_decode_opt_box_autoadd_remote_scan_status_dto(
     SseDeserializer deserializer,
   );
@@ -786,6 +845,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   (BigInt, BigInt) sse_decode_record_u_64_u_64(SseDeserializer deserializer);
+
+  @protected
+  RemoteCoverReconcileDto sse_decode_remote_cover_reconcile_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   RemoteCoverStateDto sse_decode_remote_cover_state_dto(
@@ -899,6 +963,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_cover_revision_event_Sse(
+    RustStreamSink<CoverRevisionEvent> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
@@ -992,6 +1062,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_legacy_cover_local_lookup_dto(
+    LegacyCoverLocalLookupDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_page_image(
     PageImage self,
     SseSerializer serializer,
@@ -1006,6 +1082,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_record_string_string(
     (String, String) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_remote_cover_state_dto(
+    RemoteCoverStateDto self,
     SseSerializer serializer,
   );
 
@@ -1076,6 +1158,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cover_revision_event(
+    CoverRevisionEvent self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cover_selection_dto(
     CoverSelectionDto self,
     SseSerializer serializer,
@@ -1108,6 +1196,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_index_entry_input(
     IndexEntryInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_legacy_cover_local_lookup_dto(
+    LegacyCoverLocalLookupDto self,
     SseSerializer serializer,
   );
 
@@ -1319,6 +1413,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_remote_cover_state_dto(
+    RemoteCoverStateDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_remote_scan_status_dto(
     RemoteScanStatusDto? self,
     SseSerializer serializer,
@@ -1372,6 +1472,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_record_u_64_u_64(
     (BigInt, BigInt) self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_remote_cover_reconcile_dto(
+    RemoteCoverReconcileDto self,
     SseSerializer serializer,
   );
 

@@ -6,11 +6,35 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `consume_staged_covers`, `cover_budget_key`, `cover_cache_paths`, `cover_error`, `cover_fetch_enabled_from_conn`, `cover_job_failure_state`, `cover_source_fingerprint`, `cover_source_info`, `cover_workers`, `current_cover_fetch_enabled`, `durable_cover_progress_on`, `effective_scan_mode`, `error_code`, `fetch_remote_cover_image_with_dimensions`, `initial_scan_path`, `job_dto`, `jobs`, `next_job_id`, `parse_bool_setting`, `parse_cover_profile`, `parse_cover_selection`, `parse_initial_listing`, `persist_config_status`, `persist_terminal`, `refresh_cover_progress`, `refresh_status_counts`, `run_remote_cover_worker`, `start_job`, `start_lock`, `storage_failed`, `wake_remote_cover_worker`, `write_remote_cover_cache`
+// These functions are ignored because they are not marked as `pub`: `consume_staged_covers`, `cover_budget_key`, `cover_cache_paths`, `cover_error`, `cover_fetch_enabled_from_conn`, `cover_job_failure_state`, `cover_route_for_job`, `cover_source_fingerprint`, `cover_source_info`, `cover_workers`, `current_cover_fetch_enabled`, `durable_cover_progress_on`, `effective_scan_mode`, `error_code`, `fetch_remote_cover_image_with_dimensions`, `initial_scan_path`, `job_dto`, `jobs`, `long_retry_is_retryable`, `next_job_id`, `parse_bool_setting`, `parse_cover_profile`, `parse_cover_selection`, `parse_initial_listing`, `persist_config_status`, `persist_terminal`, `refresh_cover_progress`, `refresh_status_counts`, `run_remote_cover_worker`, `start_job`, `start_lock`, `storage_failed`, `wake_cover_worker_for_source`, `wake_cover_worker`, `wake_remote_cover_worker`, `write_remote_cover_cache`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AdapterByteSource`, `CoverConsumeResult`, `CoverSourceInfo`, `InitialListingEntry`, `ScanJob`, `SqliteScanSink`, `StartConfig`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `enqueue_cover`, `previous_fingerprint`, `should_recheck_directory`, `spill_directory`, `stage_directory`, `take_spilled_directory`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `len`, `read_at`
+
+/// **source-session lifecycle 事实通知**（P1-C）。
+///
+/// Dart 只报告一个它本来就掌握的事实：某个 source 已成功获得/更新为当前有效 session。
+/// Dart **不**查 failed job、**不**算 6 小时、**不**改 retry state、**不**决定
+/// unsupported/blocked、**不**决定 worker 是否启动 —— 这些全部由 Rust 拥有。
+///
+/// Rust 侧职责：
+/// 1. 验证该 source/session 关系（source 必须存在）；
+/// 2. 复用既有可信路径 `rebind_completed_generation_session`，让已完成的 generation
+///    绑定到当前有效 session；
+/// 3. 验证现在确实存在该 session 的绑定；**取不到就什么都不做**（不猜、不伪造）；
+/// 4. 对该 source 执行 **bounded、source-scoped** 的 reconciliation；
+/// 5. 如产生 claimable work，复用 P1-B 的 `wake_cover_worker_for_source`。
+///
+/// 幂等：重复通知不会重复生成 job、不会重复消耗长期补偿、不会重复 spawn consumer。
+/// 本函数自身**不做任何 provider 网络请求**。
+Future<RemoteCoverReconcileDto> notifySourceSessionReady({
+  required String sourceId,
+  required BigInt session,
+}) => RustLib.instance.api.crateApiRemoteScanNotifySourceSessionReady(
+  sourceId: sourceId,
+  session: session,
+);
 
 Future<RemoteScanJobDto> remoteScanStart({
   required String sourceType,
@@ -58,6 +82,60 @@ Future<void> remoteScanResume({required String sourceId}) =>
 
 Future<void> remoteScanCancel({required String sourceId}) =>
     RustLib.instance.api.crateApiRemoteScanRemoteScanCancel(sourceId: sourceId);
+
+/// `notify_source_session_ready` 的返回：只描述本次 reconciliation 做了什么。
+class RemoteCoverReconcileDto {
+  /// 该 source 当前是否存在可信的 source/session 绑定。false 表示本次什么都没做。
+  final bool bindingAvailable;
+
+  /// 被推进为可 claim 的长期补偿 job 数。
+  final int compensationPromoted;
+
+  /// 因 auth/session blocker 解除而回到候选队列的 job 数。
+  final int blockerCleared;
+
+  /// 因 library 缺口而新建的 pending job 数。
+  final int jobsCreated;
+
+  /// 本次是否产生了可 claim 的工作（Rust 侧据此已复用 P1-B 的 worker wake）。
+  final bool claimable;
+
+  /// 是否因预算上限提前结束（剩余工作留给后续 session 事件）。
+  final bool truncated;
+
+  const RemoteCoverReconcileDto({
+    required this.bindingAvailable,
+    required this.compensationPromoted,
+    required this.blockerCleared,
+    required this.jobsCreated,
+    required this.claimable,
+    required this.truncated,
+  });
+
+  static Future<RemoteCoverReconcileDto> default_() =>
+      RustLib.instance.api.crateApiRemoteScanRemoteCoverReconcileDtoDefault();
+
+  @override
+  int get hashCode =>
+      bindingAvailable.hashCode ^
+      compensationPromoted.hashCode ^
+      blockerCleared.hashCode ^
+      jobsCreated.hashCode ^
+      claimable.hashCode ^
+      truncated.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RemoteCoverReconcileDto &&
+          runtimeType == other.runtimeType &&
+          bindingAvailable == other.bindingAvailable &&
+          compensationPromoted == other.compensationPromoted &&
+          blockerCleared == other.blockerCleared &&
+          jobsCreated == other.jobsCreated &&
+          claimable == other.claimable &&
+          truncated == other.truncated;
+}
 
 class RemoteScanJobDto {
   final String jobId;
@@ -118,6 +196,15 @@ class RemoteScanStatusDto {
   final BigInt blockedBooks;
   final BigInt unsupportedBooks;
   final BigInt failedBooks;
+
+  /// P1-F：`ready` **且字节真的可用**的漫画数（缓存/文件系统校验，锁外计算）。
+  final BigInt availableBooks;
+
+  /// P1-F：等待中的漫画数 = pending + retry + stale-ready + no-job。
+  final BigInt waitingBooks;
+
+  /// P1-F：真实未知 durable state 的漫画数（默认 0；不变量违例也会在此显式暴露）。
+  final BigInt otherBooks;
   final PlatformInt64 viewRevision;
 
   const RemoteScanStatusDto({
@@ -141,6 +228,9 @@ class RemoteScanStatusDto {
     required this.blockedBooks,
     required this.unsupportedBooks,
     required this.failedBooks,
+    required this.availableBooks,
+    required this.waitingBooks,
+    required this.otherBooks,
     required this.viewRevision,
   });
 
@@ -166,6 +256,9 @@ class RemoteScanStatusDto {
       blockedBooks.hashCode ^
       unsupportedBooks.hashCode ^
       failedBooks.hashCode ^
+      availableBooks.hashCode ^
+      waitingBooks.hashCode ^
+      otherBooks.hashCode ^
       viewRevision.hashCode;
 
   @override
@@ -193,5 +286,8 @@ class RemoteScanStatusDto {
           blockedBooks == other.blockedBooks &&
           unsupportedBooks == other.unsupportedBooks &&
           failedBooks == other.failedBooks &&
+          availableBooks == other.availableBooks &&
+          waitingBooks == other.waitingBooks &&
+          otherBooks == other.otherBooks &&
           viewRevision == other.viewRevision;
 }

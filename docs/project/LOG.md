@@ -983,3 +983,32 @@ SELECT ... FROM library_index WHERE source_id = ?1 AND deleted = 0   -- 只返�
 **验证**：Flutter Analyze 无问题；Flutter 全量测试 76 项通过；Rust 文件夹识别测试通过。
 
 **发布**：`v0.5.5`（补丁号递增）——更新 pubspec、Release Notes、CHANGELOG、README，创建 annotated tag 并推送触发 GitHub Actions 双端构建。
+## 2026-09-18｜第47轮：P1-E/P1-F 实现闭环（事件驱动封面 + 进度聚合语义）
+
+**范围**：P1-E（事件驱动卡片状态、窄 stream、只读 state API、删除轮询）与 P1-F（可用性语义与不变量）。
+
+**修改**：
+
+- Rust：9 个 cover durable transition 全部接入 durable revision bump（含 P1-B `read_cached_cover`、
+  P1-C reconciler、`publish_staged_generation`）；新增仓库首个 Rust→Dart `StreamSink`
+  （`CoverRevisionEvent{source_id, asset_id?}`，单 subscriber、commit-after-emit、不带 authoritative 状态）；
+  新增只读 `remote_cover_state`；新增 `cover_progress.rs` 语义层（锁内收集 → 锁外缓存校验 →
+  available/waiting/other + 不变量）。
+- Dart：coordinator 单订阅 bridge（durable-token 去重 + missed-event catch-up + 无 timer）；
+  删除 30×350ms 与 8×900ms 两个轮询循环；首次 `requestCover` 只一次；state→UI（只有 running 转圈）；
+  进度主文案 `可用 X / 共 Y 本`。
+- 语义冻结：`remote_view_revision` = source-generation 原子 durable view change token（batch 一律 +1，
+  非 row counter）；cover stream = best-effort wake transport；**U-B**（等价 upsert 刷新 `updated_at`
+  属 observable change）；**U-α**（revision/wake 粒度归事务 owner，借用事务时不 bump 不 emit）。
+
+**验证**：fresh Rust 全量 `cargo test --locked -j 2` EXIT=0（24 targets / 453 passed / 0 failed）；
+契约 60 条全绿（Rust 38 + Dart 22）；D2 因 unified 生产路径改动已 fresh 重验；
+changed-file analyze 无问题；clippy 仅既有 `reader.rs:277`。
+
+**沉淀**：`docs/reports/p1/2026-09-18-p1ef-implementation.md`。
+
+**遗留**：Release Gate PENDING（真实 115/Quark、P0 S1–S5、20/100/300 MiB Range 等）；
+基线例外未修（6 个既有 Flutter 测试失败、121 条 analyze、clippy `reader.rs:277`、
+`cover_service.rs` HEAD 已 dirty 的 rustfmt 偏差）。
+
+---

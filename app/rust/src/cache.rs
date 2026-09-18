@@ -239,6 +239,30 @@ pub fn remote_cover_cache_delete(
     }
 }
 
+/// RG-B 性能修复（方案 B）：封面素材的**廉价**存在性判据 —— `metadata` + `len > 0`。
+///
+/// 与 raw-cache 权威判据一致（"文件存在且非空"），但**不**做整文件读取与像素头校验
+/// （`remote_cover_cache_read` 会 `std::fs::read` 整个文件，代价随封面尺寸增长）。
+///
+/// 用途：`available_books` 这类**统计**判定（可能在 500ms 轮询路径上被反复调用）。
+/// 需要**字节级**有效性的场景（真正的读取/对账）仍应使用 `remote_cover_cache_read`。
+pub fn remote_cover_cache_present(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> bool {
+    let path = CacheDir::Cover.path().join(remote_cover_cache_key(
+        source_id,
+        asset_id,
+        content_revision,
+        selection_revision,
+        profile,
+    ));
+    matches!(std::fs::metadata(&path), Ok(meta) if meta.len() > 0)
+}
+
 pub fn remote_cover_cache_read(
     source_id: &str,
     asset_id: &str,

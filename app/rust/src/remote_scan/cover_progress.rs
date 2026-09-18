@@ -9,6 +9,8 @@
 //!   2. `apply_cover_availability` 在**锁已释放后**才做缓存/文件系统校验并回填。
 
 use crate::api::remote_scan::RemoteScanStatusDto;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 /// 锁内收集、锁外校验所需的输入。
 #[derive(Default)]
@@ -61,23 +63,57 @@ pub(crate) fn publish_staged_pending_represented(count: u64) {
     });
 }
 
+/// RG-B 性能修复（方案 B）：`available_books` 的**按 revision 记忆化**。
+///
+/// 依据 P1 冻结语义：`remote_view_revision` = 原子 durable view change token ⇒
+/// **同一 revision 内 ready 集合不变**，因此"存在且非空"的判定结果可在同一 revision 内复用。
+/// 键还包含**缓存根**（缓存根变更/清理 ⇒ 立即失效），避免跨根的陈旧命中。
+///
+/// 已知语义边界（方案 B 的取舍，已记录于报告）：若字节在**无** revision 变化时消失
+/// （例如系统清理缓存目录），`available_books` 会保持上次结果，直到
+/// ① 下一次 durable cover 变化（revision 前进）或 ② 缓存根变更。
+static AVAILABILITY_MEMO: OnceLock<Mutex<HashMap<String, (i64, String, u64)>>> = OnceLock::new();
+
+fn availability_memo() -> &'static Mutex<HashMap<String, (i64, String, u64)>> {
+    AVAILABILITY_MEMO.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// 锁**外**回填 `available_books` / `waiting_books` / `other_books` 并校验不变量。
 ///
 /// 只读缓存/文件系统：无 DB mutation、无 revision bump、无 wake、无 session/provider。
 pub(crate) fn apply_cover_availability(status: &mut RemoteScanStatusDto) {
     let inputs = INPUTS.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
-    let mut available = 0_u64;
-    for (asset_id, content_revision, selection_revision, profile) in &inputs.ready {
-        if super::cover_service::cover_material_available(
-            &status.source_id,
-            asset_id,
-            content_revision,
-            selection_revision,
-            profile,
-        ) {
-            available = available.saturating_add(1);
+    // 命中条件：同一 source + 同一 revision + 同一缓存根 ⇒ 不触文件系统。
+    let cache_root = crate::cache::cache_root().to_string_lossy().to_string();
+    let revision = status.view_revision;
+    let cached = availability_memo()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&status.source_id).cloned())
+        .filter(|(rev, root, _)| *rev == revision && *root == cache_root)
+        .map(|(_, _, available)| available);
+
+    let available = match cached {
+        Some(available) => available,
+        None => {
+            let mut counted = 0_u64;
+            for (asset_id, content_revision, selection_revision, profile) in &inputs.ready {
+                if super::cover_service::cover_material_present(
+                    &status.source_id,
+                    asset_id,
+                    content_revision,
+                    selection_revision,
+                    profile,
+                ) {
+                    counted = counted.saturating_add(1);
+                }
+            }
+            if let Ok(mut guard) = availability_memo().lock() {
+                guard.insert(status.source_id.clone(), (revision, cache_root, counted));
+            }
+            counted
         }
-    }
+    };
     status.available_books = available;
     // stale ready = 状态为 ready 但字节不可用 ⇒ 归入 waiting（不计入 available）。
     let stale_ready = status.ready_books.saturating_sub(available);

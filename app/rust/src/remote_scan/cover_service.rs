@@ -83,6 +83,30 @@ pub fn cover_material_available(
     .is_some()
 }
 
+/// RG-B 性能修复（方案 B）：**统计用**的廉价可用性判据（`metadata` + `len > 0`）。
+///
+/// 与 `cover_material_available` 的差异是**语义强度**：
+/// * 本函数回答"缓存文件是否存在且非空" —— 与 raw-cache 权威判据一致，成本为一次 `metadata`；
+/// * `cover_material_available` 回答"字节是否可解析" —— 会整文件读取 + 头校验，成本高。
+///
+/// `available_books` 统计使用本函数（它可能在轮询路径上被反复调用）；需要字节级确认时
+/// （P1-B 对账、真正的读取链路）继续使用 `cover_material_available`。
+pub fn cover_material_present(
+    source_id: &str,
+    asset_id: &str,
+    content_revision: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> bool {
+    cache::remote_cover_cache_present(
+        source_id,
+        asset_id,
+        content_revision,
+        selection_revision,
+        profile,
+    )
+}
+
 pub fn read_cached_cover(
     source_id: &str,
     asset_id: &str,

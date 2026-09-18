@@ -273,3 +273,68 @@ fn f_staged_greater_than_indexed_still_balances() {
     assert_eq!(s.discovered_books, 3, "discovered = max(indexed, staged)");
     assert_invariant(&s, "F-7 staged > indexed");
 }
+
+
+// ---------------------------------------------------------------------------
+// RG-B 性能修复（方案 B）：`available_books` 按 revision 记忆化 + 廉价校验
+// ---------------------------------------------------------------------------
+
+/// 删除自定义缓存根下的**所有**文件（模拟"字节消失但无 durable 变化"）。
+fn delete_all_material(root: &std::path::Path) {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
+    }
+}
+
+/// 同一 revision 内：判定结果被复用（**不再触文件系统**）；revision 前进后必须重算。
+///
+/// 这条同时把方案 B 的**陈旧边界**写成断言（字节消失但无 durable 变化 ⇒ 保持上次结果），
+/// 避免它成为未记录的隐含行为。
+#[test]
+fn f_availability_is_memoized_within_a_revision_and_recomputes_after_a_transition() {
+    let source = "f-prog-memo";
+    let guard_root = std::env::temp_dir().join(format!("rch_f_prog_{source}"));
+    // indexed = 2：后面要加第二个 job，tracked 不得超过 discovered（否则触发不变量断言）。
+    let _guard = prepare(source, 2);
+    seed_job(source, "a", CoverJobState::Ready);
+    write_material(source, "a");
+
+    let first = status_of(source);
+    assert_eq!(first.available_books, 1, "material present => available");
+    let revision_before = first.view_revision;
+
+    // 字节消失，但**不**产生 durable 变化（不 bump revision）。
+    delete_all_material(&guard_root);
+
+    let second = status_of(source);
+    assert_eq!(
+        second.view_revision, revision_before,
+        "deleting cache bytes is not a durable cover change"
+    );
+    assert_eq!(
+        second.available_books, 1,
+        "within the same revision the availability answer is memoized (documented bound)"
+    );
+
+    // 触发一次 durable cover 变化 ⇒ revision 前进 ⇒ 必须重算 ⇒ 字节已不在 ⇒ available 归零。
+    seed_job(source, "b", CoverJobState::Failed);
+    let third = status_of(source);
+    assert!(
+        third.view_revision > revision_before,
+        "a durable cover transition must bump the revision"
+    );
+    assert_eq!(
+        third.available_books, 0,
+        "after a revision change the sweep re-runs and sees the missing material"
+    );
+}

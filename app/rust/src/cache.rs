@@ -325,6 +325,93 @@ pub fn remote_cover_cache_write(
     Ok(())
 }
 
+// ====== RG-A：原子发布缓存文件 ======
+
+/// RG-A：「raw-cache 非原子写入」修复的共享实现。
+///
+/// 与既有封面缓存写法**共用同一临时名约定**（`.<name>.part-<pid>`，见上方封面写入），
+/// 因此不引入第二套约定：
+///
+/// * 最终路径**只在完整写入并 rename 成功后**才出现 ⇒ 现有复用判据 `len() > 0`
+///   依旧成立（不需要额外的完整性校验，也不需要新增持久化状态）；
+/// * 中途出错、提前 Drop、或 rename 失败 ⇒ 删除临时文件，既不留半文件、
+///   也不污染最终路径；
+/// * 写入过程中任何读者都**看不到**部分内容（最终路径尚不存在）。
+///
+/// 调用方约定：`create` → 循环 `write_all` → `commit`。
+/// 进程内单调序号（与 pid 组合生成唯一临时文件名）。
+static ATOMIC_TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+pub struct AtomicCacheFile {
+    target: PathBuf,
+    temp: PathBuf,
+    file: Option<std::fs::File>,
+    committed: bool,
+}
+
+impl AtomicCacheFile {
+    /// 在 `target` 的**同目录**创建临时文件（目录必须已存在——调用方负责创建）。
+    pub fn create(target: &Path) -> Result<Self> {
+        let dir = target
+            .parent()
+            .with_context(|| format!("缓存目标缺少父目录: {}", target.display()))?;
+        let name = target
+            .file_name()
+            .with_context(|| format!("缓存目标缺少文件名: {}", target.display()))?
+            .to_string_lossy()
+            .to_string();
+        // 唯一性：`.{name}.part-{pid}-{seq}`。
+        // pid 保证**跨进程**唯一；进程内单调序号保证**同进程并发**写同一目标时
+        // 两个 writer 不会共用同一个临时文件（否则会互相截断）。
+        let temp = dir.join(format!(
+            ".{}.part-{}-{}",
+            name,
+            std::process::id(),
+            ATOMIC_TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let file = std::fs::File::create(&temp).context("创建缓存临时文件失败")?;
+        Ok(Self {
+            target: target.to_path_buf(),
+            temp,
+            file: Some(file),
+            committed: false,
+        })
+    }
+
+    /// 写入一块数据（语义同 `Write::write_all`）。
+    pub fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        self.file
+            .as_mut()
+            .context("缓存临时文件已关闭")?
+            .write_all(buf)
+            .context("写入缓存临时文件失败")
+    }
+
+    /// 完成并**原子发布**到最终路径，返回该路径。
+    pub fn commit(mut self) -> Result<PathBuf> {
+        let mut file = self.file.take().context("缓存临时文件已关闭")?;
+        file.flush().context("同步缓存临时文件失败")?;
+        file.sync_all().context("同步缓存临时文件失败")?;
+        drop(file);
+        if self.target.exists() {
+            // Windows 上 `rename` 不覆盖已存在目标。此处目标**不可能是**完整缓存
+            // （完整缓存会走复用判据提前返回），因此先移除再 rename。
+            std::fs::remove_file(&self.target).context("替换旧缓存失败")?;
+        }
+        std::fs::rename(&self.temp, &self.target).context("发布缓存文件失败")?;
+        self.committed = true;
+        Ok(self.target.clone())
+    }
+}
+
+impl Drop for AtomicCacheFile {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.temp);
+        }
+    }
+}
+
 // ====== 大小计算与清理 ======
 
 /// 递归计算目录大小（字节）。
@@ -958,5 +1045,179 @@ mod tests {
         .is_err());
         assert!(migrate_cache_root("C:\\", "D:\\tmp_x2", support.to_str().unwrap()).is_err());
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+
+#[cfg(test)]
+mod rg_a_atomic_cache_file_tests {
+    //! RG-A：raw-cache 写入的**原子可见性**与失败清理契约。
+    use super::AtomicCacheFile;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("rch_rga_atomic_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn part_files(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".part-"))
+            .collect()
+    }
+
+    /// 核心不变量：**未 commit 时最终路径不可见**（读者看不到部分内容）。
+    #[test]
+    fn rg_a_atomic_target_is_invisible_until_commit() {
+        let dir = temp_dir("invisible");
+        let target = dir.join("book.cbz");
+
+        let mut writer = AtomicCacheFile::create(&target).unwrap();
+        writer.write_all(b"partial").unwrap();
+
+        assert!(
+            !target.exists(),
+            "final cache path must NOT exist while the write is in flight"
+        );
+        assert_eq!(part_files(&dir).len(), 1, "exactly one .part-<pid> temp exists");
+
+        let published = writer.commit().unwrap();
+        assert_eq!(published, target);
+        assert_eq!(std::fs::read(&target).unwrap(), b"partial");
+        assert!(
+            part_files(&dir).is_empty(),
+            "commit must leave no temp file behind"
+        );
+    }
+
+    /// 失败/提前 Drop ⇒ 目标不存在且临时文件被清理（不留半文件）。
+    #[test]
+    fn rg_a_atomic_abort_removes_temp_and_leaves_no_target() {
+        let dir = temp_dir("abort");
+        let target = dir.join("book.cbz");
+
+        {
+            let mut writer = AtomicCacheFile::create(&target).unwrap();
+            writer.write_all(b"half").unwrap();
+            // 模拟写入中途出错：直接 drop（不 commit）。
+        }
+
+        assert!(!target.exists(), "aborted write must not publish a target");
+        assert!(
+            part_files(&dir).is_empty(),
+            "aborted write must remove its temp file"
+        );
+    }
+
+    /// 已存在的**非完整**目标（例如旧实现的 0 字节残留）可被安全替换。
+    #[test]
+    fn rg_a_atomic_commit_replaces_existing_stale_target() {
+        let dir = temp_dir("replace");
+        let target = dir.join("book.cbz");
+        std::fs::write(&target, b"").unwrap();
+        assert_eq!(std::fs::metadata(&target).unwrap().len(), 0);
+
+        let mut writer = AtomicCacheFile::create(&target).unwrap();
+        writer.write_all(b"complete").unwrap();
+        writer.commit().unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"complete");
+        assert!(part_files(&dir).is_empty());
+    }
+
+    /// 多次写入按顺序拼接（调用方用 64KB 循环写入）。
+    #[test]
+    fn rg_a_atomic_supports_chunked_writes() {
+        let dir = temp_dir("chunked");
+        let target = dir.join("book.cbz");
+        let mut writer = AtomicCacheFile::create(&target).unwrap();
+        for _ in 0..3 {
+            writer.write_all(&[7u8; 64 * 1024]).unwrap();
+        }
+        writer.commit().unwrap();
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().len(),
+            3 * 64 * 1024,
+            "all chunks must be present after commit"
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod rg_a_atomic_temp_uniqueness_tests {
+    //! RG-A：临时文件**唯一性**契约（同进程并发写同一目标不得互相截断）。
+    use super::AtomicCacheFile;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("rch_rga_uniq_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn part_files(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".part-"))
+            .collect()
+    }
+
+    /// 两个 writer 写**同一目标** ⇒ 两个不同临时文件；依次 commit 后无残留，
+    /// 且不会出现"一个 writer 截断另一个 writer 的临时文件"。
+    #[test]
+    fn rg_a_atomic_temp_names_are_unique_per_writer() {
+        let dir = temp_dir("writers");
+        let target = dir.join("book.cbz");
+
+        let mut first = AtomicCacheFile::create(&target).unwrap();
+        first.write_all(b"AAAA").unwrap();
+        let mut second = AtomicCacheFile::create(&target).unwrap();
+        second.write_all(b"BBBBBB").unwrap();
+
+        assert_eq!(
+            part_files(&dir).len(),
+            2,
+            "two concurrent writers must hold two distinct temp files"
+        );
+
+        first.commit().unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"AAAA");
+        assert!(target.exists(), "first commit publishes the target");
+
+        // 第二个 writer 的临时文件**未被**第一个 writer 影响，仍可正常发布。
+        second.commit().unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"BBBBBB");
+        assert!(
+            part_files(&dir).is_empty(),
+            "no temp file may survive the two commits"
+        );
+    }
+
+    /// 一个 writer 中止、另一个成功 ⇒ 只清理自己的临时文件，不留任何残留。
+    #[test]
+    fn rg_a_atomic_abort_does_not_disturb_another_writer() {
+        let dir = temp_dir("mixed");
+        let target = dir.join("book.cbz");
+
+        let mut aborted = AtomicCacheFile::create(&target).unwrap();
+        aborted.write_all(b"stale").unwrap();
+        let mut good = AtomicCacheFile::create(&target).unwrap();
+        good.write_all(b"final").unwrap();
+
+        drop(aborted); // 模拟失败/取消
+        good.commit().unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"final");
+        assert!(
+            part_files(&dir).is_empty(),
+            "aborted writer must clean only its own temp file"
+        );
     }
 }

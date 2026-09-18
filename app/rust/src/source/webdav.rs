@@ -11,7 +11,7 @@ use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, CONTRO
 use reqwest::blocking::Client;
 use reqwest::header::RANGE;
 use reqwest::{Method, StatusCode, Url};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -593,8 +593,19 @@ impl WebDavClient {
             );
         }
 
-        let mut disk = std::fs::File::create(&file_path).context("创建缓存文件失败")?;
-        std::io::copy(&mut resp, &mut disk).context("写入缓存文件失败")?;
+        let mut writer = crate::cache::AtomicCacheFile::create(&file_path)?;
+        // RG-A：改为分块写入临时文件，成功后再原子发布（不再直接写最终路径）。
+        {
+            let mut chunk = [0u8; 64 * 1024];
+            loop {
+                let n = resp.read(&mut chunk).context("读取下载流失败")?;
+                if n == 0 {
+                    break;
+                }
+                writer.write_all(&chunk[..n])?;
+            }
+        }
+        writer.commit()?;
         let f = std::fs::File::open(&file_path).context("打开缓存文件失败")?;
         Ok(WebDavFile::from_local(
             Arc::new(WebDavClient {
@@ -677,7 +688,7 @@ impl WebDavClient {
             p.total.store(total, Ordering::SeqCst); // 更新文件实际大小
         }
 
-        let mut disk = std::fs::File::create(&file_path).context("创建缓存文件失败")?;
+        let mut writer = crate::cache::AtomicCacheFile::create(&file_path)?;
         let mut buf = [0u8; 64 * 1024]; // 64KB 读缓冲
         let mut written: u64 = 0;
         loop {
@@ -685,15 +696,13 @@ impl WebDavClient {
             if n == 0 {
                 break;
             }
-            disk.write_all(&buf[..n]).context("写入缓存文件失败")?;
+            writer.write_all(&buf[..n])?;
             written += n as u64;
             if let Some(p) = &progress {
                 p.downloaded.store(written, Ordering::SeqCst);
             }
         }
-        disk.flush().context("同步缓存文件失败")?;
-
-        Ok(file_path)
+        writer.commit()
     }
 
     /// Range 读取:从 offset 读满 buf 或到文件尾,返回实际字节数。

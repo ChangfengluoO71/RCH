@@ -20,7 +20,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -649,7 +649,7 @@ impl Cloud115Client {
         if let Some(p) = &progress {
             p.total.store(total, Ordering::SeqCst);
         }
-        let mut disk = std::fs::File::create(&file_path).context("创建缓存文件失败")?;
+        let mut writer = crate::cache::AtomicCacheFile::create(&file_path)?;
         let mut buf = [0u8; 64 * 1024];
         let mut written: u64 = 0;
         loop {
@@ -657,14 +657,13 @@ impl Cloud115Client {
             if n == 0 {
                 break;
             }
-            disk.write_all(&buf[..n]).context("写入缓存文件失败")?;
+            writer.write_all(&buf[..n])?;
             written += n as u64;
             if let Some(p) = &progress {
                 p.downloaded.store(written, Ordering::SeqCst);
             }
         }
-        disk.flush().ok();
-        Ok(file_path)
+        writer.commit()
     }
 }
 
@@ -1823,7 +1822,7 @@ impl Cloud115WebClient {
         if let Some(p) = &progress {
             p.total.store(total, Ordering::SeqCst);
         }
-        let mut disk = std::fs::File::create(&file_path).context("创建缓存文件失败")?;
+        let mut writer = crate::cache::AtomicCacheFile::create(&file_path)?;
         let mut buf = [0u8; 64 * 1024];
         let mut written: u64 = 0;
         loop {
@@ -1831,14 +1830,13 @@ impl Cloud115WebClient {
             if n == 0 {
                 break;
             }
-            disk.write_all(&buf[..n]).context("写入缓存文件失败")?;
+            writer.write_all(&buf[..n])?;
             written += n as u64;
             if let Some(p) = &progress {
                 p.downloaded.store(written, Ordering::SeqCst);
             }
         }
-        disk.flush().ok();
-        Ok(file_path)
+        writer.commit()
     }
 }
 

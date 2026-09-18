@@ -337,6 +337,73 @@ pub async fn notify_source_session_ready(
     Ok(report)
 }
 
+/// RG-A / A-3：cover 失败后的**纯决策**（唯一来源）。
+///
+/// 契约（由本模块内 `#[cfg(test)]` 单元测试覆盖）：
+///
+/// * `429 + Retry-After` ⇒ **优先采用服务端值**（忽略本地指数退避）；
+/// * `429` 无 `Retry-After` ⇒ 指数退避 `1s, 2s, 4s …`（cap = `2^10 s`）；
+/// * `TransientNetwork` ⇒ **同一个**有界指数退避；
+/// * `Forbidden` / 405 等**不在**该集合 ⇒ 绝不进入 retry bucket；
+/// * `attempt >= 3`（既有阈值，**RG-A 不修改**）⇒ 落终态，交给 P1-C 长期补偿；
+/// * **纯函数**：不触 DB、不 enqueue、不 wake、不 sleep、不读时钟。
+///
+/// `retry_after_ms` 是**相对延迟**；绝对时间（`next_attempt_at`）由调用方用
+/// `db::now_ms()` 组合后落库，因此本函数不需要 `now_ms` 参数。
+pub(crate) struct CoverFailureDecision {
+    pub(crate) state: crate::remote_scan::cover_model::CoverJobState,
+    pub(crate) error_code: Option<String>,
+    pub(crate) retry_after_ms: Option<u64>,
+}
+
+pub(crate) fn cover_job_failure_decision(
+    error: &RemoteScanError,
+    attempt: i64,
+) -> CoverFailureDecision {
+    use crate::remote_scan::cover_model::CoverJobState;
+    fn decide(
+        state: CoverJobState,
+        code: Option<String>,
+        retry_after_ms: Option<u64>,
+    ) -> CoverFailureDecision {
+        CoverFailureDecision {
+            state,
+            error_code: code,
+            retry_after_ms,
+        }
+    }
+    match error {
+        RemoteScanError::RangeUnavailable | RemoteScanError::Unsupported => decide(
+            CoverJobState::Unsupported,
+            Some(error_code(error).into()),
+            None,
+        ),
+        RemoteScanError::Unauthorized | RemoteScanError::Forbidden => decide(
+            CoverJobState::Blocked,
+            Some(error_code(error).into()),
+            None,
+        ),
+        RemoteScanError::TransientNetwork(_) | RemoteScanError::RateLimited { .. }
+            if attempt < 3 =>
+        {
+            let retry_after = match error {
+                RemoteScanError::RateLimited { retry_after_ms } => *retry_after_ms,
+                _ => None,
+            };
+            decide(
+                CoverJobState::RetryWait,
+                Some(error_code(error).into()),
+                retry_after.or(Some((1_i64 << attempt.clamp(0, 10)) as u64 * 1_000)),
+            )
+        }
+        RemoteScanError::Cancelled => {
+            decide(CoverJobState::Cancelled, Some("cancelled".into()), None)
+        }
+        _ => decide(CoverJobState::Failed, Some(error_code(error).into()), None),
+    }
+}
+
+/// 薄适配：保持既有调用点签名与行为不变（决策唯一来源见上方纯函数）。
 fn cover_job_failure_state(
     error: &RemoteScanError,
     attempt: i64,
@@ -345,32 +412,8 @@ fn cover_job_failure_state(
     Option<String>,
     Option<u64>,
 ) {
-    use crate::remote_scan::cover_model::CoverJobState;
-    match error {
-        RemoteScanError::RangeUnavailable | RemoteScanError::Unsupported => (
-            CoverJobState::Unsupported,
-            Some(error_code(error).into()),
-            None,
-        ),
-        RemoteScanError::Unauthorized | RemoteScanError::Forbidden => {
-            (CoverJobState::Blocked, Some(error_code(error).into()), None)
-        }
-        RemoteScanError::TransientNetwork(_) | RemoteScanError::RateLimited { .. }
-            if attempt < 3 =>
-        {
-            let retry_after = match error {
-                RemoteScanError::RateLimited { retry_after_ms } => *retry_after_ms,
-                _ => None,
-            };
-            (
-                CoverJobState::RetryWait,
-                Some(error_code(error).into()),
-                retry_after.or(Some((1_i64 << attempt.clamp(0, 10)) as u64 * 1_000)),
-            )
-        }
-        RemoteScanError::Cancelled => (CoverJobState::Cancelled, Some("cancelled".into()), None),
-        _ => (CoverJobState::Failed, Some(error_code(error).into()), None),
-    }
+    let decision = cover_job_failure_decision(error, attempt);
+    (decision.state, decision.error_code, decision.retry_after_ms)
 }
 
 fn parse_cover_profile(profile: &str) -> (u32, u32) {
@@ -3154,5 +3197,166 @@ mod session_ready_tests {
             .filter(|existing| existing.starts_with(&prefix))
             .count();
         assert!(workers <= 1, "single-flight must hold");
+    }
+}
+
+#[cfg(test)]
+mod rg_a_cover_failure_decision_tests {
+    //! RG-A / A-3：退避**决策数学**契约（纯函数，不涉及 worker orchestration）。
+    use super::*;
+    use crate::remote_scan::cover_model::CoverJobState;
+
+    fn decision(error: &RemoteScanError, attempt: i64) -> super::CoverFailureDecision {
+        super::cover_job_failure_decision(error, attempt)
+    }
+
+    #[test]
+    fn rg_a_decision_rate_limited_prefers_server_retry_after() {
+        let d = decision(
+            &RemoteScanError::RateLimited {
+                retry_after_ms: Some(7_000),
+            },
+            2,
+        );
+        assert_eq!(d.state, CoverJobState::RetryWait);
+        assert_eq!(d.retry_after_ms, Some(7_000), "server value must win over 4s");
+    }
+
+    #[test]
+    fn rg_a_decision_rate_limited_without_retry_after_uses_exponential() {
+        for (attempt, expected_ms) in [(0_i64, 1_000_u64), (1, 2_000), (2, 4_000)] {
+            let d = decision(
+                &RemoteScanError::RateLimited {
+                    retry_after_ms: None,
+                },
+                attempt,
+            );
+            assert_eq!(d.state, CoverJobState::RetryWait);
+            assert_eq!(d.retry_after_ms, Some(expected_ms), "attempt {attempt}");
+        }
+    }
+
+    #[test]
+    fn rg_a_decision_transient_uses_the_same_bounded_exponential() {
+        let d = decision(&RemoteScanError::TransientNetwork("x".into()), 1);
+        assert_eq!(d.state, CoverJobState::RetryWait);
+        assert_eq!(d.retry_after_ms, Some(2_000));
+        let r = decision(
+            &RemoteScanError::RateLimited {
+                retry_after_ms: None,
+            },
+            1,
+        );
+        assert_eq!(d.retry_after_ms, r.retry_after_ms);
+    }
+
+    #[test]
+    fn rg_a_decision_non_retryable_never_enters_retry_bucket() {
+        let forbidden = decision(&RemoteScanError::Forbidden, 0);
+        assert_eq!(forbidden.state, CoverJobState::Blocked);
+        assert_eq!(forbidden.retry_after_ms, None);
+
+        let unauthorized = decision(&RemoteScanError::Unauthorized, 0);
+        assert_eq!(unauthorized.state, CoverJobState::Blocked);
+        assert_eq!(unauthorized.retry_after_ms, None);
+
+        let method_not_allowed = decision(
+            &RemoteScanError::HttpStatus {
+                stage: "range_probe".into(),
+                status: 405,
+            },
+            0,
+        );
+        assert_eq!(method_not_allowed.state, CoverJobState::Failed);
+        assert_eq!(method_not_allowed.retry_after_ms, None);
+
+        for state in [
+            forbidden.state,
+            unauthorized.state,
+            method_not_allowed.state,
+        ] {
+            assert_ne!(state, CoverJobState::RetryWait);
+        }
+    }
+
+    /// 边界 5：退避上界。
+    ///
+    /// **RG-A 实测发现**：在 `attempt < 3` 的既有阈值下，**可达**延迟只有 1s / 2s / 4s；
+    /// 表达式中的 `clamp(0, 10)`（cap = 2^10 s）是**防御性上界**，当前阈值下**不可达**
+    /// —— 除非未来放宽 attempt 阈值（RG-A **不**修改它）。
+    ///
+    /// 因此本用例钉住两件真实事实：
+    /// 1. 可达延迟始终落在防御性上界之内；
+    /// 2. `attempt >= 3` 一律终态（无延迟），cap 根本不会被触及。
+    #[test]
+    fn rg_a_decision_reachable_delays_stay_within_the_defensive_cap() {
+        for attempt in [0_i64, 1, 2] {
+            let d = decision(&RemoteScanError::TransientNetwork("x".into()), attempt);
+            let delay = d
+                .retry_after_ms
+                .expect("reachable attempts must carry a delay");
+            assert!(
+                delay <= 1024 * 1_000,
+                "delay {delay} must stay within the defensive cap"
+            );
+        }
+        for attempt in [3_i64, 10, 11, 64] {
+            let d = decision(&RemoteScanError::TransientNetwork("x".into()), attempt);
+            assert_eq!(
+                d.retry_after_ms, None,
+                "attempt {attempt} must be terminal (cap must not be reachable)"
+            );
+            assert_eq!(d.state, CoverJobState::Failed);
+        }
+    }
+
+    #[test]
+    fn rg_a_decision_attempt_three_is_terminal_and_unchanged() {
+        let transient = decision(&RemoteScanError::TransientNetwork("x".into()), 3);
+        assert_eq!(transient.state, CoverJobState::Failed);
+        assert_eq!(transient.retry_after_ms, None);
+
+        let limited = decision(
+            &RemoteScanError::RateLimited {
+                retry_after_ms: Some(9_000),
+            },
+            3,
+        );
+        assert_eq!(
+            limited.state,
+            CoverJobState::Failed,
+            "even a server Retry-After must not extend the short budget"
+        );
+        assert_eq!(limited.retry_after_ms, None);
+    }
+
+    #[test]
+    fn rg_a_decision_other_categories_map_as_before() {
+        assert_eq!(
+            decision(&RemoteScanError::RangeUnavailable, 0).state,
+            CoverJobState::Unsupported
+        );
+        assert_eq!(
+            decision(&RemoteScanError::Unsupported, 0).state,
+            CoverJobState::Unsupported
+        );
+        assert_eq!(
+            decision(&RemoteScanError::Cancelled, 0).state,
+            CoverJobState::Cancelled
+        );
+    }
+
+    #[test]
+    fn rg_a_decision_is_pure_and_deterministic() {
+        let error = RemoteScanError::RateLimited {
+            retry_after_ms: None,
+        };
+        let a = decision(&error, 2);
+        let b = decision(&error, 2);
+        assert_eq!(a.state, b.state);
+        assert_eq!(a.error_code, b.error_code);
+        assert_eq!(a.retry_after_ms, b.retry_after_ms);
+        let negative = decision(&error, -5);
+        assert_eq!(negative.retry_after_ms, Some(1_000));
     }
 }

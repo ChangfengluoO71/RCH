@@ -1036,3 +1036,50 @@ changed-file analyze 无问题；clippy 仅既有 `reader.rs:277`。
 `cover_service.rs` HEAD 已 dirty 的 rustfmt 偏差）。
 
 ---
+## 2026-09-18｜第48轮：RG-A（Release Gate A 类自动化）—— Range fallback / atomic raw-cache / HTTP 语义
+
+**本轮目标**：把 Release Gate 中可重复、可回归的部分固化为自动化证据，使后续真机/真账号验证
+（RG-B）不会混入基础语义错误。
+
+**修改内容**：
+
+- **修掉真实缺陷（raw-cache partial publication）**：7 处 full-download 实现原先直接
+  `File::create(最终缓存路径)` 后 `write_all`，失败无清理，而复用判据是 `metadata().len() > 0`
+  ⇒ 中断/失败留下的半文件会被**当成完整缓存复用**。新增 `cache::AtomicCacheFile`
+  （同目录临时文件 → flush + `sync_all` → rename；未 commit 时 Drop 清理；Windows 安全替换；
+  临时名 `.<name>.part-<pid>-<seq>` 保证跨进程与同进程并发唯一），迁移 **7 处**（webdav×2 /
+  baidu / cloud115×2 / quark / sftp），并清理迁移后不再使用的 `Write` 导入。
+- **A-3 决策契约**：把 cover 失败决策抽成 `pub(crate) cover_job_failure_decision`
+  （纯函数：不触 DB / 不 enqueue / 不 wake / 不 sleep），模块内 8 条单元测试钉死
+  429 优先 Retry-After、无 Retry-After 走 1s/2s/4s、TransientNetwork 同契约、
+  非可重试错误绝不进入 retry bucket、`attempt >= 3` 落终态（**阈值未改**）。
+- **A-1 / A-5**：扩展现有 P0-A 本地装置（合成体零内存 / 忠实 200 / 慢滴 / **仅对 full GET 的
+  中途断流** / 非法 `Content-Range` / 按请求类型记录），驱动生产 WebDAV 路径，覆盖
+  20/100/300 MiB 全量下载矩阵、**流式落盘证明**（server 仍在发送时 `.part-*` 已在增长且
+  最终路径不存在）、失败清理、跨 client 实例复用。
+- **A-2**：经**真实 orchestrator**（`webdav_connect → open_webdav_book(..., "stream")`）
+  覆盖 ADR-005 完整链：unsupported（200）→ 整包 fallback → 原子发布 → 本地 document 权威
+  （与同一 CBZ 直接本地打开逐页一致）→ 跨 session 复用（**不再 probe、不再下载**）→
+  失败 fallback 不成缓存 → 可信 206 保持 Range 路径 → 非法 206 fail closed。
+
+**修改原因**：Release Gate 原先是一串"无法收敛"的条目；A-1/A-2/A-3/A-5 把它转成可重复的
+生产路径自动化证据，并顺带修掉了会让用户读到损坏缓存的 partial publication 缺陷。
+
+**影响范围**：`cache.rs`（新 helper）、`source/{webdav,baidu,cloud115,quark,sftp}.rs`
+（7 处写入路径）、`api/remote_scan.rs`（决策纯函数 + 模块内测试）、
+`tests/{p0_baseline_read_speed,remote_cover_error_contract}.rs`。**未**改：封面缓存内联写入、
+`len>0` 权威判据、checksum、stale `.part-*` 清理、死代码 downloader。
+
+**是否完成**：完成。A-1 / A-2 / A-3 / A-4 / A-5 全部 PASS。
+fresh `cargo test --locked -j 2` EXIT=0（24 targets / 483 passed / 0 failed）；
+A-4 Dart focused 13/13。
+
+**遗留问题**：
+- **真实 FRB `StreamSink` 跨桥 delivery 未被自动化直接证明** ⇒ RG-B / 真应用环境验证项；
+  A-4 的 PASS 仅为**消费语义**。
+- A-2 的 E2E 仅覆盖 WebDAV；其余 5 provider / 7 实现只有共享 atomic writer 的 wiring 覆盖。
+- 退避 cap `2^10 s` 在既有 `attempt < 3` 阈值下不可达（防御性上界，未改阈值）。
+- 无陈旧 `.part-*` 启动清理（崩溃残留会累积并计入缓存大小）⇒ 已登记 backlog。
+- 沉淀：`docs/reports/p1/2026-09-18-rg-a-automation.md`。
+
+---

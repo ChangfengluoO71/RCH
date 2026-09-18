@@ -185,7 +185,6 @@ impl SftpClient {
         path: &str,
         progress: Option<Arc<DownloadProgress>>,
     ) -> Result<PathBuf> {
-        use std::io::Write;
 
         let raw_dir = crate::cache::CacheDir::Raw
             .ensure()
@@ -224,8 +223,8 @@ impl SftpClient {
                     .open(path)
                     .await
                     .map_err(|e| anyhow!("SFTP 打开文件失败: {e}"))?;
-                let mut disk =
-                    std::fs::File::create(&file_path_for_write).context("创建缓存文件失败")?;
+                let mut writer =
+                    crate::cache::AtomicCacheFile::create(&file_path_for_write)?;
                 let mut buf = vec![0u8; 64 * 1024];
                 let mut written: u64 = 0;
                 loop {
@@ -236,14 +235,14 @@ impl SftpClient {
                     if n == 0 {
                         break;
                     }
-                    std::io::Write::write_all(&mut disk, &buf[..n]).context("写入缓存文件失败")?;
+                    writer.write_all(&buf[..n])?;
                     written += n as u64;
                     if let Some(p) = &progress_clone {
                         p.downloaded
                             .store(written, std::sync::atomic::Ordering::SeqCst);
                     }
                 }
-                disk.flush().context("同步缓存文件失败")?;
+                writer.commit()?;
                 Ok::<(), anyhow::Error>(())
             })
             .context("SFTP 整本下载失败")?;

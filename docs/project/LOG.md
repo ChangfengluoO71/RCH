@@ -1083,3 +1083,37 @@ A-4 Dart focused 13/13。
 - 沉淀：`docs/reports/p1/2026-09-18-rg-a-automation.md`。
 
 ---
+## 2026-09-18｜第49轮：RG-B B-0/B-0.1/B-1 —— RC 身份冻结与真实 FRB 跨桥 delivery
+
+**本轮目标**：为真实环境验证绑定具名 candidate，并先关闭 P1 遗留的**最独立**的 transport 证据缺口。
+
+**修改内容**：
+
+- **B-0**：读取并记录 RC 身份（分支/HEAD、pubspec、Android `versionCode` 派生、Windows 版本宏来源、
+  本地=远端 tags、GitHub Releases 实查）⇒ 冻结 candidate `0.5.8+100508`；定义**两层身份**
+  （RC Product Commit vs Validation Harness Commit）与收紧后的失效规则。
+- **B-0.1**：`pubspec 0.5.7+100507 → 0.5.8+100508`（本地/开发构建身份）。记录发布产物身份来自 **tag**
+  （`release.yml` 对 Windows 与 Android 均传 `--build-name/--build-number`）；Android **base**
+  `versionCode = 100000 + (maj*10000+min*100+pat)` ⇒ v0.5.8 = 100508（逐 ABI 值以构建产物为准）。
+- **B-1**：新增 `integration_test/cover_stream_real_delivery_test.dart`，在**真实 Windows app** 上证明
+  真实 Rust post-commit wake 经**真实 FRB `StreamSink`** 被真实 Dart coordinator 消费，
+  UI 在测试不驱动任何读取的条件下自动从非 ready 变为 ready。
+
+**修改原因**：RG-A 已把可自动化部分固化；剩下最独立、也最容易被误读的缺口是"真实 FRB 投递"。
+先关闭这个内部可控缺口，后续真实 provider 出问题时才不必再怀疑 wake 链本身。
+
+**影响范围**：仅 `docs/**` 与 `app/integration_test/**`（**生产 runtime surface 改动 = 0**，
+已用 `git diff b8b64de..12c8fb6` 复验）；发布元数据仅 pubspec 版本号一处。
+
+**是否完成**：B-0 / B-0.1 / B-1 = **PASS**。集成运行 `EXIT=0`（1:00）；
+机读证据行 `RG_B1_FRB_DELIVERY=PASS;candidate=0.5.8+100508;product_commit=b8b64de;injected_stream=false`。
+
+**遗留问题**：
+
+- 过程中修正 3 处 **harness** 缺口（collection GET 返回 404、缺 `dbUpsertSource` 源身份注册、
+  未执行生产 `main()` 导致真实订阅未建立）——均非生产缺陷，已详录于报告 §5.7。
+- **B-2**（真实网络 20/100/300 MiB + cancel）、**B-3**（真实 115/Quark）、
+  **B-4**（WAF/CDN/状态码/速率）仍 PENDING。
+- backlog 未动（stale `.part-*` 清理、死代码 downloader、封面 writer、不可达 2^10 cap）。
+
+---

@@ -100,7 +100,21 @@ impl<S: ByteSource + ?Sized> ByteSource for std::sync::Arc<S> {
 /// 顺序读的预读块大小：连续小块 read 时一次多读，减少底层（尤其远程）请求次数。
 ///
 /// 只用于**顺序延续**的读取。随机/元数据读取走下面的小窗口，不再被它放大。
+///
+/// 第 68 轮**试过**把它提到 1 MiB，被 `tests/p0b2_zip_read_amplification.rs` 当场否掉：
+/// 读 8 页内容 2.46 MB 却传输 7.09 MB（2.9×）、单页读也要 1 MiB ✗
+/// ⇒ 放大代价大于省下的往返次数。真正的杠杆是**减少重复的元数据读**（见下一轮），
+/// 不是加大窗口。
 const READ_AHEAD: u64 = 256 * 1024;
+/// 连续顺序读达到阈值后把窗口提到这个大小（自适应）。
+///
+/// 依据（第 68 轮实测）：真实 ZIP 页约 1.3 MB，256 KiB 窗口 ⇒ 每页 ~5 次网络往返
+/// （115 CDN 243 ms/次 ⇒ 每页 ~1.24 s）。但**不能写死大窗口**：P0-B2 的 300 KiB
+/// 页夹具会被放大成 2.9×（门禁当场否掉）。
+/// 因此窗口只在"连续顺序读"时增长，且小页（1–2 次读）**不会**触发。
+const READ_AHEAD_MAX: u64 = 1024 * 1024;
+/// 连续顺序读多少次后放大窗口。
+const READ_AHEAD_GROW_AFTER: u32 = 3;
 /// 非顺序（随机/元数据）读的最小取数长度。
 /// 64 B 足以覆盖 ZIP 的 `ZipLocalEntryBlock`（30 B）与单个中央目录条目（46 B）。
 const META_MIN_FETCH: u64 = 64;
@@ -164,6 +178,8 @@ pub struct SourceReader<S: ByteSource> {
     meta_clock: u64,
     /// 上一次读取结束的位置；`pos` 与之相等即视为顺序延续。
     last_end: Option<u64>,
+    /// 已连续顺序读的次数（达到 [`READ_AHEAD_GROW_AFTER`] 后放大窗口）。
+    sequential_runs: u32,
     /// 这个 reader 还没有读过任何数据（全新 clone 的页读取器）。
     ///
     /// 必须与"`last_end` 为空"区分开：`seek` 之后 `last_end` 也为空，但**不能**
@@ -185,6 +201,7 @@ impl<S: ByteSource + Clone> Clone for SourceReader<S> {
             meta: std::array::from_fn(|_| None),
             meta_clock: 0,
             last_end: None,
+            sequential_runs: 0,
             fresh: true,
         }
     }
@@ -202,6 +219,7 @@ impl<S: ByteSource> SourceReader<S> {
             meta: std::array::from_fn(|_| None),
             meta_clock: 0,
             last_end: None,
+            sequential_runs: 0,
             fresh: true,
         }
     }
@@ -364,7 +382,27 @@ impl<S: ByteSource> Read for SourceReader<S> {
                 None => (out.len() as u64).clamp(META_MIN_FETCH, META_MAX_FETCH),
             }
         } else {
-            READ_AHEAD.max(out.len() as u64)
+            // 保险（第 68 轮复测发现）：上一窗口**没被吃掉一半**就又要新窗口
+            // ⇒ 说明顺序性不足（典型：大页之后紧跟一个小条目），立即回落到 256 KiB，
+            // 不让 1 MiB 的窗口继续用在小读上。命中窗口的读不计入（它们不走这里）。
+            if !self.buf.is_empty() {
+                let consumed = self.pos.saturating_sub(self.buf_start);
+                if consumed * 2 < self.buf.len() as u64 {
+                    self.sequential_runs = 0;
+                }
+            }
+            // 连续顺序读 ⇒ 逐步放大窗口；随机/首次读保持 256 KiB（小页不被放大）。
+            if near_last || self.fresh {
+                self.sequential_runs = self.sequential_runs.saturating_add(1);
+            } else {
+                self.sequential_runs = 1;
+            }
+            let window = if self.sequential_runs >= READ_AHEAD_GROW_AFTER {
+                READ_AHEAD_MAX
+            } else {
+                READ_AHEAD
+            };
+            window.max(out.len() as u64)
         };
         let size = want.min(self.len - self.pos).max(1);
         let data = self.fetch(size, out.len())?;

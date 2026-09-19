@@ -380,6 +380,12 @@ mod tests {
         );
 
         assert_eq!(crate::document::Document::page_bytes(&book, 10).unwrap(), vec![10; 300 * 1024]);
+        let page_reads = reads.lock().unwrap().clone();
+        let page_fetched: u64 = page_reads[open_reads..].iter().map(|(_, n)| *n as u64).sum();
+        assert!(
+            page_fetched <= 512 * 1024,
+            "300 KiB 的页不得触发自适应放大：实际取数 {page_fetched} B"
+        );
         assert!(reads.lock().unwrap().len() - open_reads <= 3);
     }
 
@@ -437,6 +443,109 @@ mod tests {
         }
         std::fs::create_dir_all("../testdata").unwrap();
         std::fs::write("../testdata/sample.cbz", cursor.into_inner()).unwrap();
+    }
+
+
+
+    /// 第 68 轮保险：**大条目之后紧跟小条目**时，窗口必须立刻回落，
+    /// 不能继续用放大后的 1 MiB 去读一个小文件（否则就是白传流量）。
+    #[test]
+    fn window_shrinks_after_a_big_entry_is_followed_by_a_small_one() {
+        use std::sync::{Arc, Mutex};
+        struct CountingSource {
+            data: MemSource,
+            reads: Arc<Mutex<Vec<(u64, usize)>>>,
+        }
+        impl ByteSource for CountingSource {
+            fn len(&self) -> u64 {
+                self.data.len()
+            }
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+                self.reads.lock().unwrap().push((offset, buf.len()));
+                self.data.read_at(offset, buf)
+            }
+        }
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("001.jpg", options).unwrap();
+        writer.write_all(&vec![1u8; 1300 * 1024]).unwrap(); // 大页：会触发窗口放大
+        writer.start_file("002.jpg", options).unwrap();
+        writer.write_all(&vec![2u8; 8 * 1024]).unwrap(); // 小页：必须回落
+        let data = writer.finish().unwrap().into_inner();
+
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let book = super::ZipBook::open(
+            CountingSource {
+                data: MemSource(data),
+                reads: reads.clone(),
+            },
+            "mixed.cbz",
+        )
+        .unwrap();
+        let _ = crate::document::Document::page_bytes(&book, 0).unwrap();
+        let before_small = reads.lock().unwrap().len();
+        let small = crate::document::Document::page_bytes(&book, 1).unwrap();
+        assert_eq!(small.len(), 8 * 1024);
+        let tail = reads.lock().unwrap()[before_small..].to_vec();
+        let max_fetch = tail.iter().map(|(_, n)| *n).max().unwrap_or(0);
+        assert!(
+            max_fetch <= 256 * 1024,
+            "小条目不得沿用放大窗口：本次最大取数 {max_fetch} B"
+        );
+    }
+
+    /// 第 68 轮：**大页**（约 1.3 MiB，真实 ZIP 页的典型尺寸）必须触发自适应放大，
+    /// 把每页的网络读次数从 ~5 次压到 ≤3 次；同时总取数不得远超内容。
+    #[test]
+    fn large_page_grows_the_read_ahead_window() {
+        use std::sync::{Arc, Mutex};
+        struct CountingSource {
+            data: MemSource,
+            reads: Arc<Mutex<Vec<(u64, usize)>>>,
+        }
+        impl ByteSource for CountingSource {
+            fn len(&self) -> u64 {
+                self.data.len()
+            }
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+                self.reads.lock().unwrap().push((offset, buf.len()));
+                self.data.read_at(offset, buf)
+            }
+        }
+        // 一页 1.3 MiB（用 Stored 保证解压后字节数可预期）。
+        let page = vec![7u8; 1300 * 1024];
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("001.jpg", options).unwrap();
+        writer.write_all(&page).unwrap();
+        let data = writer.finish().unwrap().into_inner();
+
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let book = super::ZipBook::open(
+            CountingSource {
+                data: MemSource(data),
+                reads: reads.clone(),
+            },
+            "large.cbz",
+        )
+        .unwrap();
+        let open_reads = reads.lock().unwrap().len();
+        let bytes = crate::document::Document::page_bytes(&book, 0).unwrap();
+        assert_eq!(bytes.len(), page.len());
+        let page_reads = reads.lock().unwrap().clone();
+        let page_fetched: u64 = page_reads[open_reads..].iter().map(|(_, n)| *n as u64).sum();
+        assert!(
+            page_reads.len() - open_reads <= 3,
+            "1.3 MiB 的页应当靠自适应窗口压到 ≤3 次读：实际 {} 次",
+            page_reads.len() - open_reads
+        );
+        assert!(
+            page_fetched <= (page.len() as u64) * 2,
+            "总取数不得远超内容：fetched={page_fetched} content={}",
+            page.len()
+        );
     }
 
     /// 第 62 轮：封面快通道必须在**常数次读**内拿到首张图片，且跳过非图片前缀。

@@ -213,7 +213,9 @@ pub async fn webdav_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
 }
 
 /// 打开 WebDAV 上的书籍。
-/// 策略(strategy): "auto" 先尝试整本下载到 raw/ 缓存, 失败回退流式;
+/// 策略(strategy): "auto" **流式优先**（第 69 轮语义翻转）：命中 raw 缓存则本地打开，
+/// 否则先按需 range 流式读，失败才整本下载到 raw/ 缓存
+/// （实测：整本下载让打开时间 ∝ 文件大小，一本 49MB 的漫画要传 49MB）。
 /// "download" 强制整本下载(失败报错); "stream" 直接流式(无 Range 服务器仍需整本)。
 /// 若已有缓存则直接复用(秒开)。
 /// 这是四层架构的关键: 阅读器只操作本地资源。
@@ -1329,14 +1331,22 @@ pub async fn open_cloud115_cookie_book(
                         None => open_stream(Arc::clone(&client)),
                     }
                 }
-                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
-                    Ok(local_path) => {
-                        tracing::info!("115 整本已缓存: {}", local_path.display());
+                OpenStrategy::Auto => match cloud115_source::web_raw_cache_path(&client.origin(), &path) {
+                    Some(local_path) => {
+                        tracing::info!("115 命中缓存，直接本地打开: {}", local_path.display());
                         open_local(local_path)
                     }
-                    Err(e) => {
-                        tracing::warn!("115 整本下载失败，回退流式: {e}");
-                        open_stream(Arc::clone(&client))
+                    None => match open_stream(Arc::clone(&client)) {
+                        Ok(book) => {
+                            tracing::info!("115 流式打开成功");
+                            Ok(book)
+                        }
+                        Err(e) => {
+                            tracing::warn!("115 流式失败，回退整本下载: {e}");
+                            let local_path = client.download_to_raw_cache(&path, progress)?;
+                            tracing::info!("115 整本已缓存: {}", local_path.display());
+                            open_local(local_path)
+                        }
                     }
                 },
             }
@@ -1570,14 +1580,22 @@ pub async fn open_quark_book(session: u64, path: String, strategy: String) -> Re
                         None => open_stream(Arc::clone(&client)),
                     }
                 }
-                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
-                    Ok(local_path) => {
-                        tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
+                OpenStrategy::Auto => match quark_source::raw_cache_path(&client.origin(), &path) {
+                    Some(local_path) => {
+                        tracing::info!("夸克网盘命中缓存，直接本地打开: {}", local_path.display());
                         open_local(local_path)
                     }
-                    Err(e) => {
-                        tracing::warn!("夸克网盘整本下载失败，回退流式: {e}");
-                        open_stream(Arc::clone(&client))
+                    None => match open_stream(Arc::clone(&client)) {
+                        Ok(book) => {
+                            tracing::info!("夸克网盘流式打开成功");
+                            Ok(book)
+                        }
+                        Err(e) => {
+                            tracing::warn!("夸克网盘流式失败，回退整本下载: {e}");
+                            let local_path = client.download_to_raw_cache(&path, progress)?;
+                            tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
+                            open_local(local_path)
+                        }
                     }
                 },
             }
@@ -2085,14 +2103,22 @@ pub async fn open_baidu_book(session: u64, path: String, strategy: String) -> Re
                         None => open_stream(Arc::clone(&client)),
                     }
                 }
-                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
-                    Ok(local_path) => {
-                        tracing::info!("百度网盘整本已缓存: {}", local_path.display());
+                OpenStrategy::Auto => match baidu_source::raw_cache_path(&client.origin(), &path) {
+                    Some(local_path) => {
+                        tracing::info!("百度网盘命中缓存，直接本地打开: {}", local_path.display());
                         open_local(local_path)
                     }
-                    Err(e) => {
-                        tracing::warn!("百度网盘整本下载失败，回退流式: {e}");
-                        open_stream(Arc::clone(&client))
+                    None => match open_stream(Arc::clone(&client)) {
+                        Ok(book) => {
+                            tracing::info!("百度网盘流式打开成功");
+                            Ok(book)
+                        }
+                        Err(e) => {
+                            tracing::warn!("百度网盘流式失败，回退整本下载: {e}");
+                            let local_path = client.download_to_raw_cache(&path, progress)?;
+                            tracing::info!("百度网盘整本已缓存: {}", local_path.display());
+                            open_local(local_path)
+                        }
                     }
                 },
             }

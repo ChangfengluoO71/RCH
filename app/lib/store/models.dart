@@ -352,7 +352,11 @@ class AppSettings {
     KeyBinds? keys,
     this.cacheDir,
     this.autoConvertCbz = true,
-    this.bookOpenStrategy = BookOpenStrategy.auto,
+    // 默认流式（第 69 轮）：实测 115 的 ZIP 在 auto/整包模式下会把**整本下载**到
+    // raw 缓存（一本 49MB 的漫画 = 一次 49MB 传输；`RCH_PERF_LOG` 里表现为
+    // 数百次 256KB 的顺序 range 读），打开时间因此 ∝ 文件大小，用户感知为
+    // "ZIP 特别慢、页数越多越慢"。流式则按页 range 读，打开只需读目录。
+    this.bookOpenStrategy = BookOpenStrategy.stream,
     this.tabletLayout = 'auto',
     this.updateMirror = '',
     this.updateMirrorList = '[]',

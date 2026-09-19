@@ -2068,3 +2068,39 @@ path 约定没对上 ⇒ 目前传逻辑路径与 provider fid 都被拒），�
 `examples/read_profile.rs`（只读探针）。Dart / 表结构未改。
 
 ---
+
+---
+
+## 2026-09-19｜第69轮：默认流式 + `auto` 语义翻转（治"ZIP 打开整本下载"）
+
+**用户确认的方案**：默认改成流式阅读；用户可在全局设置更改；`auto` 语义也翻转为"流式优先"；
+（后续还要做"整包下载模式下可选：阅读完成后自动删包、封面缓存不删"——本轮未做，见遗留。）
+
+**为什么改（本轮确定性实测）**：只读探针 `examples/read_profile.rs` 修通后
+（`--path` 必须传**路由表精确匹配的 `provider_file_id`**，不能用文件名模糊匹配）测同一本 49MB 的 ZIP：
+- `auto`（=整本下载）⇒ 打开就把整本拉下来：`source.read_at` **56 次 / 12.26MB**，
+  副本 `cache/` 涨到 **58MB**；之后翻页是**本地 19ms/页** ✓
+- ⇒ "ZIP 特别慢、页数越多越慢"的真因是**打开时间 ∝ 文件大小**，不是翻页 ✗
+
+**改动**：
+
+1. `app/lib/store/models.dart`：`bookOpenStrategy` 默认 `auto` → **`stream`**（直接流式）✓
+2. `app/rust/src/api/source.rs`：**115 / 夸克 / 百度**三处 `OpenStrategy::Auto` 翻转为
+   **流式优先**——命中 raw 缓存则本地打开；否则先按需 range 流式；**失败才**整本下载 ✓；
+   同步更新策略文档注释 ✓。SFTP 保持"整包优先"（局域网场景整包合理 ✓）。
+3. **语义翻转对老用户立即生效** ✓：老设置里存的是 `auto`，现在 `auto` = 流式优先 ✓。
+
+**中途两次失败（记录以免重犯）**：
+- 正则按 `\n` 写 ⇒ 仓库源文件是 **CRLF** ⇒ 0 处命中 ✗；
+- 改用 CRLF 容错后 3 处命中，但替换模板里**内层 `match` 少一个闭合括号**（f-string 的 `}}` 转义算错）⇒ 编译失败 ✗
+  ⇒ **立即 `git checkout` 回退该文件**（不在同一文件上盲改循环），随后改用**列表拼接**（不用 f-string 拼括号）重做 ⇒ 编译通过 ✓。
+
+**验证**：全量门禁 **24 targets / 515 passed / 0 failed** ✓；`flutter build windows --debug` 成功 ✓；
+`cargo build --lib` 0 error ✓。
+
+**遗留（下一轮）**：② `delete_raw_package`（只删 raw 包、**封面缓存保留**；不能复用
+`purge_stale_book_cache` ✗ 它会连封面一起删）→ ③ FRB codegen → ④ 新设置
+`deletePackageAfterReading`（默认关）→ ⑤ 设置界面开关 → ⑥ `reader_page.dart:417` 关闭钩子
+→ ⑦ 用探针做流式 vs 整包的 A/B（打开传输量 + `cache/raw` 体积，封面目录不变）。
+
+---

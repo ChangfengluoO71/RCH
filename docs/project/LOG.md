@@ -1152,3 +1152,873 @@ A-4 Dart focused 13/13。
   （表现为 `nativeStartFailed`），改为每次唯一 id。
 
 ---
+
+## 2026-09-19｜第51轮：封面失败安全子原因归因（①）+ 长图/长 PDF 封面分级窗口与顶部裁带（③-1）
+
+**现象**：真实库夸克封面 `failed` 251 个（**首试即败**、与成功同分钟发生、cookie 刚更新）
+⇒ 与"cookie 过期 / 全局限流"不符，属**与资产相关**的失败；但库里只有笼统的 `provider`，无法归因。
+另一半现象是长条漫画 / 超大单图：封面要么直接失败，要么取到**长图正中间**那一段（不是最上面）。
+
+**原因（静态定位，逐条落到代码）**：
+
+- ① 提供商错误原文被有意丢弃 ⇒ `error_code()` 把所有 `Provider(_)` 折叠成 `provider`，
+  "是 404、没封面，还是解码失败"在数据库里不可区分。
+- ③-1 `api/remote_scan.rs`：非归档路径在 `read_size > 32MB` 处**直接返回 `cover_size_limit`**
+  —— 把"封面不可得"当结论（放弃分支），且非归档是 `read_range(0, read_size)` **整包读取**；
+  默认 `crop=None` 走 `resize_to_fill` 的**中心裁剪** ⇒ 长条图封面 = 中间那一段；
+  PDF 被 `classify()` 归为 `ArchiveFile` ⇒ **完全不受** 32MB 检查，而 `PdfBook::open`
+  一次性 `vec![0u8; len]` 读入整包。
+
+**修改内容**：
+
+- **①（`730ce77`，上一提交）**：`Provider(_)` → `provider_failure_code()` 安全子原因枚举
+  （provider:notFound / forbidden / unauthorized / rateLimited / timeout / decodeFailed / noCover / other），
+  **绝不透传**原文；单测覆盖分类 + "含 token 的未知错误必须落 other"。
+- **③-1（本轮）**：
+  - **删除放弃分支**：`MAX_REMOTE_COVER_BYTES`(32MB) → 分级窗口
+    `COVER_HEAD_BYTES`(24MB) → `COVER_HEAD_MAX_BYTES`(64MB) → `COVER_FETCH_LIMIT_BYTES`(128MB，硬上限)。
+    只有超过硬上限才拒绝，且必须给**具体**原因。
+  - **截断 → 增量续读放大窗口重试**（只读 delta，不从头重读）；仍失败才返回具体码
+    `cover_partial_decode_failed`。头部不是图片 / 像素超守卫 ⇒ 不再放大（不白花流量）。
+  - **顶部裁带**：只读头部拿尺寸（`ImageReader::into_dimensions`，不整图解码），
+    高宽比 > 3 且无显式 `crop` 时合成 `(0,0,1,band)` 交给**既有** `decode_cover` 裁剪管线
+    ⇒ 长条图封面 = 最上面那一格；显式用户裁剪**永不**被覆盖。`decode.rs` 未改（不新造管线）。
+  - **PDF**：独立上限 `COVER_PDF_MAX_BYTES`(128MB) + 具体码 `cover_pdf_bytes_limit`（不静默跳过）；
+    自动路径仍只渲染第 1 页（page 来自用户选择）。
+  - **具体码落库**：新增 `safe_malformed_code()` 白名单（6 个 cover 原因码经 `error_code()` 落
+    `remote_cover_job.error_code`）；**其余**内部码与旧行为一致折叠成 `malformed`
+    ⇒ provider / 解码器原文不可能进库、进日志、进 UI。
+  - **像素守卫** `COVER_MAX_PIXELS`(64MP ≈ 256MB RGBA)：解压炸弹在分配整图**之前**被具体码挡住。
+  - **⑤ `bytes_fetched` 埋点**：`perf.rs` **追加** 4 个计数器 + `cover.fetch` JSONL 事件
+    （source/job/kind/size/attempt/window/bytes/code；`RCH_PERF_LOG` 开启，关闭时零行为变化）。
+    归档字节已由 `SourceReadAtBytes` 在 `AdapterByteSource` 层计入，**不重复累加**（否则取证翻倍）。
+
+**影响范围**：`app/rust/src/api/remote_scan.rs`、`app/rust/src/perf.rs`（计数器仅追加）。
+Dart / FRB 公开签名 / 数据库结构 **均未改**（per-job 错误码不在 UI 渲染路径，扫描级码表不受影响）。
+
+**验证**（本轮实测，非推断）：
+
+- 全量 gate：`cargo test --locked -j 2 -- --test-threads=1` → **EXIT=0；24 targets / 495 passed / 0 failed / 2 ignored**
+  （① 基线 489 + 本轮新增 6 个契约用例 = 495）。
+- **A/B 排除法**：`-j 2`（默认并行 test 线程）下本轮 9 failed、把本轮两个文件还原成基线后 **5 failed**、
+  失败集合**不稳定**（基线含 `session_ready_tests`，本轮含 `wake_tests`）⇒ 与本轮改动无关的
+  **并行串扰**：`cache::set_custom_cache_root` 是进程级全局（`OnceLock<RwLock<Option<PathBuf>>>`），
+  并行 test 线程互相覆盖缓存根（该测试文件自己的注释已记录此陷阱）。
+- ⑤ 取证（JSONL 实拍）：`cover.fetch` 两条事件 = `attempt 1 window=512 bytes=512 code=cover_partial_decode_failed`
+  → `attempt 2 window=361734 bytes=361222` ⇒ 合计读取 = 文件大小 361734，**只读增量、未从头重读**。
+- 顶部裁带视觉复核：用"顶部红色标记 + 下方向灰度渐变"的 400×4000 长图走真实解码路径，
+  产出 340×480 封面 = **顶部一条带**（红标记在上、下方是渐变起点）；中心裁剪会得到整片中灰。
+
+**是否完成**：③-1 完成（已验证，待人工在真实书源上复核长图条目产出封面）。**未提交**（工作树待验证）。
+
+**遗留问题**：
+
+- **PDF 仍整包下载**（`PdfBook::open` 一次性读入）：本轮只加独立上限与具体码；
+  "range 化 pdfium 读取"未做 —— 先用 ⑤ 的 `bytes_fetched` 量化 PDF 的整包代价再决定。
+- **硬上限 / 像素守卫是单一旋钮**（128MB / 64MP）：等 ②-b 的**子原因分布**数据回来再定档。
+- **相邻未动**：阅读器远程图片页上限 `MAX_REMOTE_PAGE_BYTES`(32MB，`document/remote_folder.rs`)
+  —— 长条图在**阅读器**里可能仍打不开；属相邻问题，需单独确认后再动。
+- **测试基建**：`cargo test` 默认并行下缓存根全局串扰（CI 的 `.github/workflows/ci.yml` 跑的正是裸 `cargo test`），
+  建议 gate 固定 `--test-threads=1`（与 `docs/reports/p0|p1/*` 既有约定一致）。
+
+---
+
+## 2026-09-19｜第52轮：②-b 有界回填取数 —— 275 个夸克封面失败的根因是**缺 `pdfium.dll`**（+ ③-1 复测修正 3 处）
+
+**本轮目标**：按计划执行 ②-b —— 有界一次性回填，采集存量夸克封面失败的**子原因分布**，
+"先取数据再决定策略"，不预设结论。
+
+**取数结论（真实数据，逐条有取证，非推断）**：
+
+1. **存量真值**：真实数据根是 `D:\Documents\RCH`（自定义根；`%APPDATA%\RCH` 只是默认根残留）。
+   夸克 `failed` = **275**（attempt 1/2/3 = 258/14/3），**全部**是 ① 之前的笼统 `provider`。
+2. **② 原计划被实测证伪**：这 275 条 `long_retry_not_before` **全为 NULL**
+   （`cover_store.rs:840`：永久失败传 `None` ⇒ 无长期补偿资格），
+   `reconcile_cover_compensation_for_source_on` 的谓词命中 **0 行**；实跑
+   `compensation_promoted=0`、`jobs_created=0`。⇒ "复用补偿路径回填存量失败"**永远**不成立，
+   必须另做显式重排队入口。
+3. **有界回填实跑**（新增只读工具 `examples/cover_failure_triage.rs`，只作用于 **DB 副本**）：
+   40 个失败样本重抓 ⇒ **40/40 `cover_decode_failed`、0 成功**；
+   40 条 `cover.fetch` 事件里 **39 个资产是 PDF**、1 个 archive ⇒ 失败**与格式强相关**。
+4. **根因（A/B 坐实）**：正在运行的应用是
+   `D:\Projects\RCH-p1\app\build\windows\x64\runner\Debug\RCH.exe`（12:45 启动），
+   **同目录没有 `pdfium.dll`**（`Release` 由 CI 捆绑；`Debug` 需按 `docs/development/setup.md` 手动放）
+   ⇒ 所有 PDF 打不开 ⇒ 所有 PDF 封面抓取失败。
+   - **A/B-1**（把 DLL 放到 exe 旁）：同一本 17MB PDF ⇒ `failed 275→274 / ready 30→31`，**11 秒出封面**；
+   - **A/B-2**（移走 DLL）：同一资产 ⇒ 新码 `cover_native_lib_missing`，**精确自证**。
+   - 这同时解释了 ① 当初的困惑——"首试即败、与成功同分钟、与 cookie 更新无关、**与资产相关**"——
+     本质是 **PDF 与图片**的差别，不是 provider 行为。
+5. **PDF 封面 = 整包下载（⑤ 首次拿到硬数）**：单枚封面 `CoverBytesFetched = 17,272,201` 字节，
+   **与该 PDF 文件大小一模一样**；样本中 PDF 为 17–52MB，另有一个 189MB 的 mobi。
+   且 `PdfBook::open` 是"**先整包读入、后加载 pdfium**"——A/B-2 里 DLL 缺失也照样先下了 16.5MB。
+
+**③-1 复测修正（3 处，全部由真实数据暴露）**：
+
+- **`perf` 保留键被自定义字段覆盖**：封面事件里一个 `field_str("kind", …)` 就把事件类型改写成
+  `pdf`/`archive`，按 `kind` 过滤整条事件流**全部失效**。改为"先写调用方字段、后写保留键"，
+  并把封面事件字段改名 `asset_kind`。
+- **归档/PDF 封面字节根本没计数**：`AdapterByteSource::read_at` **不经过** `SourceReadAtBytes`
+  （实测该次抓取 0 个 `source.read_at` 事件）⇒ 新增 `CoverDocumentReads` 并在 `read_at` 里累加
+  `CoverBytesFetched`；否则"整包下载"的最大一笔恰恰没有数（原注释的假设是错的，已改正）。
+- **归档"打不开"细分为 3 个安全码**：`cover_native_lib_missing`（原生库缺失＝部署问题）/
+  `cover_document_open_failed` / `cover_page_render_failed`；只按固定枚举分类，**绝不**放原文。
+
+**影响范围**：`app/rust/src/api/remote_scan.rs`、`app/rust/src/perf.rs`、
+新增 `app/rust/examples/cover_failure_triage.rs`（诊断工具：只读副本 + 有界重排队 + 出 JSON 报告）。
+Dart / schema / 真实库 **均未改**。
+
+**验证**：
+
+- 全量 `cargo test --locked -j 2 -- --test-threads=1` → **EXIT=0；24 targets / 496 passed / 0 failed / 2 ignored**
+  （第 51 轮 495 + 本轮新增 1 个"原生库缺失 vs 文档错误"分类用例 = 496）。
+- A/B 报告：`triage3-report.json`（有 DLL ⇒ ready 31、`CoverBytesFetched=17272201`）、
+  `triage4-report.json`（无 DLL ⇒ `cover_native_lib_missing`、同样先下了 17272201 字节）。
+- 取数报告：`triage-report.json`（40 样本 ⇒ 40×`cover_decode_failed`）。
+- 数据安全：真实库 `D:\Documents\RCH\database.db`（346MB，被运行中的应用锁住）
+  **全程只读**（cp 快照 + `sqlite3 -readonly`），所有写入只落在 `/d/Temp` 的副本上。
+
+**遗留 / 下一步（需确认）**：
+
+- **立刻可做（最高优先）**：把 `pdfium.dll` 放到 `app\build\windows\x64\runner\Debug\`（或直接跑 Release/安装包），
+  再跑一次有界回填 ⇒ 这 275 个应当塌缩成个位数真原因。**不做这一步，②/③/④ 都在治不存在的病。**
+- **② 策略要改**：补偿只覆盖 retryable（+6h），永久失败不会自愈 ⇒ 需要显式的
+  "重试失败封面"入口，或让 `provider:rateLimited/timeout` 这类**可重试子原因**进入 retryable。
+- **③/④ 的真问题**：PDF 封面 16.5MB/枚的整包下载 —— range 化 pdfium 读取才治本。
+- **测试污染（既有缺陷，本轮发现）**：`src/api/remote_scan.rs` 的用例没隔离缓存根，
+  会写**默认根** `%APPDATA%\RCH\database.db`（残留 `wake-*`/`ready-*` 书源行）。
+  建议照 `api/source.rs` 的做法在测试里 `set_custom_cache_root(临时目录)`。
+- **CI/gate**：`.github/workflows/ci.yml` 仍跑裸 `cargo test`（并行 test 线程），
+  与 `cache::set_custom_cache_root` 进程级全局冲突 ⇒ 建议固定 `--test-threads=1`。
+
+---
+
+## 2026-09-19｜第53轮：② 自愈策略（可修复失败进长期补偿）+ 测试根隔离 + CI 串行 + pdfium 复测
+
+**本轮目标**：落地第 52 轮结论中经用户确认的三件事，并把"放好 `pdfium.dll` 之后到底还剩什么真失败"测出来。
+
+**修改内容**：
+
+1. **② 自愈策略**（`api/remote_scan.rs::long_retry_is_retryable`）：短退避集合不变
+   （`TransientNetwork | RateLimited`），额外放行两类**可修复失败**，让它们拿到一次 6h 长期补偿资格
+   （`cover_store::LONG_RETRY_DELAY_MS`，仍受 episode 语义约束：同一 episode 不刷新、不复位）：
+   - `MalformedResponse(code)` 里属于**部署 / 策略上限**的码：
+     `cover_native_lib_missing` / `cover_bytes_limit` / `cover_pdf_bytes_limit` /
+     `cover_pixels_too_large` / `cover_partial_decode_failed`（新增常量组 `COVER_RETRYABLE_REASONS`）；
+   - `Provider(message)` 归类为 `provider:rateLimited` / `:timeout` / `:unauthorized` / `:forbidden`
+     （新增常量组 `PROVIDER_RETRYABLE_CODES`）。
+   **动机**：③-1 复测证明"缺 `pdfium.dll` 导致 267 本 PDF 封面全灭"却被判为**永久失败**、
+   `long_retry_not_before=NULL` ⇒ 永远不自愈。修好部署后，这批封面应当能自动补上。
+   仍然**只做固定枚举判定**，不做自由文本推断；两张表都有单测守住不漂移，且
+   "真正不可得"的码（`cover_document_open_failed` / `cover_page_render_failed` /
+   `cover_decode_failed` / `cover_size_missing` / `provider:notFound` …）**保持永久失败**，
+   不会退化成无限重试。
+2. **测试根隔离**（`cache.rs::cache_root`）：测试构建下把数据根锚定到
+   `<TEMP>/RCH-test-<pid>`。**关键**：单测会经**生产函数内部**的 `db::get()` 打开数据库，
+   而连接是进程级 `OnceLock`——只在 `remote_scan` 的测试里 `set_custom_cache_root` 并不够
+   （第 52 轮实测：改完后默认根库的 `remote_cover_job` 仍被更新 12 行）。锚定放在
+   `cache_root()` 第一次解析处，显式 `set_custom_cache_root(...)` 仍然优先，
+   目录名保留 "RCH" 以兼容既有断言。
+3. **CI 串行**（`.github/workflows/ci.yml`）：`cargo test` → `cargo test --locked -- --test-threads=1`
+   （与 `docs/reports/p0|p1/*` 记录的既有门禁一致），消除 `set_custom_cache_root` 进程级全局的并行串扰。
+
+**pdfium 复测（放好 DLL 之后的真失败）**：
+
+- 已把 `D:\RCH\pdfium.dll` 放到运行实例同目录 `app\build\windows\x64\runner\Debug\`（**需重启应用**才生效：
+  `get_pdfium()` 的失败结果被 `OnceLock` 缓存在进程内）。
+- 有界复测（快照副本，`--asset` 定向）：
+  - PDF 0.67MB ⇒ **成功**（`ready 30→31`，3 秒，`CoverBytesFetched=697568`＝文件大小）；
+  - PDF 0.94MB / 1.0MB ⇒ 本轮**未成功也未失败**：300s 超时、`CoverDocumentReads=0`
+    ⇒ worker 在读取前就被 **`provider_budget` 账号级限速**挡住（连续多轮抓取触发的预算等待）——
+    这本身是 ② "带 `provider_budget` 限速"要求的正向证据；
+  - MOBI 33.9MB ⇒ **真失败**：整包读入 33,907,261 字节后 `cover_decode_failed`
+    ⇒ `MobiBook` 能打开、也能给出"第 1 页"字节，但那**不是可解码图片**（MOBI 需要按
+    cover/图片记录定位，而不是把 page 0 当图片）。
+
+**结论**：275 = **267 PDF（部署问题，放好 DLL 即愈）** + **8 MOBI 行 / 4 个文件（真问题，格式专用抓取策略）**。
+
+**影响范围**：`app/rust/src/api/remote_scan.rs`（策略判定 + 2 个常量组 + 1 个单测）、
+`app/rust/src/cache.rs`（测试构建专用根锚定）、`.github/workflows/ci.yml`。生产路径行为改动仅限
+"哪些失败算可重试"（其余不变）；Dart / schema / 真实库未改。
+
+**验证**：
+
+- 全量 `cargo test --locked -j 2 -- --test-threads=1` → **EXIT=0；24 targets / 497 passed / 0 failed / 2 ignored**
+  （第 52 轮 496 + 本轮 1 个"可修复失败获得长期补偿"用例 = 497）。
+- **隔离有效性（前后对比，非推断）**：默认根库 `%APPDATA%\RCH\database.db`
+  在整轮离线跑（371 个 lib 用例）与全量跑（24 targets）**两次**都保持
+  `MAX(updated_at)` 不变、mtime 不变、新行 **0** ✓（第 52 轮同一探针显示 12 行被写）。
+- 真实库 `D:\Documents\RCH\database.db` 全程只读；一致快照（`.backup`）`integrity_check=ok`，
+  真实库自身 `quick_check=ok`（第 52 轮 cp 快照报的 index/freelist 抱怨是**复制时序**假象，不是库损坏）。
+
+**遗留 / 下一步**：
+
+- **MOBI 封面（真问题）**：8 行 / 4 文件 ⇒ 需按 MOBI 的 cover 记录或首个图片记录定位，
+  而不是 `page_bytes(0)`；属 ③"格式专用抓取策略"。
+- **PDF 封面仍整包下载**（17MB/33MB 实测）⇒ range 化 pdfium 读取才治本。
+- **存量 275 行的处理**：它们带的是旧码 + `long_retry_not_before=NULL`，新策略只对**将来**的失败生效；
+  让它们自愈的最短路径是**重启应用（带 pdfium）后跑一次新扫描**（新代际会重建 cover job 并按新码重抓），
+  或用第 52 轮的 `examples/cover_failure_triage.rs` 做有界重排队。
+- 其余同第 52 轮（PDF range 化 / ④ R1 直读缓存 / ② 死角 blocked-retry_wait）。
+
+---
+
+## 2026-09-19｜第54轮：③ 格式专用 —— MOBI 封面定位修复 + 魔数嗅探诊断 + triage 工具校正
+
+**本轮目标**：第 53 轮把 275 个夸克失败分成"267 PDF＝部署问题"与"8 行 MOBI＝真问题"之后，
+把 MOBI 这类**真问题**修掉——封面页定位不能假设 `page_bytes(0)` 是图片。
+
+**根因（静态 + 实测）**：
+
+- `MobiBook` 把所有 `mobi::image_records()` 记录当作"页"。而该 API 的判定是
+  **非图片魔数黑名单**（`FLIS`/`FCIS`/`SRCS`/`RESC`/`BOUN`/`FDST`/`DATP`/`AUDI`/`VIDE`/INDX），
+  **KF8/AZW3 里的 CSS/HTML/其它资源记录会被漏进来**当"页" ⇒ `page_bytes(0)` 不是图片
+  ⇒ 封面 `cover_decode_failed`（实测：33.9MB MOBI 整包读入 33,907,261 字节后失败）。
+  同样的记录也会挤占**阅读器**的页序（第 1 页显示不出来）。
+- 另外：`image` 只启用了 `jpeg/png/webp/gif` 特性，BMP/TIFF/HEIF 即使被识别出来也解不开
+  ——此前的错误码无法区分"不是图片"与"是图片但不支持的格式"，只能靠猜。
+
+**修改内容**：
+
+1. `decode.rs`：新增**魔数嗅探器**（不依赖 `image` 编译特性）：
+   `sniff_image_magic` / `image_magic_decodable` / `image_magic_label`。
+   既能过滤"看起来是图片"的记录，也能把 bmp/tiff/heif/zip/text-like **命名**出来——
+   这正是"为什么解不开"的答案，且只记格式名、不含任何内容。
+2. `document/mobi.rs`：只保留**魔数确实可解码**的图片记录（同时修好封面与阅读器页序）；
+   全部不可解码时给出明确错误。
+3. `api/remote_scan.rs`：
+   - **有界换页** `decode_first_usable_page`：先试用户选择/默认页，不是可解码图片时
+     向后最多扫 3 页取第一张真图；上限/像素类失败不换页（换页无意义）。
+     这是**格式无关**的兜底（不只 MOBI）。
+   - **诊断事件** `cover.probe`：头部探测失败时记 `magic` + `len`（安全标签），
+     不再只能看到一个笼统码。
+4. `examples/cover_failure_triage.rs`：**session_epoch 对齐**。claim 的联接要求
+   `epoch.session_epoch = job.session_epoch`，而应用运行中会**轮换** `session_epoch`
+   （实测 gen 24 从 `c31b67270b…` 换成 `86760e3d…`），历史 job 因此谁都领不走；
+   产品侧的补偿路径在推进时会把新 epoch 写回 job，本工具手工重排必须补同一步。
+   **仅作用于副本。**
+
+**验证（实机 + 门禁）**：
+
+- 全量 `cargo test --locked -j 2 -- --test-threads=1` → **EXIT=0；24 targets / 499 passed / 0 failed / 2 ignored**
+  （第 53 轮 497 + 本轮 2 个用例：魔数嗅探、封面页回退＝`cover_falls_back_to_the_first_decodable_page`）。
+- 实机样本（同一批此前**全部失败**的资产，放好 `pdfium.dll` 后）：
+  | 资产 | 结果 | 耗时 | 读取字节 |
+  |---|---|---|---|
+  | PDF 0.67MB | ✅ ready | 3s | 697,568（＝文件大小） |
+  | PDF 0.94MB | ✅ ready | 4s | 985,898（＝文件大小） |
+  | PDF 1.0MB | ✅ ready | 5s | 1,051,170（＝文件大小） |
+  | PDF 17MB | ✅ ready | 11s | 17,272,201（＝文件大小） |
+  | **MOBI 33.9MB** | ✅ ready（**修复前 `cover_decode_failed`**） | 8s | 71,014,522（两行各整包一次） |
+  ⇒ 样本覆盖 PDF 与 MOBI 两类、**0 失败**；`CoverFailures=0`。
+- **一次误判的澄清**：两枚小 PDF 曾出现"300s / 0 读取 / job 回到 pending"，
+  一度像是代码或限速问题。静态核对 claim 联接后确认：是**应用轮换 `session_epoch`**
+  使历史 job 与 epoch 行不再相等（`DownUrlRequests=0`、`RangeStatus429=0`、`WafCooldowns=0`
+  证明**根本没有发出请求**）。产品补偿路径自带归一化，**产品代码无碍**；补齐工具侧对齐后
+  5 秒内成功。
+
+**影响范围**：`app/rust/src/decode.rs`、`app/rust/src/document/mobi.rs`、
+`app/rust/src/api/remote_scan.rs`、`app/rust/examples/cover_failure_triage.rs`。
+阅读器行为改动仅限 MOBI：页集合从"含非图片记录"变为"只含可解码图片"（这是修复）。
+
+**遗留 / 下一步**：
+
+- **存量 270 行**：仍带旧码（`provider`）+ `long_retry_not_before=NULL`，新策略只对将来生效
+  ⇒ 最短路径仍是"重启应用（带 pdfium）后跑一次新扫描"（新代际按新码重抓）。
+- **BMP/TIFF/HEIF 类图片**：现在能**命名**但解不开（`image` 特性未启用）。
+  若 ②-b 的分布里出现这些标签，再加特性即可（一次 Cargo.toml 改动）。
+- **PDF 封面整包下载**（17MB/33.9MB 实测）⇒ range 化 pdfium 读取仍待做。
+- ④ R1 直读缓存、② 死角（blocked/retry_wait 冷却恢复）同前。
+
+---
+
+## 2026-09-19｜第55轮：真实库扫描审查 —— 115 源 225 个 `notFound` 的**结构性根因**（同指纹双源 id 冲突）+ 自愈重挂 + 诊断通道
+
+**本轮目标**（用户指令：进入下一步、紧盯日志、审查扫描真实库的具体问题）：
+在真实库 `D:\Documents\RCH` 上做**只读**审查，找出扫描/封面问题的具体原因并修掉。
+
+**审查方法**：真实库仅只读（`quick_check` + 只读查询）+ `.timeout 60000` 的 SQLite `.backup`
+一致快照（`quick_check=ok`，389MB）；所有写入只落在 `/d/Temp` 的副本上。
+
+**根因（经三轮假设被证据推翻后确定）—— 同指纹双源导致 `library_index.id` 冲突**：
+
+1. 225 个 `notFound` 的行**都在**（id/路径/kind/size/指纹/代际/未删 全对），
+   但它们的 `source_id` 是**另一个源**：`sync_62556ad8_1786286465729`
+   （同一 115 账号的同步镜像），而不是 job 所属的 `115_1789360028897` —— **225/225 全部如此**。
+2. 机制：`library_index.id = hash(源指纹, 路径)` 且是 **PK**；两个书源指向**同一个远端库**时
+   `book_sources.fingerprint` 相同 ⇒ **id 相同** ⇒ 后扫描的一方**覆盖**对方的行。
+3. `cover_source_info` 用 `WHERE source_id=?1 AND path=?2` 查 ⇒ 查不到被镜像源持有的行
+   ⇒ 返回 `None` ⇒ `NotFound` ⇒ 落 `_ => Failed` **终态**，`long_retry_not_before=NULL`
+   ⇒ **永不重试**（实测卡 2 小时以上）。时间线吻合：失败集中在 12:56:11–12:56:29，
+   正是 gen 17 发布（12:56:11）之后。
+4. 当前真实库总账：quark 275（= pdfium 部署 + MOBI 记录黑名单，前两轮已修）、
+   115 `notFound` 225 + `route_missing` 214（后者是既有 F1/F2 已识别的孤儿）。
+
+**被推翻的两个假设（记录在案，避免重复走弯路）**：
+
+- ❌ "`library_index.asset_kind` 老行为空 ⇒ 解析器强匹配失败"：空 kind 的 292 行是另一批历史行；
+  225 个失败行的 kind **非空**。
+- ❌ "preview 的 `Running` 门槛是这 225 的直接原因"：这些资产的行齐备；
+  该门槛是伴随现象（但对"扫描运行期之外的 staging 解析"仍是真缺陷，一并修掉）。
+
+**修改内容**：
+
+1. **解析器按指纹语义查索引**（`cover_source_info`）：索引行改为
+   "先认本源的行；本源没有时接受**同指纹兄弟源**的行"，仍要求 `path` 一致、`deleted=0`。
+   指纹缺失的源行为不变（严格超集，无回归）。
+2. **preview 跳去掉 `Running` 要求**（`cover_source_info` + `cover_route_for_job`）：
+   改"最新代际 + 身份守卫（`session_epoch<>''` + 源指纹一致）"。
+3. **自愈重挂（reconcile 新增 (1b) 桶）**：把**现在确实能解析**的
+   `notFound`/`route_missing` 终态失败重挂为 `pending`（`long_retry_pending=1`，
+   claim 时消耗 ⇒ **一次**重试）。谓词与解析链**同构**：权威路由与索引行同时就位且路径一致，
+   或有身份守卫的 staging 行。**只查其一会把"有索引行但没有路由"的资产误重挂**
+   ——该错误被既有 L2 契约用例当场抓到并修正。
+4. **诊断通道**（新增 `remote_scan::diag`）：扫描终态 / 封面失败 / reconcile 结果写入
+   `<数据根>/scan_diag.log`（UTC+`Z`，只写安全枚举码 + 12 位短哈希，脱敏有单测）。
+   动机：应用连跑 2.5 小时、产生 225 个封面失败，而 `errors.log`/`scan_diag.log`
+   **一行未增**——"盯日志"当时是空通道。
+5. `examples/cover_failure_triage.rs` 增加 **115 分支**（`cloud115_cookie_connect`）
+   与 `session_epoch` 对齐，用于端到端验证。
+
+**验证**：
+
+- 全量 `cargo test --locked -j 2 -- --test-threads=1`（见下）；
+  补偿契约 14/14（新增"同 id 异源（同步镜像）持有的资产必须可重挂"用例）；
+  L2 契约"重复通知不得重复推进"回归修正后通过。
+- **真实库离线核对**（只读）：修正后的重挂谓词在真实库命中
+  `notFound 225/225`、`route_missing 214/214`。
+- **端到端实跑**（快照副本 + 真实 115 账号，只写副本）：
+  夹具只留 1 个 `notFound` 额度（避免一次重挂 64 本＝数 GB），
+  结果 `compensation_promoted=8`（= 目标 1 + 真的可解析的 orphan 7，与谓词口径一致）、
+  `ready 50 → 60`（**10 个原先失败的封面全部产出**）、`notFound 225 → 224`、
+  `route_missing 214 → 205`、`cover.fetch=10`、**`CoverFailures=0`**、`11.9MB`；
+  `scan_diag.log` 同时落行 `cover_reconcile source=115_… promoted=8 …`。
+
+**影响范围**：`src/api/remote_scan.rs`、`src/remote_scan/cover_store.rs`、
+新增 `src/remote_scan/diag.rs`、`examples/cover_failure_triage.rs`、
+`tests/remote_cover_compensation_contract.rs`。数据 / Dart / API 面未改。
+
+**审查报告**：`docs/reports/rg-b/2026-09-19-scan-audit-real-library.md`（含全部证据与推翻记录）。
+
+**遗留 / 待你处理**：
+
+- **真实库里的测试源**：`b1-real-delivery`（`interrupted`，config 仍 `running`）+
+  两个 `b1-real-delivery-1789…`；残留足迹 12 张表（见报告 §5）。
+  **建议在应用内「书源管理」删除**（走应用自己的清理路径）；**不要在应用运行时用 SQL 直写真实库**。
+- **存量 439 行**会在下一次 session 事件（例如重启/新扫描）由新的 (1b) 桶自动重挂
+  ——不需要人工回填。
+- **停止应用后**才建议做的数据修复（可选）：把同指纹双源的行做一次显式归一
+  （当前靠"按指纹解析"兼容，不改数据也能工作）。
+- ④ R1 直读缓存 / ② `blocked`/`retry_wait` 冷却恢复 / PDF range 化：同前。
+
+---
+
+## 2026-09-19｜第56轮：书源页刷新按钮 + 删除流兜底 + "删了没反应"诊断
+
+**用户报告**：删掉三个测试书源后"都没反应"，希望书源页有个刷新按钮。
+
+**诊断（只读真实库 + 静态分析）**：
+
+1. **删除本身成功了**：`book_sources` 只剩 4 个源（`115_…` / `local_…` / `quark_…` / `sync_…`），
+   三个 `b1-real-delivery*` 已不在；`errors.log` 仍是 12:30（**没有**新异常）
+   ⇒ 不是"删除失败"，也不是"删除抛异常导致界面没刷新"。
+2. **书源树的刷新链路本身没有缓存问题**：`SourceTreePanel` 是 `StatelessWidget` +
+   `ListenableBuilder([LibraryCatalogStore, LibraryStore])`；`removeSourceWithCleanup`
+   末尾有 `notifyListeners()` + `saveToDisk()` + `LibraryCatalogStore.loadTree()`；
+   Dart 的 `loadTree()` 用 Rust `dbSourceTree()` 且**加载完才 notify**；
+   Rust 侧 `db_source_tree()` 只读 `book_sources WHERE deleted=0` ⇒ 已删源不会再进树。
+   ⇒ 仅凭这条链路解释不了"没反应"，需要用户确认具体是哪个视图。
+3. **发现真缺陷：删除不彻底（10 张表残留）**。`db::delete_source_on` 清了
+   `read_records` / `book_metas` / `book_tags` / `scrape_*` / `catalog_revisions` /
+   `library_index` / `source_alias` / `source_snapshot` / `book_sources`（+ tombstone），
+   但**完全不碰** `remote_scan_*` / `remote_cover_*`。实测残留：
+   `remote_scan_state` 3、`remote_scan_config` 3、`remote_scan_epoch` 3、
+   `remote_scan_baseline` 2、`remote_cover_job` 6、`remote_cover_variant` 6、
+   `remote_cover_ref` 6、`remote_asset_route` 9、`remote_listing_state` 6、
+   `remote_directory_cover` 3。
+   其中 `b1-real-delivery` 的 `remote_scan_state.status` 仍是 **`interrupted`**，
+   而启动恢复 `remoteScanRecoverInterruptedAll()` 是**全局**（不 join `book_sources`）
+   ⇒ 每次启动都可能去"恢复"一个已经不存在的源（`scan_diag.log` 的
+   `startup_recovered_residual_running=1` 正是此类）。
+
+**本轮修改（UI，低风险）**：
+
+- `ui/home_page.dart`：书源页头部新增 **⟳ 刷新按钮**，调用新的 `_refreshSources()`：
+  `LibraryStore.load(force:true, persist:false)` → `LibraryCatalogStore.loadTree()` →
+  `RemoteScanCoordinator.restoreStatuses(store.sources)` → `setState`。
+  全部为重载/只读，不写业务数据。
+- `ui/home_page.dart`：删除流加兜底——`removeSourceWithCleanup` 用 try/catch 包住，
+  失败只记日志，**随后照样刷新视图**，避免"某一步失败 ⇒ 界面停在旧状态"。
+- 验证：`dart analyze lib/ui/home_page.dart` → **No issues found**。
+
+**遗留（待确认后再动 Rust）**：
+
+- **删除彻底化**（建议 `DeleteSource` 补删上述 10 张表 + 该源的封面缓存）；
+- **孤儿兜底清理**（建议启动时扫一次：`book_sources` 里已不存在的 source_id 的
+  `remote_scan_*` / `remote_cover_*` 行直接清掉）——这样用户库里现有残留无需手工修数据。
+- 需用户确认"没反应"具体是**哪个视图**（左树 / 扫描状态 / 统计 / 封面），
+  以便确认是否还存在未发现的 UI 投影问题。
+
+---
+
+## 2026-09-19｜第57轮：删除书源彻底化 + 启动孤儿清理（`remote_*` 18 张表）
+
+**用户确认的现象**：删除后**左侧书源树**仍显示那三个测试源；并选择方案 **A**
+（补删除路径 + 启动孤儿清理）。
+
+**补充排查（推翻一个假设）**：曾以为"运行中的旧构建缺 `loadTree()`"——用 `git log -S`
+核对后**不成立**（`LibraryCatalogStore.instance.loadTree()` 在删除路径里 **09-15** 就有了，
+而运行中的 exe 是 09-18 22:33 构建）。同时静态确认：
+
+- `SourceTreePanel` = `StatelessWidget` + `ListenableBuilder([CatalogStore, LibraryStore])`；
+- `db_source_tree()` 只读 `book_sources WHERE deleted=0`，树的项**只**来自这张表（无其它注入）；
+- 因此**当前代码**不会再让已删源出现在树里。最可能的机制是删除链中途某一步失败
+  （今天库多次被占用，实测只读查询都撞到 `database is locked`）导致 `loadTree()` 没走到，
+  而 `notifyListeners()` 重建时树的数据源没换 ⇒ 停旧行。第 56 轮的 try/catch + 无条件
+  `_refreshSources()` 正好覆盖这一机制。
+
+**本轮修改（Rust）**：
+
+1. `remote_scan/persistence.rs`：新增
+   - `delete_remote_rows_for_source_on(conn, source_id, book_key_prefix)`：
+     删除该源在 **15 张 `source_id` 直连表** + **2 张 `book_key` 前缀表**
+     （`remote_cover_dependency` / `remote_cover_partial_cache`）里的全部行；
+     内容寻址的 `remote_cover_blob` 无源关联列，删掉 job/ref 后成为不可达垃圾，交给缓存 GC。
+   - `purge_orphan_remote_rows_on(conn)`：删除**源已不存在**
+     （`source_id NOT IN (SELECT id FROM book_sources)`）的孤儿行；只删孤儿，存活源一行不动。
+2. `db::delete_source_on`：在删除 `book_sources` 之前调用上面的定向删除
+   （历史实现只清 `read_records`/`book_metas`/`book_tags`/`scrape_*`/`catalog_revisions`/
+   `library_index`/`source_alias`/`source_snapshot`，**完全不碰** `remote_*`）。
+3. `recover_all_interrupted_scans`（启动期，已被 `main.dart` 调用 ⇒ **无需改 Dart、无需 FRB 重生成**）：
+   在恢复 `running` 残留的同时跑一次孤儿清理，并把结果写进
+   `scan_diag.log`（`startup_purged_orphan_remote_rows=N` / 失败时 `…_failed=`）。
+
+**验证**：
+
+- 新增 2 个用例（`orphan_cleanup_tests`）：
+  `orphan_rows_are_purged_but_live_sources_survive`（只删孤儿 + 幂等）、
+  `deleting_a_source_removes_its_remote_rows`（三类表一次清干净）→ 全绿。
+- **真实库离线预测**（只读，条件与 DELETE 完全一致）：下一次启动将清理 **53 行孤儿**，
+  分布在 12 张表（state 3 / config 3 / epoch 3 / baseline 2 / cover_job 6 / variant 6 /
+  ref 6 / asset_route 9 / listing_state 6 / directory_cover 3 / view_revision 3 /
+  dependency 3）；存活源的 `remote_scan_state` 2 行**不受影响**。
+- 全量门禁见下。
+
+**影响范围**：`src/remote_scan/persistence.rs`、`src/db/mod.rs`。
+Dart / FRB 接口 / 表结构均未改（只是把"删除"做完整）。
+
+---
+
+---
+
+## 2026-09-19｜第58轮：重建 + 重启 + 端到端验证（用户授权代为执行）
+
+**执行**：关闭运行中的旧构建（PID 5212，09-18 22:33）→ `flutter build windows --debug`
+（39.3s，`BUILD_EXIT=0`；`rust_lib_app.dll` 与 `flutter_assets` 均为新构建，`RCH.exe` 是未改动的 C++ runner
+所以时间戳不变）→ 确认 `pdfium.dll` 仍在 exe 同目录 → 重启（PID 21584，16:23:03）。
+
+**验证（逐项有证据）**：
+
+1. **启动孤儿清理生效**：`scan_diag.log` 新增
+   `2026-09-19T08:23:04Z startup_purged_orphan_remote_rows=53`
+   ——与第 57 轮的**离线预测 53 行完全一致**；复查 11 张表的孤儿行 **53 → 0**。
+   这一行同时证明：新 Rust 代码已生效 + `remote_scan::diag` 诊断通道在真实环境可用。
+2. **视觉验证 ⟳ 按钮**（ffmpeg gdigrab 抓 RCH 窗口 → 人工复核）：
+   书源头部三个图标依次为 **⟳ 刷新 · 导入本地漫画 · 添加**；左树只剩 日漫 / 夸克 / 115 网盘
+   （三个 `b1-real-delivery*` 测试源已消失 ⇒ 用户的删除 + 本轮清理都正确）。
+   证据：`/d/Temp/dsh-step31/win.png`。
+3. **注意到的现状（非本轮缺陷）**：重启后会话是进程内的 ⇒ 夸克/115 现在显示"需连接"，
+   因此**还没有 session 事件**去触发自愈重挂（`cover_reconcile` 行尚未出现）；
+   同时旧构建在关闭前（16:12–16:15）又把 252+ 个夸克封面重抓失败（当时既无 pdfium 也无新码，
+   所以仍是笼统 `provider`，计数 275 → 284）。
+   ⇒ 自愈的触发点是**连接书源**（点一下夸克/115）：届时会走新的解析/重挂/具体码路径。
+
+**未做（需用户操作）**：点击夸克（或 115）建立会话以触发自愈重挂；
+不建议用 UI 自动化模拟点击（坐标风险高于收益）。
+
+---
+
+---
+
+## 2026-09-19｜第59轮：同名书源消歧 + 刷新/删除失败可见 + setState 守卫 + **恢复「选择文件夹」入口**
+
+**用户报告**：删除 115 直连源后点刷新"仍没有反应"；并且在重建 115 书源时发现
+**"选文件夹自动填 ID"的功能没了**，要求查历史并加回来。
+
+**排查 1（"删了没反应"）——删除其实成功了**：
+
+- 真实库里 `115_1789360028897` 已不在，且其 900+ 行 `remote_*` 被**一并清干净**
+  （第 57 轮新加的"删除彻底化"在生产生效 ✓）；
+- 树里剩下的那个「115 网盘」是 **`sync_62556ad8_…`**（`remote_only=1`，来自设备
+  `bfa5b71a-…` 的**同步镜像**），**与直连源同名** ⇒ 删掉直连源后看起来像"没反应" ✗。
+  截图证据：`/d/Temp/dsh-step31/win2.png`（左树 3 个源 = 日漫 / 夸克 / 115 网盘[仅索引]）。
+- 日志（第 55 轮新通道）确认：`cover_reconcile source=115_… promoted=64` —— **自愈重挂在生产生效**；
+  `scan_terminal source=115_… status=degraded error=storage`（删源前的增量扫描降级）；
+  `errors.log` 里 12:14/12:30 的 `PanicException(cover progress invariant violation:
+  tracked 267 > discovered 9)` 来自**旧构建**，新构建未再出现（该不变量早已按"正常情况"处理）。
+
+**排查 2（"选择文件夹没了"）——历史考证**：
+
+- `app/lib/ui/cloud115_folder_picker.dart`（`Cloud115FolderPickerDialog` + `Cloud115FolderChoice`）
+  **全分支只在 `1bf2e37` 出现过一次**，`git log --all -S "Cloud115FolderPicker"` 只命中该提交，
+  `--follow` 显示该文件整个历史就这一条 ⇒ **它从未被任何调用点接线**（不是被谁删掉的，
+  而是一直没接上）。`581e3c7`（扫码获取 Cookie）也没有删除任何"选文件夹"代码（diff 无对应 `-` 行）。
+
+**本轮修改（全部 UI，静态分析通过）**：
+
+1. **恢复「选择文件夹（自动填根文件夹 ID）」入口**（`ui/home_page.dart`）：
+   新增文件内辅助 `_pick115RootFolder(...)`——用当前 Cookie 建**临时会话**
+   → `Cloud115FolderPickerDialog`（`listDirectory` = `cloud115CookieList`）→ 选中即把 `cid`
+   写回「根文件夹 ID」（名称留空时顺带填名）→ `finally` 断开临时会话。
+   **两个对话框都接**：`AddSourceDialog`（115 分支）与编辑书源对话框（`src.is115`）。
+2. **同名源消歧**（`ui/source_tree.dart`）：统计重名，重名书源的**标题**补短 id
+   （如 `115 网盘 ·#17862864`），避免"删了一个看起来没反应"；不重名时不加噪声。
+3. **刷新/删除失败可见**（`ui/home_page.dart`）：`_refreshSources()` 与删除失败分支
+   不再只 `debugPrint`，改为 **SnackBar 提示 + 写 `scan_diag.log`**
+   （`sources_refreshed sources=N devices=M` / `sources_refresh_failed` / `source_delete_failed`）。
+   这是我上轮 try/catch 引入的"静默"缺口，本次补齐。
+4. **`setState` 守卫**（`ui/source_browser.dart`）：47 处 `setState` 统一走新的
+   `_safeSetState`（内部 `if (!mounted) return;`），消除
+   `setState() called after dispose(): _SourceBrowserState`（16:31:56 实测日志）。
+
+**验证**：`dart analyze lib/ui/{home_page,source_tree,source_browser}.dart` → **No issues found**；
+重建 + 重启见下（本轮末尾）。
+
+**遗留**：`scan_terminal … status=degraded error=storage`（115 增量扫描降级）待单独排查；
+"选择文件夹"需要用户重建后点开对话框目视确认（本会话无法模拟点击）。
+
+---
+
+---
+
+## 2026-09-19｜第60轮：封面"很慢"的量化根因 + 单封面读取预算（病态归档不再拖死队列）
+
+**用户报告**：重建 115 书源后"感觉很慢，且还没有扫描成功的"。要求实时盯进度。
+
+**实时监测（20 秒一帧采样，`/d/Temp/dsh-step31/watch.log`）**：
+
+- **扫描本身健康**：`remote_scan_listing_stage` 127 → 279（约 **+30/21s ≈ 86 目录/分钟**），
+  `pending_dirs` 恒为 0（无积压）；16:47:18 `scan_terminal … status=complete mode=full gen=1` ✓
+  ——所以"扫描没成功"在监测期间已经变成**成功**（此前只是还在跑）。
+- **封面完全不动** ✗：`ready` 恒为 0、`running` 恒为 1、`pending` 116 → 283，
+  `remote_cover_blob` 恒为 94 ⇒ 单线程 worker 被**一个 job** 占住。
+
+**根因（三层证据）**：
+
+1. **哪本书**：用 `library_index_id = sha256(fingerprint|path)` 反查 asset_id ⇒ 命中的是
+   **`美麗新世界 1- 262話 [完結].zip`，2,238,456,091 字节（2.08GB）**。
+2. **慢在哪（有界探针，副本上只留这一个 job）**：
+   574 次范围读、每次 **16.1KB**、115 CDN 单次往返 **平均 243.5ms** ⇒ **≈140 秒/枚**且跑不完。
+3. **为什么读了这么多（按偏移分析）**：读的偏移**连续覆盖文件尾部 233.5MB**
+   （1,993,342,976 → 2,238,185,472，步长 512KB）⇒ **EOCD 定位不到的归档打开逻辑在尾部一路回扫**，
+   属病态归档（或非标准 zip）。
+
+**中途被自己否掉的方案（记录在案）**：先做了"4MB 前进式预取窗口"，探针显示
+**字节反而暴增**（220 次 × 4MB ≈ 880MB；反向跳读抓不住）；换成"512KB 对齐块 + LRU"仍不行
+（412 次 × 512KB ≈ 210MB，因为访问跨度是 233MB）⇒ 两个方案都**回退**，
+结论是问题不在读路径，而在**归档打开本身没有成本上限**。
+
+**最终修改（`src/api/remote_scan.rs`）**：
+
+- `AdapterByteSource` 加**单次封面抓取的读取预算**（三重上限）：
+  - 字节 `COVER_READ_BUDGET_BYTES = 24MB`（只按字节不够：16KB 级读要 1500+ 次仍是 6 分钟）
+  - 次数 `COVER_READ_BUDGET_READS = 192`（≈ 最坏 47 秒）
+  - 挂钟 `COVER_READ_BUDGET_MS = 45_000`
+  超限返回稳定文案 `cover-read-budget exceeded …`。
+- 新失败码 `cover_read_budget_exceeded`（加入 `COVER_REASONS` 白名单，**终态**：同一文件重试
+  结果相同，要救只能调大预算）+ `cover_open_reason` 识别该文案 ⇒ 具体码而不是笼统"打开失败"。
+- 附带：归档/PDF 的每次远端读**逐次持 Cover 许可**（此前归档路径完全不持许可，
+  与"许可只覆盖网络段"的冻结决策不一致）。
+
+**验证（A/B，同一本 2GB 资产、同一条生产路径、副本上执行）**：
+
+| 指标 | 修复前 | 修复后 |
+|---|---|---|
+| 结果 | 永不完成（>140s） | **~46s 中止**，码 `cover_read_budget_exceeded` |
+| 远端读次数 | 574（且继续） | 192/枚内截止 |
+| 读取字节 | 9MB+（且继续） | **0.53MB** |
+| 队列影响 | 295 个 job 全被堵 | worker 立即转下一个 job |
+
+- 全量门禁：**24 targets / 505 passed / 0 failed / 2 ignored**（新增 1 个预算用例）。
+- 新增用例 `adapter_byte_source_stops_at_the_read_budget`：超预算必须报错、文案可被
+  `cover_open_reason` 识别、且映射到具体码。
+
+**影响范围**：`src/api/remote_scan.rs`（读取预算 + 新码 + 许可 + 1 用例）。Dart / 表结构未改。
+
+**遗留**：病态归档为什么会有 233MB 的无 EOCD 尾巴值得单独看（是否非标准 zip / 拼接文件）；
+治疗性方案是"归档打开前置成本上限 + 仅中心目录/首条目读取"，而本轮先把**队列不再被拖死**做实。
+
+---
+
+---
+
+## 2026-09-19｜第61轮：启动期回收**过期封面租约**（重启后 job 卡死 running 的修复）
+
+**发现（第 60 轮重启后实测）**：应用重启后，上一进程留下的封面 job 仍是 `state='running'`、
+`lease_until=16:53:52`（**早已过期**）——而 claim 只认 `pending`
+⇒ 该 job **永远不再重试**，界面上永远显示"进行中"。
+采样证据：重启后 2 分钟 8 帧全静态（`pending 295 / running 1 / ready 0 / blobs 94`）。
+
+**修改（`src/remote_scan/persistence.rs`）**：
+
+- 新增 `recover_expired_cover_leases_on(conn, now)`：`state='running'` 且
+  `lease_until IS NULL OR < now` ⇒ 回到 `pending`（清租约与退避）；**未过期的租约不动**
+  （不影响仍在活跃进程租期内的行）。
+- 挂进既有启动修复 `recover_all_interrupted_scans`（`main.dart` 已在调用 ⇒ **无需改 Dart/FRB**），
+  回收行数写 `scan_diag.log`：`startup_recovered_cover_leases=N`。
+- 新增用例 `expired_cover_leases_are_recovered_on_startup`：过期回收、未过期不动。
+
+**验证**：全量门禁 **24 targets / 506 passed / 0 failed / 2 ignored**。
+
+**影响范围**：`src/remote_scan/persistence.rs`。生效需要下一次重建（本轮**未**立即重启应用，
+以免打断用户正在进行的"连接书源"操作）。
+
+**同时记录的现状**：重启后**会话是进程内的**，夸克/115 显示"需连接"⇒ 封面 worker 领不到 job
+⇒ 队列静止；连接书源（点一下）后会触发 session-ready ⇒ reconcile + worker 唤醒。
+
+---
+
+---
+
+## 2026-09-19｜第62轮：调研 —— 封面打开成本有没有比方案 C 更好的做法（**结论：有，且 C 不可实现**）
+
+**用户提问**：调研一下相比于 C（读文件头 + 只读 EOCD/中心目录）有没有更好的方案。
+
+**方法**：① 读项目现有实现与既有分析注释（`src/document/zip.rs:193-209`）；
+② 由子代理**只读**分析本地 `zip` crate 源码（`Cargo.lock` 锁 2.4.2）定位 EOCD 与 CD 解析行为，
+含 file:line；③ 用第 60 轮**实测**探针日志复核读偏移分布；④ 查上游 issue（#231 / #280）。
+
+**关键事实**：
+
+1. `zip 2.4.2` 的 EOCD 搜索是**固定 2048 B 窗口、步进 2045 B、无上限**（`read/magic_finder.rs:115/81-94`，
+   `spec.rs:621`）⇒ 最坏扫全文件；且 **`Config`/`ArchiveOffset::Known` 无法短路它**
+   （只管 CDFH 子搜索，`spec.rs:698-704`）。
+2. **`ZipArchive::new` 对每个条目都额外读 30 B local header**（`read.rs:1259` → `read.rs:362-378`）
+   ⇒ 打开成本 ≈ **5 read + 2 seek / 条目**，与 CD 字节数无关；`by_index` 又必须先用完整 CD
+   填充 `shared.files`（`read.rs:1115-1119`）⇒ **方案 C 的两半在现有依赖下都做不到**。
+3. **实测复核（更正第 60 轮的一个误判）**：已发布代码的探针日志显示
+   367 次读 / **186 个不同偏移**，散布 **0 → 2.24 GB**、相邻间隔 40KB–318KB 不规则、单次平均 **1.5 KB**
+   ⇒ 主因是**每条目 local-header 校验读**，**不是**"尾部 233MB 连续回扫"
+   （后者是当时 512KB 块缓存方案的假象，该方案已回退）。
+4. 量级：~5000 条目的漫画 ⇒ **≈1 万次请求 × 243ms ≈ 40 分钟/枚**，而 worker 单线程 ⇒ 一枚堵死全队列。
+5. 位 3（data descriptor）条目：CD 路径支持（`read.rs:1308`），
+   但公开的流式 API `read_zipfile_from_stream` **直接拒绝**（`types.rs:710-715`）⇒ 自研路径必须自行兜底。
+
+**结论与方案对比（详见报告）**：`docs/reports/rg-b/2026-09-19-zip-cover-open-research.md`
+
+| 方案 | 打开成本 | 可行性 |
+|---|---|---|
+| A 现状 + 预算（已上线） | 有界但大归档拿不到 | ✅ 保留为兜底 |
+| B 调大预算 | 仍 O(条目数) | 只缓解 |
+| **C 头 4B + 只读 EOCD/CD** | —— | ❌ **不可实现**（crate 无此 API） |
+| **D 封面专用最小读取器（推荐）** | **4–6 次请求，O(1)** | ✅ 自研 ~150 行，不换依赖 |
+| D′ 先试 crate 流式 API | 2 次请求（位 3 清零时） | ✅ 作为 D 的廉价前置 |
+| E 升级 zip crate | ? | ⚠️ 未证实；#280 描述的是设计内行为，升级大概率不解决 |
+| F 换解析器（rc-zip） | ✅ | ❌ 影响阅读器/EPUB/写档全部路径，超范围 |
+| G 缓存首图条目偏移（改表） | 2 次请求 | ⚠️ 需改表结构 ⇒ 须用户确认 |
+| H 并行 worker | 不改单枚成本 | 只提吞吐 |
+
+**本轮不改任何代码**（按规则：新增 ZIP 解析路径属既往被标为"超出范围"的改动，须先经用户确认）。
+采样器（`watch3.sh`）继续运行，第 60/61 轮的预算与租约回收已在线上。
+
+---
+
+---
+
+## 2026-09-19｜第63轮：落地方案 D —— 封面专用最小 ZIP 读取器（实测 2GB CBZ：192 次读被截断 → **8 次读 9 秒拿到封面**）
+
+**用户指令**：继续盯进度，并着手 D 的开发（调研结论见第 62 轮报告）。
+
+**实现（`src/document/zip.rs`，新增，不改阅读器主路径）**：
+
+- `first_image_bytes_via_central_directory(src, max_page_bytes)`：
+  1. 尾部一次读（EOCD 22B + 注释上限 64KiB ⇒ **标准完备**），从后往前找**合法** EOCD
+     （注释长度必须正好落到文件末尾，避免把注释里的签名当 EOCD）；
+  2. 中央目录**一次读**（上限 8MiB，超过即回退）；
+  3. **内存里**按中央目录顺序挑前 4 张图片条目（跳过非图片前缀如 `ComicInfo.xml`、
+     目录条目、加密条目；尺寸取**中央目录**⇒ 位 3/data descriptor 也成立）；
+  4. 每候选：读 30B local header 定位数据起点 → 读压缩数据 → `stored` 直出 /
+     `deflate` 用既有 `flate2` 依赖解压（未新增依赖）。
+- 任何不成立（非 ZIP / ZIP64 哨兵 / CD 越界 / 加密 / 压缩方式不支持 / 解压失败）
+  一律返回 `Ok(None)` ⇒ 调用方回退常规路径，**行为不变**。
+- 接入点：`fetch_cover_from_document` 仅对 **`.zip` / `.cbz`** 先试快通道，
+  解码失败再走原路径（原路径还能继续试第 2/3 页）。新增 `COVER_FAST_PAGE_MAX_BYTES = 64MiB`。
+
+**配套收尾（让已被预算判死的行能靠快通道复活）**：
+
+- `cover_read_budget_exceeded` 从**终态**改为**可重试**（进 `COVER_RETRYABLE_REASONS`，
+  6 项；原注释同步更新为"根因是打开成本，快通道落地后值得再试"）。
+- reconcile (1b) 自愈重挂桶的码集合加入该码（`notFound` / `route_missing` /
+  `cover_read_budget_exceeded`）⇒ 现存失败行会在下一次 session 事件被重挂。
+- 契约用例把 `asset-shadow` 的夹具码改为该码，覆盖新纳入的路径（14/14 通过）。
+
+**验证**：
+
+- **单测 2 个（新）**：`cover_fast_path_reads_first_image_with_constant_reads`
+  （200 条目 + `ComicInfo.xml` 前缀 + 目录条目 ⇒ 返回首图且 **≤8 次读**）、
+  `cover_fast_path_bails_out_instead_of_guessing`（非 ZIP / ZIP64 哨兵 ⇒ 回退不猜）。
+- **A/B（同一本 2,238,456,091 B 的 CBZ、同一生产路径、副本上执行）**：
+
+| 指标 | 常规路径 | **D 快通道** |
+|---|---|---|
+| 网络读次数 | 574+（预算 192 处被截断） | **8** |
+| 读取字节 | 9MB+（截断） | **1.38 MB** |
+| 耗时 | >140s 且永不完成 | **9 秒**（2 个 job） |
+| 结果 | `cover_read_budget_exceeded` | **`ready`（封面产出成功）** |
+| `CoverFailures` | 2 | **0** |
+
+- 全量门禁见下（本轮新增 2 个用例 + 契约用例调整）。
+
+**影响范围**：`src/document/zip.rs`（新增快通道 + 2 用例）、`src/api/remote_scan.rs`
+（接入 + 新常量 + 可重试集合）、`src/remote_scan/cover_store.rs`（(1b) 码集合）、
+`tests/remote_cover_compensation_contract.rs`。**未改**阅读器主路径、表结构、Dart 侧。
+
+**遗留**：位 3（data descriptor）归档目前没有构造夹具（crate 2.4.2 无流式写入 API）
+⇒ 逻辑上走中央目录尺寸已覆盖，但没有单测守住；后续可手写最小夹具补上。
+ZIP64 同样只测了"回退"分支。
+
+---
+
+---
+
+## 2026-09-19｜第64轮：启动时自动重连已保存凭据的书源（用户要求）+ 快通道上线后的实测吞吐
+
+**用户指令**：加（"重启后自动重连已保存凭据的书源"）。
+
+**修改（Dart，两处）**：
+
+1. `store/remote_scan_coordinator.dart`：
+   - 新增 `warmUpSessions(sources)`：对**已保存凭据**的源（`115`/`baidu` 看 cookie 或
+     refresh_token、`quark` 看 cookie、`webdav`/`sftp` 看 url；复用既有
+     `remoteSessionFor(source)` 分发）**串行**建立一次会话，并调用
+     `notifySourceSessionReady` 把"会话就绪"交给 Rust（P1-C 生命周期）。
+     best-effort、绝不抛异常；结果写 `scan_diag.log`：
+     `startup_session_warmup candidates=N connected=M failed=K`。
+   - 新增 `_hasStoredCredentials(source)` 判定助手（无凭据的源不预热，避免无意义失败）。
+2. `main.dart`：`restoreStatuses` 之后 `unawaited(warmUpSessions(...))`（网络操作，
+   不阻塞首帧后的初始化）。
+
+**为什么需要**：会话是**进程内**的。第 60/63 轮实测：重启后每个远程书源回到"需连接"，
+封面 worker 领不到 job、扫描也收不到 session-ready ⇒ 队列完全静止，必须用户逐个手点。
+
+**验证（生产，零点击）**：
+
+- 启动后 `scan_diag.log` 依次自动出现：
+  - `startup_recovered_cover_leases=2`（第 61 轮修复：两个过期租约被回收 ✓）
+  - **`startup_session_warmup candidates=2 connected=2 failed=0`**（新功能 ✓）
+  - `scan_terminal … quark gen=35 running` / `115 gen=4 running`（会话就绪直接触发增量扫描 ✓）
+- **快通道上线后的吞吐（8 帧 × 20s 采样）**：
+  `115 ready 64 → 98`（**≈14 枚/分钟**，D 之前 ≈2.3 枚/分钟 ⇒ **约 6 倍**）、
+  `pending 253 → 219`、`blobs 212 → 246`，且**失败数恒定 17**（大归档不再新增预算失败 ✓）。
+- `dart analyze lib/store/remote_scan_coordinator.dart lib/main.dart` → No issues found；
+  重建后 `kernel_blob.bin`（19:45）内含 `startup_session_warmup` ✓。
+
+**影响范围**：`app/lib/store/remote_scan_coordinator.dart`、`app/lib/main.dart`。
+Rust / 表结构 / API 未改。
+
+**遗留（小）**：那两个"预算中止"的存量失败行（115 共 17 行）本轮**没有**被 (1b) 重挂
+（`scan_diag` 里没有出现 `cover_reconcile` 行，说明该源这次 session-ready 走的路径
+没到达我的埋点/或未进入 reconcile）；它们的码已改为可重试，下一轮单独确认重挂路径。
+
+---
+
+---
+
+## 2026-09-19｜第65轮：遗留通用码重挂的**真正缺口是触发器**（补"扫描完成即 reconcile"）+ 重扫失败提示
+
+**用户报告**：115 还有好多漫画没跑出来、夸克也是；点"重新扫描"显示失败；
+要求把遗留通用码纳入 (1b) 自愈重挂"试试"。
+
+**改动**：
+
+1. **(1b) 重挂码集合加入遗留通用码 `provider`**（旧构建把各种 provider 失败统一记成
+   `provider`，第 ① 轮才拆成 `provider:<子原因>`）。契约用例扩展为三类（同指纹行 /
+   预算中止 / 遗留通用码），14/14 通过。
+2. **补上缺失的触发器：扫描完成时 reconcile**（`persist_terminal` 里 `status=='complete'`
+   时读该代际的 `session_token` 并调用 `reconcile_cover_compensation_for_source_on`，
+   写 `cover_reconcile … trigger=scan_complete`）。原因见下。
+3. `remoteErrorMessage` 补 `RemoteScanAlreadyRunning` 分支：
+   「该源正在扫描中，请等本次扫描完成」（此前落到 fallback 显示成"远程请求失败"）。
+
+**"重挂不生效"的根因（诊断链）**：谓词一直是对的——直接用 SQL 跑那段谓词，
+夸克 284 行**全部命中**（有额度 284、路由与索引一致 284、有 epoch 269）；
+但 `notify_source_session_ready` 只接受**已完成代际**去建立"可信绑定"，
+拿不到就**静默 return**（埋点在其后，所以日志里连 `cover_reconcile` 都没有）。
+实测正是这个时序：用户点**夸克全量扫描**的同一秒（20:49:24）触发了启动会话预热
+⇒ 当时夸克最新代际仍在 `running` ⇒ 那次事件什么都没做。
+
+**验证（生产）**：
+
+- 补触发器后立刻生效：
+  `cover_reconcile source=quark_1786277879032 trigger=scan_complete promoted=64 truncated=true`
+- 夸克账目变化：`failed|provider 284` → **`failed|provider 92` + `pending|provider 178`
+  + `ready 102`（+13 已真正出图）** ⇒ 重挂→取图链路打通（剩余行会在后续扫描完成时继续重挂）。
+- 115：`ready 455 → 497`，`failed` 仅剩 2（第 63 轮快通道把此前的 15 个"预算中止"全部跑通）✓。
+- 全量门禁 **24 targets / 508 passed / 0 failed**。
+
+**用户两个现象的解释（有数据）**：
+
+- **115**：267 本漫画**全部有 job**（0 本缺 job）；当下 ready 497 / failed 2 ⇒ 这条线已基本治好。
+- **夸克**：284 本漫画里 ready 只有 89；剩下的是**旧构建遗留**的 `provider` 失败（正在重挂）
+  与 **37 个 `blocked/authExpired`** ⇒ **登录态失效**，需要重新扫码/填 Cookie
+  （UI 提示现已映射为「登录状态已失效，请重新授权」）。
+- **"点重新扫描显示失败"**：扫描其实都成功（gen 39/40/41/42 全部 complete）；
+  失败提示来自"已有扫描在跑"⇒ 已补真实提示。
+
+**影响范围**：`src/remote_scan/cover_store.rs`、`src/api/remote_scan.rs`、
+`app/lib/store/remote_scan_models.dart`、`tests/remote_cover_compensation_contract.rs`。
+
+**顺带发现（未修，记录）**：`errors.log` 出现
+`setState() … widget tree was locked`，来自 `AiUpscaleManager.setReadingBook`
+在 `_ReaderPageState.dispose` 期间通知监听器（阅读器退出时的 UI 小缺陷）。
+
+---
+
+---
+
+## 2026-09-19｜第66轮：夸克书源扫码登录（方案 A，免 F12 复制 Cookie）
+
+**用户指令**：夸克书源也加"扫码读取 Cookie"的按钮，简化操作（选 A：完整扫码）。
+
+**调研（先定接口，再写代码）**：
+
+- 夸克 passport 有公开的二维码登录接口（依据：[Quark API 手册](https://raw.githubusercontent.com/zhaocongqi/clouddrive-auto-save/main/docs/quark_apis.md)
+  + 参考实现 [lich0821/QuarkPan](https://github.com/lich0821/QuarkPan) 的 `quark_client/auth/api_login.py`）：
+  1. `GET uop.quark.cn/cas/ajax/getTokenForQrcodeLogin?client_id=532&v=1.2&request_id=<uuid>`
+     → `data.members.token`
+  2. `GET uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken`（同参数 + `token`）
+     → `status=2000000` + `data.members.service_ticket` ⇒ 已确认；`50004001` 等待；`50004002/3/4` 失败/取消
+  3. `GET pan.quark.cn/account/info?st=<ticket>&lw=scan&platform=pc` → **响应 `Set-Cookie` 即会话 Cookie**
+  - **二维码内容**由参考实现确定：`https://su.quark.cn/4_eMHBJ?token=<token>&client_id=532&v=1.2`
+    （这一步是本轮唯一的阻塞点：手册没写二维码怎么渲染，猜错会"扫了没反应"，因此先去核对再实现）
+- **真机验证第 1 步**（本轮实测，用与代码完全一致的参数）：
+  `{"status":2000000,"message":"ok","data":{"members":{"token":"sta316333d2v5x0g90q1i4kik0ux2038"}}}` ✓
+
+**实现**：
+
+1. **Rust** `src/source/quark.rs`：`web_qr_start()` / `web_qr_poll()` / `web_qr_cookie()`
+   （状态映射 0 等待 / 2 已登录 / -1 失败，与 115 语义对齐；Cookie 从 `Set-Cookie` 逐条取
+   `k=v` 后以 `; ` 连接）＋ 三个单测（状态映射、二维码 URL 形态、request_id 形态）。
+   `QuarkWebQrPayload` 与 api 层 DTO 分别命名，避免 FRB 的"同键随机挑一个"告警。
+2. **FRB**：`src/api/source.rs` 新增 `QuarkQrPayload{token,request_id,qrcode}` +
+   `quark_qr_start/poll/result`，并用 `flutter_rust_bridge_codegen generate` **重新生成绑定**
+   （工具链已装 ✓，生成后 `frb_generated.dart` 含 7 处引用 ✓）。
+3. **Dart**：新增 `lib/ui/quark_qr_scan.dart`（`scanQuarkCookie(context)` + 二维码对话框，
+   形态与 115 的 `scanCloud115Cookie` 一致：展示二维码 → 2 秒轮询 → 确认后换取 Cookie → 关闭返回）；
+   **添加书源**与**编辑书源**的夸克分支各加按钮「扫码获取 Cookie（无需 F12）」，
+   成功后自动填入 Cookie 输入框。
+
+**验证**：
+
+- 单测 3 个 ✓；全量门禁 **24 targets / 511 passed / 0 failed** ✓。
+- `dart analyze lib/ui/quark_qr_scan.dart lib/ui/home_page.dart` → No issues found ✓。
+- 重建 ✓（`rust_lib_app.dll` 与 `kernel_blob.bin` 均为 23:20；产物内含"扫码获取 Cookie（无需 F12）"✓）；
+  应用 23:23:31 启动 ✓。
+- **待你实测**：添加/编辑夸克书源 → 点「扫码获取 Cookie（无需 F12）」→ 手机夸克 App 扫码确认
+  → 应自动填入 Cookie；保存后夸克那 37 个 `blocked/authExpired` 与遗留失败会随扫描/自愈重挂继续恢复。
+
+**影响范围**：`src/source/quark.rs`、`src/api/source.rs`、`lib/ui/quark_qr_scan.dart`（新）、
+`lib/ui/home_page.dart`、`lib/src/rust/**`（codegen 产物）。未改表结构、未改 115 路径。
+
+**遗留**：夸克这套是**非官方接口**，若将来失效，手填 Cookie 的通道仍在（按钮失败会给具体原因）。
+
+---

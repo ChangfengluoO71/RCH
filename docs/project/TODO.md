@@ -53,6 +53,28 @@
 - [ ] **SFTP source authority 归属整合**（cache authority 与 endpoint 解析的职责边界收口）。
 - [ ] **Cover cache identity 统一**（远程 raw cache 与 cover blob 的身份/路径规则统一）。
 
+### 远程封面 RG-B ③（2026-09-19 登记）
+
+- [x] **①** 封面失败安全子原因归因（`provider:notFound/forbidden/unauthorized/rateLimited/timeout/decodeFailed/noCover/other`）—— `730ce77`
+- [x] **③-1** 分级窗口（24/64/128MB）+ 删除 `cover_size_limit` 放弃分支 + 顶部裁带 + 具体失败码落库 + `bytes_fetched` 埋点 —— 第 51 轮
+- [x] **②-b** 有界回填取数（新工具 `examples/cover_failure_triage.rs`，只作用于 DB 副本）—— 第 52 轮；**结论：275 个夸克失败＝267 PDF（缺 `pdfium.dll`，部署）+ 8 MOBI 行（真问题）**
+- [x] **② 自愈策略**（第 53 轮）：可修复失败（`cover_native_lib_missing` / 字节·像素上限 / 窗口截断 / `provider:rateLimited·timeout·unauthorized·forbidden`）获得一次 6h 长期补偿；永久失败仍不自愈
+- [x] **测试根隔离 + CI 串行**（第 53 轮）：`cache_root()` 测试构建锚定 `<TEMP>/RCH-test-<pid>`；CI 改 `cargo test --locked -- --test-threads=1`；实测默认根库两次全量跑均 0 写入
+- [x] **重建 + 重启 + 验证**（第 58 轮，用户授权代为执行）：`flutter build windows --debug` → 启动清理 **53 行命中离线预测**、孤儿 53→0；⟳ 刷新按钮**视觉确认**（截图）、三个测试源已消失
+- [ ] **⚡ 触发自愈**：点一下**夸克 / 115** 建立会话（重启后会话是进程内的，现在显示"需连接"）⇒ 才会走新的"按指纹解析 + (1b) 重挂 + 具体失败码"路径，存量 284(夸克)/439(115) 才会开始塌缩
+- [x] **③ 格式专用（MOBI 真问题）**（第 54 轮）：`MobiBook` 只保留魔数可解码的图片记录（`image_records()` 的非图片黑名单会漏进 KF8/AZW3 的 CSS/HTML 资源）+ 封面有界换页兜底（≤3 页）+ 魔数嗅探诊断（`cover.probe`）；实测 33.9MB MOBI 由 `cover_decode_failed` 转为 **ready（8s）**
+- [x] **真实库扫描审查 + 115 自愈**（第 55 轮，报告 `docs/reports/rg-b/2026-09-19-scan-audit-real-library.md`）：115 源 225 个 `notFound`＝**同指纹双源 `library_index.id` 冲突**（直连 115 与同步镜像 `sync_…` 指纹相同 ⇒ PK id 相同 ⇒ 行被对方持有，解析器又按 `source_id` 查）⇒ 已修：按指纹语义解析 + preview 去 `Running` 门槛 + 自愈重挂 (1b) + `scan_diag` 诊断通道；真实库离线核对命中 225/225 + 214/214，副本端到端实跑 **10/10 出封面**
+- [x] **删除真实库测试源**（用户已在应用内删除；第 57/58 轮补齐 `remote_*` 残行：启动清理 53 行 ✓）
+- [ ] **可选（需先停应用）**：同指纹双源的行做一次显式归一（当前靠"按指纹解析"兼容，不改数据也能工作）
+- [x] **封面快通道（方案 D）**（第 62/63 轮）：最小 ZIP 读取器（EOCD+中央目录+首图片，**请求数 O(1)**）—— A/B 实测 2.08GB CBZ：192 次读被预算截断 → **8 次读 9 秒拿到封面**；预算码改可重试 + (1b) 桶纳入；调研报告 `docs/reports/rg-b/2026-09-19-zip-cover-open-research.md`
+- [x] **启动自动重连书源**（第 64 轮）：`warmUpSessions` 预热已保存凭据的源（零点击恢复会话/扫描/封面），实测吞吐 ≈14 枚/分钟（≈6×）
+- [ ] **待确认**：存量 `cover_read_budget_exceeded` 失败行（115 共 17）为何未被 (1b) 重挂（该次 session-ready 未见 `cover_reconcile` 埋点）
+- [ ] **③ 格式专用（真问题）**：PDF 封面 = 整包下载（实测 17MB / 33.9MB 每枚）⇒ range 化 pdfium 读取
+- [ ] **可选**：BMP/TIFF/HEIF 现在只能**命名**（`cover.probe.magic`）但解不开 ⇒ 若分布里出现这些标签，给 `image` 加对应特性
+- [ ] **④ R1** 卡片直读缓存优先 + 递归祖先链（现有 351 个 cover blob vs "可用" 10–29）
+- [ ] **② 死角**：`blocked` / `retry_wait` 的冷却恢复路径
+- [ ] **相邻**：阅读器远程图片页上限 `MAX_REMOTE_PAGE_BYTES`(32MB) 与长条图（本轮未动，需单独确认）
+
 
 ### 规划完成(待开工) — 2026-08-02 批量规划
 - [ ] `08-02-m5-book-sources` — M5 书源扩展(SMB / SFTP)

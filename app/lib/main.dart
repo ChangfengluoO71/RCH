@@ -5,12 +5,14 @@ import 'dart:io';
 import 'package:app/src/rust/api/cache.dart';
 import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/api/pdf.dart';
+import 'package:app/src/rust/api/remote_scan.dart';
 import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/automation_coordinator.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
+import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/storage_access.dart';
@@ -83,6 +85,16 @@ Future<void> _initializeAfterFirstFrame() async {
   // 本地只读/轻量状态先恢复，再启动可能涉及同步与刮削的较重流程。
   await FolderSnapshotStore.instance.load();
   await LibraryCatalogStore.instance.loadTree();
+  // RG-B 健壮性修复（A）：把崩溃/强制退出留下的 `running` 扫描残留恢复为中断终态，
+  // 否则这些源会永久无法扫描。启动时内存 job 表为空 ⇒ 此调用安全（运行期不得调用）。
+  try {
+    final recovered = await remoteScanRecoverInterruptedAll();
+    if (recovered > 0) {
+      await appendScanDiag('startup_recovered_residual_running=$recovered');
+    }
+  } catch (error) {
+    await appendScanDiag('startup_recovery_failed=$error');
+  }
   await RemoteScanCoordinator.instance.restoreStatuses(
     LibraryStore.instance.sources,
   );

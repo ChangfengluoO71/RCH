@@ -227,6 +227,18 @@ pub fn recover_interrupted_scan(conn: &Connection, source_id: &str) -> Result<bo
     Ok(changed > 0)
 }
 
+/// RG-B 健壮性修复（A，启动时变体）：**全局**恢复所有残留的 `running` 扫描代际。
+///
+/// 应用启动时调用一次即可：进程刚启动 ⇒ 内存 job 表必为空 ⇒ 所有仍持久化为 `running`
+/// 的代际都是崩溃/强制退出残留。返回被恢复的源数量（0 表示无残留）。
+pub fn recover_all_interrupted_scans(conn: &Connection) -> Result<u32> {
+    let changed = conn.execute(
+        "UPDATE remote_scan_state          SET status='interrupted', checkpoint=NULL, error_code='interrupted'          WHERE lower(status)='running'",
+        [],
+    )?;
+    Ok(changed as u32)
+}
+
 pub fn requested_root_matches_source(
     conn: &Connection,
     source_id: &str,
@@ -2459,6 +2471,24 @@ mod rg_b_recovery_tests {
         assert_eq!(status, "interrupted");
         assert_eq!(checkpoint, None);
         assert_eq!(error.as_deref(), Some("interrupted"));
+    }
+
+    /// 全局变体：一次恢复多条 running 残留，返回数量；无残留时返回 0。
+    #[test]
+    fn global_recovery_restores_all_residual_rows() {
+        let conn = state_conn();
+        for (id, status) in [("a", "Running"), ("b", "running"), ("c", "Succeeded")] {
+            conn.execute(
+                "INSERT INTO remote_scan_state(source_id,status,mode,generation)                  VALUES(?1,?2,'Snapshot',1)",
+                params![id, status],
+            )
+            .unwrap();
+        }
+        assert_eq!(recover_all_interrupted_scans(&conn).unwrap(), 2);
+        assert_eq!(row(&conn, "a").0, "interrupted");
+        assert_eq!(row(&conn, "b").0, "interrupted");
+        assert_eq!(row(&conn, "c").0, "Succeeded");
+        assert_eq!(recover_all_interrupted_scans(&conn).unwrap(), 0);
     }
 
     /// 幂等 + 终态行不受影响（不得篡改正常完成/失败的记录）。

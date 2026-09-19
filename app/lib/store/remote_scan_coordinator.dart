@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app/src/rust/api/remote_cover.dart' as rust_cover;
 import 'package:app/src/rust/api/remote_scan.dart' as rust;
 import 'package:app/store/library_store.dart';
+import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:flutter/foundation.dart';
@@ -460,6 +461,11 @@ class RemoteScanCoordinator {
             return status;
           },
           onError: (Object error, StackTrace stackTrace) {
+            // RG-B：把**已处理**的启动失败写进本地诊断日志（只写枚举码与源标识）。
+            unawaited(appendScanDiag(
+              'scan_start_rejected source=${source.id} type=${source.type} '
+              'code=${scanStartRejectionCode(error)}',
+            ));
             // Never surface the native exception text here: provider errors
             // may contain credentials or private URLs. Return a stable,
             // safe status so UI callbacks do not create an unhandled error;

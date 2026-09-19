@@ -2064,6 +2064,16 @@ pub async fn remote_scan_start_manual(
     )
 }
 
+/// RG-B 健壮性修复（A）：应用启动时调用一次 —— 把崩溃/强制退出留下的 `running` 扫描残留
+/// 恢复为**中断终态**，使这些源能重新扫描（否则后续 epoch/baseline 证明会永久拒绝启动）。
+///
+/// 返回被恢复的源数量（0 = 无残留）。启动时内存 job 表为空，因此该操作是安全的；
+/// **运行期不要调用**（会把正在进行的扫描误标为中断）。
+pub fn remote_scan_recover_interrupted_all() -> std::result::Result<u32, String> {
+    let conn = db::get().lock().map_err(|e| e.to_string())?;
+    persistence::recover_all_interrupted_scans(&conn).map_err(|e| e.to_string())
+}
+
 pub fn remote_scan_status(source_id: String) -> Option<RemoteScanStatusDto> {
     if let Some(job) = jobs().lock().unwrap().get(&source_id) {
         let mut status = job.status.lock().unwrap().clone();

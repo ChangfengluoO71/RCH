@@ -6,8 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `consume_staged_covers`, `cover_budget_key`, `cover_cache_paths`, `cover_error`, `cover_fetch_enabled_from_conn`, `cover_job_failure_state`, `cover_route_for_job`, `cover_source_fingerprint`, `cover_source_info`, `cover_workers`, `current_cover_fetch_enabled`, `durable_cover_progress_on`, `effective_scan_mode`, `error_code`, `fetch_remote_cover_image_with_dimensions`, `initial_scan_path`, `job_dto`, `jobs`, `long_retry_is_retryable`, `next_job_id`, `parse_bool_setting`, `parse_cover_profile`, `parse_cover_selection`, `parse_initial_listing`, `persist_config_status`, `persist_terminal`, `refresh_cover_progress`, `refresh_status_counts`, `run_remote_cover_worker`, `start_job`, `start_lock`, `storage_failed`, `wake_cover_worker_for_source`, `wake_cover_worker`, `wake_remote_cover_worker`, `write_remote_cover_cache`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AdapterByteSource`, `CoverConsumeResult`, `CoverSourceInfo`, `InitialListingEntry`, `ScanJob`, `SqliteScanSink`, `StartConfig`
+// These functions are ignored because they are not marked as `pub`: `consume_staged_covers`, `cover_budget_key`, `cover_cache_paths`, `cover_error`, `cover_fetch_enabled_from_conn`, `cover_job_failure_decision`, `cover_job_failure_state`, `cover_route_for_job`, `cover_source_fingerprint`, `cover_source_info`, `cover_workers`, `current_cover_fetch_enabled`, `durable_cover_progress_on`, `effective_scan_mode`, `error_code`, `fetch_remote_cover_image_with_dimensions`, `initial_scan_path`, `job_dto`, `jobs`, `long_retry_is_retryable`, `next_job_id`, `parse_bool_setting`, `parse_cover_profile`, `parse_cover_selection`, `parse_initial_listing`, `persist_config_status`, `persist_terminal`, `refresh_cover_progress`, `refresh_status_counts`, `run_remote_cover_worker`, `start_job`, `start_lock`, `storage_failed`, `wake_cover_worker_for_source`, `wake_cover_worker`, `wake_remote_cover_worker`, `write_remote_cover_cache`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AdapterByteSource`, `CoverConsumeResult`, `CoverFailureDecision`, `CoverSourceInfo`, `InitialListingEntry`, `ScanJob`, `SqliteScanSink`, `StartConfig`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `enqueue_cover`, `previous_fingerprint`, `should_recheck_directory`, `spill_directory`, `stage_directory`, `take_spilled_directory`
 // These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `len`, `read_at`
@@ -70,6 +70,14 @@ Future<RemoteScanJobDto> remoteScanStartManual({
   mode: mode,
   initialListingJson: initialListingJson,
 );
+
+/// RG-B 健壮性修复（A）：应用启动时调用一次 —— 把崩溃/强制退出留下的 `running` 扫描残留
+/// 恢复为**中断终态**，使这些源能重新扫描（否则后续 epoch/baseline 证明会永久拒绝启动）。
+///
+/// 返回被恢复的源数量（0 = 无残留）。启动时内存 job 表为空，因此该操作是安全的；
+/// **运行期不要调用**（会把正在进行的扫描误标为中断）。
+Future<int> remoteScanRecoverInterruptedAll() =>
+    RustLib.instance.api.crateApiRemoteScanRemoteScanRecoverInterruptedAll();
 
 Future<RemoteScanStatusDto?> remoteScanStatus({required String sourceId}) =>
     RustLib.instance.api.crateApiRemoteScanRemoteScanStatus(sourceId: sourceId);

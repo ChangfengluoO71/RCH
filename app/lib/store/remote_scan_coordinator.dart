@@ -6,6 +6,7 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_scan_models.dart';
+import 'package:app/store/remote_listing.dart';
 import 'package:flutter/foundation.dart';
 
 typedef RemoteScanStart =
@@ -26,6 +27,23 @@ typedef RemoteScanStartWithInitialListing =
 typedef RemoteScanControl = Future<void> Function(String sourceId);
 typedef RemoteScanStatusLoader =
     Future<RemoteScanStatus?> Function(String sourceId);
+
+/// 该书源是否**已保存可自动连接的凭据**（无凭据的源不预热，避免无意义的失败）。
+bool _hasStoredCredentials(BookSource source) {
+  switch (source.type) {
+    case '115':
+    case 'baidu':
+      return (source.cookie ?? '').isNotEmpty ||
+          (source.refreshToken ?? '').isNotEmpty;
+    case 'quark':
+      return (source.cookie ?? '').isNotEmpty;
+    case 'webdav':
+    case 'sftp':
+      return (source.url ?? '').isNotEmpty;
+    default:
+      return false;
+  }
+}
 
 class RemoteScanAlreadyRunning implements Exception {
   const RemoteScanAlreadyRunning(this.sourceId, this.requestedMode);
@@ -303,6 +321,41 @@ class RemoteScanCoordinator {
         _recoveringSources.add(source.id);
       }
     }
+  }
+
+  /// 启动时**预热会话**：对已保存凭据的远程书源建立一次会话，并把"会话就绪"
+  /// 这一事实通知 Rust（P1-C 生命周期）。
+  ///
+  /// 为什么需要：会话是**进程内**的。重启后每个远程书源都回到"需连接"，
+  /// 封面 worker 领不到 job、扫描也不会收到 session-ready ⇒ 过去必须由用户
+  /// 逐个点一次书源（第 60/63 轮实测：重启后队列完全静止）。
+  /// 预热后 reconcile（含自愈重挂）与封面队列立刻继续。
+  ///
+  /// 约束：best-effort（单源失败不影响其它源）、**串行**（避免同时打同一个网盘的
+  /// 登录接口）、不抛异常；结果写 `scan_diag.log`（`startup_session_warmup …`）。
+  Future<void> warmUpSessions(Iterable<BookSource> sources) async {
+    final candidates = sources.where(_hasStoredCredentials).toList();
+    var connected = 0;
+    final failures = <String>[];
+    for (final source in candidates) {
+      try {
+        final session = await remoteSessionFor(source);
+        if (session != null) {
+          await rust.notifySourceSessionReady(
+            sourceId: source.id,
+            session: session,
+          );
+          connected += 1;
+        }
+      } catch (error) {
+        failures.add('${source.type}:${source.id}');
+        debugPrint('[RemoteScanCoordinator] session warm-up failed: $error');
+      }
+    }
+    await appendScanDiag(
+      'startup_session_warmup candidates=${candidates.length} '
+      'connected=$connected failed=${failures.length}',
+    );
   }
 
   Future<RemoteScanStatus> ensureForSession(

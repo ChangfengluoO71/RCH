@@ -87,6 +87,16 @@ class SourceBrowser extends StatefulWidget {
 }
 
 class _SourceBrowserState extends State<SourceBrowser> {
+  /// 安全 setState：widget 已从树上移除（页面被 pop / 切换）时静默忽略。
+  ///
+  /// 背景：本页有多条"异步拉取 → 更新界面"的路径（目录列表、封面、远端探测…），
+  /// 用户提前返回时会触发 `setState() called after dispose()`（2026-09-19 16:31:56 实测日志）。
+  /// 统一走这里，等于给所有调用点补上 `mounted` 守卫。
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+  }
+
   late String _path = widget.source.effectiveRootPath;
   late String _logicalPath = _normalizeRemoteLogicalPath(
     widget.source.effectiveRootPath,
@@ -236,7 +246,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       if (count > 0) {
         _enterOffline();
       } else if (mounted) {
-        setState(() => _error = '连接远程书源失败，暂无离线索引');
+        _safeSetState(() => _error = '连接远程书源失败，暂无离线索引');
       }
       return;
     }
@@ -257,13 +267,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
           : await cloud115SessionFor(widget.source);
     } catch (e) {
       if (mounted) {
-        setState(() => _error = '连接远程书源失败：\${remoteErrorMessage(e)}');
+        _safeSetState(() => _error = '连接远程书源失败：\${remoteErrorMessage(e)}');
       }
     }
   }
 
   void _enterOffline() {
-    setState(() {
+    _safeSetState(() {
       _offlineMode = true;
       _loading = true;
       _error = null;
@@ -276,7 +286,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 退出离线索引浏览，切回在线浏览（云端源需要已连接会话）。
   Future<void> _exitOffline() async {
     if (!_offlineMode) return;
-    setState(() {
+    _safeSetState(() {
       _offlineMode = false;
       _error = null;
     });
@@ -297,7 +307,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       // 连不上：提示并留在离线浏览
       RemoteScanCoordinator.instance.cancelDeferredRootListing(widget.source);
       if (mounted) {
-        setState(() {
+        _safeSetState(() {
           _offlineMode = true;
           _error = '连接远程书源失败，无法切换在线浏览';
         });
@@ -322,7 +332,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 离线浏览：从 library_index 读取当前目录直接子条目（不建会话、不 list 服务器）。
   Future<void> _listOffline(String path) async {
-    setState(() {
+    _safeSetState(() {
       _loading = true;
       _error = null;
       _folderKinds.clear();
@@ -334,7 +344,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
         dirPath: path,
       );
       if (!mounted) return;
-      setState(() {
+      _safeSetState(() {
         _path = path;
         _entries = entries
             .map(
@@ -351,9 +361,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
       });
       await _detectComicFolders();
     } catch (e) {
-      if (mounted) setState(() => _error = remoteErrorMessage(e));
+      if (mounted) _safeSetState(() => _error = remoteErrorMessage(e));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) _safeSetState(() => _loading = false);
     }
   }
 
@@ -367,7 +377,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   Future<void> _list(String path) async {
     _comicFolderChecker.clear();
-    setState(() {
+    _safeSetState(() {
       _loading = true;
       _error = null;
       _folderKinds.clear();
@@ -434,7 +444,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           );
         }
       }
-      setState(() {
+      _safeSetState(() {
         _path = path;
         _entries = list.where((e) => e.isDir || _isComicEntry(e)).toList();
       });
@@ -455,9 +465,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
               .then<void>((_) {}, onError: (_) {}),
         );
       }
-      if (mounted) setState(() => _error = remoteErrorMessage(e));
+      if (mounted) _safeSetState(() => _error = remoteErrorMessage(e));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) _safeSetState(() => _loading = false);
     }
   }
 
@@ -498,7 +508,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             });
         if (!changed) return;
       }
-      setState(() => _remoteDirectoryView = view);
+      _safeSetState(() => _remoteDirectoryView = view);
     } catch (_) {
       // The online provider listing remains authoritative for immediate
       // browsing. A missing local projection simply keeps the compatibility
@@ -532,7 +542,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           }
           final first = _firstComicFileOf(await listLocalDir(path: e.path));
           if (!mounted) return;
-          setState(() {
+          _safeSetState(() {
             _folderKinds[e.path] = first == null
                 ? _FolderCoverKind.plain
                 : _FolderCoverKind.container;
@@ -557,7 +567,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       )) {
         _setFolderKind(e.path, _FolderCoverKind.book);
       } else if (mounted) {
-        setState(() => _detectRemoteFolderKind(e));
+        _safeSetState(() => _detectRemoteFolderKind(e));
       }
     }
   }
@@ -581,7 +591,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   void _setFolderKind(String path, _FolderCoverKind kind) {
     if (!mounted) return;
-    setState(() => _folderKinds[path] = kind);
+    _safeSetState(() => _folderKinds[path] = kind);
   }
 
   /// 返回列表中按自然序第一个漫画文件路径；无则 null。
@@ -624,7 +634,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   void _openDir(String path, String name) {
-    setState(() {
+    _safeSetState(() {
       _stack.add(_path);
       _logicalStack.add(_logicalPath);
       _path = path;
@@ -637,7 +647,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   void _goUp() {
     if (_stack.isEmpty) return;
-    setState(() {
+    _safeSetState(() {
       _path = _stack.removeLast();
       _logicalPath = _logicalStack.removeLast();
     });
@@ -682,7 +692,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       await _connectSession();
       final session = _session;
       if (src.needsSession && session == null) {
-        if (mounted) setState(() => _error = '连接远程书源失败，无法重建索引');
+        if (mounted) _safeSetState(() => _error = '连接远程书源失败，无法重建索引');
         return;
       }
       await LibraryIndexService.instance.refreshSourceIndex(
@@ -718,7 +728,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       if (old != null) await baiduDisconnect(id: old);
       final s = await baiduRefreshTokenFor(widget.source);
       if (!mounted) return;
-      setState(() {
+      _safeSetState(() {
         _session = s;
         _error = null;
       });
@@ -729,14 +739,14 @@ class _SourceBrowserState extends State<SourceBrowser> {
       ).showSnackBar(const SnackBar(content: Text('refresh_token 已重新刷新并保存')));
     } catch (e) {
       if (mounted) {
-        setState(
+        _safeSetState(
           () => _error = '刷新 refresh_token 失败：\${remoteErrorMessage(e)}',
         );
       }
       await _reauthorizeBaidu(e);
     } finally {
       _refreshingToken = false;
-      if (mounted) setState(() {});
+      if (mounted) _safeSetState(() {});
     }
   }
 
@@ -748,7 +758,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     final secret = widget.source.clientSecret ?? '';
     if (appKey.isEmpty || secret.isEmpty) {
       if (mounted) {
-        setState(
+        _safeSetState(
           () => _error =
               '刷新 refresh_token 失败：\${remoteErrorMessage(error)}\n（未配置 AppKey/SecretKey，请编辑书源填写）',
         );
@@ -823,7 +833,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       );
       final s = await baiduRefreshTokenFor(widget.source);
       if (!mounted) return;
-      setState(() {
+      _safeSetState(() {
         _session = s;
         _error = null;
       });
@@ -834,7 +844,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       );
     } catch (e) {
       if (mounted) {
-        setState(() => _error = '重新授权失败：\${remoteErrorMessage(e)}');
+        _safeSetState(() => _error = '重新授权失败：\${remoteErrorMessage(e)}');
       }
     }
   }
@@ -869,11 +879,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
       if (tasks.isEmpty) return;
       _convertTotal = tasks.length;
       _convertDone = 0;
-      if (mounted) setState(() => _showConvertProgress = true);
+      if (mounted) _safeSetState(() => _showConvertProgress = true);
       for (final target in tasks) {
         if (_convertCancelled) break;
         _convertCurrent = target.split(Platform.pathSeparator).last;
-        if (mounted) setState(() {});
+        if (mounted) _safeSetState(() {});
         try {
           final src = targets[target]!;
           if (Directory(src).existsSync()) {
@@ -885,10 +895,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
           // 单个失败不中断其余转换
         }
         _convertDone++;
-        if (mounted) setState(() {});
+        if (mounted) _safeSetState(() {});
       }
       if (mounted) {
-        setState(() => _showConvertProgress = false);
+        _safeSetState(() => _showConvertProgress = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -935,7 +945,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           IconButton(
             icon: const Icon(Icons.close, size: 18),
             tooltip: '取消转换',
-            onPressed: () => setState(() {
+            onPressed: () => _safeSetState(() {
               _convertCancelled = true;
               _showConvertProgress = false;
             }),
@@ -1165,7 +1175,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
       LibraryStore.instance.batchTag(widget.source, expanded, tag);
       _selectedPaths.clear();
       _selectMode = false;
-      setState(() {});
+      _safeSetState(() {});
     }
   }
 
@@ -1221,13 +1231,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
                             ),
                           if (_selectMode) ...[
                             TextButton(
-                              onPressed: () => setState(() {
+                              onPressed: () => _safeSetState(() {
                                 _selectedPaths.clear();
                               }),
                               child: const Text('取消全选'),
                             ),
                             TextButton(
-                              onPressed: () => setState(() {
+                              onPressed: () => _safeSetState(() {
                                 for (var e in _filtered) {
                                   _selectedPaths.add(e.path);
                                 }
@@ -1242,7 +1252,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                             IconButton(
                               icon: const Icon(Icons.close),
                               tooltip: '退出选择',
-                              onPressed: () => setState(() {
+                              onPressed: () => _safeSetState(() {
                                 _selectedPaths.clear();
                                 _selectMode = false;
                               }),
@@ -1252,7 +1262,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                               icon: const Icon(Icons.checklist),
                               tooltip: '进入选择模式',
                               onPressed: () =>
-                                  setState(() => _selectMode = true),
+                                  _safeSetState(() => _selectMode = true),
                             ),
                           ],
                           PopupMenuButton<String>(
@@ -1264,7 +1274,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                                 _rebuildIndexFull();
                                 return;
                               }
-                              setState(() => _sort = v);
+                              _safeSetState(() => _sort = v);
                             },
                             itemBuilder: (c) => [
                               const PopupMenuItem(
@@ -1302,7 +1312,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                             ),
                             tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙',
                             onPressed: () =>
-                                setState(() => _posterMode = !_posterMode),
+                                _safeSetState(() => _posterMode = !_posterMode),
                           ),
                           IconButton(
                             icon: const Icon(Icons.refresh),
@@ -1468,7 +1478,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                 child: Material(
                   color: Colors.transparent,
                   child: InkWell(
-                    onTap: () => setState(
+                    onTap: () => _safeSetState(
                       () => sel
                           ? _selectedPaths.remove(e.path)
                           : _selectedPaths.add(e.path),
@@ -1531,7 +1541,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () => setState(
+                  onTap: () => _safeSetState(
                     () => sel
                         ? _selectedPaths.remove(e.path)
                         : _selectedPaths.add(e.path),
@@ -1609,7 +1619,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: () => setState(
+              onTap: () => _safeSetState(
                 () => sel
                     ? _selectedPaths.remove(e.path)
                     : _selectedPaths.add(e.path),
@@ -1641,7 +1651,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           return ListTile(
             leading: Checkbox(
               value: sel,
-              onChanged: (v) => setState(
+              onChanged: (v) => _safeSetState(
                 () => v == true
                     ? _selectedPaths.add(e.path)
                     : _selectedPaths.remove(e.path),
@@ -1652,7 +1662,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
               icon: const Icon(Icons.arrow_forward_ios, size: 16),
               onPressed: () => _openDir(e.path, e.name),
             ),
-            onTap: () => setState(
+            onTap: () => _safeSetState(
               () => sel
                   ? _selectedPaths.remove(e.path)
                   : _selectedPaths.add(e.path),
@@ -1663,7 +1673,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           leading: _selectMode
               ? Checkbox(
                   value: sel,
-                  onChanged: (v) => setState(
+                  onChanged: (v) => _safeSetState(
                     () => v == true
                         ? _selectedPaths.add(e.path)
                         : _selectedPaths.remove(e.path),
@@ -1673,7 +1683,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           title: Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(fmtSize(e.size)),
           onTap: _selectMode
-              ? () => setState(
+              ? () => _safeSetState(
                   () => sel
                       ? _selectedPaths.remove(e.path)
                       : _selectedPaths.add(e.path),
@@ -1759,6 +1769,16 @@ class _ComicFolderCoverCard extends StatefulWidget {
 }
 
 class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
+  /// 安全 setState：widget 已从树上移除（页面被 pop / 切换）时静默忽略。
+  ///
+  /// 背景：本页有多条"异步拉取 → 更新界面"的路径（目录列表、封面、远端探测…），
+  /// 用户提前返回时会触发 `setState() called after dispose()`（2026-09-19 16:31:56 实测日志）。
+  /// 统一走这里，等于给所有调用点补上 `mounted` 守卫。
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+  }
+
   /// null = 未加载；"" = 无显式封面（用首页）；非空 = 封面路径。
   String? _coverPath;
   bool _loadingCover = false;
@@ -1776,9 +1796,9 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
     try {
       final cp = await folderCoverPath(dirPath: widget.dirPath);
       if (!mounted) return;
-      setState(() => _coverPath = cp);
+      _safeSetState(() => _coverPath = cp);
     } catch (_) {
-      if (mounted) setState(() => _coverPath = '');
+      if (mounted) _safeSetState(() => _coverPath = '');
     }
   }
 

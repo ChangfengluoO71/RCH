@@ -67,12 +67,26 @@ class SourceTreePanel extends StatelessWidget {
             child: Text('暂无书源', style: TextStyle(color: Colors.white38)),
           );
         }
+        // 同名源消歧：树里只用 `name` 做标题时，直连 115 与它的同步镜像
+        // （都叫「115 网盘」）长得一模一样——删掉其中一个后看起来"没反应"。
+        // 这里统计重名，重名的书源在标题后补一段短 id。
+        final nameCounts = <String, int>{};
+        for (final device in store.devices) {
+          for (final src in device.sources) {
+            nameCounts[src.name] = (nameCounts[src.name] ?? 0) + 1;
+          }
+        }
+        final duplicatedNames = nameCounts.entries
+            .where((entry) => entry.value > 1)
+            .map((entry) => entry.key)
+            .toSet();
         return ListView(
           children: [
             for (var i = 0; i < store.devices.length; i++)
               _DeviceTile(
                 device: store.devices[i],
                 initiallyExpanded: i == 0,
+                duplicatedNames: duplicatedNames,
                 onEditSource: onEditSource,
                 onDeleteSource: onDeleteSource,
                 onShowDetail: onShowDetail,
@@ -87,6 +101,8 @@ class SourceTreePanel extends StatelessWidget {
 class _DeviceTile extends StatelessWidget {
   final frb.SourceTreeNodeDto device;
   final bool initiallyExpanded;
+  /// 显示名重复的书源集合（树里标题只显示名字，重名会让"删了一个"看起来没反应）。
+  final Set<String> duplicatedNames;
   final SourceAction? onEditSource;
   final SourceAction? onDeleteSource;
   final SourceAction? onShowDetail;
@@ -94,6 +110,7 @@ class _DeviceTile extends StatelessWidget {
   const _DeviceTile({
     required this.device,
     required this.initiallyExpanded,
+    this.duplicatedNames = const <String>{},
     this.onEditSource,
     this.onDeleteSource,
     this.onShowDetail,
@@ -117,6 +134,7 @@ class _DeviceTile extends StatelessWidget {
         for (final src in device.sources)
           _SourceTile(
             source: src,
+            duplicatedName: duplicatedNames.contains(src.name),
             onEditSource: onEditSource,
             onDeleteSource: onDeleteSource,
             onShowDetail: onShowDetail,
@@ -128,12 +146,15 @@ class _DeviceTile extends StatelessWidget {
 
 class _SourceTile extends StatefulWidget {
   final frb.SourceAvailabilityDto source;
+  /// 是否与其它书源同名（同名时标题补短 id 以区分）。
+  final bool duplicatedName;
   final SourceAction? onEditSource;
   final SourceAction? onDeleteSource;
   final SourceAction? onShowDetail;
 
   const _SourceTile({
     required this.source,
+    this.duplicatedName = false,
     this.onEditSource,
     this.onDeleteSource,
     this.onShowDetail,
@@ -160,7 +181,8 @@ class _SourceTileState extends State<_SourceTile> {
           key: PageStorageKey('source-${source.sourceId}'),
           leading: const Icon(Icons.folder_outlined, size: 18),
           title: Text(
-            '${LibraryCatalogStore.statusEmoji(source.status)} ${source.name}',
+            '${LibraryCatalogStore.statusEmoji(source.status)} ${source.name}'
+            '${widget.duplicatedName ? ' ·#${_shortSourceId(source.sourceId)}' : ''}',
             style: const TextStyle(fontSize: 13),
           ),
           subtitle: Text(
@@ -371,4 +393,12 @@ class _SourceBooksListState extends State<_SourceBooksList> {
     }
     openBook(context, local, b.path, b.title);
   }
+}
+
+/// 书源 id 的短标识（用于同名书源的标题消歧）。
+/// 形如 `sync_62556ad8_1786286465729` → `17862864`；`115_1789360028897` → `17893600`。
+String _shortSourceId(String id) {
+  final parts = id.split('_');
+  final tail = parts.isNotEmpty ? parts.last : id;
+  return tail.length <= 8 ? tail : tail.substring(0, 8);
 }

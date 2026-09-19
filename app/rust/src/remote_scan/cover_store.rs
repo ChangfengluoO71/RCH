@@ -1050,6 +1050,91 @@ pub fn reconcile_cover_compensation_for_source_on(
         }
     }
 
+    // (1b) **解析类终态失败的重挂**（第 55 轮真实库审查）：
+    //
+    // 扫描收尾的那一刻，解析器的两条跳会同时不可用——preview 因"不再 Running"被跳过、
+    // 而 `library_index` 尚未落行 ⇒ 封面被判 `notFound`/`route_missing` 终态，
+    // 且 `long_retry_not_before=NULL` ⇒ **永远不再重试**。实测：115 源 225 行卡了 2 小时
+    // 以上，而它们所需的数据此后已完全可用（path/kind/size/指纹/代际全对）。
+    //
+    // 这里只重挂**现在确实能解析**的那些。谓词必须与解析链**同构**：
+    // 要么权威路由与索引行同时就位且一致（`route.logical_path = index.path`，
+    // index 存活且 kind/指纹齐备），要么一条身份守卫的 staging 行同时提供路由与元数据。
+    // 只查其一是不够的——曾把"索引有行但**没有路由**"的 `route_missing` 资产误重挂
+    // （L2 契约用例当场抓到："an open episode must not re-promote"）。
+    // 复用与长期补偿同一套 episode 语义：置 `long_retry_pending=1`，claim 时置
+    // `long_retry_consumed=1` ⇒ **一次**重试，不会变成无限重试。
+    if spent < budget.max_jobs && started.elapsed().as_millis() as i64 <= budget.max_wall_time_ms {
+        let remaining = budget.max_jobs - spent;
+        let mut stale: Vec<String> = tx
+            .prepare(
+                "SELECT job.job_key FROM remote_cover_job job
+                  WHERE job.source_id=?1 AND job.state='failed'
+                    AND job.error_code IN ('notFound','route_missing',
+                                           'cover_read_budget_exceeded',
+                                           -- 遗留**通用码**：旧构建把各种 provider 失败都记成 `provider`
+                                           -- （第 ① 轮才拆成 `provider:<子原因>`）。它们同样可能只是
+                                           -- 「当时取不到」，值得按解析链可解析性重挂一次。
+                                           'provider')
+                    AND COALESCE(job.long_retry_consumed,0)=0
+                    AND COALESCE(job.long_retry_pending,0)=0
+                    AND EXISTS (SELECT 1 FROM remote_scan_epoch epoch
+                                 WHERE epoch.source_id=job.source_id
+                                   AND epoch.generation=job.generation
+                                   AND epoch.session_token=?2)
+                    AND (
+                      EXISTS (SELECT 1 FROM remote_asset_route route
+                                JOIN library_index li
+                                  ON li.id=route.asset_id
+                                 AND li.path=route.logical_path
+                               WHERE route.source_id=job.source_id
+                                 AND route.asset_id=job.asset_id
+                                 AND li.deleted=0
+                                 AND COALESCE(li.asset_kind,'')<>''
+                                 AND COALESCE(li.content_fingerprint,'')<>'')
+                      OR EXISTS (SELECT 1 FROM remote_scan_preview preview
+                                  WHERE preview.source_id=job.source_id
+                                    AND preview.asset_id=job.asset_id
+                                    AND preview.session_epoch<>''
+                                    AND COALESCE(preview.asset_kind,'')<>''
+                                    AND preview.source_fingerprint=
+                                        (SELECT fingerprint FROM book_sources WHERE id=job.source_id))
+                    )
+                  ORDER BY job.updated_at,job.job_key
+                  LIMIT ?3",
+            )?
+            .query_map(
+                params![source_id, session_token, (remaining + 1) as i64],
+                |row| row.get(0),
+            )?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        if stale.len() > remaining {
+            report.truncated = true;
+            stale.truncate(remaining);
+        }
+        for job_key in stale {
+            let changed = tx.execute(
+                "UPDATE remote_cover_job
+                    SET state='pending',long_retry_pending=1,updated_at=?1,
+                        session_epoch=(SELECT epoch.session_epoch FROM remote_scan_epoch epoch
+                                        WHERE epoch.source_id=remote_cover_job.source_id
+                                          AND epoch.generation=remote_cover_job.generation
+                                          AND epoch.session_token=?3)
+                  WHERE job_key=?2 AND state='failed'
+                    AND COALESCE(long_retry_consumed,0)=0
+                    AND COALESCE(long_retry_pending,0)=0",
+                params![now, job_key, session_token],
+            )?;
+            if changed == 1 {
+                report.compensation_promoted += 1;
+            }
+            if started.elapsed().as_millis() as i64 > budget.max_wall_time_ms {
+                report.truncated = true;
+                break;
+            }
+        }
+    }
+
     report.claimable_work = has_claimable_work_on(&tx, source_id, session_token, now)?;
     // P1-E/REV-8：只有本批次真正改变了 durable cover truth 才推进 revision。
     // 粒度按 **source/generation 的成功事务**：一次 batch 最多 +1（不要求 +N，

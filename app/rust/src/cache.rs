@@ -22,10 +22,32 @@ pub fn cache_root() -> PathBuf {
             return custom;
         }
     }
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        PathBuf::from(appdata).join("RCH")
-    } else {
-        std::env::temp_dir().join("RCH")
+    // 测试构建：把数据根锚定到**进程专属临时目录**，第一次解析就生效。
+    //
+    // 为什么必须在 `cache_root()` 里锚定：单测会经**生产函数内部**的 `db::get()`
+    // 打开数据库（如 wake/worker 路径），而 `db` 的连接是进程级 `OnceLock`——只认
+    // 第一次解析出的根。若那次解析落在 `<APPDATA>/RCH`，测试数据就写进了用户默认库
+    // （③-1/② 复测实测：残留 `wake-*` / `ready-*` 书源行与 cover job 行）。
+    // 显式 `set_custom_cache_root(...)` 仍然优先（既有测试依赖这一优先级）；
+    // 目录名保留 "RCH" 以满足 `cache_root_defaults_to_appdata` 等既有断言。
+    #[cfg(test)]
+    {
+        static TEST_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        TEST_ROOT
+            .get_or_init(|| {
+                let dir = std::env::temp_dir().join(format!("RCH-test-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                dir
+            })
+            .clone()
+    }
+    #[cfg(not(test))]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            PathBuf::from(appdata).join("RCH")
+        } else {
+            std::env::temp_dir().join("RCH")
+        }
     }
 }
 

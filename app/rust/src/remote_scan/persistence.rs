@@ -236,7 +236,128 @@ pub fn recover_all_interrupted_scans(conn: &Connection) -> Result<u32> {
         "UPDATE remote_scan_state          SET status='interrupted', checkpoint=NULL, error_code='interrupted'          WHERE lower(status)='running'",
         [],
     )?;
+    // 同一启动时机顺手清理**源已不存在**的孤儿行：`delete_source_on` 历史不碰 remote_* 表，
+    // 残行会让"已删源"继续出现在扫描类视图里（第 56 轮实测：三个测试源在 10 张表里留残行，
+    // 其中 `remote_scan_state.status` 仍是 `interrupted`，启动恢复还会去"恢复"它们）。
+    match purge_orphan_remote_rows_on(conn) {
+        Ok(removed) if removed > 0 => {
+            crate::remote_scan::diag::note(&format!("startup_purged_orphan_remote_rows={removed}"));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            crate::remote_scan::diag::note(&format!("startup_purge_orphans_failed={error}"));
+        }
+    }
+    // 同一次启动修复：回收**上一进程遗留的过期封面租约**。
+    //
+    // 第 60 轮实测：应用被关闭/重启后，原来 `running` 的封面 job 会一直挂着
+    // （claim 只认 `pending`），租约 16:53 就过期了也**永不重试**，界面上永远显示"进行中"。
+    match recover_expired_cover_leases_on(conn, crate::db::now_ms()) {
+        Ok(recovered) if recovered > 0 => {
+            crate::remote_scan::diag::note(&format!("startup_recovered_cover_leases={recovered}"));
+        }
+        Ok(_) => {}
+        Err(error) => {
+            crate::remote_scan::diag::note(&format!("startup_recover_cover_leases_failed={error}"));
+        }
+    }
     Ok(changed as u32)
+}
+
+/// 按 `source_id` 直连的 remote_* 表（**只列确有该列的表**；表名是白名单常量，非外部输入）。
+const REMOTE_SOURCE_SCOPED_TABLES: [&str; 15] = [
+    "remote_scan_state",
+    "remote_scan_config",
+    "remote_scan_epoch",
+    "remote_scan_preview",
+    "remote_scan_listing_stage",
+    "remote_scan_pending",
+    "remote_scan_baseline",
+    "remote_cover_job",
+    "remote_cover_variant",
+    "remote_cover_ref",
+    "remote_cover_stage",
+    "remote_asset_route",
+    "remote_listing_state",
+    "remote_directory_cover",
+    "remote_view_revision",
+];
+
+/// 按 `book_key` 前缀（`<type>|<source_id>|%`）关联的 remote_* 表。
+const REMOTE_BOOK_KEY_SCOPED_TABLES: [&str; 2] =
+    ["remote_cover_dependency", "remote_cover_partial_cache"];
+
+/// 删除某个源的**全部** remote_* 行（删除书源时调用）。
+///
+/// `book_key_prefix` 是既有约定 `<type>|<source_id>|`。内容寻址的 `remote_cover_blob`
+/// 没有源关联列，删掉 job/ref 后它会变成不可达垃圾，交给缓存 GC（本函数不碰它）。
+pub fn delete_remote_rows_for_source_on(
+    conn: &Connection,
+    source_id: &str,
+    book_key_prefix: &str,
+) -> Result<usize> {
+    let mut removed = 0usize;
+    for table in REMOTE_SOURCE_SCOPED_TABLES {
+        removed += conn.execute(
+            &format!("DELETE FROM {table} WHERE source_id = ?1"),
+            params![source_id],
+        )?;
+    }
+    for table in REMOTE_BOOK_KEY_SCOPED_TABLES {
+        removed += conn.execute(
+            &format!("DELETE FROM {table} WHERE book_key LIKE ?1"),
+            params![format!("{book_key_prefix}%")],
+        )?;
+    }
+    Ok(removed)
+}
+
+/// 启动期回收**过期租约**的封面 job：`running` 且 `lease_until < now` ⇒ 回到 `pending`。
+///
+/// 只动"租约已过期"的行——仍在别的活跃进程租期内的行不受影响。
+/// 返回回收行数（供 `scan_diag.log` 记录）。
+pub fn recover_expired_cover_leases_on(conn: &Connection, now: i64) -> Result<usize> {
+    let changed = conn.execute(
+        "UPDATE remote_cover_job
+            SET state='pending', lease_owner=NULL, lease_until=NULL, next_attempt_at=NULL,
+                updated_at=?1
+          WHERE state='running' AND (lease_until IS NULL OR lease_until < ?1)",
+        params![now],
+    )?;
+    Ok(changed)
+}
+
+/// 启动期清理：删除**源已不存在**（`book_sources` 里没有）的 remote_* 孤儿行。
+///
+/// 只删孤儿：任何仍然存在的源一行都不动。返回删除的总行数。
+pub fn purge_orphan_remote_rows_on(conn: &Connection) -> Result<usize> {
+    let mut removed = 0usize;
+    for table in REMOTE_SOURCE_SCOPED_TABLES {
+        removed += conn.execute(
+            &format!(
+                "DELETE FROM {table}
+                  WHERE source_id IS NOT NULL AND source_id <> ''
+                    AND source_id NOT IN (SELECT id FROM book_sources)"
+            ),
+            [],
+        )?;
+    }
+    // `book_key` 形如 `<type>|<source_id>|<path>`：取第二段比对存活源集合。
+    for table in REMOTE_BOOK_KEY_SCOPED_TABLES {
+        removed += conn.execute(
+            &format!(
+                "DELETE FROM {table}
+                  WHERE book_key IS NOT NULL
+                    AND instr(book_key,'|') > 0
+                    AND substr(book_key,
+                               instr(book_key,'|') + 1,
+                               instr(substr(book_key, instr(book_key,'|') + 1), '|') - 1)
+                        NOT IN (SELECT id FROM book_sources)"
+            ),
+            [],
+        )?;
+    }
+    Ok(removed)
 }
 
 pub fn requested_root_matches_source(
@@ -2516,5 +2637,144 @@ mod rg_b_recovery_tests {
         let (status, checkpoint, _) = row(&conn, "ok-src");
         assert_eq!(status, "Succeeded");
         assert_eq!(checkpoint.as_deref(), Some("/y"));
+    }
+}
+
+/// 第 56 轮：删除书源时的 remote_* 清理 + 启动期孤儿清理。
+#[cfg(test)]
+mod orphan_cleanup_tests {
+    use super::*;
+
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE book_sources(
+               id TEXT PRIMARY KEY,type TEXT NOT NULL,fingerprint TEXT NOT NULL,
+               path TEXT,root_id TEXT,deleted INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE library_index(
+               id TEXT PRIMARY KEY,source_id TEXT,parent_id TEXT,name TEXT,path TEXT,
+               entry_type TEXT,size INTEGER,modified_at INTEGER,asset_kind TEXT,
+               content_fingerprint TEXT,scan_generation INTEGER,
+               listing_complete INTEGER NOT NULL DEFAULT 0,
+               deleted INTEGER NOT NULL DEFAULT 0,updated_at INTEGER);",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO book_sources(id,type,fingerprint,path,root_id)
+             VALUES('alive','115','fp','/','/')",
+            [],
+        )
+        .unwrap();
+        // 一个已删源（book_sources 里不存在）+ 一个存活源，各自留行。
+        conn.execute_batch(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation)
+               VALUES('ghost','interrupted','Snapshot',2),('alive','Succeeded','Snapshot',1);
+             INSERT INTO remote_scan_config(source_id,source_type,root_path,mode,generation,status,updated_at)
+               VALUES('ghost','115','/','full',2,'running',1),('alive','115','/','full',1,'complete',1);
+             INSERT INTO remote_cover_dependency(book_key,dependency_path,dependency_fingerprint,profile,status)
+               VALUES('115|ghost|/x.cbz','/x.cbz','f','340x480@1','queued'),
+                     ('115|alive|/y.cbz','/y.cbz','f','340x480@1','queued');",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// 第 60 轮实测：重启后上一进程遗留的 `running` 封面 job 必须被回收成 `pending`，
+    /// 否则 claim 只认 `pending` ⇒ 它永远不再重试（界面永远显示"进行中"）。
+    #[test]
+    fn expired_cover_leases_are_recovered_on_startup() {
+        let conn = db();
+        conn.execute_batch(
+            "INSERT INTO remote_cover_job(
+               job_key,source_id,asset_id,content_revision,selection_revision,profile,state,
+               demand_kind,priority,generation,session_epoch,attempt,lease_owner,lease_until,updated_at)
+             VALUES
+               ('stale','alive','a','c','default','340x480@1','running','background',10,1,'e',1,'cover:alive:9',1000,1000),
+               ('live','alive','b','c','default','340x480@1','running','background',10,1,'e',1,'cover:alive:9',9999999999999,1000);",
+        )
+        .unwrap();
+        let recovered = recover_expired_cover_leases_on(&conn, 2000).unwrap();
+        assert_eq!(recovered, 1, "只回收已过期的租约");
+        let stale: String = conn
+            .query_row("SELECT state FROM remote_cover_job WHERE job_key='stale'", [], |r| r.get(0))
+            .unwrap();
+        let live: String = conn
+            .query_row("SELECT state FROM remote_cover_job WHERE job_key='live'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stale, "pending");
+        assert_eq!(live, "running", "未过期的租约不得被抢");
+    }
+
+    /// 启动期孤儿清理：只删源已不存在的行，存活源一行不动。
+    #[test]
+    fn orphan_rows_are_purged_but_live_sources_survive() {
+        let conn = db();
+        let removed = purge_orphan_remote_rows_on(&conn).unwrap();
+        assert_eq!(removed, 3, "ghost 在 state/config/dependency 各 1 行");
+        let ghost_state: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_scan_state WHERE source_id='ghost'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let alive_state: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_scan_state WHERE source_id='alive'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let alive_dep: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_dependency WHERE book_key LIKE '115|alive|%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ghost_state, 0, "已删源的扫描状态必须清掉");
+        assert_eq!(alive_state, 1, "存活源不得被误删");
+        assert_eq!(alive_dep, 1, "存活源的依赖行不得被误删");
+
+        // 幂等：再跑一次不再有可删行。
+        assert_eq!(purge_orphan_remote_rows_on(&conn).unwrap(), 0);
+    }
+
+    /// 删除某个源时，其 remote_* 行（含 `book_key` 前缀关联的两张表）必须一次清干净。
+    #[test]
+    fn deleting_a_source_removes_its_remote_rows() {
+        let conn = db();
+        conn.execute(
+            "INSERT INTO book_sources(id,type,fingerprint,path,root_id)
+             VALUES('doomed','115','fp2','/','/')",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation)
+               VALUES('doomed','Succeeded','Snapshot',1);
+             INSERT INTO remote_cover_dependency(book_key,dependency_path,dependency_fingerprint,profile,status)
+               VALUES('115|doomed|/z.cbz','/z.cbz','f','340x480@1','queued');
+             INSERT INTO remote_cover_partial_cache(book_key,dependency_fingerprint,bytes,updated_at)
+               VALUES('115|doomed|/z.cbz','f',x'00',1);",
+        )
+        .unwrap();
+        let removed = delete_remote_rows_for_source_on(&conn, "doomed", "115|doomed|").unwrap();
+        assert_eq!(removed, 3, "state + dependency + partial_cache 各 1 行");
+        for (table, sql) in [
+            ("remote_scan_state", "SELECT COUNT(*) FROM remote_scan_state WHERE source_id='doomed'"),
+            (
+                "remote_cover_dependency",
+                "SELECT COUNT(*) FROM remote_cover_dependency WHERE book_key LIKE '115|doomed|%'",
+            ),
+            (
+                "remote_cover_partial_cache",
+                "SELECT COUNT(*) FROM remote_cover_partial_cache WHERE book_key LIKE '115|doomed|%'",
+            ),
+        ] {
+            let left: i64 = conn.query_row(sql, [], |r| r.get(0)).unwrap();
+            assert_eq!(left, 0, "{table} 应被清空");
+        }
     }
 }

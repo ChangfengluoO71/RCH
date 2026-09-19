@@ -348,6 +348,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PageImage dco_decode_page_image(dynamic raw);
 
   @protected
+  QuarkQrPayload dco_decode_quark_qr_payload(dynamic raw);
+
+  @protected
   QuarkSessionInfo dco_decode_quark_session_info(dynamic raw);
 
   @protected
@@ -828,6 +831,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PageImage sse_decode_page_image(SseDeserializer deserializer);
+
+  @protected
+  QuarkQrPayload sse_decode_quark_qr_payload(SseDeserializer deserializer);
 
   @protected
   QuarkSessionInfo sse_decode_quark_session_info(SseDeserializer deserializer);
@@ -1449,6 +1455,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_page_image(PageImage self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_quark_qr_payload(
+    QuarkQrPayload self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_quark_session_info(

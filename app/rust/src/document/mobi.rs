@@ -33,7 +33,20 @@ impl MobiBook {
 
         let mut pages = Vec::with_capacity(image_records.len());
         for record in image_records {
+            // `image_records()` 只挡了**非图片黑名单**（FLIS/FCIS/INDX/SRCS/RESC…），
+            // KF8/AZW3 里的 CSS/HTML/其它资源记录会被混进来当"页"：既挤占页序，
+            // 又让封面（page 0）永远解不开（③ 实测 33.9MB MOBI ⇒ `cover_decode_failed`）。
+            // 这里要求魔数**确实是当前构建可解码的图片**。
+            if !crate::decode::image_magic_decodable(crate::decode::sniff_image_magic(
+                record.content,
+            )) {
+                continue;
+            }
             pages.push(record.content.to_vec());
+        }
+
+        if pages.is_empty() {
+            anyhow::bail!("MOBI 中没有可解码的图片记录。标题: {title}。");
         }
 
         Ok(MobiBook { pages, title })

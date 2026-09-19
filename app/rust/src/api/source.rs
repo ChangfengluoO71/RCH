@@ -1173,6 +1173,37 @@ pub async fn cloud115_cookie_qr_result(uid: String, app: String) -> Result<Strin
     tokio::task::spawn_blocking(move || cloud115_source::web_qr_cookie(&uid, &app)).await?
 }
 
+// ============================================================
+// 夸克网页扫码登录（Cookie 模式，免 F12）
+// ============================================================
+
+/// 夸克扫码载荷：`token`/`requestId` 用于轮询，`qrcode` 用于渲染二维码。
+pub struct QuarkQrPayload {
+    pub token: String,
+    pub request_id: String,
+    pub qrcode: String,
+}
+
+/// 第一步：获取夸克网页登录二维码（手机夸克 App 扫码）。
+pub async fn quark_qr_start() -> Result<QuarkQrPayload> {
+    let payload = tokio::task::spawn_blocking(quark_source::web_qr_start).await??;
+    Ok(QuarkQrPayload {
+        token: payload.token,
+        request_id: payload.request_id,
+        qrcode: payload.qrcode,
+    })
+}
+
+/// 第二步：轮询扫码状态（0 等待 / 2 已登录 / -1 失败或过期）。
+pub async fn quark_qr_poll(token: String, request_id: String) -> Result<i32> {
+    tokio::task::spawn_blocking(move || quark_source::web_qr_poll(&token, &request_id)).await?
+}
+
+/// 第三步：扫码确认后换取 Cookie（`k=v; k2=v2`）。
+pub async fn quark_qr_result(token: String, request_id: String) -> Result<String> {
+    tokio::task::spawn_blocking(move || quark_source::web_qr_cookie(&token, &request_id)).await?
+}
+
 /// 连接 115（Cookie 模式）：列表根目录做连通性测试，返回会话。
 pub async fn cloud115_cookie_connect(
     cookie: String,

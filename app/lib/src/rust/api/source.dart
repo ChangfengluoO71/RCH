@@ -224,6 +224,26 @@ Future<String> cloud115CookieQrResult({
   app: app,
 );
 
+/// 第一步：获取夸克网页登录二维码（手机夸克 App 扫码）。
+Future<QuarkQrPayload> quarkQrStart() =>
+    RustLib.instance.api.crateApiSourceQuarkQrStart();
+
+/// 第二步：轮询扫码状态（0 等待 / 2 已登录 / -1 失败或过期）。
+Future<int> quarkQrPoll({required String token, required String requestId}) =>
+    RustLib.instance.api.crateApiSourceQuarkQrPoll(
+      token: token,
+      requestId: requestId,
+    );
+
+/// 第三步：扫码确认后换取 Cookie（`k=v; k2=v2`）。
+Future<String> quarkQrResult({
+  required String token,
+  required String requestId,
+}) => RustLib.instance.api.crateApiSourceQuarkQrResult(
+  token: token,
+  requestId: requestId,
+);
+
 /// 连接 115（Cookie 模式）：列表根目录做连通性测试，返回会话。
 Future<Cloud115CookieSessionInfo> cloud115CookieConnect({
   required String cookie,
@@ -832,6 +852,31 @@ class LegacyCoverLocalLookupDto {
           width == other.width &&
           height == other.height &&
           crop == other.crop;
+}
+
+/// 夸克扫码载荷：`token`/`requestId` 用于轮询，`qrcode` 用于渲染二维码。
+class QuarkQrPayload {
+  final String token;
+  final String requestId;
+  final String qrcode;
+
+  const QuarkQrPayload({
+    required this.token,
+    required this.requestId,
+    required this.qrcode,
+  });
+
+  @override
+  int get hashCode => token.hashCode ^ requestId.hashCode ^ qrcode.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QuarkQrPayload &&
+          runtimeType == other.runtimeType &&
+          token == other.token &&
+          requestId == other.requestId &&
+          qrcode == other.qrcode;
 }
 
 /// 夸克网盘会话信息。

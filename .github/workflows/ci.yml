@@ -56,7 +56,10 @@ jobs:
           toolchain: stable
 
       - name: Cargo test
-        run: cargo test
+        # 必须串行：`cache::set_custom_cache_root` 是**进程级全局**，并行 test 线程会互相
+        # 覆盖缓存根，导致 cache/source/wake 用例随机失败（第 51/52 轮 A/B 已证）。
+        # 与 `docs/reports/p0|p1/*` 记录的既有门禁一致。
+        run: cargo test --locked -- --test-threads=1
 
   build-windows:
     name: Windows Build

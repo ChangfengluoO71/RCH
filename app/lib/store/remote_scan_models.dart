@@ -172,6 +172,12 @@ class RemoteScanViewState {
 /// must never be rendered directly in a browser/snackbar.
 String remoteErrorMessage(Object error, {String fallback = '远程请求失败，请稍后重试'}) {
   final raw = error.toString().toLowerCase();
+  // 正在扫描时再次点"重新扫描"不是错误，但过去会落到 fallback 显示成"远程请求失败"
+  // （用户实测："点重新扫描显示失败"）。这里给出真实原因。
+  if (raw.contains('remotescanalreadyrunning') ||
+      raw.contains('already running')) {
+    return '该源正在扫描中，请等本次扫描完成';
+  }
   if (raw.contains('登录状态') ||
       raw.contains('auth') ||
       raw.contains('unauthorized') ||

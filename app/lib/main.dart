@@ -98,6 +98,14 @@ Future<void> _initializeAfterFirstFrame() async {
   await RemoteScanCoordinator.instance.restoreStatuses(
     LibraryStore.instance.sources,
   );
+  // 用户要求：重启后**自动重连已保存凭据的书源**。会话是进程内的，否则每个
+  // 远程源都要手点一次（第 60/63 轮实测：重启后封面队列完全静止）。
+  // 非阻塞：连接是网络操作，不能让首帧后的初始化等它。
+  unawaited(
+    RemoteScanCoordinator.instance.warmUpSessions(
+      LibraryStore.instance.sources,
+    ),
+  );
 
   // P1-E：启动**唯一**的 cover revision stream 订阅（进程级一次）。
   // 事件只是 wake-up，coordinator 收到后会重读 durable revision 并刷新本地聚合。

@@ -663,3 +663,140 @@ fn reconciliation_is_strictly_source_scoped() {
         "a session event for source-a must never touch source-b"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 3b. 解析类终态失败的重挂（第 55 轮真实库审查）
+// ---------------------------------------------------------------------------
+
+/// 扫描收尾窗口会把封面判成 `notFound` 终态（`long_retry_not_before=NULL`），
+/// 之后即使数据齐备也**永不重试**（实测 115 源 225 行卡了两小时以上）。
+/// 新的 (1b) 桶必须：**只**重挂"现在确实能解析"的行，且只给一次机会。
+#[test]
+fn stale_resolution_failures_are_rearmed_once_after_they_become_resolvable() {
+    let conn = connection();
+    bind_epoch(&conn, "source", 1, "e1", 42);
+
+    let resolvable = job_key("source", "asset-ok");
+    let orphan = job_key("source", "asset-gone");
+    let noroute = job_key("source", "asset-noroute");
+    seed_job(&conn, &resolvable, CoverJobState::Failed, 1, "e1", 0);
+    seed_job(&conn, &orphan, CoverJobState::Failed, 1, "e1", 0);
+    conn.execute(
+        "UPDATE remote_cover_job SET error_code='notFound' WHERE source_id='source'",
+        [],
+    )
+    .unwrap();
+
+    // 解析链同构要求：路由与索引行**同时**就位且路径一致。
+    // asset-ok：路由 + 存活索引行（路径一致）⇒ 应重挂；
+    // asset-gone：有路由但索引行已删除 ⇒ 不该重挂；
+    // asset-noroute：有索引行但**没有路由** ⇒ 不该重挂（L2 回归点）。
+    for asset in ["asset-ok", "asset-gone"] {
+        conn.execute(
+            "INSERT INTO remote_asset_route(source_id,asset_id,logical_path,provider_id,source_fingerprint,generation,route_revision)
+             VALUES('source',?1,?2,'115','fp',1,1)",
+            params![asset, format!("/{asset}.zip")],
+        )
+        .unwrap();
+    }
+    seed_job(&conn, &noroute, CoverJobState::Failed, 1, "e1", 0);
+    conn.execute(
+        "UPDATE remote_cover_job SET error_code='route_missing' WHERE asset_id='asset-noroute'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO library_index(id,source_id,path,asset_kind,content_fingerprint,deleted,listing_complete,updated_at)
+         VALUES('asset-noroute','source','/asset-noroute.zip','ArchiveFile','fp-nr',0,1,0)",
+        [],
+    )
+    .unwrap();
+    // 只有 asset-ok 有"存活且齐备"的索引行；asset-gone 的行已被删除。
+    conn.execute(
+        "INSERT INTO library_index(id,source_id,path,asset_kind,content_fingerprint,deleted,listing_complete,updated_at)
+         VALUES('asset-ok','source','/asset-ok.zip','ArchiveFile','fp-ok',0,1,0)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO library_index(id,source_id,path,asset_kind,content_fingerprint,deleted,listing_complete,updated_at)
+         VALUES('asset-gone','source','/asset-gone.zip','ArchiveFile','fp-gone',1,1,0)",
+        [],
+    )
+    .unwrap();
+
+    // 第 55 轮真根因：同一远端库被两个书源指向（直连 + 同步镜像）时 `fingerprint`
+    // 相同 ⇒ `library_index.id`(PK) 相同 ⇒ 行被**另一源**持有。解析器不能因此判死：
+    // 同一个 id + 同一条路径就是同一份库的同一条资产。
+    let shadow = job_key("source", "asset-shadow");
+    seed_job(&conn, &shadow, CoverJobState::Failed, 1, "e1", 0);
+    conn.execute(
+        "UPDATE remote_cover_job SET error_code='cover_read_budget_exceeded' WHERE asset_id='asset-shadow'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO remote_asset_route(source_id,asset_id,logical_path,provider_id,source_fingerprint,generation,route_revision)
+         VALUES('source','asset-shadow','/asset-shadow.zip','115','fp',1,1)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO library_index(id,source_id,path,asset_kind,content_fingerprint,deleted,listing_complete,updated_at)
+         VALUES('asset-shadow','source-mirror','/asset-shadow.zip','ArchiveFile','fp-shadow',0,1,0)",
+        [],
+    )
+    .unwrap();
+
+    // 遗留通用码（旧构建把 provider 失败一律记成 `provider`）也必须能重挂。
+    let legacy = job_key("source", "asset-legacy");
+    seed_job(&conn, &legacy, CoverJobState::Failed, 1, "e1", 0);
+    conn.execute(
+        "UPDATE remote_cover_job SET error_code='provider' WHERE asset_id='asset-legacy'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO remote_asset_route(source_id,asset_id,logical_path,provider_id,source_fingerprint,generation,route_revision)
+         VALUES('source','asset-legacy','/asset-legacy.zip','quark','fp',1,1)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO library_index(id,source_id,path,asset_kind,content_fingerprint,deleted,listing_complete,updated_at)
+         VALUES('asset-legacy','source','/asset-legacy.zip','ArchiveFile','fp-legacy',0,1,0)",
+        [],
+    )
+    .unwrap();
+
+    let report =
+        cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, 1_000, budget(64))
+            .unwrap();
+    assert_eq!(
+        report.compensation_promoted, 3,
+        "同指纹行、预算中止、遗留通用码 provider 三类都必须能重挂"
+    );
+    assert_eq!(
+        state_of(&conn, &shadow),
+        "pending",
+        "同 id 异源（同步镜像）持有的资产必须可重挂"
+    );
+    assert_eq!(state_of(&conn, &resolvable), "pending");
+    assert_eq!(
+        long_retry(&conn, &resolvable).2,
+        1,
+        "重挂必须带 long_retry_pending（额度在 claim 时才消耗）"
+    );
+    assert_eq!(state_of(&conn, &orphan), "failed", "索引行已删除的仍保持终态");
+    assert_eq!(
+        state_of(&conn, &noroute),
+        "failed",
+        "有索引行但没有路由的（route_missing）不得重挂"
+    );
+
+    // 幂等：第二次 reconcile 不得重复推进。
+    let again =
+        cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, 2_000, budget(64))
+            .unwrap();
+    assert_eq!(again.compensation_promoted, 0, "同一次重挂只能推进一次");
+}

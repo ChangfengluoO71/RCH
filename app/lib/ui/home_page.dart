@@ -6,6 +6,9 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/repository/tag_repository.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/store/scan_diag_log.dart';
+import 'package:app/store/library_catalog.dart';
+import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
@@ -15,7 +18,9 @@ import 'package:app/store/update_manager.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/backup_panel.dart';
 import 'package:app/ui/cache_manager.dart';
+import 'package:app/ui/cloud115_folder_picker.dart';
 import 'package:app/ui/cloud115_qr_scan.dart';
+import 'package:app/ui/quark_qr_scan.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/ui/global_search.dart';
@@ -470,6 +475,14 @@ class _HomePageState extends State<HomePage> {
               ),
               const Spacer(),
               InkWell(
+                onTap: () => _refreshSources(),
+                borderRadius: BorderRadius.circular(4),
+                child: const Padding(
+                  padding: EdgeInsets.all(2),
+                  child: Icon(Icons.refresh, size: 18, color: Colors.white70),
+                ),
+              ),
+              InkWell(
                 onTap: () => _importLocalComics(),
                 borderRadius: BorderRadius.circular(4),
                 child: const Padding(
@@ -514,6 +527,39 @@ class _HomePageState extends State<HomePage> {
         ),
       ],
     );
+  }
+
+  /// 手动刷新书源视图（书源头部的 ⟳ 按钮）。
+  ///
+  /// 为什么需要：删除/新增书源后，只要**任何一个**投影没跟着更新（或者数据是被后台、
+  /// 另一个窗口改动的），用户就只能重启应用才能看到正确结果——"删了没反应"。
+  /// 这里给一个不重启的兜底：重载设备/书源树 → 从 SQLite 重载资料库 → 再按当前
+  /// 书源列表恢复远程扫描状态。全部只读/重载，不写业务数据。
+  Future<void> _refreshSources() async {
+    final store = LibraryStore.instance;
+    var failure = '';
+    try {
+      await store.load(force: true, persist: false);
+      await LibraryCatalogStore.instance.loadTree();
+      await RemoteScanCoordinator.instance.restoreStatuses(store.sources);
+    } catch (error) {
+      // 不能再静默：刷新失败必须让用户**看见**，否则就是"点了没反应"。
+      failure = '$error';
+      debugPrint('[HomePage] refresh sources failed: $error');
+    }
+    final devices = LibraryCatalogStore.instance.devices.length;
+    await appendScanDiag(
+      failure.isEmpty
+          ? 'sources_refreshed sources=${store.sources.length} devices=$devices'
+          : 'sources_refresh_failed error=$failure',
+    );
+    if (!mounted) return;
+    setState(() {});
+    if (failure.isNotEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('刷新失败：$failure')));
+    }
   }
 
   /// 从系统文件选择器（Android=SAF）导入本地漫画：流式复制进应用私有 books/
@@ -1038,6 +1084,30 @@ class _HomePageState extends State<HomePage> {
                 _fd('根文件夹 ID(留空=网盘根目录)', rootIdCtrl),
                 OutlinedButton.icon(
                   onPressed: () async {
+                    // 与「添加书源」同一入口：浏览网盘目录树，选中的 cid 自动填回。
+                    try {
+                      final choice = await _pick115RootFolder(
+                        context: ctx,
+                        cookie: cookieCtrl.text,
+                        currentRootId: rootIdCtrl.text,
+                      );
+                      if (choice != null && ctx.mounted) {
+                        rootIdCtrl.text = choice.id;
+                      }
+                    } catch (error) {
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          SnackBar(content: Text('浏览 115 文件夹失败：$error')),
+                        );
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.folder_open, size: 18),
+                  label: const Text('选择文件夹（自动填根文件夹 ID）'),
+                ),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                  onPressed: () async {
                     final cookie = await scanCloud115Cookie(ctx);
                     if (cookie != null && ctx.mounted) cookieCtrl.text = cookie;
                   },
@@ -1050,7 +1120,56 @@ class _HomePageState extends State<HomePage> {
                 _fd('APP ID（官方模式必填）', appKeyCtrl),
               ] else if (src.isQuark) ...[
                 _fd('根文件夹 ID', rootIdCtrl),
-                _fdPw('Cookie', cookieCtrl),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final cookie = await scanQuarkCookie(
+                        ctx,
+                        onError: (message) {
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              SnackBar(content: Text(message)),
+                            );
+                          }
+                        },
+                      );
+                      if (cookie != null && ctx.mounted) {
+                        cookieCtrl.text = cookie;
+                      }
+                    } catch (error) {
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          SnackBar(content: Text('夸克扫码失败：$error')),
+                        );
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.qr_code_2, size: 18),
+                  label: const Text('扫码获取 Cookie（无需 F12）'),
+                ),
+                _fdPw('Cookie（可扫码自动填入）', cookieCtrl),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final choice = await _pickQuarkRootFolder(
+                        context: ctx,
+                        cookie: cookieCtrl.text,
+                        currentRootId: rootIdCtrl.text,
+                      );
+                      if (choice != null && ctx.mounted) {
+                        rootIdCtrl.text = choice.id;
+                      }
+                    } catch (error) {
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          SnackBar(content: Text('浏览夸克文件夹失败：$error')),
+                        );
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.folder_open, size: 18),
+                  label: const Text('选择文件夹（自动填根文件夹 ID）'),
+                ),
               ] else if (src.isSmb)
                 _fd('共享目录路径(UNC)', pathCtrl)
               else
@@ -1217,10 +1336,22 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     ).then((ok) async {
-      if (ok == true) {
+      if (ok != true) return;
+      try {
         await LibraryStore.instance.removeSourceWithCleanup(src.id);
-        setState(() {});
+      } catch (error) {
+        // 删除链里的任何一步失败（例如数据库瞬时被占用）都不该让界面停在旧状态：
+        // 记下来、**提示用户**，然后照样重载一次视图，让用户看到真实结果，
+        // 而不是"删了没反应"。
+        debugPrint('[HomePage] delete source failed: $error');
+        await appendScanDiag('source_delete_failed id=${src.id} error=$error');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('删除失败：$error（书源可能未被删除）')),
+          );
+        }
       }
+      await _refreshSources();
     });
   }
 
@@ -1943,6 +2074,83 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
   );
 }
 
+/// 夸克根文件夹选择：与 115 同形——用给定 Cookie 建**临时会话** → 打开目录树 →
+/// 返回选中的 `(fid, name)`；用后立即断开。
+///
+/// 复用 `Cloud115FolderPickerDialog`（它的文档明确写了"接收 listDirectory 回调、
+/// 由调用方掌握会话生命周期，因此可同时服务新增与编辑流程"）——夸克与 115 的
+/// 目录接口形状一致（`listDirectory(path)` → `List<DirEntry>`）。
+Future<Cloud115FolderChoice?> _pickQuarkRootFolder({
+  required BuildContext context,
+  required String cookie,
+  required String currentRootId,
+}) async {
+  final trimmed = cookie.trim();
+  if (trimmed.isEmpty) {
+    throw StateError('先扫码获取 Cookie（或粘贴 Cookie）才能浏览网盘文件夹');
+  }
+  final session = await quarkConnect(
+    cookie: trimmed,
+    rootId: currentRootId.trim().isEmpty ? '0' : currentRootId.trim(),
+  );
+  try {
+    if (!context.mounted) return null;
+    return await showDialog<Cloud115FolderChoice>(
+      context: context,
+      builder: (c) => Cloud115FolderPickerDialog(
+        listDirectory: (path) => quarkList(session: session.id, path: path),
+        initialPath: session.root,
+      ),
+    );
+  } finally {
+    try {
+      await quarkDisconnect(id: session.id);
+    } catch (_) {
+      // 断开失败不影响选择结果。
+    }
+  }
+}
+
+/// 115 根文件夹选择：用给定 Cookie 建一个**临时会话** → 打开网盘目录树 → 返回选中的
+/// `(cid, name)`；会话用后立即断开。
+///
+/// 为什么需要：115 的根目录只能靠 `cid` 指定，手输要用户自己去网页端 URL 里翻。
+/// 选择器 `Cloud115FolderPickerDialog`（`ui/cloud115_folder_picker.dart`）就是为此写的，
+/// 但它在 `1bf2e37` 加入后**一直没有调用点** ——这里把入口接上：
+/// 「选择文件夹」→ 自动把 `cid` 写进「根文件夹 ID」（名称留空时顺带填上）。
+Future<Cloud115FolderChoice?> _pick115RootFolder({
+  required BuildContext context,
+  required String cookie,
+  required String currentRootId,
+}) async {
+  final trimmed = cookie.trim();
+  if (trimmed.isEmpty) {
+    throw StateError('先扫码获取 Cookie（或粘贴 Cookie）才能浏览网盘文件夹');
+  }
+  final session = await cloud115CookieConnect(
+    cookie: trimmed,
+    rootId: currentRootId.trim().isEmpty ? '0' : currentRootId.trim(),
+  );
+  try {
+    // 会话建立期间用户可能已关掉对话框：跨 await 使用 context 前必须确认仍挂载。
+    if (!context.mounted) return null;
+    return await showDialog<Cloud115FolderChoice>(
+      context: context,
+      builder: (c) => Cloud115FolderPickerDialog(
+        listDirectory: (path) =>
+            cloud115CookieList(session: session.id, path: path),
+        initialPath: session.root,
+      ),
+    );
+  } finally {
+    try {
+      await cloud115CookieDisconnect(id: session.id);
+    } catch (_) {
+      // 断开失败不影响选择结果。
+    }
+  }
+}
+
 class AddSourceDialog extends StatefulWidget {
   const AddSourceDialog({super.key});
   @override
@@ -2369,6 +2577,84 @@ class _AddDialogState extends State<AddSourceDialog> {
     }
   }
 
+  /// 115：浏览网盘目录并选中根文件夹（选中的 `cid` 自动填进「根文件夹 ID」）。
+  Future<void> _browse115RootFolder() async {
+    setState(() {
+      _t = true;
+      _e = null;
+    });
+    try {
+      final choice = await _pick115RootFolder(
+        context: context,
+        cookie: _cookie115.text,
+        currentRootId: _rootId.text,
+      );
+      if (choice != null && mounted) {
+        setState(() {
+          _rootId.text = choice.id;
+          if (_a.text.trim().isEmpty && choice.name.isNotEmpty) {
+            _a.text = choice.name;
+          }
+        });
+      }
+    } catch (error) {
+      if (mounted) _setError('浏览 115 文件夹失败：$error');
+    } finally {
+      if (mounted) setState(() => _t = false);
+    }
+  }
+
+  /// 夸克：扫码获取 Cookie（手机夸克 App），成功后自动填入 Cookie 输入框。
+  Future<void> _scanQuarkCookie() async {
+    setState(() {
+      _t = true;
+      _e = null;
+    });
+    try {
+      final cookie = await scanQuarkCookie(
+        context,
+        onError: (message) {
+          if (mounted) _setError(message);
+        },
+      );
+      if (cookie != null && mounted) {
+        setState(() {
+          _cookie.text = cookie;
+          _e = null;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _t = false);
+    }
+  }
+
+  /// 夸克：浏览网盘目录并选中根文件夹（选中的 fid 自动填进「根文件夹 ID」）。
+  Future<void> _browseQuarkRootFolder() async {
+    setState(() {
+      _t = true;
+      _e = null;
+    });
+    try {
+      final choice = await _pickQuarkRootFolder(
+        context: context,
+        cookie: _cookie.text,
+        currentRootId: _rootId.text,
+      );
+      if (choice != null && mounted) {
+        setState(() {
+          _rootId.text = choice.id;
+          if (_a.text.trim().isEmpty && choice.name.isNotEmpty) {
+            _a.text = choice.name;
+          }
+        });
+      }
+    } catch (error) {
+      if (mounted) _setError('浏览夸克文件夹失败：$error');
+    } finally {
+      if (mounted) setState(() => _t = false);
+    }
+  }
+
   /// 解析 SFTP 服务器地址：`host` / `host:port`，端口缺省取端口字段或 22。
   (String, int) _sftpHostPort() {
     final addr = _u.text.trim();
@@ -2618,21 +2904,39 @@ class _AddDialogState extends State<AddSourceDialog> {
                 controller: _cookie,
                 obscureText: true,
                 decoration: const InputDecoration(
-                  labelText: 'Cookie(pan.quark.cn 登录后 F12 复制)',
+                  labelText: 'Cookie(可扫码自动填入，或 F12 复制)',
                   hintText: 'stoken=...; pds=...; __puus=...',
                   border: OutlineInputBorder(),
                   isDense: true,
                 ),
+              ),
+              const SizedBox(height: 6),
+              OutlinedButton.icon(
+                onPressed: _t ? null : _scanQuarkCookie,
+                icon: const Icon(Icons.qr_code_2, size: 18),
+                label: const Text('扫码获取 Cookie（无需 F12）'),
+              ),
+              const SizedBox(height: 6),
+              OutlinedButton.icon(
+                onPressed: _t ? null : _browseQuarkRootFolder,
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('选择文件夹（自动填根文件夹 ID）'),
               ),
             ] else ...[
               TextField(
                 controller: _rootId,
                 decoration: const InputDecoration(
                   labelText: '根文件夹 ID(留空=网盘根目录)',
-                  hintText: '115 网页端进入目标文件夹，复制 URL 中 cid= 后的数字',
+                  hintText: '115 网页端进入目标文件夹，复制 URL 中 cid= 后的数字；也可用下方「选择文件夹」',
                   border: OutlineInputBorder(),
                   isDense: true,
                 ),
+              ),
+              const SizedBox(height: 6),
+              OutlinedButton.icon(
+                onPressed: _t ? null : _browse115RootFolder,
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('选择文件夹（自动填根文件夹 ID）'),
               ),
               const SizedBox(height: 10),
               OutlinedButton.icon(

@@ -1590,6 +1590,15 @@ pub(crate) fn delete_source_on(conn: &Connection, id: &str) -> Result<()> {
         "DELETE FROM source_snapshot WHERE source_id = ?1",
         params![id],
     )?;
+    // 远程扫描/封面行必须一起删。历史实现不碰 `remote_*`（18 张表），
+    // 已删源会留残行并继续出现在扫描类视图里（第 56 轮实测：三个测试源在 10 张表里
+    // 留了 40+ 行，其中 `remote_scan_state.status` 还是 `interrupted`）。
+    let remote_prefix = format!("{}|{}|", source_type.unwrap_or_default(), id);
+    let _ = crate::remote_scan::persistence::delete_remote_rows_for_source_on(
+        conn,
+        id,
+        &remote_prefix,
+    );
     conn.execute("DELETE FROM book_sources WHERE id = ?1", params![id])?;
     upsert_tombstone_on(&conn, "sources", id)?;
     Ok(())

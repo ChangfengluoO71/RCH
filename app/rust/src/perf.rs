@@ -117,6 +117,17 @@ define_counters!(
     CdnGateWaitUsMaxForeground,
     CdnGateWaitUsTotalBackground,
     CdnGateWaitUsMaxBackground,
+    // ---- 远程封面抓取（③-1：用数据证明"封面不再整包下载"）----
+    //
+    // 非归档（单图/图片文件夹）按窗口读取；归档/PDF 走 `AdapterByteSource`，
+    // 那里**不经过** `SourceReadAtBytes`（③-1 真实数据复测实测：PDF 封面抓取
+    // 0 个 `source.read_at` 事件），所以在 `read_at` 里单独计数，否则"整包下载"
+    // 的最大一笔恰恰没有数。
+    CoverRangeReads,
+    CoverBytesFetched,
+    CoverDocumentReads,
+    CoverEscalations,
+    CoverFailures,
 );
 
 /// 进程启动基准，用于把 `Instant` 转成可跨线程比较的相对微秒。
@@ -352,6 +363,12 @@ pub fn note(kind: &str, key: &str, value: impl Into<String>) {
 fn emit(kind: &str, dur_us: u64, fields: &Map<String, Value>) {
     let Some(sink) = sink() else { return };
     let mut record = Map::new();
+    // 先放调用方字段，再写保留键：保留键（`kind`/`t_us`/`wall_ms`/`tag`/`pid`/`dur_us`）
+    // **永远**不被自定义字段覆盖。③-1 真实数据复测踩过：调用方一个
+    // `field_str("kind", …)` 就把事件类型改成 `pdf`，按 kind 过滤整条事件流全部失效。
+    for (key, value) in fields {
+        record.insert(key.clone(), value.clone());
+    }
     record.insert("kind".into(), json!(kind));
     record.insert("t_us".into(), json!(now_us()));
     record.insert("wall_ms".into(), json!(wall_ms()));
@@ -359,9 +376,6 @@ fn emit(kind: &str, dur_us: u64, fields: &Map<String, Value>) {
     record.insert("pid".into(), json!(std::process::id()));
     if dur_us > 0 {
         record.insert("dur_us".into(), json!(dur_us));
-    }
-    for (key, value) in fields {
-        record.insert(key.clone(), value.clone());
     }
     let line = Value::Object(record).to_string();
     if let Ok(mut file) = sink.lock() {

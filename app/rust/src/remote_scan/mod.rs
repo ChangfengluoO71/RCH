@@ -6,6 +6,7 @@ pub mod cover_revision_stream;
 pub mod cover_service;
 pub mod cover_state;
 pub mod cover_store;
+pub(crate) mod diag;
 pub mod engine;
 pub mod model;
 pub mod persistence;

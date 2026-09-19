@@ -194,17 +194,54 @@ pub(crate) fn wake_cover_worker_for_source(source_id: &str) {
     wake_remote_cover_worker(source_id.to_string(), token);
 }
 
+/// 属于**部署 / 策略上限**类、修好之后本应能补上的封面原因码（可获得 6h 长期补偿）。
+/// 与 [`COVER_REASONS`] 的包含关系有单测守住，新增码时不会静默漂移。
+const COVER_RETRYABLE_REASONS: [&str; 6] = [
+    COVER_REASON_NATIVE_LIB_MISSING,
+    COVER_REASON_BYTES_LIMIT,
+    COVER_REASON_PDF_BYTES_LIMIT,
+    COVER_REASON_PIXELS,
+    COVER_REASON_PARTIAL_DECODE,
+    // 预算中止的**根因是"打开归档太贵"**（`zip` 按条目读 local header）。
+    // 第 62 轮落地封面快通道后，这类失败再试一次就能成（实测 2GB CBZ：
+    // 192 次读被截断 → 8 次读 9 秒拿到封面），所以从"终态"改为"可重试"。
+    COVER_REASON_READ_BUDGET,
+];
+
+/// 账号 / 会话级的 provider 子原因：会话恢复或限流解除后应当重试（进 long retry）。
+/// 这些码由 `provider_failure_code` 产出（有单测守住"确实能产出"）。
+const PROVIDER_RETRYABLE_CODES: [&str; 4] = [
+    "provider:rateLimited",
+    "provider:timeout",
+    "provider:unauthorized",
+    "provider:forbidden",
+];
+
 /// 长期补偿的 retryable 判定。
 ///
-/// **不引入任何错误字符串推断**：这里复用的正是既有短退避处理的那一个错误集合
-/// （`TransientNetwork | RateLimited`）。当短预算耗尽（`attempt >= 3`）时，这类失败
-/// 会落入 `cover_job_failure_state` 的 `_ => Failed` 分支 —— 那就是 retryable terminal
-/// failure，可获得一次 6h 长期补偿资格。其余错误一律视为永久失败。
+/// 基础集合不变（短退避那一个错误集合 `TransientNetwork | RateLimited`：短预算耗尽
+/// `attempt >= 3` 后落入 `_ => Failed`，获得一次 6h 长期补偿）。② 起额外放行两类
+/// **可修复的失败**——否则它们会被永久结案、永远不自愈：
+///
+/// * `Provider(message)` 归类为 rateLimited / timeout / unauthorized / forbidden
+///   ⇒ 账号级或会话级原因，换个会话就该再试；
+/// * `MalformedResponse(code)` 里属于**部署或策略上限**的码（原生库缺失、字节上限、
+///   像素守卫、窗口截断）⇒ 用户修好部署（③-1 实测：Debug 构建缺 `pdfium.dll` 时
+///   267 本 PDF 封面全灭）或调大上限后，这批封面应当能自动补上。
+///
+/// 仍然**只做固定枚举判定**，不做自由文本推断；`provider_failure_code` 本身也是
+/// 枚举化分类（① 的安全子原因）。
 fn long_retry_is_retryable(error: &RemoteScanError) -> bool {
-    matches!(
-        error,
-        RemoteScanError::TransientNetwork(_) | RemoteScanError::RateLimited { .. }
-    )
+    match error {
+        RemoteScanError::TransientNetwork(_) | RemoteScanError::RateLimited { .. } => true,
+        RemoteScanError::Provider(message) => {
+            PROVIDER_RETRYABLE_CODES.contains(&provider_failure_code(message))
+        }
+        RemoteScanError::MalformedResponse(code) => {
+            COVER_RETRYABLE_REASONS.contains(&code.as_str())
+        }
+        _ => false,
+    }
 }
 
 /// `notify_source_session_ready` 的返回：只描述本次 reconciliation 做了什么。
@@ -334,6 +371,20 @@ pub async fn notify_source_session_ready(
     if claimable {
         wake_cover_worker_for_source(&source_id);
     }
+    // 诊断通道（第 55 轮）：让"自愈/重挂"在日志里可见（只有确实做了事才写一行，
+    // 避免每次 UI 事件都刷屏）。`compensation_promoted` 含本轮新增的
+    // "解析类终态失败重挂"（见 `cover_store` 的 (1b) 桶）。
+    if report.compensation_promoted > 0 || report.blocker_cleared > 0 || report.jobs_created > 0 {
+        crate::remote_scan::diag::note(&format!(
+            "cover_reconcile source={} promoted={} cleared={} created={} truncated={} claimable={}",
+            source_id,
+            report.compensation_promoted,
+            report.blocker_cleared,
+            report.jobs_created,
+            report.truncated,
+            report.claimable
+        ));
+    }
     Ok(report)
 }
 
@@ -462,18 +513,20 @@ fn cover_route_for_job(
     asset_id: &str,
 ) -> Option<(String, String, Option<String>)> {
     let conn = db::get().lock().ok()?;
-    // Prefer a current preview route while a generation is running. The
-    // logical path may be unchanged while an opaque provider id is refreshed;
-    // using the previous authoritative route would then fetch stale content.
+    // 优先用 preview 路由（它可能是**最新**的路由：逻辑路径不变而不透明 provider id 已刷新）。
+    //
+    // **不能要求 `remote_scan_state.status='Running'`**：真实库审查（第 55 轮）实测——
+    // 扫描收尾的那一刻（12:56:11 发布索引 vs 12:56:11–12:56:29 的封面失败）两条跳
+    // 同时不可用：preview 因"不再 Running"被跳过、而 library_index 尚未落行
+    // ⇒ 225 个封面被判 `notFound` 终态、再无重试。这里改为"最新代际 + 身份守卫"，
+    // 身份守卫（`session_epoch<>''` + `source_fingerprint=book_sources.fingerprint`）
+    // 保证不会读到别的书源/别的会话的残留。
     let preview = conn
         .query_row(
             "SELECT p.logical_path,
                     COALESCE((SELECT type FROM book_sources WHERE id=?1),'unknown'),
                     p.provider_file_id
              FROM remote_scan_preview p
-             JOIN remote_scan_state s ON s.source_id=p.source_id
-                                      AND s.generation=p.generation
-                                      AND s.status='Running'
              WHERE p.source_id=?1 AND p.asset_id=?2
                AND p.session_epoch <> ''
                AND p.source_fingerprint=(SELECT fingerprint FROM book_sources WHERE id=?1)
@@ -649,6 +702,10 @@ fn run_remote_cover_worker(source_id: &str, session: u64) {
                         profile_height,
                         cover_page,
                         cover_crop,
+                        CoverFetchTrace {
+                            source_id,
+                            asset_id: &job.key.asset_id,
+                        },
                     )
                 })
         });
@@ -752,6 +809,18 @@ fn run_remote_cover_worker(source_id: &str, session: u64) {
                         );
                     }
                 }
+                // 诊断通道（第 55 轮）：封面失败此前**只落库、不进日志**，
+                // 导致应用连跑 2.5 小时、225 个失败而 scan_diag.log 一行没有。
+                // 只写安全枚举码 + 源/代际/尝试次数 + 资产短标签（脱敏见 `diag`）。
+                crate::remote_scan::diag::note(&format!(
+                    "cover_fail source={} gen={} attempt={} state={} code={} asset={}",
+                    job.key.source_id,
+                    job.generation,
+                    job.attempt,
+                    state.as_str(),
+                    code.as_deref().unwrap_or("-"),
+                    crate::remote_scan::diag::safe_asset_label(&job.key.asset_id)
+                ));
             }
         }
     }
@@ -997,6 +1066,58 @@ fn persist_terminal(status: &RemoteScanStatusDto) {
     if let Ok(conn) = db::get().lock() {
         let _ = persistence::mark_scan_status(&conn, &state);
     }
+    // 扫描**完成**是"资产从此可解析"的时刻，必须在这里补一次封面 reconcile：
+    // `notify_source_session_ready` 只接受**已完成**代际，若 session-ready 事件恰好
+    // 落在扫描中途（实测：用户点全量扫描的同一秒触发了启动会话预热），那次事件会
+    // 静默跳过（拿不到可信绑定）⇒ 遗留失败不会被自愈重挂。
+    // 这里直接读该代际的 session_token，不依赖内存里的会话。
+    if status.status == "complete" {
+        if let Ok(conn) = db::get().lock() {
+            let token: Option<i64> = conn
+                .query_row(
+                    "SELECT session_token FROM remote_scan_epoch
+                      WHERE source_id=?1 AND generation=?2",
+                    rusqlite::params![status.source_id, status.generation],
+                    |row| row.get(0),
+                )
+                .ok();
+            if let Some(token) = token.filter(|value| *value > 0) {
+                if let Ok(report) =
+                    crate::remote_scan::cover_store::reconcile_cover_compensation_for_source_on(
+                        &conn,
+                        &status.source_id,
+                        token as u64,
+                        crate::db::now_ms(),
+                        crate::remote_scan::cover_store::ReconcileBudget::default(),
+                    )
+                {
+                    if report.compensation_promoted > 0
+                        || report.blocker_cleared > 0
+                        || report.jobs_created > 0
+                    {
+                        crate::remote_scan::diag::note(&format!(
+                            "cover_reconcile source={} trigger=scan_complete promoted={} cleared={} created={} truncated={}",
+                            status.source_id,
+                            report.compensation_promoted,
+                            report.blocker_cleared,
+                            report.jobs_created,
+                            report.truncated
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    // 诊断通道（第 55 轮）：扫描终态此前不进日志，问题只能靠翻库。
+    crate::remote_scan::diag::note(&format!(
+        "scan_terminal source={} status={} mode={} gen={} checked={} error={}",
+        status.source_id,
+        status.status,
+        status.mode,
+        status.generation,
+        status.processed,
+        status.error_code.as_deref().unwrap_or("-")
+    ));
 }
 
 fn persist_config_status(status: &RemoteScanStatusDto) {
@@ -1016,7 +1137,7 @@ fn error_code(error: &RemoteScanError) -> &'static str {
         RemoteScanError::RateLimited { .. } => "rateLimited",
         RemoteScanError::TransientNetwork(_) => "transient",
         RemoteScanError::RangeUnavailable => "rangeUnavailable",
-        RemoteScanError::MalformedResponse(_) => "malformed",
+        RemoteScanError::MalformedResponse(code) => safe_malformed_code(code.as_str()),
         RemoteScanError::Cancelled => "cancelled",
         RemoteScanError::Unsupported => "unsupported",
         RemoteScanError::Io(_) => "storage",
@@ -1045,7 +1166,55 @@ fn effective_scan_mode(
 
 const REMOTE_COVER_WIDTH: u32 = 340;
 const REMOTE_COVER_HEIGHT: u32 = 480;
-const MAX_REMOTE_COVER_BYTES: u64 = 32 * 1024 * 1024;
+/// 封面窗口阶梯的第一档：长图/超大单图只需要最上面的一条带，先按最小窗口取。
+/// 旧实现在 32MB 处直接返回"封面不可得"（`cover_size_limit`），该放弃分支已删除：
+/// 现在只有"超过硬上限"才拒绝，且必须给出具体原因。
+const COVER_HEAD_BYTES: u64 = 24 * 1024 * 1024;
+/// 第二档放大：第一档解码不成功（缓冲区被窗口截断）时续读到这么大。
+const COVER_HEAD_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// 硬上限：超过它就不再尝试读取。128MB 是"覆盖面 × 手机峰值内存"的折中，
+/// 也是唯一需要按设备情况调整的旋钮。
+const COVER_FETCH_LIMIT_BYTES: u64 = 128 * 1024 * 1024;
+/// PDF 必须先整包交给 pdfium（`PdfBook::open` 一次性读入整个文件），不能按图片
+/// 窗口语义截断，所以上限单独设置；超限给具体原因，不做"下载几百 MB 换一张封面"。
+const COVER_PDF_MAX_BYTES: u64 = 128 * 1024 * 1024;
+/// 快通道允许的单页字节上限（超过就交回常规路径；正常漫画页远小于此）。
+const COVER_FAST_PAGE_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// 解码像素守卫：窗口放大后仍可能碰到"小体积 → 巨大位图"的解压炸弹。
+/// RGBA 峰值 ≈ 像素数 × 4（64MP ≈ 256MB），超过即给具体原因而不是让设备 OOM。
+const COVER_MAX_PIXELS: u64 = 64_000_000;
+/// 高宽比超过它的源图/页面视为长条：封面只取顶部一条，不再取中间那条。
+const COVER_LONG_STRIP_ASPECT: f64 = 3.0;
+/// 封面失败的安全子原因（唯一真源）：这些码会进入 `remote_cover_job.error_code`
+/// 与本地诊断日志，因此只允许本文件的常量；provider / 解码器原文一律不得出现。
+const COVER_REASON_SIZE_MISSING: &str = "cover_size_missing";
+const COVER_REASON_BYTES_LIMIT: &str = "cover_bytes_limit";
+const COVER_REASON_PDF_BYTES_LIMIT: &str = "cover_pdf_bytes_limit";
+const COVER_REASON_PARTIAL_DECODE: &str = "cover_partial_decode_failed";
+const COVER_REASON_DECODE: &str = "cover_decode_failed";
+const COVER_REASON_PIXELS: &str = "cover_pixels_too_large";
+/// ③-1 真实数据复测新增：归档/PDF 的"打不开"必须再分三层，否则部署问题会被
+/// 当成"文件坏/封面不可得"而永久结案（实测：开发机 Debug 构建缺 `pdfium.dll` 时，
+/// 40/40 个失败样本全部落进同一码，无法自证）。
+const COVER_REASON_NATIVE_LIB_MISSING: &str = "cover_native_lib_missing";
+const COVER_REASON_DOCUMENT_OPEN: &str = "cover_document_open_failed";
+const COVER_REASON_PAGE_RENDER: &str = "cover_page_render_failed";
+/// 单封面读取超出预算（归档打开成本过高：`zip` 对每个条目都要读一次 local
+/// header 做校验）。**可重试**：第 62 轮的封面快通道把这条路径的请求数降到常数级，
+/// 同一个文件再试一次可以成功（实测 2GB CBZ：192 次读被截断 → 8 次读 9 秒成功）。
+const COVER_REASON_READ_BUDGET: &str = "cover_read_budget_exceeded";
+const COVER_REASONS: [&str; 10] = [
+    COVER_REASON_SIZE_MISSING,
+    COVER_REASON_BYTES_LIMIT,
+    COVER_REASON_PDF_BYTES_LIMIT,
+    COVER_REASON_PARTIAL_DECODE,
+    COVER_REASON_DECODE,
+    COVER_REASON_PIXELS,
+    COVER_REASON_NATIVE_LIB_MISSING,
+    COVER_REASON_DOCUMENT_OPEN,
+    COVER_REASON_PAGE_RENDER,
+    COVER_REASON_READ_BUDGET,
+];
 
 fn parse_bool_setting(value: Option<String>) -> bool {
     match value
@@ -1076,6 +1245,22 @@ fn cover_fetch_enabled_from_conn(conn: &rusqlite::Connection) -> bool {
     }
 }
 
+/// 单次封面抓取允许从远端读取的**总字节预算**（归档/PDF 路径）。
+///
+/// 为什么必须有（第 60 轮实测）：115 上一本 2.08GB 的“`.zip`”让归档打开逻辑在
+/// **文件尾部顺序扫描了 233MB**（EOCD 定位不到就一直往回找），单枚封面吃掉
+/// 233MB 流量 + 数分钟；而后台 worker 是**单线程** ⇒ 一枚封面就把整条队列堵死
+/// （`ready` 长时间为 0，用户体感"很慢"）。
+/// 预算让这类病态归档**快速失败并给出具体码**（`cover_read_budget_exceeded`），
+/// 而不是拖着整条队列。
+const COVER_READ_BUDGET_BYTES: u64 = 24 * 1024 * 1024;
+/// 单次封面抓取的**远端读取次数**上限。
+/// 为什么字节预算不够：实测这些读是 **16KB 级**，115 CDN 单次往返 ~243ms，
+/// 24MB 预算要 1500+ 次 ⇒ 仍是 6 分钟。次数上限才能界定时延（192 次 ≈ 最坏 47s）。
+const COVER_READ_BUDGET_READS: u64 = 192;
+/// 单次封面抓取的**挂钟**上限（兜底：远端变慢时也要让 worker 走下一个 job）。
+const COVER_READ_BUDGET_MS: u128 = 45_000;
+
 /// A bounded random-access source backed by the provider adapter. ZIP/CBZ
 /// parsing can therefore read the tail directory and the first page without
 /// downloading the whole book or retaining file-sized buffers.
@@ -1084,6 +1269,41 @@ struct AdapterByteSource {
     adapter: Arc<dyn crate::remote_scan::adapter::RemoteProviderAdapter>,
     path: String,
     length: u64,
+    /// 本次抓取已从远端读取的字节（预算见 [`COVER_READ_BUDGET_BYTES`]）。
+    read_bytes: std::sync::atomic::AtomicU64,
+    /// 本次抓取已发生的远端读取次数（预算见 [`COVER_READ_BUDGET_READS`]）。
+    read_calls: std::sync::atomic::AtomicU64,
+    /// 抓取起点（预算见 [`COVER_READ_BUDGET_MS`]）。
+    started_at: std::time::Instant,
+    /// 预算上限（常量注入，便于单测用极小预算验证）。
+    read_budget: u64,
+}
+
+impl AdapterByteSource {
+    fn new(
+        adapter: Arc<dyn crate::remote_scan::adapter::RemoteProviderAdapter>,
+        path: String,
+        length: u64,
+    ) -> Self {
+        Self::with_budget(adapter, path, length, COVER_READ_BUDGET_BYTES)
+    }
+
+    fn with_budget(
+        adapter: Arc<dyn crate::remote_scan::adapter::RemoteProviderAdapter>,
+        path: String,
+        length: u64,
+        read_budget: u64,
+    ) -> Self {
+        Self {
+            adapter,
+            path,
+            length,
+            read_bytes: std::sync::atomic::AtomicU64::new(0),
+            read_calls: std::sync::atomic::AtomicU64::new(0),
+            started_at: std::time::Instant::now(),
+            read_budget,
+        }
+    }
 }
 
 impl ByteSource for AdapterByteSource {
@@ -1096,6 +1316,30 @@ impl ByteSource for AdapterByteSource {
             return Ok(0);
         }
         let requested = (self.length - offset).min(buf.len() as u64) as usize;
+        // 预算：病态归档（例如尾部 233MB 的 EOCD 扫描）必须快速失败，
+        // 具体失败码由 `cover_open_reason` 从这段稳定文案映射出来。
+        let used = self
+            .read_bytes
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let calls = self
+            .read_calls
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let elapsed_ms = self.started_at.elapsed().as_millis();
+        if used.saturating_add(requested as u64) > self.read_budget
+            || calls >= COVER_READ_BUDGET_READS
+            || elapsed_ms > COVER_READ_BUDGET_MS
+        {
+            return Err(io::Error::other(format!(
+                "cover-read-budget exceeded: {used}/{} bytes, {calls}/{} reads, {elapsed_ms}ms",
+                self.read_budget, COVER_READ_BUDGET_READS
+            )));
+        }
+        // 网络读**逐次**持 Cover 许可（归档路径此前完全不持许可；
+        // 审阅冻结决策 4 要求许可只覆盖网络段、不跨越解码）。
+        let governor = blocking_request_governor();
+        let _permit = governor
+            .acquire(RequestPriority::Cover)
+            .map_err(|_| io::Error::other("cover_read_queue_full"))?;
         let bytes = self
             .adapter
             .read_range(&self.path, offset, requested as u64)
@@ -1106,22 +1350,351 @@ impl ByteSource for AdapterByteSource {
                 "remote range response exceeded requested length",
             ));
         }
+        // ⑤：归档/PDF 封面的字节数只能在这里数——这条路径**不经过**
+        // `SourceReadAtBytes`（③-1 真实数据复测：PDF 封面抓取 0 个 `source.read_at`
+        // 事件），漏掉它等于把"整包下载"的最大一笔藏起来。
+        crate::perf::bump(crate::perf::Counter::CoverDocumentReads);
+        crate::perf::add(crate::perf::Counter::CoverBytesFetched, bytes.len() as u64);
+        self.read_bytes
+            .fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.read_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         buf[..bytes.len()].copy_from_slice(&bytes);
         Ok(bytes.len())
     }
 }
 
-fn cover_error(error: impl std::fmt::Display) -> RemoteScanError {
-    // Do not expose provider URLs, credentials, or archive parser details in
-    // persisted status. The UI only needs a stable placeholder reason.
-    let _ = error;
-    RemoteScanError::Provider("cover_decode_failed".into())
+/// 构造一个封面失败原因。参数必须是上面的常量：绝不把 provider / 解码器原文
+/// 塞进持久化状态（契约由 `safe_malformed_code` 的白名单与单测共同保证）。
+fn cover_reason(code: &'static str) -> RemoteScanError {
+    RemoteScanError::MalformedResponse(code.to_string())
+}
+
+/// 允许进入持久化状态与诊断日志的 `MalformedResponse` 内部码白名单。
+/// 只有封面自己的 9 个原因码会变成具体码；其余内部码（含 range probe 的契约码）
+/// 与旧行为一致地折叠成 `malformed`——既保持 UI 既有提示不变，也保证
+/// provider / 解码器原文永远不可能出现在数据库或日志里。
+fn safe_malformed_code(code: &str) -> &'static str {
+    COVER_REASONS
+        .iter()
+        .copied()
+        .find(|known| *known == code)
+        .unwrap_or("malformed")
+}
+
+/// 是否值得"放大窗口再试一次"。只有一种失败值得：缓冲区只是文件的前一段、
+/// 像素数据还没读完。头部不是图片、像素超守卫、整页都解不开都不值得再读网络。
+fn cover_error_worth_escalating(error: &RemoteScanError) -> bool {
+    match error {
+        RemoteScanError::MalformedResponse(code) => code.as_str() == COVER_REASON_PARTIAL_DECODE,
+        _ => false,
+    }
+}
+
+/// 封面窗口阶梯：由小到大，最后一跳覆盖整个文件。
+/// 返回 `None` 表示超过硬上限——调用方必须给出具体原因，而不是笼统地当"不可得"。
+fn cover_read_windows(read_size: u64) -> Option<Vec<u64>> {
+    if read_size == 0 || read_size > COVER_FETCH_LIMIT_BYTES {
+        return None;
+    }
+    let mut windows = Vec::new();
+    for limit in [
+        COVER_HEAD_BYTES,
+        COVER_HEAD_MAX_BYTES,
+        COVER_FETCH_LIMIT_BYTES,
+    ] {
+        let window = read_size.min(limit);
+        if windows.last() != Some(&window) {
+            windows.push(window);
+        }
+    }
+    Some(windows)
+}
+
+/// 长条源（高/宽 > [`COVER_LONG_STRIP_ASPECT`]）且调用方没有给显式裁剪时，
+/// 封面只取顶部一条：条带高度按目标封面比例（h/w）反推，即"最上面那一格画面"。
+/// 普通比例返回 `None`，保持既有中心裁剪行为不变；显式 `crop:` 永不被覆盖。
+fn cover_top_band_crop(
+    image_width: u32,
+    image_height: u32,
+    cover_width: u32,
+    cover_height: u32,
+) -> Option<(f64, f64, f64, f64)> {
+    if image_width == 0 || image_height == 0 || cover_width == 0 || cover_height == 0 {
+        return None;
+    }
+    let aspect = f64::from(image_height) / f64::from(image_width);
+    if aspect <= COVER_LONG_STRIP_ASPECT {
+        return None;
+    }
+    let band = (f64::from(cover_height) / f64::from(cover_width) / aspect).clamp(0.0, 1.0);
+    Some((0.0, 0.0, 1.0, band))
+}
+
+/// 只读头部拿像素尺寸，不做整图解码。这四种格式的尺寸信息都在文件最前面
+/// （PNG 在首个 IDAT 之前，JPEG 在 SOF，WebP/GIF 在文件头），因此"头部读不出来"
+/// 意味着放大窗口也没有意义（不是截断问题）。
+fn cover_image_dimensions(bytes: &[u8]) -> Result<(u32, u32), RemoteScanError> {
+    let reader = image::ImageReader::new(io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|_| cover_reason(COVER_REASON_DECODE))?;
+    reader
+        .into_dimensions()
+        .map_err(|_| cover_reason(COVER_REASON_DECODE))
+}
+
+/// 解码一个有界缓冲区，复用既有 `decode_cover` 的裁剪管线（不新造管线）。
+/// `truncated` 表示"这个缓冲区可能只是文件的前一段"，失败码据此区分：
+/// 截断 → `cover_partial_decode_failed`（值得放大窗口），否则 → `cover_decode_failed`。
+fn decode_cover_bounded(
+    bytes: &[u8],
+    cover_width: u32,
+    cover_height: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+    truncated: bool,
+) -> Result<crate::decode::DecodedImage, RemoteScanError> {
+    let magic = crate::decode::sniff_image_magic(bytes);
+    let (image_width, image_height) = match cover_image_dimensions(bytes) {
+        Ok(dimensions) => dimensions,
+        Err(error) => {
+            // 诊断（安全）：只记**格式标签**与长度，绝不记内容或原文。
+            // 这是"为什么解不开"的答案来源（bmp/tiff/heif/zip/text-like…）。
+            if crate::perf::enabled() {
+                let mut fields = serde_json::Map::new();
+                fields.insert(
+                    "magic".into(),
+                    serde_json::json!(crate::decode::image_magic_label(magic)),
+                );
+                fields.insert("len".into(), serde_json::json!(bytes.len()));
+                crate::perf::event("cover.probe", fields);
+            }
+            return Err(error);
+        }
+    };
+    if u64::from(image_width) * u64::from(image_height) > COVER_MAX_PIXELS {
+        // 解压炸弹：在分配整图之前挡住，而不是让设备 OOM。
+        return Err(cover_reason(COVER_REASON_PIXELS));
+    }
+    let crop =
+        crop.or_else(|| cover_top_band_crop(image_width, image_height, cover_width, cover_height));
+    crate::decode::decode_cover(bytes, cover_width, cover_height, crop).map_err(|_| {
+        cover_reason(if truncated {
+            COVER_REASON_PARTIAL_DECODE
+        } else {
+            COVER_REASON_DECODE
+        })
+    })
+}
+
+/// 归档封面最多向后扫几页（封面页不是图片时，退到下一张真正可解码的图）。
+///
+/// 动机（③ 实测）：`mobi::image_records()` 只做非图片魔数**黑名单**，KF8/AZW3 的
+/// CSS/HTML/资源记录会被当成"页"，`page_bytes(0)` 不是图片 ⇒ 封面永远失败。
+/// 有界（3）保证不会为了封面把整本书扫一遍。
+const COVER_PAGE_SCAN_LIMIT: u32 = 3;
+
+/// 取"第一张真正可解码的页"作为封面：先试用户选择/默认页，再**有界**向后扫。
+/// 只有"这一页不是可解码图片"才换页；上限/像素类失败换页无意义，直接返回。
+fn decode_first_usable_page(
+    document: &dyn crate::document::Document,
+    first_page: u32,
+    cover_width: u32,
+    cover_height: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+) -> Result<crate::decode::DecodedImage, RemoteScanError> {
+    let mut last = cover_reason(COVER_REASON_PAGE_RENDER);
+    for offset in 0..=COVER_PAGE_SCAN_LIMIT {
+        let page = first_page.saturating_add(offset);
+        let Ok(bytes) = document.page_bytes(page) else {
+            break; // 没有更多页
+        };
+        match decode_cover_bounded(&bytes, cover_width, cover_height, crop, false) {
+            Ok(image) => return Ok(image),
+            Err(error) => {
+                if error_code(&error) != COVER_REASON_DECODE {
+                    return Err(error);
+                }
+                last = error;
+            }
+        }
+    }
+    Err(last)
+}
+
+/// ⑤ 取证上下文：按源/按 job 记录封面抓取字节，用数据证明"封面不再整包下载"。
+/// `asset_id` 是书源作用域内的标识（可能含逻辑路径），但不含 provider 直链、
+/// Cookie 或响应正文——与 `perf` 模块的脱敏约束一致。
+#[derive(Clone, Copy)]
+struct CoverFetchTrace<'a> {
+    source_id: &'a str,
+    asset_id: &'a str,
+}
+
+impl<'a> CoverFetchTrace<'a> {
+    /// 一次封面抓取事件。事件流关闭时 `perf` 自身会短路，这里只做常量拼接。
+    /// 字段名用 `asset_kind` 而**不是** `kind`：`kind` 是事件流的保留键
+    /// （曾把事件类型覆盖成 `pdf`，导致按 kind 过滤全部失效）。
+    fn span(self, asset_kind: &'static str, size: u64) -> crate::perf::Span {
+        crate::perf::Span::new("cover.fetch")
+            .field_str("source", self.source_id)
+            .field_str("job", self.asset_id)
+            .field_str("asset_kind", asset_kind)
+            .field_u64("size", size)
+    }
+}
+
+/// 按窗口阶梯抓取并解码封面：增量续读（不从头重读），只有"缓冲区被截断"这一种
+/// 失败会放大窗口重试一次；仍失败才返回具体原因。网络读取逐次持 Cover 许可，
+/// 解码始终在许可之外（审阅冻结决策 4：不跨越解码持有网络许可）。
+#[allow(clippy::too_many_arguments)]
+fn fetch_cover_by_windows(
+    adapter: &dyn crate::remote_scan::adapter::RemoteProviderAdapter,
+    path: &str,
+    read_size: u64,
+    windows: &[u64],
+    cover_width: u32,
+    cover_height: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+    trace: CoverFetchTrace<'_>,
+) -> Result<crate::decode::DecodedImage, RemoteScanError> {
+    let governor = blocking_request_governor();
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut last_error: Option<RemoteScanError> = None;
+    for (attempt, window) in windows.iter().enumerate() {
+        let missing = window.saturating_sub(buffer.len() as u64);
+        let delta = if missing == 0 {
+            Vec::new()
+        } else {
+            let _permit = governor
+                .acquire(RequestPriority::Cover)
+                .map_err(|_| RemoteScanError::Provider("request_queue_full".into()))?;
+            adapter.read_range(path, buffer.len() as u64, missing)?
+        };
+        if missing > 0 && delta.is_empty() {
+            // 有界读取没有任何进展：再放大窗口只会得到同样的空结果。
+            break;
+        }
+        if missing > 0 {
+            crate::perf::bump(crate::perf::Counter::CoverRangeReads);
+            crate::perf::add(crate::perf::Counter::CoverBytesFetched, delta.len() as u64);
+        }
+        buffer.extend_from_slice(&delta);
+        let truncated = (buffer.len() as u64) < read_size;
+        let span = trace
+            .span("image", read_size)
+            .field_u64("attempt", attempt as u64 + 1)
+            .field_u64("window", *window)
+            .field_u64("bytes", delta.len() as u64);
+        match decode_cover_bounded(&buffer, cover_width, cover_height, crop, truncated) {
+            Ok(image) => {
+                span.end();
+                return Ok(image);
+            }
+            Err(error) => {
+                span.field_str("code", error_code(&error)).end();
+                crate::perf::bump(crate::perf::Counter::CoverFailures);
+                if !cover_error_worth_escalating(&error) {
+                    return Err(error);
+                }
+                if attempt + 1 < windows.len() {
+                    crate::perf::bump(crate::perf::Counter::CoverEscalations);
+                }
+                last_error = Some(error);
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| cover_reason(COVER_REASON_PARTIAL_DECODE)))
+}
+
+/// 归档/PDF"打不开"的**安全**细分：只按固定枚举落库，绝不放原文。
+///
+/// 为什么要单列 `cover_native_lib_missing`：③-1 真实数据复测中，40/40 个失败样本
+/// 全部落进同一个笼统码，事后才查出运行实例的 `RCH.exe` 同目录缺 `pdfium.dll`
+/// ——部署问题被误判成"封面不可得"。原生库缺失必须能自证。
+fn cover_open_reason(error: &anyhow::Error) -> RemoteScanError {
+    let text = format!("{error:#}").to_ascii_lowercase();
+    if text.contains("cover-read-budget") {
+        // 预算中止是**我们自己**的决定，不是文件损坏：给独立码（终态）。
+        cover_reason(COVER_REASON_READ_BUDGET)
+    } else if text.contains("pdfium") {
+        cover_reason(COVER_REASON_NATIVE_LIB_MISSING)
+    } else {
+        cover_reason(COVER_REASON_DOCUMENT_OPEN)
+    }
+}
+
+/// 归档封面：按真实文件名的格式解析，只取所需的那一页（自动路径 = 第 1 页）。
+/// 归档仍走 `AdapterByteSource` 的按需 Range 读取（PDF 除外：pdfium 需要整包）；
+/// 该路径的字节由 `AdapterByteSource::read_at` 计入 `CoverBytesFetched`
+/// （**不**经过 `SourceReadAtBytes`）。
+#[allow(clippy::too_many_arguments)]
+fn fetch_cover_from_document(
+    adapter: &Arc<dyn crate::remote_scan::adapter::RemoteProviderAdapter>,
+    read_path: String,
+    read_size: u64,
+    document_name: &str,
+    page: u32,
+    cover_width: u32,
+    cover_height: u32,
+    crop: Option<(f64, f64, f64, f64)>,
+    trace: CoverFetchTrace<'_>,
+) -> Result<crate::decode::DecodedImage, RemoteScanError> {
+    let asset_kind = if document_name.to_lowercase().ends_with(".pdf") {
+        "pdf"
+    } else {
+        "archive"
+    };
+    let span = trace.span(asset_kind, read_size);
+    let source = AdapterByteSource::new(Arc::clone(adapter), read_path, read_size);
+    // 第 62 轮：`.zip/.cbz` 的封面先走**最小 ZIP 读取器**（请求数与文件大小/条目数
+    // 无关）。常规路径的 `zip::ZipArchive::new` 会对**每个条目**读一次 local header
+    // 做校验 ⇒ 一本 2.08GB、~5000 条目的 CBZ 要上万次请求（115 CDN 单次 243ms
+    // ⇒ 约 40 分钟/枚），而 worker 是单线程。快通道拿不到（非 ZIP / ZIP64 /
+    // 超限 / 解压失败）就照旧回退，行为不变。
+    let lower_name = document_name.to_lowercase();
+    if lower_name.ends_with(".zip") || lower_name.ends_with(".cbz") {
+        if let Ok(Some(page_bytes)) =
+            crate::document::zip::first_image_bytes_via_central_directory(
+                &source,
+                COVER_FAST_PAGE_MAX_BYTES,
+            )
+        {
+            if let Ok(image) =
+                decode_cover_bounded(&page_bytes, cover_width, cover_height, crop, false)
+            {
+                span.end();
+                return Ok(image);
+            }
+        }
+    }
+    // 115/夸克/百度 use an opaque id as the logical path; dispatch the
+    // parser by the real file name stored in library_index.
+    // 封面页取"第一张真正可解码的图"（有界向后扫），见 `decode_first_usable_page`。
+    let outcome = crate::document::open_document(source, document_name)
+        .map_err(|error| cover_open_reason(&error))
+        .and_then(|document| {
+            decode_first_usable_page(document.as_ref(), page, cover_width, cover_height, crop)
+        });
+    match &outcome {
+        Ok(_) => {
+            span.end();
+        }
+        Err(error) => {
+            span.field_str("code", error_code(error)).end();
+            crate::perf::bump(crate::perf::Counter::CoverFailures);
+        }
+    }
+    outcome
 }
 
 /// Decode an actual first page for an archive or image-folder cover. The
 /// previous implementation treated the first 256 KiB of a ZIP as an image;
 /// this function keeps the range-only policy while passing bytes through the
 /// existing document and image decoders.
+///
+/// ③-1：超大单图不再在 32MB 处直接放弃（`cover_size_limit` 放弃分支已删除），
+/// 改为"按窗口有界读取 → 解码 → 放大窗口再试一次 → 仍失败给具体原因"；
+/// 长条源在自动路径上只截顶部一条带（见 `cover_top_band_crop`）。
 #[allow(clippy::too_many_arguments)]
 fn fetch_remote_cover_image_with_dimensions(
     adapter: Arc<dyn crate::remote_scan::adapter::RemoteProviderAdapter>,
@@ -1135,6 +1708,7 @@ fn fetch_remote_cover_image_with_dimensions(
     cover_height: u32,
     page: u32,
     crop: Option<(f64, f64, f64, f64)>,
+    trace: CoverFetchTrace<'_>,
 ) -> Result<crate::decode::DecodedImage, RemoteScanError> {
     let (read_path, read_size, read_fingerprint, is_archive) = match asset_kind {
         RemoteAssetKind::ArchiveFile => (path.to_string(), size, fingerprint.to_string(), true),
@@ -1147,15 +1721,20 @@ fn fetch_remote_cover_image_with_dimensions(
         _ => return Err(RemoteScanError::Unsupported),
     };
     let Some(read_size) = read_size.filter(|value| *value > 0) else {
-        return Err(RemoteScanError::MalformedResponse(
-            "cover_size_missing".into(),
-        ));
+        return Err(cover_reason(COVER_REASON_SIZE_MISSING));
     };
-    if read_size > MAX_REMOTE_COVER_BYTES && !is_archive {
-        return Err(RemoteScanError::MalformedResponse(
-            "cover_size_limit".into(),
-        ));
+    // PDF 必须先整包交给 pdfium（`PdfBook::open`）：先按独立上限拒绝，给出
+    // 具体原因，不静默跳过，也不做"下载几百 MB 换一张封面"。
+    let is_pdf = is_archive && document_name.to_lowercase().ends_with(".pdf");
+    if is_pdf && read_size > COVER_PDF_MAX_BYTES {
+        return Err(cover_reason(COVER_REASON_PDF_BYTES_LIMIT));
     }
+    // 非归档先算窗口阶梯：超过硬上限在这里就变成具体原因，而不是笼统失败。
+    let windows = if is_archive {
+        Vec::new()
+    } else {
+        cover_read_windows(read_size).ok_or_else(|| cover_reason(COVER_REASON_BYTES_LIMIT))?
+    };
     // Hold the shared Cover permit across capability probing as well as the
     // actual range reads.  For opaque providers (115/Quark/Baidu), probing
     // itself performs a downurl + HTTP Range request; doing it before the
@@ -1167,9 +1746,10 @@ fn fetch_remote_cover_image_with_dimensions(
     // For 115/Quark the fine-grained priority is carried by the CDN Range gate
     // itself (see `source::gate`), which queues every individual request by
     // priority. This permit remains because it is also the only protection for
-    // providers without their own gate (WebDAV / SFTP).
+    // providers without their own gate (WebDAV / SFTP). 窗口阶梯的每次续读各自
+    // 持许可（`fetch_cover_by_windows`），解码一律在许可之外。
     let governor = blocking_request_governor();
-    let bytes = {
+    {
         let _permit = governor
             .acquire(RequestPriority::Cover)
             .map_err(|_| RemoteScanError::Provider("request_queue_full".into()))?;
@@ -1177,22 +1757,30 @@ fn fetch_remote_cover_image_with_dimensions(
         if !capabilities.range_read {
             return Err(RemoteScanError::RangeUnavailable);
         }
-        if is_archive {
-            let source = AdapterByteSource {
-                adapter: Arc::clone(&adapter),
-                path: read_path,
-                length: read_size,
-            };
-            // 115/夸克/百度 use an opaque id as the logical path; dispatch the
-            // parser by the real file name stored in library_index.
-            let document =
-                crate::document::open_document(source, document_name).map_err(cover_error)?;
-            document.page_bytes(page).map_err(cover_error)?
-        } else {
-            adapter.read_range(&read_path, 0, read_size)?
-        }
-    };
-    crate::decode::decode_cover(&bytes, cover_width, cover_height, crop).map_err(cover_error)
+    }
+    if is_archive {
+        return fetch_cover_from_document(
+            &adapter,
+            read_path,
+            read_size,
+            document_name,
+            page,
+            cover_width,
+            cover_height,
+            crop,
+            trace,
+        );
+    }
+    fetch_cover_by_windows(
+        adapter.as_ref(),
+        &read_path,
+        read_size,
+        &windows,
+        cover_width,
+        cover_height,
+        crop,
+        trace,
+    )
 }
 
 #[derive(Clone)]
@@ -1207,22 +1795,44 @@ struct CoverSourceInfo {
 fn cover_source_info(source_id: &str, path: &str, page: u32) -> Option<CoverSourceInfo> {
     let conn = db::get().lock().ok()?;
     let normalized_path = normalize_path(path);
+    // 索引行按 **`hash(源指纹, 路径)` 语义**查，而不是 `source_id + path`：
+    // 先认本源的行；本源没有时，接受**同指纹兄弟源**的行。
+    //
+    // 为什么：同一个远端库可能被两个书源指向（例如直连的 `115_…` 与同步镜像
+    // `sync_…`），它们 `book_sources.fingerprint` **相同** ⇒ `library_index.id`
+    // （PK）**也相同** ⇒ 后扫描的一方会覆盖对方的行。此时按 `source_id` 过滤就
+    // 永远查不到，封面被判 `notFound` 且不再重试。
+    // （第 55 轮真实库审查实测：115 源 225 个 `notFound` **全部**是这种"行被同指纹的
+    // 另一源持有"——id 与路径都相同，只是 `source_id` 不同。）
+    //
+    // 安全性：命中前提是**源指纹相同**（`id = hash(指纹, 路径)`）且路径一致 ⇒
+    // 只可能是"同一份远端库的同一条路径"，不会跨库串数据；
+    // 指纹缺失/为空的源仍然只认自己的行（与旧行为一致，是严格的超集）。
     let indexed: Option<(String, String, Option<i64>, Option<String>)> = conn
         .query_row(
-            "SELECT name,asset_kind,size,content_fingerprint FROM library_index
-             WHERE source_id=?1 AND path=?2 AND deleted=0",
+            "SELECT li.name,li.asset_kind,li.size,li.content_fingerprint
+               FROM library_index li
+              WHERE li.path=?2 AND li.deleted=0
+                AND (li.source_id=?1
+                     OR li.source_id IN (SELECT id FROM book_sources
+                                          WHERE fingerprint=
+                                                (SELECT fingerprint FROM book_sources WHERE id=?1)
+                                            AND COALESCE(fingerprint,'')<>''))
+              ORDER BY CASE WHEN li.source_id=?1 THEN 0 ELSE 1 END, li.updated_at DESC
+              LIMIT 1",
             params![source_id, normalized_path],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .ok()?;
+    // preview 元数据：**不要求扫描仍在 Running**（同 `cover_route_for_job` 的理由）。
+    // staging 行只要身份守卫成立（`session_epoch<>''` + 源指纹一致）就是可信的；
+    // 要求 Running 会在"扫描收尾 → 索引尚未落行"的窗口里制造永久 `notFound`
+    // （第 55 轮真实库审查：225 行正是这样被记成终态的）。
     let preview: Option<(String, String, Option<i64>, Option<String>)> = conn
         .query_row(
             "SELECT p.name,p.asset_kind,p.size,p.content_fingerprint
              FROM remote_scan_preview p
-             JOIN remote_scan_state s ON s.source_id=p.source_id
-                                      AND s.generation=p.generation
-                                      AND s.status='Running'
              WHERE p.source_id=?1 AND p.logical_path=?2
                AND p.session_epoch <> ''
                AND p.source_fingerprint=(SELECT fingerprint FROM book_sources WHERE id=?1)
@@ -2573,6 +3183,10 @@ mod tests {
             REMOTE_COVER_HEIGHT,
             0,
             None,
+            CoverFetchTrace {
+                source_id: "cover-contract-source",
+                asset_id: "/opaque-fid",
+            },
         )
         .unwrap();
         assert_eq!((decoded.width, decoded.height), (340, 480));
@@ -2646,9 +3260,511 @@ mod tests {
             REMOTE_COVER_HEIGHT,
             0,
             None,
+            CoverFetchTrace {
+                source_id: "cover-contract-source",
+                asset_id: "/folder/page1.png",
+            },
         )
         .unwrap();
         assert_eq!((decoded.width, decoded.height), (340, 480));
+    }
+
+    /// ③-1 契约：窗口阶梯必须"由小到大、最后一跳覆盖整个文件"，只有超过硬上限
+    /// 才拒绝。旧实现在 32MB 处直接当"封面不可得"，这里断言它不会再回来。
+    #[test]
+    fn cover_window_ladder_is_bounded_and_never_gives_up_early() {
+        let small = 8 * 1024 * 1024;
+        assert_eq!(cover_read_windows(small), Some(vec![small]));
+
+        let medium = 40 * 1024 * 1024;
+        assert_eq!(
+            cover_read_windows(medium),
+            Some(vec![COVER_HEAD_BYTES, medium])
+        );
+
+        let large = 100 * 1024 * 1024;
+        assert_eq!(
+            cover_read_windows(large),
+            Some(vec![
+                COVER_HEAD_BYTES,
+                COVER_HEAD_MAX_BYTES,
+                large
+            ])
+        );
+
+        assert_eq!(cover_read_windows(COVER_FETCH_LIMIT_BYTES), Some(vec![
+            COVER_HEAD_BYTES,
+            COVER_HEAD_MAX_BYTES,
+            COVER_FETCH_LIMIT_BYTES,
+        ]));
+        assert_eq!(cover_read_windows(COVER_FETCH_LIMIT_BYTES + 1), None);
+        assert_eq!(cover_read_windows(0), None);
+    }
+
+    /// 长条源只取顶部一条带；普通比例页面保持既有的中心裁剪。
+    #[test]
+    fn long_strip_cover_takes_the_top_band_only() {
+        assert_eq!(cover_top_band_crop(800, 1200, 340, 480), None);
+
+        let (x, y, w, h) = cover_top_band_crop(800, 20_000, 340, 480).unwrap();
+        assert_eq!((x, y, w), (0.0, 0.0, 1.0));
+        let expected = (480.0 / 340.0) / (20_000.0 / 800.0);
+        assert!((h - expected).abs() < 1e-9, "band height must match the cover aspect");
+        assert!(h < 0.06, "the band must come from the top, not the middle");
+
+        assert_eq!(cover_top_band_crop(0, 20_000, 340, 480), None);
+    }
+
+    /// 具体失败码必须落在白名单内；provider / 解码器原文永远折叠成 `malformed`。
+    #[test]
+    fn cover_failure_codes_stay_inside_the_safe_allowlist() {
+        for code in COVER_REASONS {
+            assert_eq!(safe_malformed_code(code), code);
+        }
+        assert_eq!(safe_malformed_code("HTTP 403 token=secret"), "malformed");
+        assert_eq!(
+            error_code(&RemoteScanError::MalformedResponse(
+                "https://cdn.example.com/x?sign=abc".into()
+            )),
+            "malformed"
+        );
+        assert_eq!(
+            error_code(&cover_reason(COVER_REASON_PARTIAL_DECODE)),
+            COVER_REASON_PARTIAL_DECODE
+        );
+    }
+
+    /// 归档/PDF"打不开"的安全细分：**原生库缺失**（部署问题）必须与文件本身的问题分开，
+    /// 且分类结果绝不能夹带原文（③-1 真实数据复测：缺 pdfium.dll 时全部失败样本
+    /// 落进同一个笼统码，无法自证）。
+    #[test]
+    fn archive_open_failures_separate_missing_native_lib_from_document_errors() {
+        let missing = anyhow::anyhow!(
+            "无法加载 pdfium 动态库，请将 pdfium.dll 放在 RCH.exe 同目录。bind failed"
+        );
+        assert_eq!(
+            error_code(&cover_open_reason(&missing)),
+            COVER_REASON_NATIVE_LIB_MISSING
+        );
+
+        let broken = anyhow::anyhow!("invalid zip directory: offset out of range");
+        assert_eq!(
+            error_code(&cover_open_reason(&broken)),
+            COVER_REASON_DOCUMENT_OPEN
+        );
+
+        // 安全性质：分类结果里不得出现原文片段。
+        let classified = format!("{:?}", cover_open_reason(&missing));
+        assert!(
+            !classified.contains("放在 RCH.exe") && !classified.contains("bind failed"),
+            "分类结果不得夹带原文: {classified}"
+        );
+    }
+
+    /// ③ MOBI 实测：`page_bytes(0)` 可能**不是图片**（KF8/AZW3 的 CSS/HTML 资源记录
+    /// 被 `image_records()` 的黑名单漏进来）。封面必须退到第一张真正可解码的页；
+    /// 一页都不可解码时仍要给**具体**失败码，不能静默成功。
+    #[test]
+    fn cover_falls_back_to_the_first_decodable_page() {
+        struct FakeBook {
+            pages: Vec<Vec<u8>>,
+        }
+        impl crate::document::Document for FakeBook {
+            fn page_count(&self) -> u32 {
+                self.pages.len() as u32
+            }
+            fn page_bytes(&self, index: u32) -> anyhow::Result<Vec<u8>> {
+                self.pages
+                    .get(index as usize)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("越界"))
+            }
+        }
+
+        let image = image::RgbaImage::from_pixel(4, 6, image::Rgba([10, 20, 30, 255]));
+        let mut encoded = io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+
+        let book = FakeBook {
+            pages: vec![
+                b"<!DOCTYPE html><html>not an image</html>".to_vec(),
+                b"BM\x36\x00\x00\x00".to_vec(), // BMP：可命名，但当前构建不可解码
+                encoded.into_inner(),
+            ],
+        };
+        let cover =
+            decode_first_usable_page(&book, 0, REMOTE_COVER_WIDTH, REMOTE_COVER_HEIGHT, None)
+                .expect("第三页是可解码 PNG，应作为封面");
+        assert_eq!((cover.width, cover.height), (340, 480));
+
+        let broken = FakeBook {
+            pages: vec![b"<html>".to_vec(), b"not an image".to_vec()],
+        };
+        let outcome =
+            decode_first_usable_page(&broken, 0, REMOTE_COVER_WIDTH, REMOTE_COVER_HEIGHT, None);
+        match outcome {
+            Ok(_) => panic!("没有任何可解码页时不得判为成功"),
+            Err(error) => assert_eq!(error_code(&error), COVER_REASON_DECODE),
+        }
+    }
+
+    /// ② 策略：**可修复的失败**必须拿到 6h 长期补偿资格，否则永久结案、永不自愈
+    /// （③-1 实测：缺 `pdfium.dll` 导致 267 本 PDF 封面全灭，却因"永久失败"永不重试）。
+    /// 同时守住两张表不漂移，并确认真正不可得的失败仍保持永久失败（不会无限重试）。
+    #[test]
+    fn fixable_cover_failures_earn_a_long_retry_episode() {
+        // 1) 可重试封面码 ⊆ 已登记原因码
+        for code in COVER_RETRYABLE_REASONS {
+            assert!(
+                COVER_REASONS.contains(&code),
+                "可重试码 {code} 不在 COVER_REASONS 白名单里"
+            );
+        }
+        // 2) provider 可重试码确实是分类器能产出的码
+        for (message, expected) in [
+            ("429 too many requests", "provider:rateLimited"),
+            ("request timed out", "provider:timeout"),
+            ("401 unauthorized", "provider:unauthorized"),
+            ("403 Forbidden", "provider:forbidden"),
+        ] {
+            assert_eq!(provider_failure_code(message), expected);
+            assert!(PROVIDER_RETRYABLE_CODES.contains(&expected));
+        }
+
+        // 3) 部署 / 策略上限类 ⇒ 可重试（由白名单驱动，避免手抄漏项）
+        for code in COVER_RETRYABLE_REASONS {
+            assert!(
+                long_retry_is_retryable(&cover_reason(code)),
+                "{code} 属于可修复失败，应获得长期补偿"
+            );
+        }
+        // 4) 账号 / 会话级 provider 子原因 ⇒ 可重试
+        assert!(long_retry_is_retryable(&RemoteScanError::Provider(
+            "429 too many requests".into()
+        )));
+        assert!(long_retry_is_retryable(&RemoteScanError::Provider(
+            "request timed out".into()
+        )));
+        assert!(long_retry_is_retryable(&RemoteScanError::TransientNetwork(
+            "network".into()
+        )));
+
+        // 5) 真正不可得的失败仍必须永久失败（不能退化成无限重试）
+        for terminal in [
+            COVER_REASON_DOCUMENT_OPEN,
+            COVER_REASON_PAGE_RENDER,
+            COVER_REASON_DECODE,
+            COVER_REASON_SIZE_MISSING,
+        ] {
+            assert!(
+                !long_retry_is_retryable(&cover_reason(terminal)),
+                "{terminal} 不应获得长期补偿"
+            );
+        }
+        assert!(!long_retry_is_retryable(&RemoteScanError::Provider(
+            "404 not found".into()
+        )));
+        assert!(!long_retry_is_retryable(&RemoteScanError::Unsupported));
+    }
+
+
+    /// 第 60 轮实测回归：病态归档（尾部 233MB 的 EOCD 扫描）必须被**读取预算**挡住，
+    /// 而不是拖着单线程 worker 把整条封面队列堵死。
+    #[test]
+    fn adapter_byte_source_stops_at_the_read_budget() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct SweepingAdapter {
+            calls: AtomicU64,
+        }
+        impl RemoteProviderAdapter for SweepingAdapter {
+            fn list(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<(Vec<crate::remote_scan::model::RemoteEntry>, Option<String>), RemoteScanError>
+            {
+                Err(RemoteScanError::Unsupported)
+            }
+            fn read_range(
+                &self,
+                _path: &str,
+                _offset: u64,
+                length: u64,
+            ) -> Result<Vec<u8>, RemoteScanError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![0u8; length as usize])
+            }
+            fn read_file_limited(&self, _: &str, _: u64) -> Result<Vec<u8>, RemoteScanError> {
+                panic!("封面路径不得整包读取")
+            }
+            fn normalize_path(&self, path: &str) -> String {
+                normalize_path(path)
+            }
+            fn capabilities(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<crate::remote_scan::adapter::RemoteCapabilities, RemoteScanError> {
+                Err(RemoteScanError::Unsupported)
+            }
+        }
+
+        let budget = 64 * 1024;
+        let adapter = Arc::new(SweepingAdapter {
+            calls: AtomicU64::new(0),
+        });
+        let source = AdapterByteSource::with_budget(
+            adapter.clone(),
+            "/huge.zip".into(),
+            512 * 1024 * 1024,
+            budget,
+        );
+        let mut buf = vec![0u8; 16 * 1024];
+        let mut offset = 0u64;
+        let mut error = None;
+        for _ in 0..1000 {
+            match source.read_at(offset, &mut buf) {
+                Ok(n) => offset += n as u64,
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
+        }
+        let error = error.expect("超预算必须报错");
+        assert!(
+            error.to_string().contains("cover-read-budget"),
+            "错误文案要能被 cover_open_reason 识别: {error}"
+        );
+        assert!(
+            adapter.calls.load(Ordering::SeqCst) <= 8,
+            "预算内最多几次网络读，实际 {}",
+            adapter.calls.load(Ordering::SeqCst)
+        );
+        // 映射到具体失败码（而不是笼统的打开失败）
+        let mapped = cover_open_reason(&anyhow::anyhow!("{error}"));
+        assert_eq!(error_code(&mapped), COVER_REASON_READ_BUDGET);
+    }
+
+    /// 超过硬上限的单图必须"不读一个字节"就给具体原因，绝不整包下载。
+    #[test]
+    fn oversized_single_image_is_rejected_with_a_specific_reason_without_reading() {
+        struct PanickingReader;
+        impl RemoteProviderAdapter for PanickingReader {
+            fn list(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<
+                (Vec<crate::remote_scan::model::RemoteEntry>, Option<String>),
+                RemoteScanError,
+            > {
+                Err(RemoteScanError::Unsupported)
+            }
+            fn read_range(&self, _: &str, _: u64, _: u64) -> Result<Vec<u8>, RemoteScanError> {
+                panic!("超过硬上限的封面不得发出任何读取请求")
+            }
+            fn read_file_limited(&self, _: &str, _: u64) -> Result<Vec<u8>, RemoteScanError> {
+                panic!("safe cover worker must never fall back to a whole-book read")
+            }
+            fn normalize_path(&self, path: &str) -> String {
+                normalize_path(path)
+            }
+            fn capabilities(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<RemoteCapabilities, RemoteScanError> {
+                Ok(RemoteCapabilities {
+                    range_read: true,
+                    pagination: false,
+                })
+            }
+        }
+
+        let oversized = COVER_FETCH_LIMIT_BYTES + 1;
+        // `DecodedImage` 不实现 `Debug`（也不该为了测试去改共享解码类型），
+        // 因此这里显式匹配而不是 `unwrap_err()`。
+        let outcome = fetch_remote_cover_image_with_dimensions(
+            Arc::new(PanickingReader),
+            "/opaque-image",
+            "huge.jpg",
+            Some(oversized),
+            "fp",
+            RemoteAssetKind::ImageFile,
+            Some(("/opaque-image".into(), Some(oversized), "fp".into())),
+            REMOTE_COVER_WIDTH,
+            REMOTE_COVER_HEIGHT,
+            0,
+            None,
+            CoverFetchTrace {
+                source_id: "cover-contract-source",
+                asset_id: "/opaque-image",
+            },
+        );
+        let error = match outcome {
+            Ok(_) => panic!("超过硬上限的封面必须被具体原因拒绝"),
+            Err(error) => error,
+        };
+        assert_eq!(error_code(&error), COVER_REASON_BYTES_LIMIT);
+    }
+
+    /// 第一档窗口被截断时必须放大窗口重试，并且只续读增量（不从头重读一遍）。
+    #[test]
+    fn truncated_window_escalates_once_and_reuses_the_prefix() {
+        struct WindowedPng {
+            bytes: Vec<u8>,
+            requests: Mutex<Vec<(u64, u64)>>,
+        }
+        impl RemoteProviderAdapter for WindowedPng {
+            fn list(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<
+                (Vec<crate::remote_scan::model::RemoteEntry>, Option<String>),
+                RemoteScanError,
+            > {
+                Err(RemoteScanError::Unsupported)
+            }
+            fn read_range(
+                &self,
+                _: &str,
+                offset: u64,
+                length: u64,
+            ) -> Result<Vec<u8>, RemoteScanError> {
+                self.requests.lock().unwrap().push((offset, length));
+                let start = (offset as usize).min(self.bytes.len());
+                let end = start
+                    .saturating_add(length as usize)
+                    .min(self.bytes.len());
+                Ok(self.bytes[start..end].to_vec())
+            }
+            fn read_file_limited(&self, _: &str, _: u64) -> Result<Vec<u8>, RemoteScanError> {
+                panic!("windowed cover fetch must never fall back to a whole-file read")
+            }
+            fn normalize_path(&self, path: &str) -> String {
+                normalize_path(path)
+            }
+            fn capabilities(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<RemoteCapabilities, RemoteScanError> {
+                Ok(RemoteCapabilities {
+                    range_read: true,
+                    pagination: false,
+                })
+            }
+        }
+
+        let image = image::RgbaImage::from_fn(400, 800, |x, y| {
+            image::Rgba([
+                (x % 251) as u8,
+                (y % 241) as u8,
+                ((x + y) % 239) as u8,
+                255,
+            ])
+        });
+        let mut encoded = io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let full = encoded.into_inner();
+        let first_window = 512_u64;
+        assert!(
+            full.len() as u64 > first_window + 1024,
+            "fixture must be large enough for the first window to truncate it"
+        );
+
+        let adapter = WindowedPng {
+            bytes: full.clone(),
+            requests: Mutex::new(Vec::new()),
+        };
+        let decoded = fetch_cover_by_windows(
+            &adapter,
+            "/opaque-image",
+            full.len() as u64,
+            &[first_window, full.len() as u64],
+            REMOTE_COVER_WIDTH,
+            REMOTE_COVER_HEIGHT,
+            None,
+            CoverFetchTrace {
+                source_id: "cover-contract-source",
+                asset_id: "/opaque-image",
+            },
+        )
+        .unwrap();
+        assert_eq!((decoded.width, decoded.height), (340, 480));
+
+        let requests = adapter.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 2, "must escalate exactly once");
+        assert_eq!(requests[0], (0, first_window));
+        assert_eq!(
+            requests[1],
+            (first_window, full.len() as u64 - first_window),
+            "escalation must continue from the prefix instead of re-reading the file"
+        );
+    }
+
+    /// 长条封面必须来自**顶部**而不是中间：用"顶部红色标记 + 下方向灰度渐变"的
+    /// 合成长图走真实解码路径，断言封面首行是顶部标记、末行不是。
+    /// 设置 `RCH_STEP31_PROOF=<path>` 时同时写出封面 PNG 供人工复核。
+    #[test]
+    fn long_strip_cover_is_rendered_from_the_top_band() {
+        let (width, height) = (400_u32, 4_000_u32);
+        let marker_rows = height / 10;
+        let image = image::RgbaImage::from_fn(width, height, |_x, y| {
+            if y < marker_rows {
+                image::Rgba([220, 30, 30, 255])
+            } else {
+                let level = (y * 255 / height) as u8;
+                image::Rgba([level, level, level, 255])
+            }
+        });
+        let mut encoded = io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        let bytes = encoded.into_inner();
+
+        let cover =
+            decode_cover_bounded(&bytes, REMOTE_COVER_WIDTH, REMOTE_COVER_HEIGHT, None, false)
+                .unwrap();
+        assert_eq!((cover.width, cover.height), (340, 480));
+
+        let pixel = |x: u32, y: u32| -> (u8, u8, u8) {
+            let offset = ((y * cover.width + x) * 4) as usize;
+            (
+                cover.rgba[offset],
+                cover.rgba[offset + 1],
+                cover.rgba[offset + 2],
+            )
+        };
+        let (top_r, top_g, _) = pixel(0, 0);
+        assert!(
+            top_r > 150 && top_g < 100,
+            "封面首行必须是长图顶部的标记，实际 ({top_r},{top_g})"
+        );
+        let (bottom_r, bottom_g, _) = pixel(0, cover.height - 1);
+        assert!(
+            !(bottom_r > 150 && bottom_g < 100),
+            "封面不得取自长图中间"
+        );
+
+        if let Ok(path) = std::env::var("RCH_STEP31_PROOF") {
+            let mut out = io::Cursor::new(Vec::new());
+            let rendered =
+                image::RgbaImage::from_raw(cover.width, cover.height, cover.rgba.clone())
+                    .expect("rgba buffer must match the cover dimensions");
+            image::DynamicImage::ImageRgba8(rendered)
+                .write_to(&mut out, image::ImageFormat::Png)
+                .unwrap();
+            std::fs::write(&path, out.into_inner()).unwrap();
+        }
     }
 }
 

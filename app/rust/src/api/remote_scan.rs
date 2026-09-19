@@ -1020,7 +1020,7 @@ fn error_code(error: &RemoteScanError) -> &'static str {
         RemoteScanError::Cancelled => "cancelled",
         RemoteScanError::Unsupported => "unsupported",
         RemoteScanError::Io(_) => "storage",
-        RemoteScanError::Provider(_) => "provider",
+        RemoteScanError::Provider(message) => provider_failure_code(message),
         RemoteScanError::HttpStatus { .. } => "httpStatus",
     }
 }
@@ -3391,5 +3391,57 @@ mod rg_a_cover_failure_decision_tests {
         assert_eq!(a.retry_after_ms, b.retry_after_ms);
         let negative = decision(&error, -5);
         assert_eq!(negative.retry_after_ms, Some(1_000));
+    }
+}
+
+/// RG-B ①：把提供商错误**归类为安全子原因**并持久化（只写枚举，**绝不**透传提供商原文，
+/// 避免 URL/凭据/私有路径进入数据库与 UI）。
+///
+/// 背景：此前所有提供商失败都只记为笼统的 `provider`，导致"251 个失败到底是什么"无法归因
+/// （见真实库：夸克 attempt 1 即有 251 个 provider 失败，首试即败且与成功同分钟 ⇒ 与资产相关）。
+fn provider_failure_code(message: &str) -> &'static str {
+    let text = message.to_ascii_lowercase();
+    if text.contains("404") || text.contains("not found") || text.contains("不存在") {
+        return "provider:notFound";
+    }
+    if text.contains("403") || text.contains("forbidden") || text.contains("denied") {
+        return "provider:forbidden";
+    }
+    if text.contains("401") || text.contains("unauthor") || text.contains("登录") {
+        return "provider:unauthorized";
+    }
+    if text.contains("429") || text.contains("rate") || text.contains("频繁") {
+        return "provider:rateLimited";
+    }
+    if text.contains("timeout") || text.contains("timed out") || text.contains("超时") {
+        return "provider:timeout";
+    }
+    if text.contains("decode") || text.contains("解码") || text.contains("invalid image") {
+        return "provider:decodeFailed";
+    }
+    if text.contains("cover") || text.contains("封面") {
+        return "provider:noCover";
+    }
+    "provider:other"
+}
+
+#[cfg(test)]
+mod provider_failure_code_tests {
+    use super::provider_failure_code;
+
+    /// 分类必须安全（固定枚举）且**绝不泄露**提供商原文。
+    #[test]
+    fn classifies_safely_and_never_leaks_provider_text() {
+        assert_eq!(provider_failure_code("HTTP 404 Not Found"), "provider:notFound");
+        assert_eq!(provider_failure_code("403 Forbidden"), "provider:forbidden");
+        assert_eq!(provider_failure_code("429 too many requests"), "provider:rateLimited");
+        assert_eq!(provider_failure_code("request timed out"), "provider:timeout");
+        assert_eq!(provider_failure_code("image decode failed"), "provider:decodeFailed");
+        assert_eq!(provider_failure_code("封面缺失"), "provider:noCover");
+        // 含敏感信息的未知错误 ⇒ 只留枚举，不透传。
+        assert_eq!(
+            provider_failure_code("https://secret.example/x?token=abc failed"),
+            "provider:other"
+        );
     }
 }

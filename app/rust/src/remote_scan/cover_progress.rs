@@ -123,14 +123,17 @@ pub(crate) fn apply_cover_availability(status: &mut RemoteScanStatusDto) {
         - inputs.tracked_distinct as i64
         - inputs.staged_pending_represented as i64;
     let mut other = inputs.other_unknown;
+    // `tracked > discovered` 在真实数据中是**正常**情况：封面 job 会跨代际、跨列表变更累积
+    // （资产被删除/改名/移动后旧 job 行仍留在 `remote_cover_job`），而 `discovered` 只统计
+    // **当前**列表 ⇒ tracked 可能远大于 discovered（RG-B 实测 267 > 9）。
+    //
+    // 因此这里**绝不允许 panic**：P1 曾用 `debug_assert!(false)` 暴露该情况，结果在真实数据上
+    // 让 `remote_scan_status` 每次调用都抛 PanicException（经 FRB 变成 Dart 异常），
+    // 打断 `restoreStatuses` 与状态面板刷新（errors.log 反复记录；表现：启动卡顿、
+    // 面板停在失败态、封面进度不可见）。
+    //
+    // 现行语义：超出部分**计入 other**（`other_books` 可见地 > 0），no_job 取 0，waiting 不为负。
     let no_job = if no_job_signed < 0 {
-        // 不变量违例：tracked > discovered。**不得静默 clamp 后报告正常** ——
-        // 显式暴露（debug 断言 + 计入 other，使 other > 0 可见）。
-        debug_assert!(
-            false,
-            "cover progress invariant violation: tracked {} > discovered {}",
-            inputs.tracked_distinct, status.discovered_books
-        );
         other = other.saturating_add(no_job_signed.unsigned_abs());
         0
     } else {
@@ -142,15 +145,22 @@ pub(crate) fn apply_cover_availability(status: &mut RemoteScanStatusDto) {
         .saturating_add(stale_ready)
         .saturating_add(no_job);
     status.other_books = other;
-    debug_assert_eq!(
-        status.available_books
+    // 不变量仅作**诊断输出**：真实数据形状不受我们控制，任何情况下都不得 panic
+    // （panic 会经 FRB 变成 Dart 异常并打断状态读取 —— RG-B 已实测该故障模式）。
+    #[cfg(debug_assertions)]
+    {
+        let sum = status.available_books
             + status.waiting_books
             + status.active_books
             + status.failed_books
             + status.unsupported_books
             + status.blocked_books
-            + status.other_books,
-        status.discovered_books,
-        "P1-F invariant: available+waiting+active+failed+unsupported+blocked+other == discovered"
-    );
+            + status.other_books;
+        if sum != status.discovered_books {
+            eprintln!(
+                "[cover_progress] invariant mismatch: sum {} != discovered {} (source {})",
+                sum, status.discovered_books, status.source_id
+            );
+        }
+    }
 }

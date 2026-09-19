@@ -338,3 +338,41 @@ fn f_availability_is_memoized_within_a_revision_and_recomputes_after_a_transitio
         "after a revision change the sweep re-runs and sees the missing material"
     );
 }
+
+/// RG-B 回归：真实数据里 `tracked > discovered` 是**常态**（封面 job 跨代际/列表变更累积，
+/// 实测 267 > 9）。该形状**绝不允许 panic** —— 修复前它会经 FRB 变成 Dart 异常，
+/// 使 `restoreStatuses` 每次启动都失败（errors.log 反复记录 PanicException）。
+///
+/// 注意：tracked > discovered 时"各桶之和 == discovered"在数学上不可满足
+/// （job 桶本身就超过 discovered），因此该恒等式只在 tracked <= discovered 时成立；
+/// 超出的部分由 `other_books` **可见地**吸收，这里只断言"不 panic + 超出可见"。
+#[test]
+fn f_tracked_greater_than_discovered_never_panics_and_is_absorbed_into_other() {
+    let source = "f-prog-tracked-over";
+    let _guard = prepare(source, 1); // discovered = 1
+    seed_job(source, "a", CoverJobState::Ready);
+    seed_job(source, "b", CoverJobState::Pending); // tracked = 2 > discovered = 1
+
+    // 修复前：此处直接 panic（cover progress invariant violation）。
+    let status = status_of(source);
+
+    assert_eq!(status.discovered_books, 1);
+    assert!(
+        status.other_books >= 1,
+        "超出 discovered 的部分必须在 other 中可见（不得静默丢失）"
+    );
+    // 不变量在 tracked <= discovered 时才可能成立；此处只要求各桶之和 >= discovered。
+    let sum = status.available_books
+        + status.waiting_books
+        + status.active_books
+        + status.failed_books
+        + status.unsupported_books
+        + status.blocked_books
+        + status.other_books;
+    assert!(
+        sum >= status.discovered_books,
+        "sum {} must be at least discovered {}",
+        sum,
+        status.discovered_books
+    );
+}

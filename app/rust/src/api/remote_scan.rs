@@ -1380,7 +1380,8 @@ fn refresh_status_counts(
 
     let mut counts = [0_u64; 7];
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT asset_id,state,updated_at,content_revision,selection_revision,profile
+        "SELECT asset_id,state,updated_at,content_revision,selection_revision,profile,
+                COALESCE(error_code,'')
            FROM remote_cover_job
           WHERE source_id=?1 AND generation=?2",
     ) {
@@ -1392,26 +1393,33 @@ fn refresh_status_counts(
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
             ))
         }) {
             // P1-F：latest-per-asset（与 UI 的"当前 job"语义一致），
             // 并保留 cover 身份供**锁外**做缓存可用性校验。
-            let mut latest_by_asset: HashMap<String, (String, i64, String, String, String)> =
+            let mut latest_by_asset: HashMap<String, (String, i64, String, String, String, String)> =
                 HashMap::new();
             for row in rows.flatten() {
                 let replace = latest_by_asset
                     .get(&row.0)
-                    .is_none_or(|(_, updated_at, _, _, _)| row.2 >= *updated_at);
+                    .is_none_or(|(_, updated_at, _, _, _, _)| row.2 >= *updated_at);
                 if replace {
-                    latest_by_asset.insert(row.0, (row.1, row.2, row.3, row.4, row.5));
+                    latest_by_asset
+                        .insert(row.0, (row.1, row.2, row.3, row.4, row.5, row.6));
                 }
             }
             let tracked_distinct = latest_by_asset.len() as u64;
             let mut other_unknown = 0_u64;
             let mut ready_identities: Vec<(String, String, String, String)> = Vec::new();
-            for (asset_id, (state, _, content_revision, selection_revision, profile)) in
+            for (asset_id, (state, _, content_revision, selection_revision, profile, error_code)) in
                 latest_by_asset.into_iter()
             {
+                // RG-B F1/F2：`route_missing` 表示该 job 的资产在当前列表/路由表里**已无路由**
+                // （跨代际残留的孤儿封面任务），它**不是**真实的抓取失败 ⇒ 不计入"失败"桶，
+                // 而是计入 other（UI 显示为"暂不可用 / 已失效"），避免失败率被孤儿严重虚高。
+                // 与之配套：failed 是终态，worker 不会重试孤儿 job（不再空转）。
+                let is_stale_orphan = state == "failed" && error_code == "route_missing";
                 let index = match state.as_str() {
                     "ready" => Some(0),
                     "running" => Some(1),
@@ -1419,8 +1427,10 @@ fn refresh_status_counts(
                     "retry_wait" => Some(3),
                     "blocked" => Some(4),
                     "unsupported" => Some(5),
+                    "failed" if is_stale_orphan => None,
                     "failed" => Some(6),
-                    // P1-F：真实未知 durable state **不得静默丢弃**。
+                    // P1-F：真实未知 durable state **不得静默丢弃**；
+                    // F1/F2：孤儿（route_missing）同样落到 other，保持"可见但不计入失败"。
                     _ => None,
                 };
                 match index {

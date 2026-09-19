@@ -183,6 +183,26 @@ class RemoteScanCoordinator {
       _lastSeenCoverRevision[sourceId] ?? 0;
 
   /// 订阅**唯一**的 cover revision stream（进程级只建立一次）。
+  /// RG-B 可诊断性修复（B）：把原生启动失败**映射为安全枚举码**。
+  ///
+  /// 原生 `start_job` 的失败文本只可能是固定常量（见 `api/remote_scan.rs`），但为避免任何
+  /// 泄露风险，这里**只输出枚举码**，绝不把原生文本带进 UI。
+  static String scanStartRejectionCode(Object error) {
+    final text = error.toString().toLowerCase();
+    if (text.contains('session unavailable')) return 'scanStartRejected:session';
+    if (text.contains('session proof')) return 'scanStartRejected:epoch';
+    if (text.contains('root changed')) return 'scanStartRejected:root';
+    if (text.contains('proof unavailable')) return 'scanStartRejected:proof';
+    if (text.contains('state recovery unavailable')) {
+      return 'scanStartRejected:recovery';
+    }
+    if (text.contains('state unavailable')) return 'scanStartRejected:state';
+    if (text.contains('baseline unavailable')) return 'scanStartRejected:baseline';
+    if (text.contains('local-only')) return 'scanStartRejected:localOnly';
+    if (text.contains('invalid scan mode')) return 'scanStartRejected:mode';
+    return 'scanStartRejected:unknown';
+  }
+
   void startCoverRevisionWatch() {
     if (_disposed || _coverSubscription != null) return;
     final stream =
@@ -439,7 +459,7 @@ class RemoteScanCoordinator {
             }
             return status;
           },
-          onError: (Object _, StackTrace stackTrace) {
+          onError: (Object error, StackTrace stackTrace) {
             // Never surface the native exception text here: provider errors
             // may contain credentials or private URLs. Return a stable,
             // safe status so UI callbacks do not create an unhandled error;
@@ -452,7 +472,7 @@ class RemoteScanCoordinator {
                 status: 'failed',
                 mode: mode,
                 generation: generation,
-                errorCode: 'nativeStartFailed',
+                errorCode: scanStartRejectionCode(error),
               ),
             );
             _observedSources.remove(source.id);
@@ -464,7 +484,7 @@ class RemoteScanCoordinator {
               status: 'failed',
               mode: mode,
               generation: generation,
-              errorCode: 'nativeStartFailed',
+              errorCode: scanStartRejectionCode(error),
             );
           },
         )

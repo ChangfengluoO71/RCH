@@ -205,6 +205,28 @@ fn source_epoch_matches_on(conn: &Connection, source_id: &str, generation: i64) 
 /// Check that a caller is using the source's authoritative effective root.
 /// A root from an old source row or a legacy source without a fingerprint is
 /// never accepted as proof material.
+/// RG-B 健壮性修复（A）：把**残留的 `running` 扫描代际**落为中断终态。
+///
+/// 依据：进程启动时内存 job 表为空 ⇒ 任何仍持久化为 `running` 的代际都不可能有存活 job，
+/// 只能是崩溃/强制退出留下的残留。若不清理，后续的 epoch / baseline 证明会**永久拒绝**
+/// 新的扫描启动（用户看到的就是"扫描启动失败"，且该源再也无法扫描）。
+///
+/// * 大小写不敏感（历史行可能是 `Running`）；
+/// * 清空 `checkpoint`（半途状态不得作为续扫依据）并写 `error_code='interrupted'`；
+/// * 幂等：非 running 行不受影响；返回是否有行被更新。
+///
+/// **调用前提**：仅在该源**没有存活 job** 时调用（见 `api::remote_scan::start_job`），
+/// 否则会把正在运行的扫描状态误标为中断。
+pub fn recover_interrupted_scan(conn: &Connection, source_id: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE remote_scan_state \
+         SET status='interrupted', checkpoint=NULL, error_code='interrupted' \
+         WHERE source_id=?1 AND lower(status)='running'",
+        params![source_id],
+    )?;
+    Ok(changed > 0)
+}
+
 pub fn requested_root_matches_source(
     conn: &Connection,
     source_id: &str,
@@ -2388,5 +2410,81 @@ mod verified_remote_deletion_tests {
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+}
+
+
+#[cfg(test)]
+mod rg_b_recovery_tests {
+    use super::*;
+
+    fn state_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE remote_scan_state(\
+                 source_id TEXT PRIMARY KEY,\
+                 status TEXT NOT NULL,\
+                 mode TEXT NOT NULL,\
+                 generation INTEGER NOT NULL,\
+                 checkpoint TEXT,\
+                 last_success_at INTEGER,\
+                 error_code TEXT);",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn row(conn: &Connection, source_id: &str) -> (String, Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT status, checkpoint, error_code FROM remote_scan_state WHERE source_id=?1",
+            params![source_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    /// 大小写不敏感的 `Running` 残留必须被恢复为中断终态、清空 checkpoint、写入 error_code。
+    #[test]
+    fn residual_running_is_recovered_as_interrupted() {
+        let conn = state_conn();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation,checkpoint) \
+             VALUES('src','Running','Snapshot',4,'/deep/path')",
+            [],
+        )
+        .unwrap();
+
+        assert!(recover_interrupted_scan(&conn, "src").unwrap());
+        let (status, checkpoint, error) = row(&conn, "src");
+        assert_eq!(status, "interrupted");
+        assert_eq!(checkpoint, None);
+        assert_eq!(error.as_deref(), Some("interrupted"));
+    }
+
+    /// 幂等 + 终态行不受影响（不得篡改正常完成/失败的记录）。
+    #[test]
+    fn recovery_is_idempotent_and_leaves_terminal_rows_untouched() {
+        let conn = state_conn();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation,checkpoint,error_code) \
+             VALUES('running-src','running','Snapshot',2,'/x','-')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO remote_scan_state(source_id,status,mode,generation,checkpoint) \
+             VALUES('ok-src','Succeeded','Snapshot',9,'/y')",
+            [],
+        )
+        .unwrap();
+
+        assert!(recover_interrupted_scan(&conn, "running-src").unwrap());
+        assert!(!recover_interrupted_scan(&conn, "running-src").unwrap());
+        assert_eq!(row(&conn, "running-src").0, "interrupted");
+
+        assert!(!recover_interrupted_scan(&conn, "ok-src").unwrap());
+        let (status, checkpoint, _) = row(&conn, "ok-src");
+        assert_eq!(status, "Succeeded");
+        assert_eq!(checkpoint.as_deref(), Some("/y"));
     }
 }

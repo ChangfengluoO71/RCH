@@ -1591,6 +1591,19 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
             existing.token.cancel();
         }
     }
+    // RG-B 健壮性修复（A）：若该源**没有存活 job**，则持久化的 `running` 代际必然是
+    // 崩溃/强制退出留下的残留 ⇒ 先落为中断终态再继续。否则下面的 epoch/baseline 证明
+    // 会永久拒绝本次启动（用户表现为"扫描启动失败"且无法恢复）。
+    if !jobs().lock().unwrap().contains_key(&config.source_id) {
+        if let Ok(conn) = db::get().lock() {
+            if persistence::recover_interrupted_scan(&conn, &config.source_id).unwrap_or(false) {
+                eprintln!(
+                    "[remote_scan] recovered residual running generation for {}",
+                    config.source_id
+                );
+            }
+        }
+    }
     let adapter = remote_provider_adapter(&config.source_type, config.session, &config.root_path)
         .map_err(|_| "remote session unavailable".to_string())?;
     let initial_listing = if resume {

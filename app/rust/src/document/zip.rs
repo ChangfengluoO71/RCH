@@ -200,6 +200,9 @@ const ZIP_LFH_LEN: usize = 30;
 const ZIP_MAX_COMMENT: usize = 65_535;
 /// 中央目录读取上限（正常 CBZ ~60B/条目 => 8MiB 覆盖 ~13 万条目），超过交回常规路径。
 const ZIP_FAST_MAX_CD: u64 = 8 * 1024 * 1024;
+/// "放宽候选"（EOCD 之后还有多余字节）最多尝试几个：只在严格候选失败时用，每个候选要一次
+/// 4 B 的中央目录头签名读来验证，因此只试最近的少数几个。
+const ZIP_EOCD_RELAXED_TRIES: usize = 4;
 /// 快通道最多尝试几张图片条目（按中央目录顺序）。
 const ZIP_FAST_MAX_CANDIDATES: usize = 4;
 
@@ -252,10 +255,16 @@ pub(crate) fn read_central_directory<S: ByteSource>(src: &S) -> Result<Option<Ve
     if len < ZIP_EOCD_LEN as u64 {
         return Ok(None);
     }
-    // 1) 尾部一次读：从后往前找**合法**的 EOCD（注释长度必须正好落到文件末尾）。
+    // 1) 尾部一次读，并在其中找 EOCD：
+    //    - **严格候选**：注释长度正好落到文件末尾（干净归档，命中即用、零额外读）；
+    //    - **放宽候选**：EOCD 之后还多出若干字节（真机见过：夸克上一本漫画 EPUB 的 EOCD 后
+    //      还有 5 B 尾巴）。`zip` crate 容忍这种尾巴，本层过去要求"正好落在末尾"⇒ 明明结构
+    //      健康却白白回退成逐条目读（实测打开 219 次读 / 30 s）。放宽候选必须能定位到
+    //      **签名正确的中央目录**才被接受，否则仍然回退。
     let tail_len = (ZIP_EOCD_LEN + ZIP_MAX_COMMENT).min(len as usize);
     let tail = read_exact_at(src, len - tail_len as u64, tail_len)?;
-    let mut eocd_at: Option<usize> = None;
+    let mut strict_at: Option<usize> = None;
+    let mut relaxed_at: Vec<usize> = Vec::new();
     if tail.len() >= ZIP_EOCD_LEN {
         for at in (0..=tail.len() - ZIP_EOCD_LEN).rev() {
             if u32_at(&tail, at) != ZIP_EOCD_SIG {
@@ -263,16 +272,42 @@ pub(crate) fn read_central_directory<S: ByteSource>(src: &S) -> Result<Option<Ve
             }
             let comment = u16_at(&tail, at + 20) as usize;
             if at + ZIP_EOCD_LEN + comment == tail.len() {
-                eocd_at = Some(at);
+                strict_at = Some(at);
                 break;
+            }
+            if relaxed_at.len() < ZIP_EOCD_RELAXED_TRIES {
+                relaxed_at.push(at);
             }
         }
     }
-    let Some(eocd_at) = eocd_at else {
-        return Ok(None);
+    let eocd_fields = |at: usize| {
+        (
+            u32_at(&tail, at + 12) as u64,
+            u32_at(&tail, at + 16) as u64,
+        )
     };
-    let cd_size = u32_at(&tail, eocd_at + 12) as u64;
-    let cd_offset = u32_at(&tail, eocd_at + 16) as u64;
+    if let Some(at) = strict_at {
+        let (cd_size, cd_offset) = eocd_fields(at);
+        return central_directory_at(src, len, cd_offset, cd_size);
+    }
+    for at in relaxed_at {
+        let (cd_size, cd_offset) = eocd_fields(at);
+        if let Some(entries) = central_directory_at(src, len, cd_offset, cd_size)? {
+            return Ok(Some(entries));
+        }
+    }
+    Ok(None)
+}
+
+/// 在 `cd_offset` 处读一次中央目录并解析（**不读任何 local header**）。
+///
+/// 任何不成立（ZIP64 哨兵 / 空 / 越界 / 头签名不符 / 解析为空）都返回 `Ok(None)`。
+fn central_directory_at<S: ByteSource>(
+    src: &S,
+    len: u64,
+    cd_offset: u64,
+    cd_size: u64,
+) -> Result<Option<Vec<ZipEntryMeta>>> {
     // ZIP64 哨兵值 => 交回常规路径（它有完整实现）。
     if cd_size == u32::MAX as u64 || cd_offset == u32::MAX as u64 || cd_size == 0 {
         return Ok(None);
@@ -280,9 +315,12 @@ pub(crate) fn read_central_directory<S: ByteSource>(src: &S) -> Result<Option<Ve
     if cd_size > ZIP_FAST_MAX_CD || cd_offset.saturating_add(cd_size) > len {
         return Ok(None);
     }
-    // 2) 中央目录一次读。
+    // 中央目录一次读。
     let cd = read_exact_at(src, cd_offset, cd_size as usize)?;
-    // 3) 在内存里顺序解析条目（不碰 local header）。
+    if cd.len() < ZIP_CDFH_LEN || u32_at(&cd, 0) != ZIP_CDFH_SIG {
+        return Ok(None);
+    }
+    // 在内存里顺序解析条目（不碰 local header）。
     let mut entries: Vec<ZipEntryMeta> = Vec::new();
     let mut at = 0usize;
     while at + ZIP_CDFH_LEN <= cd.len() && entries.len() < ZIP_MAX_ENTRIES {
@@ -360,6 +398,118 @@ pub(crate) fn read_entry_bytes<S: ByteSource>(
     }
 }
 
+// ============================================================
+// 第 78 轮新增：EPUB 快路径专用的"按需取数"构件
+// ============================================================
+//
+// 为什么与 [`read_entry_bytes`] 并存：后者"1 次 local header + 1 次数据"的**步数**是
+// `ZipBook` / 封面快通道的既有契约（P0 基线用例断言每页请求数），本轮刻意一动不动。
+// EPUB 打开期要读 container.xml / OPF 这类小条目，且"打开 = 常数次读"是本轮验收口径，
+// 因此需要"local header 与数据合并成一次 `read_at`"的变体；它同时把算出的数据区起点
+// 交回调用方（EPUB 用它实现 `data_start` 的惰性化缓存）。
+
+/// 一次读里为 local header 的 extra field 预留的余量（字节）。
+///
+/// LFH 的 extra 长度**只能**从 LFH 自己读到（中央目录里的 extra 可能不同），因此"一次读"的
+/// 窗口按 `30 + 中央目录里的名字长度 + 余量 + 压缩尺寸` 取。常见写入器（无 extra / zip64 /
+/// 时间戳 / unicode 路径）都远小于该余量 ⇒ 1 次读；超长 extra 时补一次精确读，正确性不变。
+const ZIP_LFH_EXTRA_SLACK: u64 = 1024;
+
+/// 同 [`read_entry_bytes`]，但 local header 与数据**合并成一次** `read_at`，并把算出的
+/// **数据区起点**一并返回（调用方据此缓存，避免重复读 local header）。
+pub(crate) fn read_entry_bytes_tracked<S: ByteSource>(
+    src: &S,
+    entry: &ZipEntryMeta,
+    max_bytes: u64,
+) -> Result<Option<(Vec<u8>, u64)>> {
+    let len = src.len();
+    if entry.compressed_size == 0 || entry.compressed_size > max_bytes {
+        return Ok(None);
+    }
+    if entry.local_header >= len {
+        return Ok(None);
+    }
+    // 1) 一次读：local header + 名字 + extra 余量 + 数据。
+    let want = (ZIP_LFH_LEN as u64)
+        .saturating_add(entry.name.len() as u64)
+        .saturating_add(ZIP_LFH_EXTRA_SLACK)
+        .saturating_add(entry.compressed_size)
+        .min(len - entry.local_header);
+    if want < ZIP_LFH_LEN as u64 {
+        return Ok(None);
+    }
+    let Ok(window) = read_exact_at(src, entry.local_header, want as usize) else {
+        return Ok(None);
+    };
+    // 2) 在窗口里解析 local header（签名不符 ⇒ 不信任这个 offset）。
+    let Some(header_len) = lfh_data_offset(&window) else {
+        return Ok(None);
+    };
+    let data_start = entry.local_header + header_len;
+    if data_start.saturating_add(entry.compressed_size) > len {
+        return Ok(None);
+    }
+    // 3) 数据通常已在窗口里；只有 extra field 比余量大时才补一次精确读。
+    let raw = if header_len + entry.compressed_size <= window.len() as u64 {
+        window[header_len as usize..(header_len + entry.compressed_size) as usize].to_vec()
+    } else {
+        let Ok(raw) = read_exact_at(src, data_start, entry.compressed_size as usize) else {
+            return Ok(None);
+        };
+        raw
+    };
+    Ok(decode_entry_bytes(entry, raw).map(|bytes| (bytes, data_start)))
+}
+
+/// 数据区起点**已知**（它的 local header 已被读过一次并校验）时只读数据：1 次读。
+pub(crate) fn read_entry_at<S: ByteSource>(
+    src: &S,
+    entry: &ZipEntryMeta,
+    data_start: u64,
+    max_bytes: u64,
+) -> Result<Option<Vec<u8>>> {
+    if entry.compressed_size == 0 || entry.compressed_size > max_bytes {
+        return Ok(None);
+    }
+    if data_start.saturating_add(entry.compressed_size) > src.len() {
+        return Ok(None);
+    }
+    let Ok(raw) = read_exact_at(src, data_start, entry.compressed_size as usize) else {
+        return Ok(None);
+    };
+    Ok(decode_entry_bytes(entry, raw))
+}
+
+/// local header 里 "固定头 + 名字 + extra" 的总长度（`None` = 签名不符 / 不足 30B）。
+fn lfh_data_offset(header: &[u8]) -> Option<u64> {
+    if header.len() < ZIP_LFH_LEN || u32_at(header, 0) != ZIP_LFH_SIG {
+        return None;
+    }
+    Some(ZIP_LFH_LEN as u64 + u16_at(header, 26) as u64 + u16_at(header, 28) as u64)
+}
+
+/// 按中央目录给出的压缩方式解压（stored / deflate）。不支持的方式 / 解压失败 ⇒ `None`。
+///
+/// 与 [`read_entry_bytes`] 内的解压分支等价；那一处**刻意冻结**（P0 契约），两处互不影响。
+fn decode_entry_bytes(entry: &ZipEntryMeta, raw: Vec<u8>) -> Option<Vec<u8>> {
+    match entry.method {
+        0 => Some(raw),
+        8 => {
+            let mut out = Vec::new();
+            if flate2::read::DeflateDecoder::new(raw.as_slice())
+                .read_to_end(&mut out)
+                .is_ok()
+                && !out.is_empty()
+            {
+                Some(out)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// "只取封面"的 ZIP 快通道：返回**第一张图片条目**的原始字节。
 ///
 /// 请求数恒定（尾部 1 次 + 中央目录 1 次 + 每候选 1 次 local header + 1 次数据），
@@ -369,7 +519,6 @@ pub(crate) fn first_image_bytes_via_central_directory<S: ByteSource>(
     src: &S,
     max_page_bytes: usize,
 ) -> Result<Option<Vec<u8>>> {
-    let len = src.len();
     // 1)+2)+3) 只读 EOCD 与中央目录（不再逐条读 local header），挑出前几张图片条目。
     let Some(entries) = read_central_directory(src)? else {
         return Ok(None);
@@ -837,5 +986,35 @@ mod tests {
         assert_eq!(bytes.len(), 512);
         let page_reads = reads.lock().unwrap().len() - before;
         assert!(page_reads <= 2, "取一页应 ≤2 次读，实际 {page_reads} 次");
+    }
+
+    /// 第 78 轮真机修复：**EOCD 之后还多出几个字节**的归档（现场就是这样：夸克上一本漫画
+    /// `2.epub` 的 EOCD 后还有 5 B 尾巴）也必须能"只读中央目录"打开。
+    ///
+    /// `zip` crate 容忍这种尾巴，而本层过去要求"EOCD 正好落在文件末尾" ⇒ 明明结构完全健康
+    /// （402 条目 / 全部 Stored / 无加密 / 无 ZIP64）却整条快路径弃权，回退成逐条目读
+    /// （真机实测：打开 219 次读 / 30 s）。
+    #[test]
+    fn central_directory_tolerates_trailing_bytes_after_eocd() {
+        let plain = make_cbz();
+        let plain_entries = super::read_central_directory(&MemSource(plain.clone()))
+            .unwrap()
+            .map(|entries| entries.len());
+        assert_eq!(plain_entries, Some(3), "干净归档先按严格规则命中");
+
+        // 模拟现场：EOCD 之后追加 5 个字节。
+        let mut trailed = plain;
+        trailed.extend_from_slice(&[0x7e, 0x46, 0x1f, 0x0d, 0x00]);
+        let tail_entries = super::read_central_directory(&MemSource(trailed.clone()))
+            .unwrap()
+            .map(|entries| entries.len());
+        assert_eq!(
+            tail_entries, plain_entries,
+            "EOCD 后有尾巴也必须解析出同样的中央目录"
+        );
+
+        // 端到端：仍然能正常打开并取页。
+        let doc = open_document(MemSource(trailed), "trailing.cbz").unwrap();
+        assert_eq!(doc.page_count(), 3);
     }
 }

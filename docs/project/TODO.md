@@ -120,27 +120,47 @@
 - [x] 文档体系: (LOG / LOG-INDEX / README / TODO / DECISION / SPEC)
 - [x] 书源同步导出补全: 手动导出到文件 + 加密书源凭据包 + Android 导出降级（第42轮）
 
-## Doing（下次开工直接接手 · 2026-09-20）
+## Waiting（待验证 · 2026-09-20）
 
-### 1. EPUB 打开优化（**一次成型**，方案已就绪）
-- **现状（安全 ✓）**：`app/rust/src/document/epub.rs` 已有 `CdArchive` 适配层（只读 EOCD + 中央目录，
-  不可解析回退 crate），**尚未接线**；`cargo build --lib` 0 error、`document::epub` 4 条单测全绿、
-  行为零变化。文件 474 行。
-- **病症**：`open` 仍走 `zip::ZipArchive::new` ⇒ 逐条目读 local header ⇒ **O(条目数)** 远端请求
-  （EPUB 条目数远多于 CBZ ⇒ 用户实测"EPUB 特别慢"）。
-- **做法（三步，勿用片断编辑 —— 已试两次均撞未读调用点）**：
-  1. 完整读 `epub.rs:201-474`（`page_bytes` / `find_opf_path` / `read_zip_entry` / `parse_opf` /
-     `resolve_path` / `extract_img_src` / `index_for_name_ignore_case` / 4 条单测）
-  2. 用 `write` **整体重写**该文件：让 `CdArchive` 的条目视图**完整模仿 crate `ZipFile` 接口**
-     （`name()` / `size()` / `compression()` / `data_start()` / `compressed_size()` / `Read`）
-     ⇒ 解析逻辑**一行不改**；`data_start()` 改为**首次访问时才读 local header 并缓存**
-     （这是消除 O(条目数) 的关键）；唯一必改处：页表改存**条目引用**，`page_bytes` 走
-     `read_entry_bytes`（2 次读/页）
-  3. 第二阶段（收益最大）：**按需解析** —— `open` 只建 spine 表，章节 html 首次翻到才读 + 缓存
-     ⇒ 打开恒定 **2 次请求**（container.xml + OPF）
-- **验收**：`cargo build --lib` ✓ → `document::epub` 4/4 ✓ → **新增「300 条目 ⇒ 打开 ≤4 次读」** ✓
-  → `cargo test --locked -j 2 -- --test-threads=1` 全量 ✓ → 探针量改前后（`examples/read_profile.rs`）
-- **详细精读结论**：`docs/project/LOG.md` 第 77 轮附录（提交 `e09c512`）
+### 1. EPUB 打开优化（**第 78 轮已实施**，待用户实测确认）
+- [x] 三步一次成型落地 —— `app/rust/src/document/epub.rs` **整体重写**（未用片断编辑）：
+      `CdArchive` 接线（只读 EOCD + 中央目录；不可解析/不支持的压缩方式整体回退 crate）·
+      **起点惰性缓存**（打开期零 local header 读；某条目首次被访问时才读它的 local header ——
+      与数据合并成一次 `read_at` —— 并把算出的数据区起点缓存给后续读取）· 页表只存**条目索引** ·
+      章节 xhtml **按需解析**（open 只登记 spine 表，首翻才读 + 缓存）
+- [x] ZIP 构件（`app/rust/src/document/zip.rs`）**只增不改**：新增"local header 与数据合并成一次
+      `read_at`"的构件（`read_entry_bytes_tracked` / `read_entry_at` / `decode_entry_bytes`），
+      **仅 EPUB 快路径使用**；`read_entry_bytes` 与"每页 2 次读"的 P0 契约一字未动
+      （只删了 `first_image_bytes_via_central_directory` 里一行未使用的 `let len`，零行为改动）
+- [x] 门禁（2026-09-20 实测）：`cargo build --lib` 0 error / 0 lib 警告 →
+      `document::` 35 passed（`document::epub` **8/8**：原 4 条回归 + 新增 4 条）→
+      `cargo test --locked -j 2 -- --test-threads=1` 全量通过 → `p0b2_zip_read_amplification` 9/9
+- [x] 独立评审（fresh-context、只读）后的修正：把"按名找条目"收敛成**两个后端同一条规则**
+      （精确 → 大小写不敏感），删掉 77 轮 shim 里那处会**静默选错条目**的"后缀匹配"；
+      回退路径去掉新加的 512 MiB 上限；`CdArchive::new` 的读取错误也回退 crate；
+      补 3 条测试（打开只读尾部 / `<img src>` 大小写不一致 / 快路径不可用时回退）
+- [x] 验收口径实测：**300 条目漫画 EPUB 打开 4 次读**（≤4 ✓；容器 + OPF 合并读）
+- [x] **真机复核修复（同日）**：应用实测"打开 EPUB 还是很慢" ⇒ perf 日志显示快路径在生产上弃权
+      （393 次 `requested=30` 的逐条目 local header 读）。新增只读诊断工具
+      `examples/quark_epub_probe.rs`（从 DB 副本读 cookie；结构体检 + 改前/改后 A/B）定位到根因：
+      真机文件 **EOCD 之后多出 5 B 尾巴**，而 shim 的判定要求"EOCD 正好落在文件末尾"。
+      修复：严格候选优先、放宽候选需中央目录头签名验证（干净归档零额外读）。真机两本实测
+      **219 / 204 次读 → 4 次读**（30.8 s / 28.2 s → 0.59 s / 0.58 s）；全量门禁 exit 0。
+- [x] 探针 A/B（`examples/read_profile.rs --file … [--legacy]`，合成 300 条目 EPUB 654 KB）：
+      打开 **47 次读 / 651,836 B → 4 次读 / 90,196 B**；首次翻页 2 次读（章节 + 图片）
+- [ ] **待用户实测**：真实 115 上漫画 EPUB 的首次打开耗时是否达标；
+      若某本 EPUB 页数或翻页异常（章节不含 `<img>` 的 nav 文档会占一页），回报即可
+      —— 取舍与理由见 LOG 第 78 轮
+
+## 下次开工（Backlog）
+
+### 1.5 挂账（第 78 轮评审后登记）
+- [ ] **中央目录复用已读的尾部窗口**：EOCD 与中央目录同在文件最后 64 KiB 内，可省掉每次打开
+      1 次往返（EPUB 打开 4 → 3 次读）。第 78 轮**已实现又撤销**：它会把
+      `p0a_disk_cache_hit_bypasses_the_network_gate` 的测量窗口推进上一相位的预取线程噪声里
+      （HEAD 5/5 ok → 4/5 FAIL）。要与 `tests/p0_baseline_read_speed.rs` 的测量口径一起处理。
+- [ ] 若仍有 EPUB 打开异常上报：优先看 `LOG.md` 第 78 轮"有意取舍"三条（章节页数模型 /
+      无图章节报错 / 跨章节图片不去重），并考虑给 nav 文档（EPUB3 `properties="nav"`）做 spine 过滤。
 
 ### 2. 其余格式（按收益/工作量排序，逐个照 EPUB 的做法）
 **RAR（最严重：打开就整包下载到临时文件）→ PDF（整份读入 + pdfium 需自定义 range 读回调）→

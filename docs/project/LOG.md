@@ -2297,3 +2297,178 @@ Rust 侧为**纯新增**（`delete_raw_package`），门禁见 gate30 ✓。
 
 **剩余未读**：:201-474（`page_bytes`、`find_opf_path`、`read_zip_entry`、`parse_opf`、
 `resolve_path`、`extract_img_src`、`index_for_name_ignore_case`、4 条单测）。
+
+---
+
+## 2026-09-20｜第78轮：EPUB 打开优化（只读中央目录 + `data_start` 惰性 + 章节按需解析）
+
+**本轮目标**：把"打开一本 EPUB 的远端请求数"从 O(条目数) 降到常数级。第 77 轮定位的病因是
+`EpubBook::open` 走 `zip::ZipArchive::new`，而 crate 会对**每个条目**读一次 local header 做校验；
+EPUB 每章一个 xhtml + 每个资源一个文件，条目数远多于 CBZ ⇒ 用户实测"EPUB 特别慢"。
+
+**改动**（3 个文件；`epub.rs` 按交接单要求**整体重写**，不用片断编辑 —— 前两次失败都撞在未读调用点上）
+
+1. `app/rust/src/document/epub.rs`（474 → 约 700 行）
+   - 新增归档访问层 `EpubArchive`：解析层（`find_opf_path` / `read_zip_entry` /
+     `index_for_name_ignore_case` / 页表构建）只依赖 4 个操作（条目数 / 按名查索引 /
+     按索引取名字 / 按索引读字节），`CdArchive` 与 crate `ZipArchive` 共用**同一份**解析逻辑
+     ⇒ 结构上不存在"改了快路径、忘了回退路径"的调用点。
+     取舍说明：交接单给的形态是"条目视图逐字模仿 `ZipFile`（GAT + `ZipFile<'a, R>`）"，
+     这里换成"归档四操作"抽象——目标相同（解析逻辑一份、不撞调用点），但避开了关联类型命名与
+     借用形态带来的编译风险，且页读取路径（`&self`）与解析路径共用同一接口。
+   - `CdArchive` 接线：打开先只读 EOCD + 中央目录；条目字节一律按需读；`fast_path_safe()`
+     对**每个条目**校验"本层读得懂"（stored/deflate、不加密、非 ZIP64 哨兵、offset 在文件内），
+     任一不满足就**整体回退** crate 路径（宁可慢，不可错）。
+   - `data_start` **惰性化**：首次访问某条目才读 30B local header 并缓存（打开期零 local header
+     读）；读数据时把算出的起点写回同一缓存 ⇒ 同一条目最多付一次 local header。
+   - **页表只存条目索引**（不再存 `data_start`/`compressed_size`），`page_bytes` 按需取数。
+   - **章节按需解析**：`open` 只登记 spine 表；章节 xhtml 首次翻到才读 + 取 `<img src>`，
+     成功结果用 `Mutex` 缓存（锁不跨越 IO；并发最坏重复读一次，幂等）。
+   - `open_legacy()`：强制走历史 crate 路径，供探针在同一二进制里做"改前/改后"对比。
+
+2. `app/rust/src/document/zip.rs`（**只增不改**）
+   - 新增 `read_entry_bytes_tracked`（local header 与数据合并成**一次** `read_at`）/
+     `read_entry_at` / `local_data_start` / `decode_entry_bytes`，**仅 EPUB 快路径使用**
+     （`epub.rs` 是唯一调用方）。
+   - `read_entry_bytes` 与 `first_image_bytes_via_central_directory` 的取数步数
+     （1 次 local header + 1 次数据）**一字未动** —— 这是被门禁挡回后收敛出来的边界（见下）。
+
+3. `app/rust/examples/read_profile.rs`（探针增强）
+   - 新增本地模式 `--file <x.epub|y.cbz> [--pages N] [--legacy]` 与 `--gen-epub --entries N`
+     （生成合成漫画 EPUB），打印"打开读次数 / 打开耗时 / 每页读次数"，不依赖书源会话即可量改前后
+     （远端模式 `--root/--source/--path` 原样保留）。
+
+**被门禁挡回的两次（如实记录：都是我的改动，不是用例的问题）**
+- 第一版把共用构件 `read_entry_bytes` 也改成"合并一次读"，ZIP/CBZ 每页请求数 2 → 1：
+  `tests/p0_baseline_read_speed.rs` 两个用例当场失败（"至少一页要付门控下限"、"后台不得把前台
+  拖得比基线更差"）。A/B 实测：纯净 HEAD 3 passed / 我的版本 2 failed ⇒ 判定为**真实行为变化**，
+  不是抖动。处置：ZIP/CBZ 路径恢复原步数，合并读只留给 EPUB 快路径。
+- 第二版还顺手做了"中央目录已在尾部 64 KiB 窗口里就不再多读一次"（打开 2 → 1 次读）：
+  `p0a_disk_cache_hit_bypasses_the_network_gate` 变成 **4/5 FAIL**（HEAD 5/5 ok）。
+  该用例的测量窗口会被上一相位的**预取线程**污染（同文件另一用例的注释也承认这个噪声），
+  我的改动把时序推进了那个窗口。处置：**撤销**该优化（EPUB 打开退到 4 次读，仍满足 ≤4 验收），
+  并把收益挂账到下一轮（见"下一轮建议"）。
+  第三次全量门禁在撤销后**一次通过**（`FULL_GATE_EXIT=0`）。
+
+**验收（2026-09-20 实测，命令 + 数字）**
+
+| 口径 | 结果 |
+|---|---|
+| `cargo build --lib` | 0 error，0 lib 警告（只剩环境自带的 linker 提示） |
+| `cargo test --locked --lib document::` | 33 passed；其中 `document::epub` **6/6**（原 4 条回归全绿 + 新增 2 条） |
+| 新增「300 条目 EPUB ⇒ 打开 ≤4 次读」 | **4 次**（EOCD+中央目录 2 + container.xml 1 + OPF 1）；同夹具改前 `EPUB-METRIC legacy_open_reads=45` |
+| `cargo test --locked -j 2 -- --test-threads=1` | **全量通过（exit 0）**：391 lib + 19 `p0_baseline_read_speed` + 9 `p0b2_zip_read_amplification` + 其余契约套件 |
+| 探针 A/B（654 KB 合成 300 条目漫画 EPUB） | 打开 **47 次读 / 651,836 B → 4 次读 / 90,196 B**；首次翻页 2 次读（章节 + 图片），重复翻同页 ≤1 次（章节已缓存） |
+
+**为什么"改前"实测是 45/47 而不是 300**：crate 的逐条 local header 读会落在 `SourceReader` 的
+元数据小窗口里，空间邻近的条目被合并取数（夹具图片仅 4 KiB ⇒ 窗口能连成片）。真实远端上
+**1 次读 = 1 次 CDN Range（115 实测 243 ms 量级）**，而且历史 `open` 还要把 spine 里的章节 xhtml
+**全部读一遍**（夹具 148 章 ⇒ 现在推迟到首次翻页才付），所以用户侧的"打开特别慢"正是这个量级。
+
+**有意取舍（第 3 步的固有代价，需用户实机确认）**
+1. 章节页的**页数 = spine 条目数**：不再"打开时把所有章节读一遍、只保留确实含 `<img>` 的章节"。
+   Manga EPUB 一章一图 ⇒ 页数不变；若某本 EPUB 把 nav/目录文档也放进 spine，它会占一页。
+2. 章节不含 `<img>`（或 `src` 不是图片）时该页**读取报错**（信息带章节路径），而不是像过去那样
+   静默跳过 —— "按需"模型下页数在 open 时已定，静默跳过无法自洽。
+3. 跨章节重复引用同一张图片不再去重（同上原因）；spine 直接列图片时的去重保留。
+
+**下一轮建议**
+1. 挂账：把"中央目录复用尾部窗口"（每次打开省 1 次往返，EPUB 打开 4 → 3 次读）与
+   `p0_baseline_read_speed` 的测量口径（预取线程污染计数窗口）一起处理，再合并进来。
+2. 其余格式照此办理：RAR（打开即整包下载）→ PDF（整份读入 + pdfium range 回调）→ MOBI/7Z/TAR。
+3. 用户实机确认：真实 115 上漫画 EPUB 的首次打开耗时；含 nav 的 EPUB 页数是否正常。
+
+**独立评审（fresh-context + 只读）与修正（同日，评审结论 FAIL → 已全部处置）**
+
+评审确认了 AC 链（打开 4 次读的算术与实现一致）、回退门控（加密/ZIP64 哨兵/非 0|8 方法/越界
+一律整体回退）、以及 ZIP/CBZ 侧确为"只增不改"；同时给出 2 个 Important + 8 个 Minor。
+Important 两条都是**我引入的语义回归**（不是历史问题），已修：
+
+1. **大小写不敏感丢失（Important）**：`EpubBook::entry_index` 的快路径分支原写成 `index_of`
+   （只精确匹配），而历史实现（含 crate 回退路径）用的是 `index_for_name_ignore_case`
+   ⇒ 章节里 `<img src="../Images/P001.JPG">` 而条目名全小写的书，会从"能看"变成"找不到图片"。
+   修正：两个后端都走 `index_for_name_ignore_case`（精确 → 大小写不敏感）；新增回归用例
+   `open_epub_with_mismatched_case_in_img_src`（修正前该用例必失败）。
+2. **后缀匹配会静默选错条目（Important）**：第 77 轮 shim 里的 `ends_with` 兜底（注释还写成
+   "与既有 crate 行为一致"——crate 的 `index_for_name` 实为精确匹配）在"请求路径只是某个条目
+   尾部"时会返回**另一个条目**⇒ 读到别的页却不报错（错页比报错更糟）。修正：删除后缀兜底
+   （改为 `exact_index` 精确命中），注释改正；"找不到"回到报错路径。
+
+Minor 的处置：
+- **死路径**：`data_start()` 的"只读 30B local header"分支在生产中不可达（组合读已把起点算出
+  并缓存）⇒ 删除 `data_start` / `zip::local_data_start` 及对应单测，换成更强的
+  `opening_cd_archive_reads_only_the_tail`：断言打开阶段的每次读都落在**文件尾部 64 KiB 窗口**内
+  + 总次数 ≤2 ⇒ 任何"逐条读 local header"的实现都会当场失败（夹具特意放大到 650 KB 才有分辨力）。
+- **未记录的行为变化**：回退路径去掉新加的 512 MiB 单条目上限（恢复历史无上限；上限只约束快路径）。
+- **回退契约**：`CdArchive::new` 的读取错误也吞掉并回退 crate（快路径只做加速、不引入新失败点）。
+- **过度声明**：改正注释里"行为与历史完全一致"（回退路径页读取按需走 `by_index`）与
+  "页数 = spine 条目数"（归档里找不到的章节条目会被 `continue` 跳过）。
+- **回退分支零覆盖**：新增 `opening_falls_back_when_an_entry_is_unreadable`（把非页条目的中央
+  目录压缩方式改成 bzip2 ⇒ 断言整体回退 crate、页数与页字节仍正确、打开读数远大于常数次）。
+- 记录不采纳：锁中毒（`.unwrap()`，与仓库既有风格一致）、夹具"改前"只量 `ZipArchive::new`
+  （探针标签已注明历史版本还会逐章读）、阈值与夹具相关（真实归档 local header extra > 1 KiB 时
+  打开为 5 次读，仍是常数）。
+
+修正后复测：`cargo build --lib` 0 error / 0 lib 警告；`document::` **35 passed**（`document::epub`
+**8/8**：原 4 条 + 300 条目 ≤4 读 + 只读尾部 + 大小写回归 + 回退分支）；`EPUB-METRIC … open_reads=4`；
+`cargo test --locked -j 2 -- --test-threads=1` **全量 exit 0**；探针 A/B 数字不变（47 → 4 次读）。
+
+**复审（scoped re-review，fresh-context + 只读）**：**Status PASS / Spec Compliance PASS /
+Chain Integrity PASS / Test Evidence PASS**；I-1、I-2 判定为"真修好"（不是粉饰），无新增
+Critical/Important。复审另给 9 条 Minor，可当场收敛的已处理：
+
+- **测试判别力**：回退用例的读数断言改为在**读页之前**采样（`> 6`）——否则快路径（4 次打开
+  读 + 4 次翻页读）也能凑出 `> 4`，覆盖会自我认证；重复翻页断言加"请求长度 ≈ 压缩尺寸"
+  （证明热路径真的省掉了 `30 + 名字 + 1024` 的 local header 余量，而不只是"1 次读"）；
+  大小写用例补跑 `open_legacy`（crate 分支同样覆盖同一规则）。
+- **文档精度**：TODO 两处仍在描述已删除的设计（"只读 30B local header"、`local_data_start`），
+  已改为"起点惰性缓存（起点由那次合并读算出并缓存）"；LOG-INDEX 的"ZIP/CBZ 路径零改动"
+  改为"零行为改动"（实际删了 1 行未使用的 `let len`）；回退路径的 CRC32 差异（crate `by_index`
+  会校验，历史手工读与快路径都不校验）写进 `epub.rs` 注释。
+- **记录不采纳**：夹具相关阈值说明（真实归档 local header extra > 1 KiB 时打开为 5 次读，
+  仍是常数）、重复条目名在两个后端之间的解析差异（第 70 轮既有行为，本轮未引入）、
+  `.unwrap()` 锁中毒风格（与仓库一致）、夹具"改前"只量 `ZipArchive::new`（探针标签已注明）。
+- **挂账进 TODO**：**中央目录复用已读的尾部窗口**（每次打开省 1 次往返，EPUB 打开 4 → 3 次读）
+  必须与 `p0_baseline_read_speed` 的测量口径（预取线程污染计数窗口）一起处理后再合并。
+
+**真机复核（同日，用户实机）—— 快路径在生产上根本没生效：根因与修复**
+
+用户启动应用、导入夸克书源后实测"打开 EPUB 还是很慢"。我带 `RCH_PERF_LOG` 启动应用后，
+日志里的形状是：**486 次 `source.read_at`，其中 393 次 `requested=30 / len=64`** —— 这正是
+"逐条目读 30 B local header"的指纹（`SourceReader` 层），即老路径；在 4 req/s 的 CDN 门控下
+≈ 100 s。**快路径在生产上弃权了。**
+
+为定位"为什么弃权"，新增只读诊断工具 `examples/quark_epub_probe.rs`（照 `read_profile` 的模式：
+从 DB **副本**读该书源 cookie，不打印凭据、不写库）：① 只读远端 EOCD + 中央目录做结构体检
+（条目数 / 压缩方式直方图 / 加密位 / ZIP64 哨兵 / local header 是否可信 / CD 与 EOCD 的关系）；
+② 在同一份远端文件上直接对比 `EpubBook::open` 与 `open_legacy` 的**打开读数**。
+
+探针在用户两本真机文件上的结论（**实测，不是推断**）：
+
+| 文件 | 大小 | 条目 | 结构体检 | EOCD 后的尾巴 | 改前 open | 改后 open |
+|---|---|---|---|---|---|---|
+| `2.epub` | 82.8 MB | 402（全 Stored） | 健康：无加密 / 无 ZIP64 / 偏移全可信 | **5 B** | 218 次读 / 29.7 s | **4 次读 / 0.59 s** |
+| `10.epub` | 130.8 MB | 384（1 Stored + 383 Deflate） | 健康 | **5 B** | 204 次读 / 28.2 s | **4 次读 / 0.58 s** |
+
+**根因**：这两本的 **EOCD 之后都多出 5 个字节**（尾字节 `… 00 00 7e 46 1f 0c/0d`，同一工具产出）。
+`zip` crate 容忍这种尾巴（所以书能打开），而第 77 轮 shim 的判定是"**EOCD 必须正好落在文件末尾**"
+⇒ `read_central_directory` 返回 `None` ⇒ 整条快路径弃权、回退 crate 逐条目读。我列的 7 道闸门
+（CD 可定位 / 尺寸合法 / method∈{0,8} / 无加密 / 无 ZIP64 / local header 可信）**全部通过**，
+却卡在最前面那道"找 EOCD"。
+
+**修复**（`zip.rs`，共享函数 `read_central_directory` 拆出 `central_directory_at`）：
+- EOCD 先按**严格候选**（注释长度正好落到文件末尾）命中 ⇒ 干净归档的行为与读数**一字不变**；
+- 严格候选不存在时，按 crate 同等规则试**放宽候选**（容忍 EOCD 之后还有字节），但必须能定位到
+  **签名正确的中央目录**（`PK\x01\x02` + 解析出条目）才接受，最多试 4 个候选；
+- 顺带把"中央目录头签名校验"从"解析后为空"提前为显式判定（语义等价，让放宽路径可判真假）；
+- 新增单测 `central_directory_tolerates_trailing_bytes_after_eocd`（干净归档先命中严格规则、
+  追加 5 B 后同样解析出 3 条目、端到端仍能取页）。
+
+**验证**：`cargo test --locked -j 2 -- --test-threads=1` **exit 0**（394 lib + 19 P0 基线 +
+9 P0-B2 + 全部契约套件）；探针在**两本真机文件**上打开从 219 / 204 次读降到 **4 次读**
+（30.8 s / 28.2 s → 0.59 s / 0.58 s）；应用重建（21:21）后交用户复验手感。
+
+**边界更新（如实记录）**：`read_central_directory` 是 ZIP/CBZ 与 EPUB 共用的函数，因此
+"ZIP/CBZ 零行为改动"应修正为"**干净归档零行为改动**（严格规则先命中、零额外读）"；对
+"EOCD 后有多余字节"的归档，CBZ 侧一并受益（同样从逐条目读变为只读中央目录）。
+新增诊断工具 `examples/quark_epub_probe.rs` 一并入库。

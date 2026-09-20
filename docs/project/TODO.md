@@ -119,3 +119,35 @@
 - [x] 数据层: SQLite 迁移 + Repository 层 + 封面磁盘缓存 + 并发加载限流（第36-38轮）
 - [x] 文档体系: (LOG / LOG-INDEX / README / TODO / DECISION / SPEC)
 - [x] 书源同步导出补全: 手动导出到文件 + 加密书源凭据包 + Android 导出降级（第42轮）
+
+## Doing（下次开工直接接手 · 2026-09-20）
+
+### 1. EPUB 打开优化（**一次成型**，方案已就绪）
+- **现状（安全 ✓）**：`app/rust/src/document/epub.rs` 已有 `CdArchive` 适配层（只读 EOCD + 中央目录，
+  不可解析回退 crate），**尚未接线**；`cargo build --lib` 0 error、`document::epub` 4 条单测全绿、
+  行为零变化。文件 474 行。
+- **病症**：`open` 仍走 `zip::ZipArchive::new` ⇒ 逐条目读 local header ⇒ **O(条目数)** 远端请求
+  （EPUB 条目数远多于 CBZ ⇒ 用户实测"EPUB 特别慢"）。
+- **做法（三步，勿用片断编辑 —— 已试两次均撞未读调用点）**：
+  1. 完整读 `epub.rs:201-474`（`page_bytes` / `find_opf_path` / `read_zip_entry` / `parse_opf` /
+     `resolve_path` / `extract_img_src` / `index_for_name_ignore_case` / 4 条单测）
+  2. 用 `write` **整体重写**该文件：让 `CdArchive` 的条目视图**完整模仿 crate `ZipFile` 接口**
+     （`name()` / `size()` / `compression()` / `data_start()` / `compressed_size()` / `Read`）
+     ⇒ 解析逻辑**一行不改**；`data_start()` 改为**首次访问时才读 local header 并缓存**
+     （这是消除 O(条目数) 的关键）；唯一必改处：页表改存**条目引用**，`page_bytes` 走
+     `read_entry_bytes`（2 次读/页）
+  3. 第二阶段（收益最大）：**按需解析** —— `open` 只建 spine 表，章节 html 首次翻到才读 + 缓存
+     ⇒ 打开恒定 **2 次请求**（container.xml + OPF）
+- **验收**：`cargo build --lib` ✓ → `document::epub` 4/4 ✓ → **新增「300 条目 ⇒ 打开 ≤4 次读」** ✓
+  → `cargo test --locked -j 2 -- --test-threads=1` 全量 ✓ → 探针量改前后（`examples/read_profile.rs`）
+- **详细精读结论**：`docs/project/LOG.md` 第 77 轮附录（提交 `e09c512`）
+
+### 2. 其余格式（按收益/工作量排序，逐个照 EPUB 的做法）
+**RAR（最严重：打开就整包下载到临时文件）→ PDF（整份读入 + pdfium 需自定义 range 读回调）→
+MOBI / 7Z / TAR（整份读入）** —— 全格式审查表见 LOG 第 77 轮。
+
+### 3. 小尾巴
+- 桌面端**白天主题目视复核**：设置 → 外观与布局 → 主题 → 白天 ⇒ 截图逐屏 `read_image` 复核；
+  待定项：`home_page` 1 处 + `book_detail_page` 2 处（疑似背景填充）、`source_browser` 7 处深色文字、
+  `comic_cover.dart` 一处 const 子树内的 TODO
+- 夸克扫码链路（一次性 ticket 修复后）待用户实扫验证；手机端「保存到相册」已修成真 PNG 待复验

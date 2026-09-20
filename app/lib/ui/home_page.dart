@@ -360,7 +360,7 @@ class _HomePageState extends State<HomePage> {
                         : null,
                     isDense: true,
                     filled: true,
-                    fillColor: Colors.white10,
+                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
                       borderSide: BorderSide.none,
@@ -391,7 +391,7 @@ class _HomePageState extends State<HomePage> {
                       child: Icon(
                         _globalMode ? Icons.public : Icons.public_off,
                         size: 18,
-                        color: _globalMode ? Colors.white : Colors.white54,
+                        color: _globalMode ? Colors.white : Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -469,28 +469,28 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Row(
             children: [
-              const Text(
+              Text(
                 '书源',
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
               ),
               const Spacer(),
               InkWell(
                 onTap: () => _refreshSources(),
                 borderRadius: BorderRadius.circular(4),
-                child: const Padding(
+                child: Padding(
                   padding: EdgeInsets.all(2),
-                  child: Icon(Icons.refresh, size: 18, color: Colors.white70),
+                  child: Icon(Icons.refresh, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ),
               InkWell(
                 onTap: () => _importLocalComics(),
                 borderRadius: BorderRadius.circular(4),
-                child: const Padding(
+                child: Padding(
                   padding: EdgeInsets.all(2),
                   child: Icon(
                     Icons.add_photo_alternate_outlined,
                     size: 18,
-                    color: Colors.white70,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -500,9 +500,9 @@ class _HomePageState extends State<HomePage> {
                   builder: (c) => const AddSourceDialog(),
                 ),
                 borderRadius: BorderRadius.circular(4),
-                child: const Padding(
+                child: Padding(
                   padding: EdgeInsets.all(2),
-                  child: Icon(Icons.add, size: 18, color: Colors.white70),
+                  child: Icon(Icons.add, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ),
             ],
@@ -665,7 +665,7 @@ class _HomePageState extends State<HomePage> {
       leading: Icon(icon, size: 20),
       title: Text(label, style: const TextStyle(fontSize: 14)),
       selected: _section == s,
-      selectedTileColor: Colors.white10,
+      selectedTileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       onTap: () => _select(s),
     ),
@@ -751,11 +751,11 @@ class _HomePageState extends State<HomePage> {
         ),
         Expanded(
           child: list.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     '暂无记录\n去书源里打开一本漫画吧',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white38),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 )
               : GridView.builder(
@@ -905,11 +905,11 @@ class _HomePageState extends State<HomePage> {
         ),
         Expanded(
           child: rows.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     '暂无统计\n去书源里打开一些漫画吧',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white38),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 )
               : ListView.separated(
@@ -981,7 +981,7 @@ class _HomePageState extends State<HomePage> {
             const Spacer(),
             Text(
               '$count 本',
-              style: TextStyle(fontSize: 13, color: Colors.white54),
+              style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -1506,10 +1506,10 @@ class _HomePageState extends State<HomePage> {
           Expanded(
             flex: 3,
             child: filtered.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
                       '暂无标签',
-                      style: TextStyle(color: Colors.white38),
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                   )
                 : ListView(
@@ -1592,10 +1592,10 @@ class _HomePageState extends State<HomePage> {
               }
               final list = snap.data!;
               return list.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
                         '没有匹配的漫画',
-                        style: TextStyle(color: Colors.white38),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                     )
                   : GridView.builder(
@@ -1799,11 +1799,11 @@ class _HomePageState extends State<HomePage> {
           setState(() {});
         },
         title: const Text('阅读完成后删除整包（封面缓存保留）'),
-        subtitle: const Text('仅对"优先下载整本"有效；只删 raw 包，封面不受影响'),
+        subtitle: const Text('对"下载整本"与"自动"都有效（自动回退到整本时也算）；只删 raw 包，封面不受影响'),
       ),
       const SizedBox(height: 8),
       Text(
-        '自动：先下载整本到缓存（有进度条），失败转流式；下载整本：适合网速快或想离线读；直接流式：即点即读、不占缓存',
+        '自动：流式优先，失败才整本下载；下载整本：适合网速快或想离线读（有进度条、之后秒开）；直接流式：即点即读、不占缓存',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       SwitchListTile(
@@ -1983,7 +1983,7 @@ class _HomePageState extends State<HomePage> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              border: Border.all(color: Colors.white30),
+              border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text(
@@ -2089,9 +2089,9 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
         children: [
           Text('当前: ${_k?.debugName ?? '?'}', textAlign: TextAlign.center),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             '按下任意键绑定',
-            style: TextStyle(fontSize: 12, color: Colors.white54),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -3023,9 +3023,9 @@ class _AddDialogState extends State<AddSourceDialog> {
                   onChanged: (v) => setState(() => _qrApp = v ?? 'wechatmini'),
                 ),
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   '提示：选不常用设备可避免挤掉网页端/App 旧登录；Windows/Mac/Linux 客户端已下架不可用。',
-                  style: TextStyle(fontSize: 11, color: Colors.white54),
+                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
                 const Divider(height: 16),
                 OutlinedButton.icon(
@@ -3219,19 +3219,19 @@ class _StoragePermissionTileState extends State<_StoragePermissionTile>
         ),
         const SizedBox(height: 4),
         if (granted == null)
-          const Text(
+          Text(
             '检查中…',
-            style: TextStyle(fontSize: 12, color: Colors.white54),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           )
         else if (granted)
-          const Text(
+          Text(
             '已授予"所有文件访问"，本地书源可直接读取 /sdcard 等外部目录',
-            style: TextStyle(fontSize: 12, color: Colors.white54),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           )
         else ...[
-          const Text(
+          Text(
             '未授予"所有文件访问"。如需直接读取外部目录（如 /sdcard/Download），请点击下方按钮授权。',
-            style: TextStyle(fontSize: 12, color: Colors.white54),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 6),
           FilledButton.tonal(

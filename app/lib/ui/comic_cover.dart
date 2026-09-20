@@ -308,10 +308,12 @@ class ComicCover extends StatefulWidget {
             size: 36,
             color: Colors.lightBlueAccent.withAlpha(120),
           ),
-          const SizedBox(height: 4),
-          const Text(
+          SizedBox(height: 4),
+          Text(
             '未缓存',
-            style: TextStyle(fontSize: 10, color: Colors.white38),
+            // TODO(第75轮): 该处在 const 子树内取不到 context ⇒ 暂用中性灰（明暗都可读）；
+            // 下一轮把父级 const 拆掉后换回 colorScheme.onSurfaceVariant。
+            style: TextStyle(fontSize: 10, color: Colors.grey),
           ),
         ],
       ),
@@ -984,7 +986,7 @@ class _ComicCoverState extends State<ComicCover> {
       child: Text(
         label,
         textAlign: TextAlign.center,
-        style: const TextStyle(color: Colors.white70, fontSize: 12),
+        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
       ),
     );
   }
@@ -1063,9 +1065,9 @@ class ComicCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10,
-                        color: Colors.white54,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],

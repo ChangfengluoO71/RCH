@@ -328,7 +328,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       else ...[
         if (_sizes != null) ...[
           Text('磁盘总占用: ${fmtSize(_sizes!.total)}',
-              style: const TextStyle(fontSize: 13, color: Colors.white54)),
+              style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
           const SizedBox(height: 10),
           _cacheRow(Icons.download, '页面缓存（page/）', _sizes!.page,
               'L2 磁盘缓存，复用后秒开',
@@ -360,7 +360,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
           future: cacheRootPath(),
           builder: (c, sn) => Column(children: [
             Text('目录: ${sn.data ?? ''}',
-                style: const TextStyle(fontSize: 11, color: Colors.white38)),
+                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
@@ -415,11 +415,11 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       child: ListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        leading: Icon(icon, size: 20, color: size > BigInt.zero ? Colors.lightBlueAccent : Colors.white38),
+        leading: Icon(icon, size: 20, color: size > BigInt.zero ? Colors.lightBlueAccent : Theme.of(context).colorScheme.onSurfaceVariant),
         title: Text(label, style: const TextStyle(fontSize: 13)),
-        subtitle: Text(hint, style: const TextStyle(fontSize: 11, color: Colors.white54)),
+        subtitle: Text(hint, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(fmtSize(size), style: const TextStyle(fontSize: 12, color: Colors.white54)),
+          Text(fmtSize(size), style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
           const SizedBox(width: 8),
           OutlinedButton(onPressed: onClear, child: const Text('清理', style: TextStyle(fontSize: 12))),
         ]),

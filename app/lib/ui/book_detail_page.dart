@@ -395,14 +395,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 width: 220,
                 height: 310,
                 decoration: BoxDecoration(
-                  color: Colors.white10,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Center(
                   child: Text(
                     '仅元数据\n来自${SyncManager.instance.deviceNameOf(widget.source.originDeviceId)}',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white54, fontSize: 13),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13),
                   ),
                 ),
               ),

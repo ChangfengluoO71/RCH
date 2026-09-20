@@ -219,9 +219,9 @@ class _SyncPanelState extends State<SyncPanel> {
           style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         ),
         if (_devices.isEmpty)
-          const Text(
+          Text(
             '暂无',
-            style: TextStyle(fontSize: 12, color: Colors.white38),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           )
         else
           ..._devices.map(
@@ -239,9 +239,9 @@ class _SyncPanelState extends State<SyncPanel> {
           style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         ),
         if (_history.isEmpty)
-          const Text(
+          Text(
             '暂无',
-            style: TextStyle(fontSize: 12, color: Colors.white38),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           )
         else
           ..._history.map((h) {
@@ -256,7 +256,7 @@ class _SyncPanelState extends State<SyncPanel> {
               child: Text(
                 '$time  v${h.revisionBefore}→v${h.revisionAfter}'
                 '  拉${h.pullCount} 推${h.pushCount} 合${h.mergeCount} 冲突${h.conflictCount}$err',
-                style: const TextStyle(fontSize: 11, color: Colors.white70),
+                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),

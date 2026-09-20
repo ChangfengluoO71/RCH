@@ -469,7 +469,7 @@ class _ReaderPageState extends State<ReaderPage> {
         const SizedBox(height: 8),
         Text('${(pct * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
         const SizedBox(height: 4),
-        const Text('首次阅读需下载整本,后续秒开', style: TextStyle(fontSize: 11, color: Colors.white38)),
+        Text('首次阅读需下载整本,后续秒开', style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ])));
     }
     final b = _book;
@@ -496,9 +496,9 @@ class _ReaderPageState extends State<ReaderPage> {
           child: InkWell(
             customBorder: const CircleBorder(),
             onTap: () => _rotatePage(page),
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.all(8),
-              child: Icon(Icons.rotate_right, size: 22, color: Colors.white),
+              child: Icon(Icons.rotate_right, size: 22, color: Theme.of(context).colorScheme.onSurface),
             ),
           ),
         ),
@@ -697,7 +697,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // ---- 设置 ----
   void _showSettings(){showModalBottomSheet(context:context,isScrollControlled:true,builder:(ctx)=>StatefulBuilder(builder:(ctx,ss)=>SingleChildScrollView(padding:EdgeInsets.fromLTRB(20,12,20,24),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
-    Center(child:Container(width:36,height:4,decoration:BoxDecoration(color:Colors.white24,borderRadius:BorderRadius.circular(2)))),const SizedBox(height:16),
+    Center(child:Container(width:36,height:4,decoration:BoxDecoration(color:Theme.of(context).colorScheme.outlineVariant,borderRadius:BorderRadius.circular(2)))),const SizedBox(height:16),
     const Text('阅读设置(仅对本会话)',style:TextStyle(fontSize:16,fontWeight:FontWeight.w600)),const SizedBox(height:12),
     const Text('阅读模式'),const SizedBox(height:6),
     SegmentedButton<ReadMode>(segments:ReadMode.values.map((r)=>ButtonSegment(value:r,label:Text(r.label))).toList(),selected:{_mode},onSelectionChanged:(vs){ss((){});setState((){_mode=vs.first;});_recreatePageCtrl();}),
@@ -706,7 +706,7 @@ class _ReaderPageState extends State<ReaderPage> {
     const SizedBox(height:8),Row(children:[const Text('拼接间隙:'),SizedBox(width:120,child:Slider(value:_gap.toDouble(),min:0,max:20,divisions:20,label:'${_gap}px',onChanged:(v){ss((){});setState((){_gap=v.toInt();});})),Text('${_gap}px')]),
     const SizedBox(height:10),Row(children:[const Text('首页单独显示(不参与拼接)'),const Spacer(),Switch(value:_skipCover,onChanged:(v){ss((){});setState((){_skipCover=v;});_recreatePageCtrl();})]),
     const SizedBox(height:16),SwitchListTile(title:const Text('日漫模式点击区反向'),subtitle:const Text('打开后右侧区域变为前进'),dense:true,contentPadding:EdgeInsets.zero,value:_invert,onChanged:(v){ss((){});setState((){_invert=v;});}),
-    if(!isAndroidPlatform)...[const SizedBox(height:16),const Text('🤖 AI 超分',style:TextStyle(color:Colors.white38,fontSize:12)),const SizedBox(height:6),const SizedBox(width:double.infinity,child:Card(child:Padding(padding:EdgeInsets.all(12),child:Text('右键当前页选择 \'AI 超分 (2x)\' 即可端侧推理放大图片，已启用。',style:TextStyle(fontSize:12,color:Colors.white54)))))],
+    if(!isAndroidPlatform)...[SizedBox(height:16),Text('🤖 AI 超分',style:TextStyle(color:Theme.of(context).colorScheme.onSurfaceVariant,fontSize:12)),SizedBox(height:6),SizedBox(width:double.infinity,child:Card(child:Padding(padding:EdgeInsets.all(12),child:Text('右键当前页选择 \'AI 超分 (2x)\' 即可端侧推理放大图片，已启用。',style:TextStyle(fontSize:12,color:Theme.of(context).colorScheme.onSurfaceVariant)))))],
   ]))));}
 
   @override Widget build(BuildContext context) { final b=_book;

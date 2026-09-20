@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/store/qr_image_saver.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -69,6 +72,9 @@ class Cloud115CookieQrScanDialog extends StatefulWidget {
 }
 
 class _Cloud115CookieQrScanDialogState extends State<Cloud115CookieQrScanDialog> {
+  /// 截屏用的边界（保存相册时取真实 PNG 字节）。
+  final GlobalKey _qrKey = GlobalKey();
+
   final ValueNotifier<String> _status = ValueNotifier('请用 115 APP 扫码');
   Timer? _timer;
   bool _polling = false;
@@ -127,22 +133,69 @@ class _Cloud115CookieQrScanDialogState extends State<Cloud115CookieQrScanDialog>
     }
   }
 
+
+  /// 第 73 轮：把当前二维码保存到手机相册（`gal` 走系统媒体库 ✓）。
+  ///
+  /// 为什么之前"没有"：`store/qr_image_saver.dart` 早就实现了保存，
+  /// 但**从来没有任何调用点**（既有提交 1bf2e37 引入后一直是孤儿），这里是接线。
+  Future<void> _saveQrToGallery(BuildContext c) async {
+    final messenger = ScaffoldMessenger.of(c);
+    try {
+      // 第 76 轮修正：`QrPainter.toImageData` 返回的是**原始 RGBA 像素**，
+      // 不是 PNG 文件 ⇒ 之前存进相册的图无法识别（看着全黑）。
+      // 改为截取屏幕上的二维码边界并导出 **PNG** 字节。
+      final boundary = _qrKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      final image = await boundary?.toImage(pixelRatio: 3);
+      final data = await image?.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = data?.buffer.asUint8List();
+      if (bytes == null || bytes.isEmpty) {
+        throw StateError('二维码渲染失败');
+      }
+      await saveQrImageToGallery(bytes);
+      messenger.showSnackBar(const SnackBar(content: Text('二维码已保存到相册（相册 RCH）')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('保存失败：$e')));
+    }
+  }
   @override
   Widget build(BuildContext c) => AlertDialog(
         scrollable: true,
         title: const Text('115 扫码获取 Cookie'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('用 115 手机 App 扫码，无需申请 APP ID',
-              style: TextStyle(fontSize: 12, color: Colors.white70)),
+          Text('用 115 手机 App 扫码，无需申请 APP ID',
+              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
           const SizedBox(height: 10),
-          SizedBox(
-            width: 220,
-            height: 220,
-            child: CustomPaint(
-              painter: QrPainter(
-                data: widget.qrcode,
-                version: QrVersions.auto,
+          RepaintBoundary(
+            key: _qrKey,
+            child: Container(
+              color: const Color(0xFFFFFFFF),
+              padding: const EdgeInsets.all(8),
+              child: SizedBox(
+                width: 220,
+                height: 220,
+                child: CustomPaint(
+                  painter: QrPainter(
+                    data: widget.qrcode,
+                    version: QrVersions.auto,
+                  ),
+                ),
               ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // 第 76 轮（用户反馈）：115 建议用**微信小程序**扫码，
+          // 用 115 App 扫可能提示"不支持的设备/二维码已过期"。
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0x332E7D32),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Text(
+              '推荐用「微信」扫码 → 小程序「115 网盘」→ 确认登录（用 115 App 扫可能提示设备不支持）',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, height: 1.5),
             ),
           ),
           const SizedBox(height: 10),
@@ -152,6 +205,10 @@ class _Cloud115CookieQrScanDialogState extends State<Cloud115CookieQrScanDialog>
           ),
         ]),
         actions: [
+          TextButton(
+            onPressed: () => _saveQrToGallery(c),
+            child: const Text('保存到相册'),
+          ),
           TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('关闭')),
         ],
       );

@@ -111,8 +111,8 @@ class _GlobalSearchResultsState extends State<GlobalSearchResults> {
     if (_results.isEmpty) {
       return _loading
           ? const Center(child: CircularProgressIndicator())
-          : const Center(
-              child: Text('没有匹配的漫画', style: TextStyle(color: Colors.white38)));
+          : Center(
+              child: Text('没有匹配的漫画', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)));
     }
     return ListView.builder(
       padding: const EdgeInsets.all(12),
@@ -155,7 +155,7 @@ class _GlobalSearchResultsState extends State<GlobalSearchResults> {
             '${b.tags.isNotEmpty ? ' · #${b.tags.replaceAll(',', ' #')}' : ''}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: Colors.white54),
+            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           onTap: () => _open(context, b),
         );

@@ -26,6 +26,79 @@ struct ZipEntryMeta {
     deflated: bool,
 }
 
+
+// ============================================================
+// 只读中央目录的 EPUB 归档适配层（第 77 轮）
+// ============================================================
+//
+// 为什么需要：`EpubBook::open` 过去走 `zip::ZipArchive::new`，而后者会对**每个条目**
+// 读一次 local header 做校验（`zip-2.4.2/src/read.rs:1259`）⇒ EPUB 条目数远多于 CBZ
+// （每章一个 xhtml + 每个资源一个文件）⇒ 打开就是几百次远端往返（用户实测"EPUB 特别慢"）。
+//
+// 本层复用 ZIP 优化时抽好的构件（`read_central_directory` / `read_entry_bytes`），
+// 把"打开"降到 **1 次请求**（尾部 EOCD + 中央目录），条目内容按需读。
+//
+// 中央目录不可解析（非 ZIP / ZIP64 / 流式条目 / 越界）时 `new` 返回 `Ok(None)`，
+// 由调用方回退到现有的 crate 实现，保证不劣化。
+pub(crate) struct CdArchive<S: ByteSource> {
+    src: std::sync::Arc<S>,
+    entries: Vec<super::zip::ZipEntryMeta>,
+    by_name: HashMap<String, usize>,
+}
+
+impl<S: ByteSource> CdArchive<S> {
+    /// 只读 EOCD + 中央目录；不可用时返回 `Ok(None)`（调用方回退 crate）。
+    pub(crate) fn new(src: std::sync::Arc<S>) -> Result<Option<Self>> {
+        let Some(entries) = super::zip::read_central_directory(src.as_ref())? else {
+            return Ok(None);
+        };
+        let mut by_name = HashMap::with_capacity(entries.len());
+        for (index, entry) in entries.iter().enumerate() {
+            by_name.entry(entry.name.clone()).or_insert(index);
+        }
+        Ok(Some(CdArchive { src, entries, by_name }))
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn name_for_index(&self, index: usize) -> Option<&str> {
+        self.entries.get(index).map(|entry| entry.name.as_str())
+    }
+
+    /// 精确命中优先；否则退化为"以 `name` 结尾"的后缀匹配（与既有 crate 行为一致）。
+    pub(crate) fn index_for_name(&self, name: &str) -> Option<usize> {
+        if let Some(index) = self.by_name.get(name) {
+            return Some(*index);
+        }
+        self.entries
+            .iter()
+            .position(|entry| entry.name.ends_with(name))
+    }
+
+    pub(crate) fn is_deflated(&self, index: usize) -> bool {
+        self.entries.get(index).is_some_and(|entry| entry.method == 8)
+    }
+
+    /// 读出一个条目的解压后字节（走 ZIP 优化时抽好的 `read_entry_bytes`）。
+    pub(crate) fn read_index(&self, index: usize, max_bytes: u64) -> Result<Vec<u8>> {
+        let entry = self
+            .entries
+            .get(index)
+            .ok_or_else(|| anyhow!("EPUB 条目索引越界: {index}"))?;
+        super::zip::read_entry_bytes(self.src.as_ref(), entry, max_bytes)?
+            .ok_or_else(|| anyhow!("读取 EPUB 条目失败: {}", entry.name))
+    }
+
+    pub(crate) fn read_name(&self, name: &str, max_bytes: u64) -> Result<Vec<u8>> {
+        let index = self
+            .index_for_name(name)
+            .ok_or_else(|| anyhow!("EPUB 内找不到条目: {name}"))?;
+        self.read_index(index, max_bytes)
+    }
+}
+
 impl<S: ByteSource> EpubBook<S> {
     pub fn open(src: S, path: &str) -> Result<Self> {
         // 先解析 ZIP 中心目录,收集所有需要的元数据

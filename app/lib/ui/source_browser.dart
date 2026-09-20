@@ -1466,10 +1466,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
                     decoration: BoxDecoration(
                       color: sel ? Colors.blue : Colors.black45,
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white38),
+                      border: Border.all(color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                     child: sel
-                        ? const Icon(Icons.check, size: 16, color: Colors.white)
+                        ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.onSurface)
                         : null,
                   ),
                 ),
@@ -1529,10 +1529,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   decoration: BoxDecoration(
                     color: sel ? Colors.blue : Colors.black45,
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white38),
+                    border: Border.all(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                   child: sel
-                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.onSurface)
                       : null,
                 ),
               ),
@@ -1607,10 +1607,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
               decoration: BoxDecoration(
                 color: sel ? Colors.blue : Colors.black45,
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white38),
+                border: Border.all(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
               child: sel
-                  ? const Icon(Icons.check, size: 16, color: Colors.white)
+                  ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.onSurface)
                   : null,
             ),
           ),

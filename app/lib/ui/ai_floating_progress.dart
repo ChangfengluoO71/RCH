@@ -91,15 +91,15 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('AI 超分',
-                    style: TextStyle(color: Colors.white70, fontSize: 11)),
+                Text('AI 超分',
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
                 const SizedBox(width: 4),
                 Text('${active.length}',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
                 const SizedBox(width: 4),
                 InkWell(
                   onTap: () => setState(() => _expanded = true),
-                  child: const Icon(Icons.unfold_more, size: 16, color: Colors.white54),
+                  child: Icon(Icons.unfold_more, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -131,17 +131,17 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
             padding: const EdgeInsets.fromLTRB(12, 10, 6, 4),
             child: Row(
               children: [
-                const Text('AI 超分任务',
+                Text('AI 超分任务',
                     style: TextStyle(
-                        color: Colors.white,
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontWeight: FontWeight.w600,
                         fontSize: 13)),
                 const SizedBox(width: 8),
                 Text('${active.length} 个',
-                    style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.expand_more, size: 18, color: Colors.white70),
+                  icon: Icon(Icons.expand_more, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   tooltip: '收起',
                   visualDensity: VisualDensity.compact,
                   onPressed: () => setState(() => _expanded = false),
@@ -149,7 +149,7 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
               ],
             ),
           ),
-          const Divider(height: 1, color: Colors.white12),
+          Divider(height: 1, color: Theme.of(context).colorScheme.outlineVariant),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 320),
             child: ReorderableListView.builder(
@@ -173,10 +173,10 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
                       else
                         ReorderableDragStartListener(
                           index: i,
-                          child: const Padding(
+                          child: Padding(
                             padding: EdgeInsets.only(right: 8, top: 6),
                             child: Icon(Icons.drag_indicator,
-                                size: 20, color: Colors.white54),
+                                size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
                         ),
                       Expanded(child: _taskTile(t)),
@@ -206,7 +206,7 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(countText.isEmpty ? label : '$label $countText',
-                  style: const TextStyle(color: Colors.white, fontSize: 12)),
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface, fontSize: 12)),
               const SizedBox(width: 10),
               InkWell(
                 onTap: () => AiUpscaleManager.instance.cancel(t.id),
@@ -221,14 +221,14 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
             child: LinearProgressIndicator(
               value: progress,
               minHeight: 3,
-              backgroundColor: Colors.white12,
+              backgroundColor: Theme.of(context).colorScheme.outlineVariant,
             ),
           ),
           const SizedBox(height: 4),
           Text(t.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
         ],
       ),
     );

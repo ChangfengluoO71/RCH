@@ -42,6 +42,7 @@ dependencies:
   url_launcher: ^6.3.0
   qr_flutter: ^4.1.0
   package_info_plus: ^10.2.1
+  gal: ^2.3.3
 
 dev_dependencies:
   flutter_test:

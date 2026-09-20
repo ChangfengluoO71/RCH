@@ -197,7 +197,7 @@ class _EntryCard extends StatelessWidget {
                 color: Colors.black26,
                 child: Center(
                   child: snap.hasError
-                      ? const Icon(Icons.broken_image, color: Colors.white38)
+                      ? Icon(Icons.broken_image, color: Theme.of(context).colorScheme.onSurfaceVariant)
                       : const SizedBox(
                           width: 22, height: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
@@ -221,7 +221,7 @@ class _EntryCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(fmtSize(entry.size),
-                  style: const TextStyle(fontSize: 10, color: Colors.white54)),
+                  style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant)),
             ],
           ),
         ),

@@ -63,8 +63,8 @@ class SourceTreePanel extends StatelessWidget {
           return const Center(child: CircularProgressIndicator());
         }
         if (store.devices.isEmpty) {
-          return const Center(
-            child: Text('暂无书源', style: TextStyle(color: Colors.white38)),
+          return Center(
+            child: Text('暂无书源', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           );
         }
         // 同名源消歧：树里只用 `name` 做标题时，直连 115 与它的同步镜像
@@ -188,7 +188,7 @@ class _SourceTileState extends State<_SourceTile> {
           subtitle: Text(
             '${LibraryCatalogStore.statusLabel(source.status)} · ${source.offlineIndexCount} 本'
             '${source.isRemote ? ' · 远端' : ''}',
-            style: const TextStyle(fontSize: 11, color: Colors.white54),
+            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           // 点开书源 = 打开浏览器（在线浏览或离线索引），恢复"点开书源看漫画"。
           onTap: () => _openBrowser(context),
@@ -321,7 +321,7 @@ class _SourceBooksListState extends State<_SourceBooksList> {
         padding: const EdgeInsets.all(12),
         child: Text(
           _loading ? '加载中…' : '暂无漫画索引',
-          style: const TextStyle(fontSize: 12, color: Colors.white38),
+          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -361,7 +361,7 @@ class _SourceBooksListState extends State<_SourceBooksList> {
             b.path,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 10, color: Colors.white38),
+            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           onTap: () => _openBook(context, b),
         );

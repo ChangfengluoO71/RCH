@@ -2268,3 +2268,32 @@ Rust 侧为**纯新增**（`delete_raw_package`），门禁见 gate30 ✓。
   （文档亦提醒 507 无法覆盖 2507），本次因旧包已卸载而 `pm install -r` 直接通过。
 
 ---
+
+### 第77轮附录 · `epub.rs` 精读结论（读到 200/474 行，可直接照此改）
+
+**现有结构（已读部分）**：
+- `EpubBook<S>{ src: S, page_entries: Vec<ZipEntryMeta{data_start, compressed_size, deflated}>, title }`（:15-27）
+- `open`（:103-199）：
+  1. `SourceReader::new(src)` + `ZipArchive::new`（:105-106）
+  2. `find_opf_path(&mut zip)`（:109）→ 读 OPF（:112-114 `parse_opf` → manifest+spine）
+  3. 按 spine 逐章：若是 xhtml/html ⇒ **读该 html** 找 `<img src>`（:130-142，`extract_img_src`）
+     ⇒ 路径 `resolve_path(html_dir, img)` 并去重；若 spine 直接是图片则直接收（:143-147）
+  4. **退化**：spine 没解析出图片 ⇒ 扫 ZIP 全条目取图片按名自然排序（:151-167）
+  5. **建立页表**：对每个图片 `index_for_name_ignore_case(&mut zip, path)`（:176）
+     ⇒ `zip.by_index(idx)` ⇒ 存 `(f.data_start(), f.compressed_size(), deflated)`（:179-183）
+  6. `zip.into_inner().into_inner()` 取回 `src`（:187）
+
+**改造方案（最小侵入，正解）**：
+- 让访问层 `CdArchive` **完整模仿** crate 的 `ZipFile` 接口：`name()` / `size()` /
+  `compression()` / `data_start()` / `compressed_size()` / `Read`（供 `read_to_end`）⇒
+  :109-167 的解析逻辑**一行都不用改**。
+- `data_start()` 的实现要点：Central 变体**不预先读 local header**（那正是要消除的 O(条目数) 开销），
+  而是在**首次访问该条目**时读一次 local header 算出并**缓存**（每个条目最多 1 次，且只对真正用到的页）。
+- 最后一处必改：:179-183 目前存 `data_start/compressed_size`；改为**存条目引用**，
+  `page_bytes` 走 `cd.read_index(i, MAX)`（= `zip::read_entry_bytes`：local header + 数据 = 2 次读/页）。
+- **按需解析（第二阶段，可选但收益最大）**：spine 只建表（:124-149 不在 open 里做），
+  章节 html 在**首次翻到该页**时才读 + 缓存 ⇒ 打开恒定 **2 次请求**（container.xml + OPF）。
+- 回退：`CdArchive::new` 返回 `None`（非 ZIP/ZIP64/流式条目/越界）⇒ 保留现有 crate 路径。
+
+**剩余未读**：:201-474（`page_bytes`、`find_opf_path`、`read_zip_entry`、`parse_opf`、
+`resolve_path`、`extract_img_src`、`index_for_name_ignore_case`、4 条单测）。

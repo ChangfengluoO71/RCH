@@ -2210,3 +2210,61 @@ Rust 侧为**纯新增**（`delete_raw_package`），门禁见 gate30 ✓。
 是否需要"高级"类别收纳冷门项 —— 待用户反馈。
 
 ---
+
+---
+
+## 2026-09-19/20｜第73–77轮：安卓真机、二维码保存修复、对比度与文案、EPUB 病因确认
+
+**第73轮 · 115/夸克 保存二维码到相册（用户报告"功能没了"）**
+- 查历史：`store/qr_image_saver.dart`（`saveQrImageToGallery`）**一直在**，但**全仓库无任何调用点**
+  （`git log -S "保存到相册"` 查无此提交）⇒ **从未接线**，且 `gal` **未写入 pubspec** ⇒ 该文件
+  根本编译不到（死代码）——不是被删的。
+- 处置：补 `gal: ^2.3.3` 依赖；115 与夸克扫码对话框各加「保存到相册」按钮。
+
+**第74轮 · 文案没跟上功能改动（用户要求系统检查）**
+- 第 69 轮把 `auto` 语义翻转为"流式优先"后，文案仍写"先下载，失败转流式"（**说反**）。
+- 修正：`models.dart` 枚举标签 → `自动（流式优先，失败转整本）`；策略说明同步；
+  「阅读完成后删除整包」副标题改为"对下载整本与自动都有效"。
+- 全量巡检结论：其余涉及本轮改动的文案准确（缓存管理里"整本下载（raw/）"等）。
+
+**第75轮 · 白色主题对比度（用户报告白底白字看不清）**
+- 根因：UI 深色优先、把文字写死成 `Colors.whiteXX`（**80+ 处 / 12 个文件**）。
+- 处置：统一改主题色（`white10`→`surfaceContainerHighest`；`white12/24/30`→`outlineVariant`；
+  `white38/54/70`→`onSurfaceVariant`；`white`→`onSurface`）。**80+ → 3 处**（剩 3 处疑似背景填充）。
+- `const` 阻挡用"迭代摘除"解决（去掉 const 安全，只损失优化）。每步 `dart analyze` 全绿。
+- 遗留：`comic_cover.dart` 一处落在 const 子树内取不到 context ⇒ 暂用中性灰 + TODO。
+
+**第76轮 · 二维码保存后无法识别（用户报告"像全黑"）+ 115 微信小程序提示**
+- 根因：`QrPainter.toImageData()` 返回**原始 RGBA 像素**而非 PNG ⇒ 存进相册的"图"无法识别。
+- 处置：改用 `RepaintBoundary` + `toImage(pixelRatio: 3)` + `toByteData(format: png)` ⇒ **真 PNG**；
+  外层加白底（保证静默区）。两个对话框都修。
+- 按用户反馈：115 二维码**下方**加提示"推荐用「微信」扫码 → 小程序「115 网盘」"，
+  并把上方写反的"用 115 手机 App 扫码"改为"扫码登录 115"（流程本就是 `app='wechatmini'`）。
+
+**第77轮 · 全格式审查：其他格式为何慢于 ZIP（用户报告 EPUB 特别慢）**
+- 逐个解析器审查结论：**除 ZIP（已优化）与本地目录类，其余 6 种格式都在走老路**：
+  | 格式 | 现状 | 病因 |
+  |---|---|---|
+  | epub | `ZipArchive::new` + `by_index` | **逐条目读 local header ⇒ O(条目数)** |
+  | pdf / mobi / sevenz | `len as usize` 迹象 | 疑似**整份读入** |
+  | tar | `tar::Archive::new(cursor)` | 先整份进内存 |
+  | rar | `unrar::Archive::new(&tmp)` | **整包下载到临时文件**（最严重） |
+- EPUB 处置（进行中）：新增 `CdArchive` 适配层（`epub.rs`）——只读 EOCD + 中央目录（打开 = 1 次请求），
+  复用 ZIP 优化时抽好的 `read_central_directory` / `read_entry_bytes`；不可解析时回退 crate。
+  **编译通过、EPUB 4 条单测全绿、行为零变化**（尚未接线）。
+- **接线两次未完成（如实记录）**：片断编辑 401 行文件必撞未读过的调用点
+  （`index_for_name_ignore_case`、`data_start`、`f.name()` 方法 vs 字段）。
+  **下次正解**：完整读该文件 → 用 `write` **整体重写**，让访问层完整模仿 crate 的 `ZipFile` 接口
+  （`name()`/`size()`/`compression()`/`Read`）⇒ 原解析逻辑一行不改；唯一必改的是 `data_start`
+  改走 `read_entry_bytes`（避免为每条目读 local header）；同时做**按需解析**（spine 只建表、
+  章节 html 首访才读 + 缓存）⇒ 打开恒定 2 次请求。
+
+**第73–77轮附带 · 安卓真机**
+- Kotlin 增量编译在 Windows 上"Could not close incremental caches"导致打包失败 ⇒
+  `android/gradle.properties` 加 `kotlin.incremental=false`（原文件已备份）。
+- `adb` 的**路径参数被 Git Bash 改写** ⇒ 必须 `MSYS_NO_PATHCONV=1` +
+  **源用 Windows 形式、目标用 POSIX 形式**（`adb push "D:/…apk" /data/local/tmp/…`）。
+- profile 包（156MB）安装成功并在真机运行；本机旧包为正式签名 + `versionCode=102507`
+  （文档亦提醒 507 无法覆盖 2507），本次因旧包已卸载而 `pm install -r` 直接通过。
+
+---

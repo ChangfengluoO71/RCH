@@ -2104,3 +2104,45 @@ path 约定没对上 ⇒ 目前传逻辑路径与 provider fid 都被拒），�
 → ⑦ 用探针做流式 vs 整包的 A/B（打开传输量 + `cache/raw` 体积，封面目录不变）。
 
 ---
+
+---
+
+## 2026-09-19｜第70轮：P0 落地 —— 打开 ZIP 只读中央目录（800 条目 ⇒ 打开 ≤4 次远端读）
+
+**用户指令**：先做 P0（治"页数越多越慢"）。
+
+**背景（实测真因）**：`RCH_PERF_LOG` 显示一次阅读里 `load_claimed`(83) ≈ `get_page`(71)，
+即**打开次数不比翻页少**；而打开走 `ZipBook::open` → `zip::ZipArchive::new`，后者会对
+**每个条目**读一次 local header（`zip-2.4.2/src/read.rs:1259`）⇒ 打开时间 ∝ 页数 ✗
+（115 CDN 243ms/次 ⇒ 一本 500 页的 CBZ 要分钟级）。
+
+**实现（`src/document/zip.rs`）**：
+
+1. 抽出可复用构件：`ZipEntryMeta{name, local_header, compressed_size, method, flags}`（尺寸
+   **取自中央目录** ⇒ 位 3 也成立）、`read_central_directory(src)`（只读 EOCD + 中央目录，
+   不读任何 local header；非 ZIP / ZIP64 / 越界 / 超限 ⇒ `Ok(None)`）、
+   `read_entry_bytes(src, entry, max)`（local header → 数据起点 → stored/deflate）。
+2. 快通道（封面）改为复用上述构件（等价重构，用例 7/7 全绿）。
+3. `ZipBook`：`PageMeta.source: PageSource::{Central(ZipEntryMeta), Crate(usize)}`；
+   `open` **优先只读中央目录建页表**（不构造 crate 归档 ⇒ 打开 = 1 次请求），
+   中央目录不可解析时**回退** crate 路径；`page_bytes` 双路径。
+4. **验收断言**：`opening_a_many_entry_cbz_stays_constant` —— **800 条目 ⇒ 打开 ≤4 次读**、
+   取一页 ≤2 次读 ✓。
+
+**契约调整（用户选 A）**：`tests/p0_baseline_read_speed.rs` 的
+"reading pages over the network must issue range reads" 原先断言 `source_reads_per_page`
+（`SourceReader` 窗口层计数）。P0 取页改为"整页一次读"后不再经过该层，计数为 0 已不代表
+"没走网络" ⇒ 断言改用**网络层** `range_requests_per_page`（语义更强：直接证明打了网络），
+旧值继续打进报告供对照。**不是弱化契约**，注释已写明原因。
+
+**过程中的两次自查**：
+- 单独跑该套件时漏了 `--test-threads=1` ⇒ 7 个无关用例并行互相干扰而失败 ✗；
+  按门禁口径串行重跑即 19/19 全绿 ✓（以后单独跑一律带该参数）。
+- 验收断言的 `edit` 锚点第一次没匹配（文件尾部与记忆不同）⇒ 先读尾部再用唯一锚点 ✓。
+
+**验证**：`document::zip` 8/8 ✓；`p0_baseline_read_speed` 19/19 ✓；全量门禁见本轮日志尾部 ✓；
+`flutter build windows --debug` 成功 ✓；应用已用 P0 版本重启 ✓。
+
+**遗留**：自动删除整包（②–⑦，见第 69 轮施工单）。
+
+---

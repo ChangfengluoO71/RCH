@@ -29,19 +29,81 @@ fn is_image(name: &str) -> bool {
 /// 一页(图片 entry)的定位与解压信息。
 struct PageMeta {
     name: String,
-    archive_index: usize,
+    source: PageSource,
 }
 
+/// 一页的数据来源。
+enum PageSource {
+    /// P0 快路径：只读中央目录得到的元数据，按需读 local header + 数据。
+    Central(ZipEntryMeta),
+    /// 回退路径：`zip` crate 解析出的条目索引。
+    Crate(usize),
+}
+
+/// 单页原始数据的字节上限（防病态输入；正常漫画页远小于此）。
+const ZIP_PAGE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
 /// ZIP/CBZ 书籍:中心目录定位各页,按需下载解压,`page_bytes` 无内部可变状态。
+///
+/// **P0（第 70 轮）**：优先**只读 EOCD + 中央目录**自己建页表。原因：`zip::ZipArchive::new`
+/// 会对**每个条目**读一次它的 local header 做校验（`zip-2.4.2/src/read.rs:1259`），
+/// 一本几百页的 CBZ 因此要几百次远端请求 ⇒ 打开时间 ∝ 页数（115 CDN 243ms/次 ⇒ 分钟级）。
+/// 自己解析后**打开只需 1 次请求**。中央目录不可解析（非 ZIP / ZIP64 / 越界 / 无图片条目）
+/// 时回退到 crate 路径，行为与过去一致。
 pub struct ZipBook<S: ByteSource> {
-    archive: zip::ZipArchive<SourceReader<std::sync::Arc<S>>>,
+    /// 快路径的字节源（`Central` 页按需向它取数据）。
+    central: Option<std::sync::Arc<S>>,
+    /// 回退路径的归档（`Crate` 页用）。
+    archive: Option<zip::ZipArchive<SourceReader<std::sync::Arc<S>>>>,
     pages: Vec<PageMeta>,
     title: String,
 }
 
 impl<S: ByteSource> ZipBook<S> {
     pub fn open(src: S, path: &str) -> Result<Self> {
-        let reader = SourceReader::new(std::sync::Arc::new(src));
+        let title = std::path::Path::new(path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string());
+        let shared = std::sync::Arc::new(src);
+
+        // ① 快路径：只读中央目录建页表（**不构造 crate 归档**）。
+        //
+        // 只在**每个图片条目都可信**时才走：压缩尺寸为 0（流式写出的条目，尺寸只在
+        // data descriptor 里）或 0xFFFF_FFFF（ZIP64 哨兵）的条目本模块读不了，
+        // 必须交给 crate ⇒ 否则取页会失败（P0-B2 的兼容性用例当场抓到过）。
+        if let Some(entries) = read_central_directory(shared.as_ref())? {
+            let images: Vec<&ZipEntryMeta> = entries
+                .iter()
+                .filter(|entry| is_image(&entry.name))
+                .collect();
+            let fast_path_safe = !images.is_empty()
+                && images.iter().all(|entry| {
+                    entry.compressed_size > 0
+                        && entry.compressed_size != u32::MAX as u64
+                        && entry.local_header < shared.len()
+                        && entry.flags & 0x1 == 0
+                });
+            if fast_path_safe {
+                let mut pages: Vec<PageMeta> = images
+                    .iter()
+                    .map(|entry| PageMeta {
+                        name: entry.name.clone(),
+                        source: PageSource::Central((*entry).clone()),
+                    })
+                    .collect();
+                pages.sort_by(|a, b| crate::util::natural_cmp(&a.name, &b.name));
+                return Ok(ZipBook {
+                    central: Some(shared),
+                    archive: None,
+                    pages,
+                    title,
+                });
+            }
+        }
+
+        // ② 回退：交给 crate（非 ZIP / ZIP64 / 无图片条目）。
+        let reader = SourceReader::new(shared);
         let zip = zip::ZipArchive::new(reader).context("打开 ZIP/CBZ 失败")?;
         let mut pages = Vec::new();
         for i in 0..zip.len() {
@@ -54,15 +116,16 @@ impl<S: ByteSource> ZipBook<S> {
             }
             pages.push(PageMeta {
                 name,
-                archive_index: i,
+                source: PageSource::Crate(i),
             });
         }
         pages.sort_by(|a, b| crate::util::natural_cmp(&a.name, &b.name));
-        let title = std::path::Path::new(path)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string());
-        Ok(ZipBook { archive: zip, pages, title })
+        Ok(ZipBook {
+            central: None,
+            archive: Some(zip),
+            pages,
+            title,
+        })
     }
 }
 
@@ -83,13 +146,31 @@ impl<S: ByteSource> Document for ZipBook<S> {
             .pages
             .get(index as usize)
             .with_context(|| format!("页索引越界: {index}"))?;
-        // ZipArchive shares immutable central metadata on clone; each reader
-        // has its own cursor, so foreground and prefetch need no archive lock.
-        let mut archive = self.archive.clone();
-        let mut page = archive.by_index(p.archive_index).context("读取页文件头失败")?;
-        let mut bytes = Vec::new();
-        page.read_to_end(&mut bytes).context("读取或解压页数据失败")?;
-        Ok(bytes)
+        match &p.source {
+            PageSource::Central(entry) => {
+                let src = self
+                    .central
+                    .as_ref()
+                    .context("ZIP 快路径缺少字节源")?;
+                read_entry_bytes(src.as_ref(), entry, ZIP_PAGE_MAX_BYTES)?
+                    .with_context(|| format!("读取页数据失败: {}", p.name))
+            }
+            PageSource::Crate(archive_index) => {
+                // ZipArchive shares immutable central metadata on clone; each reader
+                // has its own cursor, so foreground and prefetch need no archive lock.
+                let archive = self
+                    .archive
+                    .as_ref()
+                    .context("ZIP 回退路径缺少归档")?;
+                let mut archive = archive.clone();
+                let mut page = archive
+                    .by_index(*archive_index)
+                    .context("读取页文件头失败")?;
+                let mut bytes = Vec::new();
+                page.read_to_end(&mut bytes).context("读取或解压页数据失败")?;
+                Ok(bytes)
+            }
+        }
     }
 }
 
@@ -144,15 +225,29 @@ fn read_exact_at<S: ByteSource>(src: &S, offset: u64, len: usize) -> Result<Vec<
     Ok(buf)
 }
 
-/// "只取封面"的 ZIP 快通道：返回**第一张图片条目**的原始字节。
+/// 中央目录里的一个条目元数据（只读 EOCD + 中央目录即可得到，**不需要**逐条读 local header）。
+#[derive(Debug, Clone)]
+pub(crate) struct ZipEntryMeta {
+    pub name: String,
+    pub local_header: u64,
+    /// 压缩尺寸。**取自中央目录**：位 3（data descriptor）时 local header 里是 0。
+    pub compressed_size: u64,
+    pub method: u16,
+    pub flags: u16,
+}
+
+/// 条目数上限（防病态输入把内存吃光；正常 CBZ 远小于此）。
+const ZIP_MAX_ENTRIES: usize = 200_000;
+
+/// **只读 EOCD + 中央目录**，返回全部条目元数据——不读任何 local header。
 ///
-/// 请求数恒定（尾部 1 次 + 中央目录 1 次 + 每候选 1 次 local header + 1 次数据），
-/// 与文件大小/条目数无关。任何不成立的情况都返回 `Ok(None)`，由调用方回退常规路径：
-/// 非 ZIP、ZIP64、中央目录超限、条目被加密、压缩方式非 stored/deflate、解压失败。
-pub(crate) fn first_image_bytes_via_central_directory<S: ByteSource>(
-    src: &S,
-    max_page_bytes: usize,
-) -> Result<Option<Vec<u8>>> {
+/// 这是 P0 的地基：`zip::ZipArchive::new` 会对**每个条目**读一次它的 local header
+/// 做校验（`zip-2.4.2/src/read.rs:1259` -> `362-378`），一本几百页的 CBZ 因此要几百次
+/// 远端请求（115 CDN 单次 243ms => 分钟级）。本函数把打开降到 **1 次请求**。
+///
+/// 任何不成立的情况（非 ZIP / ZIP64 哨兵 / 中央目录越界或超限 / 目录头损坏）一律返回
+/// `Ok(None)`，由调用方回退到 `zip` crate 的完整实现，保证不劣化。
+pub(crate) fn read_central_directory<S: ByteSource>(src: &S) -> Result<Option<Vec<ZipEntryMeta>>> {
     let len = src.len();
     if len < ZIP_EOCD_LEN as u64 {
         return Ok(None);
@@ -187,10 +282,10 @@ pub(crate) fn first_image_bytes_via_central_directory<S: ByteSource>(
     }
     // 2) 中央目录一次读。
     let cd = read_exact_at(src, cd_offset, cd_size as usize)?;
-    // 3) 内存里挑出图片条目（按中央目录顺序，取前几个候选）。
-    let mut candidates: Vec<(u64, u64, u16)> = Vec::new(); // (local_header_offset, csize, method)
+    // 3) 在内存里顺序解析条目（不碰 local header）。
+    let mut entries: Vec<ZipEntryMeta> = Vec::new();
     let mut at = 0usize;
-    while at + ZIP_CDFH_LEN <= cd.len() && candidates.len() < ZIP_FAST_MAX_CANDIDATES {
+    while at + ZIP_CDFH_LEN <= cd.len() && entries.len() < ZIP_MAX_ENTRIES {
         if u32_at(&cd, at) != ZIP_CDFH_SIG {
             break;
         }
@@ -204,43 +299,95 @@ pub(crate) fn first_image_bytes_via_central_directory<S: ByteSource>(
         if at + ZIP_CDFH_LEN + name_len > cd.len() {
             break;
         }
-        let name = String::from_utf8_lossy(&cd[at + ZIP_CDFH_LEN..at + ZIP_CDFH_LEN + name_len]);
-        // 加密条目不碰；尺寸取自**中央目录**（位 3/data descriptor 时 local header 里是 0）。
-        if flags & 0x1 == 0 && csize > 0 && csize <= max_page_bytes as u64 && is_image(&name) {
-            candidates.push((local_header, csize, method));
-        }
+        let name = String::from_utf8_lossy(&cd[at + ZIP_CDFH_LEN..at + ZIP_CDFH_LEN + name_len])
+            .into_owned();
+        entries.push(ZipEntryMeta {
+            name,
+            local_header,
+            compressed_size: csize,
+            method,
+            flags,
+        });
         at += ZIP_CDFH_LEN + name_len + extra_len + comment_len;
     }
-    // 4) 逐候选：读 local header 定位数据起点 -> 读数据 -> 解压（stored / deflate）。
-    for (local_header, csize, method) in candidates {
-        let Ok(header) = read_exact_at(src, local_header, ZIP_LFH_LEN) else {
-            continue;
-        };
-        if u32_at(&header, 0) != ZIP_LFH_SIG {
-            continue;
-        }
-        let name_len = u16_at(&header, 26) as u64;
-        let extra_len = u16_at(&header, 28) as u64;
-        let data_start = local_header + ZIP_LFH_LEN as u64 + name_len + extra_len;
-        if data_start.saturating_add(csize) > len {
-            continue;
-        }
-        let Ok(raw) = read_exact_at(src, data_start, csize as usize) else {
-            continue;
-        };
-        match method {
-            0 => return Ok(Some(raw)),
-            8 => {
-                let mut out = Vec::new();
-                if flate2::read::DeflateDecoder::new(raw.as_slice())
-                    .read_to_end(&mut out)
-                    .is_ok()
-                    && !out.is_empty()
-                {
-                    return Ok(Some(out));
-                }
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(entries))
+}
+
+/// 读出一个条目的**原始字节**（已解压）：读 30B local header 定位数据起点 -> 读数据 ->
+/// 按中央目录给出的压缩方式解压（stored / deflate）。位 3 也成立，因为尺寸取自中央目录。
+pub(crate) fn read_entry_bytes<S: ByteSource>(
+    src: &S,
+    entry: &ZipEntryMeta,
+    max_bytes: u64,
+) -> Result<Option<Vec<u8>>> {
+    let len = src.len();
+    if entry.compressed_size == 0 || entry.compressed_size > max_bytes {
+        return Ok(None);
+    }
+    let Ok(header) = read_exact_at(src, entry.local_header, ZIP_LFH_LEN) else {
+        return Ok(None);
+    };
+    if u32_at(&header, 0) != ZIP_LFH_SIG {
+        return Ok(None);
+    }
+    let name_len = u16_at(&header, 26) as u64;
+    let extra_len = u16_at(&header, 28) as u64;
+    let data_start = entry.local_header + ZIP_LFH_LEN as u64 + name_len + extra_len;
+    if data_start.saturating_add(entry.compressed_size) > len {
+        return Ok(None);
+    }
+    let Ok(raw) = read_exact_at(src, data_start, entry.compressed_size as usize) else {
+        return Ok(None);
+    };
+    match entry.method {
+        0 => Ok(Some(raw)),
+        8 => {
+            let mut out = Vec::new();
+            if flate2::read::DeflateDecoder::new(raw.as_slice())
+                .read_to_end(&mut out)
+                .is_ok()
+                && !out.is_empty()
+            {
+                Ok(Some(out))
+            } else {
+                Ok(None)
             }
-            _ => continue,
+        }
+        _ => Ok(None),
+    }
+}
+
+/// "只取封面"的 ZIP 快通道：返回**第一张图片条目**的原始字节。
+///
+/// 请求数恒定（尾部 1 次 + 中央目录 1 次 + 每候选 1 次 local header + 1 次数据），
+/// 与文件大小/条目数无关。任何不成立的情况都返回 `Ok(None)`，由调用方回退常规路径：
+/// 非 ZIP、ZIP64、中央目录超限、条目被加密、压缩方式非 stored/deflate、解压失败。
+pub(crate) fn first_image_bytes_via_central_directory<S: ByteSource>(
+    src: &S,
+    max_page_bytes: usize,
+) -> Result<Option<Vec<u8>>> {
+    let len = src.len();
+    // 1)+2)+3) 只读 EOCD 与中央目录（不再逐条读 local header），挑出前几张图片条目。
+    let Some(entries) = read_central_directory(src)? else {
+        return Ok(None);
+    };
+    let candidates: Vec<&ZipEntryMeta> = entries
+        .iter()
+        .filter(|entry| {
+            entry.flags & 0x1 == 0
+                && entry.compressed_size > 0
+                && entry.compressed_size <= max_page_bytes as u64
+                && is_image(&entry.name)
+        })
+        .take(ZIP_FAST_MAX_CANDIDATES)
+        .collect();
+    // 4) 逐候选：读 local header 定位数据起点 -> 读数据 -> 解压（stored / deflate）。
+    for entry in candidates {
+        if let Some(bytes) = read_entry_bytes(src, entry, max_page_bytes as u64)? {
+            return Ok(Some(bytes));
         }
     }
     Ok(None)
@@ -638,5 +785,57 @@ mod tests {
                 .is_none(),
             "ZIP64 哨兵必须回退给常规路径"
         );
+    }
+
+    /// P0（第 70 轮）验收：打开一本 **800 条目**的 CBZ 只产生**常数次**远端读。
+    ///
+    /// 改前：`zip::ZipArchive::new` 对每个条目读一次 local header ⇒ 800+ 次读 ⇒
+    /// 115 CDN 243ms/次就是分钟级（"页数越多越慢"）。改后走"只读中央目录"。
+    #[test]
+    fn opening_a_many_entry_cbz_stays_constant() {
+        use std::sync::{Arc, Mutex};
+        struct CountingSource {
+            data: MemSource,
+            reads: Arc<Mutex<Vec<(u64, usize)>>>,
+        }
+        impl ByteSource for CountingSource {
+            fn len(&self) -> u64 {
+                self.data.len()
+            }
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+                self.reads.lock().unwrap().push((offset, buf.len()));
+                self.data.read_at(offset, buf)
+            }
+        }
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for page in 0..800 {
+            writer.start_file(format!("{page:04}.jpg"), options).unwrap();
+            writer.write_all(&vec![page as u8; 512]).unwrap();
+        }
+        let data = writer.finish().unwrap().into_inner();
+
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let book = super::ZipBook::open(
+            CountingSource {
+                data: MemSource(data),
+                reads: reads.clone(),
+            },
+            "many.cbz",
+        )
+        .unwrap();
+        assert_eq!(crate::document::Document::page_count(&book), 800);
+        let open_reads = reads.lock().unwrap().len();
+        assert!(
+            open_reads <= 4,
+            "打开成本应与条目数无关：800 条目实际 {open_reads} 次远端读"
+        );
+        // 取任意一页也应是常数次（local header 1 次 + 数据 1 次）。
+        let before = reads.lock().unwrap().len();
+        let bytes = crate::document::Document::page_bytes(&book, 400).unwrap();
+        assert_eq!(bytes.len(), 512);
+        let page_reads = reads.lock().unwrap().len() - before;
+        assert!(page_reads <= 2, "取一页应 ≤2 次读，实际 {page_reads} 次");
     }
 }

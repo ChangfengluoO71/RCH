@@ -837,22 +837,28 @@ fn p0a_single_page_latency_without_background_load() {
         }),
     );
 
-    // 3 页合计的预读窗口未命中数应大于 0：被后台预取提前读进来的页会记 0，
-    // 这是预取生效的正确行为，不是失败。
-    let total_reads: u64 = probe.source_reads_per_page.iter().sum();
+    // 第 70 轮（P0）：取页改为"只读中央目录 + 整页一次读"，**不再经过 SourceReader
+    // 的窗口层** ⇒ `source_reads_per_page`（该层计数）会记 0，这已不表示"没走网络"。
+    // 真正要守住的契约是"页面必须走网络范围读"，故断言改用**网络层**的
+    // `range_requests_per_page`（语义更强：直接证明打了网络）。
+    // 旧值仍在上面的报告里输出，供对照与回归观察。
+    let total_source_reads: u64 = probe.source_reads_per_page.iter().sum();
+    let total_range_requests: u64 = probe.range_requests_per_page.iter().sum();
     let theoretical_total =
         probe.source_reads_per_page.len() as u64 * (PAGE_BYTES as u64).div_ceil(256 * 1024);
     report(
         "page_latency_no_background_totals",
         serde_json::json!({
-            "total_source_reads": total_reads,
+            "total_source_reads": total_source_reads,
+            "total_range_requests": total_range_requests,
             "theoretical_total_if_all_cold": theoretical_total,
             "prefetched_pages": probe.source_reads_per_page.iter().filter(|&&v| v == 0).count(),
         }),
     );
     assert!(
-        total_reads > 0,
-        "reading pages over the network must issue range reads"
+        total_range_requests > 0,
+        "reading pages over the network must issue range reads: {:?}",
+        probe.range_requests_per_page
     );
     assert!(
         probe.page_ms.iter().any(|&v| v >= 500),

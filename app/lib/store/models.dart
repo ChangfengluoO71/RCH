@@ -333,6 +333,8 @@ class AppSettings {
   String? cacheDir; // 自定义缓存目录（null = 默认）
   bool autoConvertCbz; // 刷新本地书源时自动将漫画文件夹/zip 转为 CBZ
   BookOpenStrategy bookOpenStrategy; // 远程书源打开策略（WebDAV/SFTP 共用）
+  /// 整包下载模式下，阅读完成后自动删除 raw 整包（封面缓存保留）。
+  bool deletePackageAfterReading;
   String
   tabletLayout; // 'auto' | 'desktop' | 'mobile'：平板布局模式（auto=按宽度，desktop=桌面侧栏，mobile=手机底部导航）
   String updateMirror; // GitHub 下载镜像前缀（''=官方直连；自定义镜像也存这里）
@@ -357,6 +359,9 @@ class AppSettings {
     // 数百次 256KB 的顺序 range 读），打开时间因此 ∝ 文件大小，用户感知为
     // "ZIP 特别慢、页数越多越慢"。流式则按页 range 读，打开只需读目录。
     this.bookOpenStrategy = BookOpenStrategy.stream,
+    // 第 71 轮：整包下载模式下，阅读完成后自动删除 raw 整包以节省空间。
+    // **封面缓存不删**（列表页资产）。默认关，用户在设置里自行开启。
+    this.deletePackageAfterReading = false,
     this.tabletLayout = 'auto',
     this.updateMirror = '',
     this.updateMirrorList = '[]',
@@ -377,6 +382,7 @@ class AppSettings {
     if (cacheDir != null) 'cacheDir': cacheDir,
     'autoConvertCbz': autoConvertCbz,
     'bookOpenStrategy': bookOpenStrategy.name,
+    'deletePackageAfterReading': deletePackageAfterReading,
     'tabletLayout': tabletLayout,
     'updateMirror': updateMirror,
     'updateMirrorList': updateMirrorList,
@@ -409,6 +415,8 @@ class AppSettings {
       (s) => s.name == j['bookOpenStrategy'],
       orElse: () => BookOpenStrategy.auto,
     ),
+      deletePackageAfterReading:
+          (j['deletePackageAfterReading'] as bool?) ?? false,
     tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
     updateMirror: (j['updateMirror'] as String?) ?? '',
     updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),

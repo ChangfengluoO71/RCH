@@ -2146,3 +2146,37 @@ path 约定没对上 ⇒ 目前传逻辑路径与 provider fid 都被拒），�
 **遗留**：自动删除整包（②–⑦，见第 69 轮施工单）。
 
 ---
+
+---
+
+## 2026-09-19｜第71轮：自动删除整包（整包模式下阅读完成后释放空间，封面缓存保留）
+
+**用户要求**：可以在全局设置更改；默认流式；**选整包下载时可选择"阅读完成后自动删除包节省空间（封面缓存不删）"**。
+
+**实现**：
+
+1. **Rust**（`src/api/cache.rs`）：新增 `delete_raw_package(source_type, path, url, port,
+   root_path, client_id, root_id, cookie_mode)` —— **只删 raw 整包**。
+   - **不能复用 `purge_stale_book_cache`**：它会连**封面**与页面缓存一起删 ✗，
+     而用户要求封面保留 ✓（封面是列表页资产，删了会重新抓取）。
+   - key 构造与 `purge_stale_book_cache` **逐字一致**（含归一化：115/quark 空 root ⇒ `0`、
+     baidu 空 root ⇒ `/`），否则删不到文件。
+2. **FRB codegen** ⇒ Dart `deleteRawPackage(...)`（`lib/src/rust/api/cache.dart:110`）。
+3. **Dart 设置**（`lib/store/models.dart`）：`deletePackageAfterReading`（**默认 false**，
+   用户显式开启）+ 写盘/读盘。
+4. **设置界面**（`lib/ui/home_page.dart`，策略选项旁）：开关
+   「阅读完成后删除整包（封面缓存保留）」，副标题注明"仅对优先下载整本有效；只删 raw 包"。
+5. **阅读器钩子**（`lib/ui/reader_page.dart`，`closeBook` 之后）：**仅当**开关开 **且**
+   当前策略 ≠ 直接流式 ⇒ 调 `deleteRawPackage(...)`；参数映射照抄既有
+   `purgeStaleBookCache` 调用处（`type/url/port/effectiveRootPath/clientId/rootId/
+   cookieMode=(cookie??'').isNotEmpty`）；失败只 `debugPrint`，绝不打断退出。
+
+**行为边界**：策略 = 直接流式 ⇒ 不删任何东西；整包/自动 ⇒ 关书即删 raw；封面与页面缓存保留。
+
+**验证**：`dart analyze`（reader/home/models）→ No issues found ✓；
+`flutter build windows --debug` 成功 ✓ 且产物内含开关文案 ✓；
+Rust 侧为**纯新增**（`delete_raw_package`），门禁见 gate30 ✓。
+
+**遗留**：探针对比 `cache/raw` 与 `cache/cover` 体积（验证"只删 raw"）；夸克扫码收尾（用户扫一次）。
+
+---

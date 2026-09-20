@@ -1766,6 +1766,18 @@ class _HomePageState extends State<HomePage> {
           },
         ),
       ),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: s.deletePackageAfterReading,
+        onChanged: (v) {
+          s.deletePackageAfterReading = v;
+          LibraryStore.instance.updateSettings(s);
+          setState(() {});
+        },
+        title: const Text('阅读完成后删除整包（封面缓存保留）'),
+        subtitle: const Text('仅对"优先下载整本"有效；只删 raw 包，封面不受影响'),
+      ),
       const SizedBox(height: 8),
       Text(
         '自动：先下载整本到缓存（有进度条），失败转流式；下载整本：适合网速快或想离线读；直接流式：即点即读、不占缓存',

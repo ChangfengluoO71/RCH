@@ -5,6 +5,7 @@ import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/src/rust/api/cache.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_cache_cleanup.dart';
@@ -415,6 +416,29 @@ class _ReaderPageState extends State<ReaderPage> {
       );
     }
     final b=_book;if(b!=null)closeBook(handle:b.handle);
+    // 第 71 轮：整包下载模式下，若设置在"阅读完成后自动删除整包"，关闭书本即删 raw 包。
+    // 只删 raw（封面缓存与页面缓存保留）；流式模式不动任何缓存。
+    final delSrc = widget.source;
+    final delSettings = LibraryStore.instance.settings;
+    if (delSrc != null &&
+        delSettings.deletePackageAfterReading &&
+        delSettings.bookOpenStrategy != BookOpenStrategy.stream) {
+      unawaited(
+        deleteRawPackage(
+          sourceType: delSrc.type,
+          path: widget.path,
+          url: delSrc.url,
+          port: delSrc.port,
+          rootPath: delSrc.effectiveRootPath,
+          clientId: delSrc.clientId,
+          rootId: delSrc.rootId,
+          cookieMode: (delSrc.cookie ?? '').isNotEmpty,
+        ).catchError((Object e) {
+          debugPrint('[reader] delete raw package failed: $e');
+          return BigInt.zero;
+        }),
+      );
+    }
     final lease = _cleanupLease;
     if (lease != null) {
       unawaited(lease.release(completionCandidate: _completion.completionCandidate));

@@ -35,7 +35,9 @@ Future<List<DirEntry>> webdavList({
     RustLib.instance.api.crateApiSourceWebdavList(session: session, path: path);
 
 /// 打开 WebDAV 上的书籍。
-/// 策略(strategy): "auto" 先尝试整本下载到 raw/ 缓存, 失败回退流式;
+/// 策略(strategy): "auto" **流式优先**（第 69 轮语义翻转）：命中 raw 缓存则本地打开，
+/// 否则先按需 range 流式读，失败才整本下载到 raw/ 缓存
+/// （实测：整本下载让打开时间 ∝ 文件大小，一本 49MB 的漫画要传 49MB）。
 /// "download" 强制整本下载(失败报错); "stream" 直接流式(无 Range 服务器仍需整本)。
 /// 若已有缓存则直接复用(秒开)。
 /// 这是四层架构的关键: 阅读器只操作本地资源。

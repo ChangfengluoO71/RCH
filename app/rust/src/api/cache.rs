@@ -187,6 +187,72 @@ fn sftp_endpoint(url: Option<&str>, port: Option<i64>) -> Option<String> {
 ///   - `root_path`：source.path（baidu 的 root 目录）
 ///   - `client_id`：baidu app_key / 115 app_id
 ///   - `root_id`：115 / quark 的根目录 id
+/// 只删除某本书的**整本 raw 包**（不动封面缓存、不动页面缓存）。
+///
+/// 用途（第 71 轮）：设置里勾选"整包下载 + 阅读完成后自动删除包"时，阅读器关闭书本后
+/// 调用本接口腾空间。**封面必须保留**——它是列表页的资产，删掉会导致封面重新抓取；
+/// 因此**不能**复用 `purge_stale_book_cache`（它会连封面与页面缓存一起删）。
+///
+/// key 的构造与 `purge_stale_book_cache` **逐字一致**（含 root 归一化：115/quark 空值
+/// 归一为 `0`、baidu 空值归一为 `/`），否则删不到文件。
+pub fn delete_raw_package(
+    source_type: String,
+    path: String,
+    url: Option<String>,
+    port: Option<i64>,
+    root_path: String,
+    client_id: Option<String>,
+    root_id: Option<String>,
+    cookie_mode: bool,
+) -> Result<u64, String> {
+    use crate::cache::delete_raw_cache_for_key;
+    if path.is_empty() {
+        return Ok(0);
+    }
+    let key = match source_type.as_str() {
+        "webdav" => match url.as_deref().and_then(webdav_origin) {
+            Some(origin) => format!("{origin}{path}"),
+            None => return Ok(0),
+        },
+        "sftp" => match sftp_endpoint(url.as_deref(), port) {
+            Some(endpoint) => format!("{endpoint}{path}"),
+            None => return Ok(0),
+        },
+        "baidu" => {
+            let root = if root_path.trim().is_empty() {
+                "/".to_string()
+            } else {
+                root_path
+            };
+            format!("baidu:{}:{}{}", client_id.unwrap_or_default(), root, path)
+        }
+        "115" => {
+            let root = root_id.unwrap_or_default();
+            let root = if root.trim().is_empty() {
+                "0".to_string()
+            } else {
+                root
+            };
+            if cookie_mode {
+                format!("115web:{root}{path}")
+            } else {
+                format!("115:{}:{root}{path}", client_id.unwrap_or_default())
+            }
+        }
+        "quark" => {
+            let root = root_id.unwrap_or_default();
+            let root = if root.trim().is_empty() {
+                "0".to_string()
+            } else {
+                root
+            };
+            format!("quark:{root}{path}")
+        }
+        _ => return Ok(0),
+    };
+    delete_raw_cache_for_key(&key).map_err(|e| e.to_string())
+}
+
 ///   - `cookie_mode`：115 是否为网页 Cookie 模式（origin 前缀不同）
 ///
 /// 说明：quark / 115 的浏览路径本身即内部素材 id（fid / pick_code），

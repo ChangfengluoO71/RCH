@@ -99,6 +99,34 @@ Future<void> clearMigrationMarker({required String root}) =>
 ///   - `root_path`：source.path（baidu 的 root 目录）
 ///   - `client_id`：baidu app_key / 115 app_id
 ///   - `root_id`：115 / quark 的根目录 id
+/// 只删除某本书的**整本 raw 包**（不动封面缓存、不动页面缓存）。
+///
+/// 用途（第 71 轮）：设置里勾选"整包下载 + 阅读完成后自动删除包"时，阅读器关闭书本后
+/// 调用本接口腾空间。**封面必须保留**——它是列表页的资产，删掉会导致封面重新抓取；
+/// 因此**不能**复用 `purge_stale_book_cache`（它会连封面与页面缓存一起删）。
+///
+/// key 的构造与 `purge_stale_book_cache` **逐字一致**（含 root 归一化：115/quark 空值
+/// 归一为 `0`、baidu 空值归一为 `/`），否则删不到文件。
+Future<BigInt> deleteRawPackage({
+  required String sourceType,
+  required String path,
+  String? url,
+  PlatformInt64? port,
+  required String rootPath,
+  String? clientId,
+  String? rootId,
+  required bool cookieMode,
+}) => RustLib.instance.api.crateApiCacheDeleteRawPackage(
+  sourceType: sourceType,
+  path: path,
+  url: url,
+  port: port,
+  rootPath: rootPath,
+  clientId: clientId,
+  rootId: rootId,
+  cookieMode: cookieMode,
+);
+
 ///   - `cookie_mode`：115 是否为网页 Cookie 模式（origin 前缀不同）
 ///
 /// 说明：quark / 115 的浏览路径本身即内部素材 id（fid / pick_code），

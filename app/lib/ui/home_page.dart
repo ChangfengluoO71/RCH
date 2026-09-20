@@ -1640,6 +1640,25 @@ class _HomePageState extends State<HomePage> {
   // ============================================================
   // 设置
   // ============================================================
+  /// 设置分类容器：把若干既有分组折叠在一个标题下。
+  ///
+  /// 为什么：设置项越来越多（阅读/书源/缓存/同步/外观），平铺列表让用户找不到东西。
+  /// 这里只做**折叠与归类**，不改动任何设置项的字段、默认值与实现。
+  Widget _settingsCategory({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+    bool initiallyExpanded = false,
+  }) =>
+      ExpansionTile(
+        initiallyExpanded: initiallyExpanded,
+        leading: Icon(icon, size: 20),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+        childrenPadding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
+        children: children,
+      );
+
   Widget _buildSettings() {
     final s = LibraryStore.instance.settings;
     return ListenableBuilder(
@@ -1651,32 +1670,36 @@ class _HomePageState extends State<HomePage> {
             '设置',
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 28),
-          const _StoragePermissionTile(),
-          const SizedBox(height: 28),
-          _tabletLayout(s),
           const SizedBox(height: 16),
-          const CacheManagerPanel(),
-          const SizedBox(height: 28),
-          const SyncPanel(),
-          const SizedBox(height: 28),
-          const BackupPanel(),
-          const SizedBox(height: 28),
-          const UpdatePanel(),
-          const SizedBox(height: 28),
-          const ScrapePanel(),
-          const SizedBox(height: 28),
-          _readingDefaults(s),
-          const SizedBox(height: 16),
-          _remoteSources(s),
-          const SizedBox(height: 16),
-          _localComics(s),
-          const SizedBox(height: 16),
-          _keybinds(s),
-          const SizedBox(height: 28),
-          _coverQuality(s),
-          const SizedBox(height: 32),
-          _theme(s),
+          // 第 72 轮：设置项已增多，按**类别折叠**，减少"找不到"的成本。
+          // 只包一层 ExpansionTile，**不改任何设置项自身的实现与顺序**。
+          _settingsCategory(
+            title: '阅读',
+            icon: Icons.menu_book_outlined,
+            initiallyExpanded: true,
+            children: [_readingDefaults(s), _keybinds(s), _coverQuality(s)],
+          ),
+          _settingsCategory(
+            title: '书源与网络',
+            icon: Icons.cloud_outlined,
+            children: [_remoteSources(s), _localComics(s), const ScrapePanel()],
+          ),
+          _settingsCategory(
+            title: '缓存与存储',
+            icon: Icons.storage_outlined,
+            children: [const CacheManagerPanel(), const _StoragePermissionTile()],
+          ),
+          _settingsCategory(
+            title: '同步与备份',
+            icon: Icons.sync_outlined,
+            children: [const SyncPanel(), const BackupPanel(), const UpdatePanel()],
+          ),
+          _settingsCategory(
+            title: '外观与布局',
+            icon: Icons.palette_outlined,
+            children: [_theme(s), _tabletLayout(s)],
+          ),
+          const SizedBox(height: 24),
         ],
       ),
     );

@@ -31,6 +31,21 @@ graphify god-nodes --top 15                            # 架构枢纽
 **不入库**（`.gitignore` 已排除 `graphify-out/`）：它是派生产物，随源码演进会过期；
 需要时本地重建即可（首次约数分钟，835 个源文件）。**不要**把它当作"项目文档"提交。
 
+**图谱规模与"污染"警告（2026-09-21 首次构建实测）**：
+- 规模：**14,503 节点 / 26,186 边 / 678 社区**；产物 `graph.html`（>5000 节点时自动聚合为社区视图）、
+  `graph.json`（16.8 MB）、`GRAPH_REPORT.md`，共约 35 MB。
+- **污染**：graphify 没有忽略文件机制，`app/rust/vendor/unrar_sys/vendor/**`（vendored unrar C++）
+  与生成文件会被一起索引 ⇒ `god-nodes` 与报告里的"Surprising Connections"基本是 unrar 内部调用，
+  **不要**据此判断架构枢纽。**定向查询不受影响**（实测有效）：
+  ```bash
+  graphify explain "SourceReader"     # 给出 源文件:行 + 社区 + 连接（含证据）—— 最好用的一条
+  graphify query "封面为什么回退 legacy 缓存"
+  graphify path "ComicCover" "read_legacy_cover_local" --undirected   # 默认有向图，查不到时加 --undirected
+  ```
+- **想要干净图谱**（报告类输出才有意义）时的配方：先临时把 `app/rust/vendor/unrar_sys/vendor`
+  移出工作区（或改用"分路径构建 + `graphify merge-graphs`"），再 `graphify update . --force`，
+  最后把目录移回。**不要**把 `graphify-out/` 提交进仓库。
+
 **已知盲点（2026-09-21 实测）**：
 - 76 个文件抽不出节点（`task.json`、`.template-hashes.json` 等纯数据/配置）——预期行为；
 - 38 个文件有语法错误只能部分抽取（`generated_plugin_registrant.cc`、`main.cc`、vendored 的

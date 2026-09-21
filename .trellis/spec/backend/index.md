@@ -17,8 +17,8 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| [Quality Guidelines](./quality-guidelines.md) | 并发/原生库安全契约 + **质量门禁（与 CI 对齐）** | Filled |
+| [Logging Guidelines](./logging-guidelines.md) | 三套日志机制、`*_diag.log` 形态、红线与失败码枚举（2026-09-21 补实） | Filled |
 | [SFTP 书源规范](./sftp-source.md) | russh 选型、会话模式、API 契约 | Filled |
 | [网盘书源规范](./netdisk-source.md) | 百度/115 官方 API 鉴权、直链、缓存、已知坑 | Filled |
 | [夸克网盘书源规范](./quark-source.md) | 非官方 Web API、Cookie 认证、fid 路径约定、已知坑 | Filled |

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
-- **Last Active**: 2026-08-25
+- **Total Sessions**: 14
+- **Last Active**: 2026-09-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~479 | Active |
+| `journal-1.md` | ~518 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-09-21 | 第82–96轮：阅读速度与封面管线整改 + v0.6.0 发布 | `bf3ae59`, `fc9ac8c`, `539fd05`, `feaf23a`, `ce716b7`, `d35f858`, `5108b9d`, `60a601c`, `6c7bf92`, `ac081d8`, `4f3e6d9`, `6c4c288`, `30e80c8`, `d6daffb`, `931424c`, `372d317`, `9196768`, `b291ce0`, `69e3ebe` | `p1-cover-completion` |
 | 13 | 2026-08-25 | 文件夹批量标签修复与 v0.5.5 发布准备 | `63af629` | `master` |
 | 12 | 2026-08-24 | v0.5.4 发布：离线刮削与书源清理 | `5c4eaab`, `1912d50` | `master` |
 | 11 | 2026-08-24 | M8 离线刮削自动化与标签投影修复 | `1265a28` | `master` |

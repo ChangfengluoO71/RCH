@@ -477,3 +477,42 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Next Steps
 
 - 推送 master 与 v0.5.5 标签，确认 GitHub Actions 发布产物
+
+
+## Session 14: 第82–96轮：阅读速度与封面管线整改 + v0.6.0 发布
+
+**Date**: 2026-09-21
+**Task**: 第82–96轮：阅读速度与封面管线整改 + v0.6.0 发布
+**Branch**: `p1-cover-completion`
+
+### Summary
+
+① 阅读速度：MOBI 并发探测（40s→10s）+ 页表缓存（二次打开 45→5 次远端读）+ G1 头窗口钉住与元数据槽 2→4；② 封面管线：Release 缺 pdfium.dll、无 asset id 卡片不订阅 revision（详情页出图后墙不刷新）、unified 无字节回退 legacy 纯本地缓存（详情页有而墙上失败）、失败封面可重排并修会话顺序、取消故意整本读的预算拒绝、MOBI 惰性打开对越界/空区间记录宽松化、缺库误标修复 —— 真机夸克 MOBI 封面由长期失败变为全部就绪（可用 63→284）；③ 体验：D7 阅读渲染宽度设置（省流/标准/跟随屏幕）、115+夸克原文件名不再显示 id、扫描状态栏三按钮移除、cache/raw 2GiB 上限与最旧优先淘汰；④ 可观测性：pdf_diag/reader_diag/mobi_diag 与惰性拒绝原因；⑤ 规范：读 Trellis 体系并回写 remote-cover-update-contracts 的 v0.6.0 Superseding Addendum（含可执行边界）；⑥ 发布 v0.6.0：版本号 0.6.0+100600（有意破例升次版本，理由入 CHANGELOG）、发布说明 release_notes_v0.6.0、README/CHANGELOG 同步并回填 0.5.7、master 快进发布。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bf3ae59` | (see git log) |
+| `fc9ac8c` | (see git log) |
+| `539fd05` | (see git log) |
+| `feaf23a` | (see git log) |
+| `ce716b7` | (see git log) |
+| `d35f858` | (see git log) |
+| `5108b9d` | (see git log) |
+| `60a601c` | (see git log) |
+| `6c7bf92` | (see git log) |
+| `ac081d8` | (see git log) |
+| `4f3e6d9` | (see git log) |
+| `6c4c288` | (see git log) |
+| `30e80c8` | (see git log) |
+| `d6daffb` | (see git log) |
+| `931424c` | (see git log) |
+| `372d317` | (see git log) |
+| `9196768` | (see git log) |
+| `b291ce0` | (see git log) |
+| `69e3ebe` | (see git log) |
+
+### Status
+
+[OK] **Completed**

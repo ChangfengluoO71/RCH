@@ -296,21 +296,26 @@ class ComicCover extends StatefulWidget {
     _cache.removeWhere((k, _) => k.startsWith('$sourceId|$path'));
   }
 
-  /// “未缓存”占位（网盘文件未下载 / 网盘文件夹无本地数据共用）。
-  static Widget uncachedPlaceholder() => Container(
+  /// 未就绪占位（网盘文件未下载 / 容器文件夹无本地数据 / 未知封面状态**共用**）。
+  ///
+  /// 2026-09-21 用户决定：**删除原「未缓存」文案**，一律统一显示「等待扫描」。
+  /// 原因：封面格子会在「等待获取」与旧「未缓存」之间来回跳，视觉上像两个互相矛盾的
+  /// 状态；统一成同一个"等待"语义后不再自相矛盾。
+  /// （状态抖动的**根因**另在扫描 reconcile 的档位错位与读路径回写，不是这条文案本身。）
+  static Widget waitingScanPlaceholder() => Container(
     color: Colors.black26,
     child: Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.cloud_download_outlined,
+            Icons.schedule,
             size: 36,
             color: Colors.lightBlueAccent.withAlpha(120),
           ),
           SizedBox(height: 4),
           Text(
-            '未缓存',
+            '等待扫描',
             // TODO(第75轮): 该处在 const 子树内取不到 context ⇒ 暂用中性灰（明暗都可读）；
             // 下一轮把父级 const 拆掉后换回 colorScheme.onSurfaceVariant。
             style: TextStyle(fontSize: 10, color: Colors.grey),
@@ -412,7 +417,12 @@ class _ComicCoverState extends State<ComicCover> {
     // durable cover truth 可能变了 ⇒ 重读一次（**不** request、**不** 轮询）。
     _future = null;
     _loadFailed = false;
-    _coverState = null;
+    // 2026-09-21（用户报告"封面格子在等待/未缓存之间闪"）：**不再无条件清空 `_coverState`**。
+    // 清空会让新状态读回来之前的那一帧掉进占位分支，与上一帧的真实文案来回跳（= 闪）。
+    // 但 `build()` 里 `running` 会短路成 spinner（`if (_coverState == 'running') return _loading();`），
+    // 保留 `running` 会把 "running → ready" 的转场钉死在转圈上（3 个终端契约测试当场抓到）
+    // ⇒ 只对 `running` 保持旧的清空语义，其余状态保留到新状态读回来再替换。
+    if (_coverState == 'running') _coverState = null;
     _maybeLoad();
     if (mounted) setState(() {});
   }
@@ -1046,7 +1056,7 @@ class _ComicCoverState extends State<ComicCover> {
       'blocked' => '暂不可用',
       _ => null,
     };
-    if (label == null) return ComicCover.uncachedPlaceholder();
+    if (label == null) return ComicCover.waitingScanPlaceholder();
     return Container(
       color: Colors.black26,
       alignment: Alignment.center,

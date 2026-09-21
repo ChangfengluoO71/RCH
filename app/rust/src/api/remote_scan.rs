@@ -349,6 +349,10 @@ pub async fn notify_source_session_ready(
             let remaining = budget.max_jobs.saturating_sub(spent);
             let mut missing_created = 0;
             if remaining > 0 {
+                // 档位取**用户当前设置**（与卡片读状态用的是同一份映射）——
+                // 写死常量会让"缺口补齐"永远补不到卡片看的那个档位（真机实测：
+                // 设置 low 时每次会话事件造 64 条 340 档任务 + bump revision ⇒ 封面文案抖动）。
+                let profile = cover_quality_profile_on(&conn);
                 let gap = reconcile_missing_covers_for_source_on(
                     &conn,
                     &source_id,
@@ -358,6 +362,7 @@ pub async fn notify_source_session_ready(
                         max_jobs: remaining,
                         ..budget
                     },
+                    &profile,
                 )
                 .map_err(|error| error.to_string())?;
                 missing_created = gap.jobs_created;

@@ -2991,3 +2991,57 @@ crate 就是从这个位置顺序读头的；而我只用了"记录表里 record
    perf 事件），数字不过任何映射 ⇒ 下次失败能自证"字节/次数/时间"哪条先超 ✓。
 
 **验收**：`cargo build --lib` 无警告；P0 套件 **19 passed**；全量门禁 `--test-threads=1` exit 0。
+
+
+---
+
+## 2026-09-21｜第82轮：封面文案统一 + 扫描档位/状态收口（桌面切 Release）
+
+> 备注：本编号曾有一次"第82轮"（换档重置分批/限量 + 代际重绑）的实现，经用户要求**已整体回退**到
+> `56fffd9`，该版本保存在本地备份分支 `backup/round82-cover-reset`（未推送）。本条目是回退后
+> **重新开的一轮**，起点就是 `56fffd9`。
+
+**本轮目标（全部来自用户当轮反馈）**：① 封面格子在「等待」与「未缓存」之间闪烁；② 用户要求
+**删除「未缓存」占位符**、统一显示「等待扫描」；③ 手机明显比电脑快；④ MOBI 封面不显示、MOBI
+流式阅读慢（含"别的文件也慢"）。
+
+**做了什么**：
+1. **文案统一**（用户明确决定）：`ComicCover.uncachedPlaceholder()` → `waitingScanPlaceholder()`，
+   「未缓存」→「等待扫描」，图标 `cloud_download` → `schedule`；网盘行/容器文件夹两处调用与
+   4 处注释同步；3 个测试文件里的文案断言**同等强度**改写（`findsOneWidget` 仍是 `findsOneWidget`）。
+2. **扫描 reconcile 档位改为用户设置**（真机实测的闪烁根因之一）：`reconcile_missing_covers_for_source_on`
+   新增 `profile: &str` 参数，调用方传 `cover_quality_profile_on(&conn)`；此前它写死
+   `DEFAULT_COVER_PROFILE = 340x480@1`，而用户设置是 `low(170x240@1)` ⇒ **每次会话事件都按错档位
+   造 64 条任务 + bump revision**（卡片永远读不到自己要的档位 ⇒ 文案抖 + worker 去抓没人看的档位）。
+   新增回归测试 `replenishment_uses_the_caller_supplied_profile`（落在调用方档位 / 同档不重复 / 换档独立补齐）。
+3. **revision 到达时不再无条件清空 `_coverState`**：清空会让新状态读回来之前的那一帧掉进占位分支
+   ⇒ 与上一帧真实文案来回跳。**只对 `running` 保留清空语义**——第一版无差别保留，被 3 个终端契约
+   测试当场抓到：`build()` 里 `if (_coverState == 'running') return _loading();` 会把
+   "running → ready" 的转场**钉死在转圈上**。这就是"测试先于感觉"的价值。
+4. **桌面从 Debug 切到 Release**（用户要求"以后都启动 Release 版"）：Debug = Dart JIT + Rust
+   opt-level 0（`rust_lib_app.dll` 39.4 MB），Release = AOT + 优化（18.9 MB）。手机装的 release APK
+   （09-20 21:29，同一代码纪元）与桌面读**同一批夸克远端文件** ⇒ 构建档位是"手机快"的头号解释；
+   代码里读路径**无任何平台分叉**（仅 `cover_progress.rs:150` 一处 `debug_assertions`）。
+
+**门禁**：Rust 全量 `cargo test --locked -j 2 -- --test-threads=1` **exit 0（24 套件 / 532 passed / 0 failed）**；
+Dart `flutter analyze` 干净；10 个封面相关测试文件 **34 项全过**。首次跑 Rust 门禁还抓到"改动 API 后
+`tests/` 里 5 处旧签名未同步"（E0061）⇒ 门禁确实在挡人。
+
+**本轮审计结论（只读，未修，已登记 TODO）**：
+- **D1｜MOBI 是唯一没接 `SourceReader` 的格式**（zip/epub/pdf 都接了 256 KiB 预读 + 小窗口合并），
+  `document/mobi.rs:215-230` 对**每条候选记录各发一次 16 B 远端读** ⇒ 200–300 次 Range；实测每次
+  Range ~136 ms ⇒ 撞穿封面 30 s 挂钟预算（`cover_read_budget_exceeded` 281 条，同尺寸非 MOBI 1.8 s 成功）。
+- **G1｜"别的文件也慢"有共同签名**：每页 **7.8–16.1 次串行 Range**、每次 RTT p50 88–150 ms；
+  EPUB 会话 1265 次读里 **906 次请求 <512 B（占 62% 耗时）**、同一 `offset=0` 被重取 **108–135 次**
+  （`SourceReader` 只有 2 个元数据窗口槽 ⇒ 抖动）。并行 Range 已被第 81 轮 A/B 否掉（慢 ~8%），
+  账号/链路总带宽只有 0.4–3.7 MB/s ⇒ **唯一杠杆是减少往返**。
+- **D4｜磁盘上 1061 张封面（1.2 GB）一张也读不出**：`remote_cover_variant = 0` 而读图被
+  durable `state='ready'` 门控（`cover_service.rs:110-148`）⇒ 满屏占位/失败。
+- **D3｜读路径会写**：卡片读缓存时把 `ready` 打成 `pending` 并 bump revision+notify
+  （`cover_service.rs:159-208`），读一次就把自己的文案打回"等待"。
+- **D7/D8｜正文页=单条 5–15 MB 记录不可分片**；「正在下载漫画…首次阅读需下载整本」在**流式**下也会显示
+  （夸克分支无条件起进度轮询 + 非下载时进度函数返回 1.0）⇒ 误导性 UI。
+- **观测盲区**：MOBI 路径**零埋点**（PDF 有 `pdf_diag.log`）⇒ 修完无法验收，建议补 `mobi_diag.log`。
+
+**未完成/遗留**：D1a/D1b（MOBI 接 `SourceReader` + 合并探测 + 探测失败不整体回退）、G1（元数据读合并、
+钉住头窗口）、D4（ref+blob 回建 variant 或只读回退）、D3、D6（locked-frame 不推 notifier）、D7/D8、mobi_diag。

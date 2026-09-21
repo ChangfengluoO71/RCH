@@ -35,7 +35,7 @@ enum _FolderCoverKind {
   /// 普通文件夹：本地确认无漫画文件 → 无封面。
   plain,
 
-  /// 本地无数据（仅网盘）：与漫画文件一致显示“未缓存”。
+  /// 本地无数据（仅网盘）：与漫画文件一致统一显示「等待扫描」。
   uncached,
 
   /// 文件夹式漫画书（本地图片目录）：封面 = cover.jpg / 首页，点击进详情。
@@ -119,7 +119,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   bool _refreshingToken = false; // 百度网盘：正在强制刷新 refresh_token
 
   /// 扫描完成后重新评估当前目录的远程文件夹类型，让图片文件夹/容器卡片
-  /// 不必等用户离开页面再进入才能从“未缓存”切换为可用封面。
+  /// 不必等用户离开页面再进入才能从「等待扫描」切换为可用封面。
   late final ValueListenable<RemoteScanStatus?> _remoteScanStatus;
   int? _lastAppliedScanGeneration;
   remote_cover.RemoteDirectoryViewDto? _remoteDirectoryView;
@@ -215,7 +215,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   /// 阅读记录/元数据变化后重跑网盘目录判定（纯本地），
-  /// 例如下载完成 / 记录加载后 未缓存 → 封面。
+  /// 例如下载完成 / 记录加载后 等待扫描 → 封面。
   void _onStoreChanged() {
     if (_offlineMode || widget.source.isLocalFs || _entries.isEmpty) return;
     unawaited(_detectComicFolders());
@@ -1741,7 +1741,7 @@ class _FolderCard extends StatelessWidget {
 
 /// 漫画文件夹封面卡片。
 /// book：cover.jpg 优先，无封面用首页；container：第一个漫画文件封面；
-/// uncached：与漫画文件一致显示“未缓存”。
+/// uncached：与漫画文件一致统一显示「等待扫描」。
 class _ComicFolderCoverCard extends StatefulWidget {
   final BookSource source;
   final String dirPath;
@@ -1847,14 +1847,15 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
     if (widget.remoteAssetId != null) {
       return _loadCover(widget.dirPath, widget.remoteAssetId);
     }
-    // 网盘无本地数据 → 与漫画文件一致的“未缓存”占位
+    // 网盘无本地数据 → 与漫画文件一致统一显示「等待扫描」（2026-09-21 用户决定，
+    // 删除原「未缓存」文案）
     if (widget.kind == _FolderCoverKind.uncached) {
-      return ComicCover.uncachedPlaceholder();
+      return ComicCover.waitingScanPlaceholder();
     }
-    // 容器文件夹 → 第一个漫画文件封面（未下载时由 ComicCover 显示“未缓存”）
+    // 容器文件夹 → 第一个漫画文件封面（未就绪时由 ComicCover 显示「等待扫描」）
     if (widget.kind == _FolderCoverKind.container) {
       final f = widget.firstComicFile;
-      return f == null ? ComicCover.uncachedPlaceholder() : _loadCover(f);
+      return f == null ? ComicCover.waitingScanPlaceholder() : _loadCover(f);
     }
     // 有显式封面 → 优先用封面路径解码（第 0 页）
     if (_coverPath != null && _coverPath!.isNotEmpty) {
@@ -1878,7 +1879,7 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
   }
 
   Widget _loadCover(String path, [String? remoteAssetId]) {
-    // 下载/阅读记录变化后强制重建 ComicCover，让 未缓存 → 封面 自动生效
+    // 下载/阅读记录变化后强制重建 ComicCover，让 等待扫描 → 封面 自动生效
     final key = bookKeyOf(widget.source.type, widget.source.id, path);
     final cached = LibraryStore.instance.records.containsKey(key);
     return ComicCover(

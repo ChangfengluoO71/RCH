@@ -519,6 +519,7 @@ fn replenishment_creates_a_pending_job_for_a_library_asset_without_any_job() {
         42,
         1_000,
         budget(64),
+        "340x480@1",
     )
     .unwrap();
     assert_eq!(report.jobs_created, 1);
@@ -540,6 +541,7 @@ fn replenishment_creates_a_pending_job_for_a_library_asset_without_any_job() {
         42,
         1_100,
         budget(64),
+        "340x480@1",
     )
     .unwrap();
     assert_eq!(again.jobs_created, 0);
@@ -551,6 +553,56 @@ fn replenishment_creates_a_pending_job_for_a_library_asset_without_any_job() {
         )
         .unwrap();
     assert_eq!(count, 1, "replenishment must not duplicate the job");
+}
+
+/// 2026-09-21（用户报告"封面格子在等待/未缓存之间闪"）：缺口补齐必须用**调用方给的档位**。
+///
+/// 旧实现把档位写死成 `DEFAULT_COVER_PROFILE = 340x480@1`：用户把 `coverQuality` 设成
+/// `low(170x240@1)` 后，卡片按 170 读状态、reconcile 却一直按 340 判缺口 ⇒ 每次会话事件都
+/// 重新造一批 340 档任务（既补不满卡片要的档位，又凭空 bump revision 让整面墙重读 ⇒ 文案抖动），
+/// 还让封面 worker 去抓没人看的档位。这里锁死"档位由调用方决定"这一契约。
+#[test]
+fn replenishment_uses_the_caller_supplied_profile() {
+    let conn = connection();
+    bind_epoch(&conn, "source", 1, "e1", 42);
+    let asset_id = seed_library_asset(&conn, "source", "/low.cbz", "fp-low");
+
+    let low = "170x240@1";
+    let first =
+        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 5_000, budget(64), low)
+            .unwrap();
+    assert_eq!(first.jobs_created, 1, "缺口必须被补齐");
+
+    let key = CoverJobKey {
+        source_id: "source".into(),
+        asset_id: asset_id.clone(),
+        content_revision: "fp-low".into(),
+        selection_revision: "default".into(),
+        profile: low.into(),
+    };
+    assert_eq!(
+        state_of(&conn, &key),
+        "pending",
+        "补齐出来的任务必须落在调用方给的档位（旧实现会落到常量 340 档）"
+    );
+
+    // 同一档位再跑：不得重复创建（旧实现按 340 判缺口 ⇒ 每次都会再创建一遍）。
+    let again =
+        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 5_100, budget(64), low)
+            .unwrap();
+    assert_eq!(again.jobs_created, 0, "同一档位不得重复补齐");
+
+    // 换档位是另一条缺口判定：该资产在默认档确实还没有任务。
+    let other = cover_store::reconcile_missing_covers_for_source_on(
+        &conn,
+        "source",
+        42,
+        5_200,
+        budget(64),
+        "340x480@1",
+    )
+    .unwrap();
+    assert_eq!(other.jobs_created, 1, "换档位后该档的缺口应被独立补齐");
 }
 
 #[test]
@@ -590,7 +642,7 @@ fn replenishment_leaves_live_and_terminal_states_alone() {
     seed_job(&conn, &failed_key, CoverJobState::Failed, 1, "e1", 0);
 
     let report =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 2_000, budget(64)).unwrap();
+        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 2_000, budget(64), "340x480@1").unwrap();
     assert_eq!(report.jobs_created, 0, "existing job rows must never be duplicated");
     assert_eq!(state_of(&conn, &ready_key), "ready");
     assert_eq!(state_of(&conn, &running_key), "running");
@@ -619,13 +671,13 @@ fn replenishment_is_bounded_by_its_budget() {
     }
 
     let report =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 3_000, budget(10)).unwrap();
+        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 3_000, budget(10), "340x480@1").unwrap();
     assert_eq!(report.jobs_created, 10, "one pass must respect max_jobs");
     assert!(report.truncated, "a bounded pass must report that more work remains");
 
     // 后续 pass 继续推进，而不是一次 fan-out 出全部 25 个。
     let next =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 3_100, budget(10)).unwrap();
+        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 3_100, budget(10), "340x480@1").unwrap();
     assert_eq!(next.jobs_created, 10);
     let total: i64 = conn
         .query_row(

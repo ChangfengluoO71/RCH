@@ -102,6 +102,33 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 82 轮审计遗留（2026-09-21，只读审计结论，**均未修**）
+- [ ] **D1a MOBI 接入 `SourceReader` / 合并魔数探测**（收益最大）：`document/mobi.rs:215-230`
+      现在对**每条候选记录各发一次 16 B 远端读**（200–300 次 Range × ~136 ms）⇒ 撞穿封面 30 s
+      预算（`cover_read_budget_exceeded` 281 条）并让打开变慢；zip/epub/pdf 都接了
+      `SourceReader`（256 KiB 预读 + 小窗口合并），**只有 MOBI 裸读**。目标：任意页数下
+      `mobi_open reads ≤20 / bytes ≤16 KB`。
+- [ ] **D1b 探测失败不要整体回退**：`mobi.rs` 里任一次 `read_exact_at(...).ok()?` 失败即放弃惰性
+      ⇒ 回退**整本读入**（76 MB）；只有头部/记录表读不到才应回退。
+- [ ] **G1 减少串行往返（"别的文件也慢"的共同根因）**：每页 7.8–16.1 次 Range、每次 RTT p50
+      88–150 ms；EPUB 会话 906/1265 次是 <512 B 小读（占 62% 耗时）；同一 `offset=0` 被重取
+      108–135 次（`SourceReader` 仅 2 个元数据窗口槽）。改造方向：元数据读合并、钉住/复用头窗口、
+      按条目一次性读。**并行 Range 已被第 81 轮 A/B 否掉（慢 ~8%），不要再提**。
+- [ ] **D4 磁盘已有封面读不出来**：`remote_cover_variant=0` 而 `blob=1061/ref=1061`（1.2 GB）；
+      读图被 durable `state='ready'` 门控（`cover_service.rs:110-148`）。方案：用 ref+blob 重建
+      variant 行，或读路径加只读回退。
+- [ ] **D3 读路径不再回写状态**：`cover_service.rs:159-208` 的 `ready→pending` 对账 + bump + notify
+      发生在**卡片读缓存**路径上 ⇒ 读一次就把自己的文案打回"等待"。应移出读路径或按字节过期节流。
+- [ ] **D6 locked-frame 内不推 notifier**：卡片挂载期的封面加载会在 locked frame 内推
+      `RemoteScanCoordinator._setStatus` 的 ValueNotifier（`errors.log` 136 条 `widget tree was locked`）。
+- [ ] **D7 正文页=单条 5–15 MB 记录不可分片**（阅读侧按屏宽渲染/长条切片，属**画质口径**，需用户拍板；
+      与交接单 C.1 同源）。
+- [ ] **D8 误导性文案**：流式阅读时也会显示「正在下载漫画…首次阅读需下载整本」（夸克分支无条件起
+      进度轮询，非下载时进度函数返回 1.0）⇒ 文案应按真实策略显示。
+- [ ] **观测盲区**：MOBI 路径**零埋点**（PDF 有 `pdf_diag.log`）⇒ 建议补 `mobi_diag.log`
+      （`mobi_open reads/bytes/ms`、`mobi_page index/ms/reads/bytes`），否则 D1 修完无法验收。
+
+
 ### P1 后续改进（2026-09-18 登记）
 
 - [ ] **持久化 115-web / Quark 的远程 raw-cache 身份**（provider 返回的文件名）。

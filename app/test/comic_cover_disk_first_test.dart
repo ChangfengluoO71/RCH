@@ -147,7 +147,7 @@ void main() {
 
       expect(find.byType(RawImage), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.text('未缓存'), findsNothing);
+      expect(find.text('等待扫描'), findsNothing);
       expect(fake.localReads, [assetId]);
       expect(fake.sessionRequests, isEmpty);
     },
@@ -165,7 +165,7 @@ void main() {
       expect(fake.localReads, [assetId]);
       // ...the card degrades to the placeholder instead of throwing...
       expect(find.byType(RawImage), findsNothing);
-      expect(find.text('未缓存'), findsOneWidget);
+      expect(find.text('等待扫描'), findsOneWidget);
       // ...and the disabled switch means no session and no remote work.
       expect(fake.sessionRequests, isEmpty);
     },

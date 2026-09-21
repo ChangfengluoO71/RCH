@@ -1167,12 +1167,18 @@ pub fn reconcile_cover_compensation_for_source_on(
 /// 只补"完全没有对应 cover job 行"的资产。已有 `pending`/`running`/`retry_wait`/`ready`
 /// 一律不动；`failed`/`blocked`/`unsupported` 等终态也不在这里复活 —— 它们只由各自的
 /// 显式原因（见 P1-A 的统一矩阵）解除。`ready` 但字节缺失的情形走 P1-B 已验证的对账路径。
+/// 2026-09-21（用户报告"封面在等待/未缓存之间闪"）修复：**档位不再写死常量**。
+/// 旧实现用 [`DEFAULT_COVER_PROFILE`] 建"缺口"任务，而卡片按用户在设置里选的档位读状态
+/// ⇒ 设置 `low(170x240@1)` 时，每次会话事件都会造 64 条 **340 档**任务（既补不满缺口，
+/// 又凭空 bump revision 让全墙卡片重读 ⇒ 文案抖动），还让 worker 去抓没人看的档位。
+/// 现在档位由**调用方**传入（与 `cover_quality_profile_on` 同一份映射，唯一真相源）。
 pub fn reconcile_missing_covers_for_source_on(
     conn: &Connection,
     source_id: &str,
     session: u64,
     now: i64,
     budget: ReconcileBudget,
+    profile: &str,
 ) -> Result<ReconcileReport> {
     // P1-E/U-α：整批补齐必须发生**同一个**事务里，这样 inner upsert 不自行 bump，
     // revision 由本函数按批次粒度推进一次（N=1 与 N=100 都是 +1）。
@@ -1228,7 +1234,7 @@ pub fn reconcile_missing_covers_for_source_on(
             params![
                 source_id,
                 DEFAULT_SELECTION_REVISION,
-                DEFAULT_COVER_PROFILE,
+                profile,
                 (budget.max_jobs + 1) as i64
             ],
             |row| Ok((row.get(0)?, row.get(1)?)),
@@ -1267,7 +1273,7 @@ pub fn reconcile_missing_covers_for_source_on(
             asset_id,
             content_revision,
             selection_revision: DEFAULT_SELECTION_REVISION.to_string(),
-            profile: DEFAULT_COVER_PROFILE.to_string(),
+            profile: profile.to_string(),
         };
         upsert_job_on(
             scope,

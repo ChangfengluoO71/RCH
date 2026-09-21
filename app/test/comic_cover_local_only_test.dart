@@ -126,7 +126,7 @@ void main() {
   }
 
   bool visible() => find.byType(RawImage).evaluate().isNotEmpty;
-  bool placeholder() => find.text('未缓存').evaluate().isNotEmpty;
+  bool placeholder() => find.text('等待扫描').evaluate().isNotEmpty;
 
   // ---------------------------------------------------------------- D2-1
   testWidgets('D2-1 offline + legacy disk hit => visible, local=1, session=0, provider=0', (

@@ -152,7 +152,7 @@ void main() {
 
       if (entry.key == 'running') {
         expect(hasSpinner(), isTrue, reason: 'running => spinner');
-        expect(find.text('未缓存'), findsNothing);
+        expect(find.text('等待扫描'), findsNothing);
       } else {
         expect(
           hasSpinner(),

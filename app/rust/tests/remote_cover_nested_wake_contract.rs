@@ -219,6 +219,7 @@ fn nw1b_missing_covers_reconcile_batch_wakes_once() {
             max_jobs: 64,
             max_wall_time_ms: 5_000,
         },
+        "340x480@1",
     )
     .unwrap();
 

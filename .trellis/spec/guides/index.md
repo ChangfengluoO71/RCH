@@ -95,3 +95,4 @@ Found a new "didn't think of that" moment? Add it to the relevant guide.
 ---
 
 **Core Principle**: 30 minutes of thinking saves 3 hours of debugging.
+| [Handover & Knowledge Base](./handover-and-knowledge-base.md) | 接手入口、Graphify 用法、本地门禁与交接 checklist |

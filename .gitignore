@@ -46,3 +46,6 @@ Thumbs.db
 remote_state/
 build_artifacts/*
 !build_artifacts/make_app_icon.py
+
+# Graphify 代码知识图谱（派生产物，不入库；见 .trellis/spec 的交接说明）
+graphify-out/

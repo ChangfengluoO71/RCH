@@ -3303,3 +3303,39 @@ D6 locked-frame 推 notifier、D7 单条大记录不可分片（需画质口径�
 "读完流畅=逐页缓存"（`cache/page` 426 MB，17:00 后新增 121 文件），**与整本下载无关**；
 `reader_diag.log`/`mobi_diag.log` 已就位，用户用 18:0x 版本读一本 MOBI 即可给出"stream vs
 fallback-download"的确凿结论。整本下载方案对 76 MB 书 ≈17 s（实测 4.4 MB/s）**反而更慢**。
+
+
+---
+
+## 2026-09-21｜第89轮：MOBI 页表缓存（首开十几秒 → 之后秒开）
+
+**用户当轮**："开工"（指上一轮提出的页面表缓存：干掉 MOBI 首次打开的十几秒）。
+
+**问题回顾**：`open_lazy` 必须逐条探测每条候选记录的 16 B 魔数才能确定页表；
+真机一本漫画 MOBI 有 200–300 条候选 ⇒ 即使 4 并发也要 ~10 s（第85轮已把 ~40 s 压到这里）。
+
+**本轮做法（键 + 自校验 + 原子写）**：
+- **缓存键**：`stable_hash(path|file_len)` → `cache/mobi_table/<hash>.table`（`CacheDir` 新增 `MobiTable`）。
+- **自校验**：文件里存 `digest = sha256(头 78 B ‖ 整张记录表)`；命中要求版本/长度/digest 全等
+  ⇒ **文件被替换或改写（即使长度相同）都会失效**；另有"区间非空/单调递增/落在文件内"的防御校验。
+- **时机**：先读头 + 记录表（本来就要读）→ 试缓存 → 命中则**零探测**返回页表；未命中才并发探测，
+  成功后 best-effort 写盘（先写 `.tmp` 再 `rename`，避免半个文件被当成有效缓存）。
+- **封面入口不写缓存**：`cover_only` 只探到第一张，缓存它会把页表截断（代码里有注释）。
+- **诊断**：`mobi_diag.log` 的 `mobi_open` 行新增 `mode=lazy-cached` 与 `cache=hit|miss`。
+
+**验证（单测实测读数）**：40 条记录 × 每条隔 512 KB 的夹具 ——
+`PAGE-TABLE-CACHE reads: first=45 second=5 pages=40`
+⇒ **第二次打开 45 → 5 次远端读（≈9 倍）**，页数与第 0 页内容与首次一致；
+按真机 ~136 ms/次估算：300 页的书 **~41 s → ~0.7 s**。
+两条回归：`page_table_cache_makes_the_second_open_probe_free`、
+`page_table_cache_is_invalidated_when_the_record_table_changes`（篡改记录表一个字节必须失效）。
+
+**测试隔离（重要）**：页表缓存让"每次打开都探测"的旧假设失效（旧的并发测试当场挂掉），
+且用默认缓存根会**往用户真实缓存目录写表文件** ⇒ 给 mobi 测试模块的**每个**用例分配独立
+临时缓存根（RAII 守卫，panic 也会还原）。
+
+**门禁**：Rust 全量（`--no-fail-fast`）**24 套件 / 538 passed / 0 failed**（+2 条缓存回归）。
+
+**交付物**：桌面 Release 重建（`rust_lib_app.dll` 18,919,936 B / 18:13）并重启（PID 15952）；
+安卓包重建（116.2 MB / 18:15:46）复制到 `C:/Users/cfl/Downloads/RCH-0.5.8+100508-20260921.apk`
+—— 手机仍未插（`adb` 无设备），插上即可 `adb install -r`。

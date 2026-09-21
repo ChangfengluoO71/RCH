@@ -2,7 +2,7 @@
 //!
 //! # 为什么要改
 //!
-//! P0-A 实测（`docs/reports/p0/2026-09-17-p0a-baseline.md`）：
+//! P0-A 实测（`../../../../.trellis/tasks/09-14-remote-cover-cleanup/research/p0/2026-09-17-p0a-baseline.md`）：
 //!
 //! - 9 次 Range 读，服务端到达时刻被精确摊成
 //!   `[0, 249, 500, 750, 1000, 1250, 1501, 1751, 2001] ms`；`wall_ms = 2259` 里

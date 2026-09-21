@@ -1,6 +1,6 @@
 # 统一云端清单与增量扫描契约：执行计划
 
-**Canonical plan:** `docs/superpowers/plans/2026-09-14-remote-cloud-scan.md` Task 1。
+**Canonical plan:** `../09-14-remote-cloud-scan/research/2026-09-14-remote-cloud-scan.md` Task 1。
 
 - [ ] 在 `app/rust/src/remote_scan/model.rs` 先写 `RemoteAssetKind`、指纹、自然排序和图片扩展测试。
 - [ ] 在 `app/rust/src/remote_scan/adapter.rs` 写 fake adapter contract，覆盖分页 cursor、metadata 缺失和结构化错误。

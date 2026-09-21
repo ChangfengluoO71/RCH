@@ -1,6 +1,6 @@
 # 云端扫描界面与跨 provider 验证：执行计划
 
-**Canonical plan:** `docs/superpowers/plans/2026-09-14-remote-cloud-scan.md` Tasks 5–6。
+**Canonical plan:** `../09-14-remote-cloud-scan/research/2026-09-14-remote-cloud-scan.md` Tasks 5–6。
 
 - [ ] 先写设置迁移、首次触发一次、后续增量、重扫模式和重复点击合并测试。
 - [ ] 在 `home_page.dart` 增加默认开启且可持久化的 `remoteBackgroundScanEnabled`，保留远程封面总开关语义。

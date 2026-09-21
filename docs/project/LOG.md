@@ -3669,3 +3669,30 @@ CI `release.yml` 构建 Windows 安装包 + 分 ABI 的 3 个 APK 并发布 Rele
 
 **教训（与第 97 轮并列）**：**用脚本改 YAML/CI 配置时，反斜杠路径必须用 raw 字符串或双反斜杠**；
 改完 workflow 必须本地 `yaml.safe_load` 校验一次 —— 否则 GitHub 只会"静默不跑"。
+
+
+---
+
+## 2026-09-21｜第99轮：文档整理批 2 —— 零散文档按任务归位（Trellis research/）+ 引用修复
+
+**执行内容**（方案见 `docs/reports/doc-consolidation-into-trellis-plan-2026-09-21.md`）：
+- `docs/superpowers/{plans,specs}/*`（8 份）→ 对应任务 `research/`：
+  cloud-scan 计划+设计 → `09-14-remote-cloud-scan/research/`；
+  封面/读取速度两份 → `09-14-remote-cover-cleanup/research/`；M8 四份 → `08-08-m8-smart-scraping/research/`。
+- `docs/reports/{p0,p1,rg-b}/*`（24 份）+ 根目录 3 份主题报告 → 按主题并入
+  `09-14-remote-cover-cleanup/research/{p0,p1,rg-b}/` 与 `09-14-remote-cloud-scan/research/`（`git mv` 保留历史）。
+- **保留原位**：`docs/reports/rch-v057-*.md`（发布证据）、`catalog-*.json`（原始数据，批 3 议题）、
+  本方案文档。
+- **旧位置留跳转说明**：`docs/reports/README.md`、`docs/superpowers/README.md`（写明新旧路径对照与理由）。
+- **引用修复**：16 个文件（13 份任务文档 + `docs/project/TODO.md` + 两处 **Rust 代码注释**
+  `document/zip.rs`、`source/gate.rs`），链接按**各自文件所在目录**重算相对路径。
+- **不改 `docs/project/LOG.md` 的历史路径**：遵守 CLAUDE.md 的 append-only 约定；
+  因此靠上面的跳转说明保证可追溯。
+
+**遗留说明（诚实记录）**：被移动的**证据文档内部**仍有"当时 git status 里写着 docs/reports/p0/"这类
+**历史叙述**（如 `2026-09-17-p0bcd-gate-and-download-url.md`），它们是历史记录、不是链接，
+**不修改**（改了反而篡改证据）。
+
+**踩坑（本轮我自己犯的）**：脚本里 `subprocess(cwd='/d/Projects/RCH-p1')` 用了 Git-Bash 路径
+⇒ `WinError 267` ⇒ 第一次执行**零移动**且脚本中断。教训：Windows 上给 Python 的路径必须用
+`D:/...`（这条早已在本项目踩坑清单里，仍复发了）。

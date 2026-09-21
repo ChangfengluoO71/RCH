@@ -107,4 +107,4 @@
 
 ## Notes
 
-本 PRD 只描述产品需求、约束和验收。技术边界、数据流和回滚方案见 `design.md` 及 `docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md`；执行顺序待 spec 审阅后由 `implement.md` 固化。
+本 PRD 只描述产品需求、约束和验收。技术边界、数据流和回滚方案见 `design.md` 及 `research/2026-09-14-remote-cloud-scan-design.md`；执行顺序待 spec 审阅后由 `implement.md` 固化。

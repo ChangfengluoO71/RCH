@@ -1,6 +1,6 @@
 # 远程图片文件夹阅读器：执行计划
 
-**Canonical plan:** `docs/superpowers/plans/2026-09-14-remote-cloud-scan.md` Task 3。
+**Canonical plan:** `../09-14-remote-cloud-scan/research/2026-09-14-remote-cloud-scan.md` Task 3。
 
 - [ ] 为 `RemoteFolderBook` 写页数、自然排序、隐藏过滤、越界、取消和单页大小上限测试。
 - [ ] 在 `document/remote_folder.rs` 实现按页 adapter 读取；Range/随机读取优先，非 Range 只允许受限单图片响应。

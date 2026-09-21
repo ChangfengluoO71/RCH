@@ -1,6 +1,6 @@
 # 全云端远程扫描与封面索引：执行计划
 
-规范化实现计划位于 [`docs/superpowers/plans/2026-09-14-remote-cloud-scan.md`](../../../docs/superpowers/plans/2026-09-14-remote-cloud-scan.md)。本文件是 Trellis 父任务的执行索引，执行者必须同时阅读该计划和设计 spec。
+规范化实现计划位于 [`research/2026-09-14-remote-cloud-scan.md`](../../../research/2026-09-14-remote-cloud-scan.md)。本文件是 Trellis 父任务的执行索引，执行者必须同时阅读该计划和设计 spec。
 
 ## 执行顺序
 

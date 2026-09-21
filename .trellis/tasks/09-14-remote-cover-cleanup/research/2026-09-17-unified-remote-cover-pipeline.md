@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust、rusqlite/SQLite、现有同步 provider I/O 与 tokio blocking worker、flutter_rust_bridge 2.12.0、Flutter/Dart。
 
-**Spec:** `docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md`；本计划第 1 节列出对旧设计的明确修订；证据见 `.trellis/tasks/09-14-remote-scan-ui-verify/research/2026-09-17-cover-pipeline-review.md`。
+**Spec:** `../../09-14-remote-cloud-scan/research/2026-09-14-remote-cloud-scan-design.md`；本计划第 1 节列出对旧设计的明确修订；证据见 `.trellis/tasks/09-14-remote-scan-ui-verify/research/2026-09-17-cover-pipeline-review.md`。
 
 ## 1. 全局约束与设计修订
 

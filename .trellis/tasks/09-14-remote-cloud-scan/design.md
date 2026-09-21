@@ -1,6 +1,6 @@
 # 全云端远程扫描与封面索引：技术设计
 
-> 本文是 Trellis 任务 `09-14-remote-cloud-scan` 的技术设计摘要。完整、可审阅的设计规范位于 [`docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md`](../../../docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md)。
+> 本文是 Trellis 任务 `09-14-remote-cloud-scan` 的技术设计摘要。完整、可审阅的设计规范位于 [`research/2026-09-14-remote-cloud-scan-design.md`](../../../research/2026-09-14-remote-cloud-scan-design.md)。
 
 ## 1. 目标与边界
 

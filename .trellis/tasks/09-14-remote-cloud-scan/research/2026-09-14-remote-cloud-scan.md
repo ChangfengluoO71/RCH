@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust、rusqlite、Tokio `spawn_blocking`、Flutter/Dart、Flutter Rust Bridge、现有 WebDAV/SFTP/Baidu/115/Quark clients、现有 Reader/page/cover caches。
 
-**Spec:** `docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md`
+**Spec:** `2026-09-14-remote-cloud-scan-design.md`
 
 ## Global Constraints
 
@@ -297,7 +297,7 @@
 **Files:**
 
 - Modify generated bindings through `app/codegen.ps1` only.
-- Create: `app/rust/tests/remote_scan_contract.rs`, `docs/reports/rch-remote-cloud-scan-2026-09-14.md`
+- Create: `app/rust/tests/remote_scan_contract.rs`, `rch-remote-cloud-scan-2026-09-14.md`
 - Modify: `.trellis/spec/backend/remote-cover-update-contracts.md`, `.trellis/spec/backend/source-refresh-cleanup.md`, historical-task note in `08-02-cover-loading-perf` only by adding a superseding reference (do not rewrite history).
 
 **Interfaces:**

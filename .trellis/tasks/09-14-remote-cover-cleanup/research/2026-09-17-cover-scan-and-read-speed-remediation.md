@@ -1,7 +1,7 @@
 # 云端封面扫描与流式阅读提速 — 完整解决方案（待审阅）
 
 > **日期**：2026-09-17（接手轮）。**范围**：代码勘察、外部资料调研、方案设计。**本轮未修改任何生产代码**，所有结论均可回溯到第 8 节的「文件:行」证据。
-> **承接**：`docs/superpowers/specs/2026-09-14-remote-cloud-scan-design.md`、`docs/superpowers/plans/2026-09-17-unified-remote-cover-pipeline.md`。
+> **承接**：`../../09-14-remote-cloud-scan/research/2026-09-14-remote-cloud-scan-design.md`、`2026-09-17-unified-remote-cover-pipeline.md`。
 > **修正**：`.trellis/tasks/09-14-remote-scan-ui-verify/research/2026-09-17-cover-pipeline-review.md` 中有三条结论已被后续提交修掉或定位有偏，第 1 节先纠正，避免重复劳动。
 > **状态**：本文件为方案，尚未实施；复选框是审阅通过后的执行检查点。
 
@@ -23,7 +23,7 @@
 
 | 既往结论 | 本轮复核结果 | 证据 |
 |---|---|---|
-| "压缩包打开时逐页探测" | **并未修复**（本节原判为"已修"，P0-A 实测推翻）。`ZipBook::open` 确实改用了 `zip.name_for_index(i)`，注释也宣称为此改的；但项目自带测试 `opening_many_pages_does_not_fetch_every_local_header`（`document/zip.rs:190`）实测：**打开 40 页要 81 次 Range（≈2 次/页，线性于页数）**，断言 `<= 8` 直接失败。已在 P0-A 用 A/B 证明与新增埋点无关（摘掉埋点后同样 81）。 | `document/zip.rs:42-66`、`document/zip.rs:190`、`docs/reports/p0/2026-09-17-p0a-baseline.md` |
+| "压缩包打开时逐页探测" | **并未修复**（本节原判为"已修"，P0-A 实测推翻）。`ZipBook::open` 确实改用了 `zip.name_for_index(i)`，注释也宣称为此改的；但项目自带测试 `opening_many_pages_does_not_fetch_every_local_header`（`document/zip.rs:190`）实测：**打开 40 页要 81 次 Range（≈2 次/页，线性于页数）**，断言 `<= 8` 直接失败。已在 P0-A 用 A/B 证明与新增埋点无关（摘掉埋点后同样 81）。 | `document/zip.rs:42-66`、`document/zip.rs:190`、`p0/2026-09-17-p0a-baseline.md` |
 | — | **但 CB7/CBT/CBR 是"整包读入内存再解压"**：远程漫画打开 = **整本下载**，且发生在封面路径的 `open_document` 内。这才是压缩包侧真正的缺口。 | `document/sevenz.rs:18-28`、`document/tar.rs:18-24`、`document/rar.rs:20-31` |
 | "磁盘页缓存也要排网络队列" | **阅读页已修**：`load_claimed` 先 `disk_get`，命中直接返回，之后才取 governor 许可；并有专门测试 `disk_hit_does_not_wait_for_network_permits`。 | `reader.rs:317-325`、`reader.rs:496` |
 | — | **但封面磁盘缓存被"网络总开关"挡住**：`_maybeLoad` 在查磁盘之前就 `return`，所以关掉联网开关时，**磁盘上已有的封面也显示不出来**（显示"未缓存"）。这才是残留缺口，且它在 Dart 层而非 Rust 层。 | `comic_cover.dart:456`、`comic_cover.dart:700-731` |

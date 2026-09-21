@@ -179,7 +179,7 @@ impl<S: ByteSource> Document for ZipBook<S> {
 // 封面快通道：最小 ZIP 读取器（第 62 轮）
 // ============================================================
 //
-// 为什么需要（调研：`docs/reports/rg-b/2026-09-19-zip-cover-open-research.md`）：
+// 为什么需要（调研：`../../../../.trellis/tasks/09-14-remote-cover-cleanup/research/rg-b/2026-09-19-zip-cover-open-research.md`）：
 // `zip::ZipArchive::new` 会对**每个条目**额外读一次 30B local header 做校验
 // （`zip-2.4.2/src/read.rs:1259` -> `read.rs:362-378`），打开成本 ~ O(条目数)；
 // 实测 115 上一本 2.08GB 的 CBZ：367 次读散布在 0 -> 2.24GB、单次平均 1.5KB，

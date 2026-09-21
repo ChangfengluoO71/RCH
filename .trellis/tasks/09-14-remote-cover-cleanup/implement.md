@@ -1,6 +1,6 @@
 # 封面依赖与失效缓存清理：执行计划
 
-**Canonical plan:** `docs/superpowers/plans/2026-09-14-remote-cloud-scan.md` Task 4。
+**Canonical plan:** `../09-14-remote-cloud-scan/research/2026-09-14-remote-cloud-scan.md` Task 4。
 
 - [ ] 先写完整/部分/失败列表与缓存依赖测试，固定 tombstone proof 条件。
 - [ ] 在 `remote_scan/persistence.rs` 让 tombstone API 接受 complete listing、有效 session 和 generation 校验。

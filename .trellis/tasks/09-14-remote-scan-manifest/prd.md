@@ -24,4 +24,4 @@
 
 ## Notes
 
-实现细节和文件边界见父任务 `docs/superpowers/plans/2026-09-14-remote-cloud-scan.md` Task 1；本子任务不启动后台 worker、不改 UI。
+实现细节和文件边界见父任务 `../09-14-remote-cloud-scan/research/2026-09-14-remote-cloud-scan.md` Task 1；本子任务不启动后台 worker、不改 UI。

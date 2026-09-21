@@ -1317,6 +1317,25 @@ fn cover_fetch_enabled_from_conn(conn: &rusqlite::Connection) -> bool {
 /// 预算让这类病态归档**快速失败并给出具体码**（`cover_read_budget_exceeded`），
 /// 而不是拖着整条队列。
 const COVER_READ_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
+
+/// **故意整本读**的绝对上限（2026-09-21 用户决策："取消拒绝"）。
+///
+/// 背景：`COVER_READ_BUDGET_BYTES` 的字节上限会**误伤一次性整本读** ——
+/// 真机 82.6 MB 的 MOBI 惰性打开被拒后回退整本读，一次请求 82.6 MB 直接被拒，
+/// 封面永远 `cover_read_budget_exceeded`。
+/// 现在：`offset == 0 && 一次要完整个文件` 视为**故意整本读**，豁免字节预算；
+/// 病态扫描（尾部 EOCD 那类）的特征是**很多次小读**，仍由
+/// [`COVER_READ_BUDGET_READS`] 与 [`COVER_READ_BUDGET_MS`] 两条继续兜住。
+/// 整本读自身仍受这条 512 MiB 绝对上限约束（与 PDF 的 `COVER_PDF_MAX_BYTES` 同口径）。
+const COVER_WHOLE_FILE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// 这次远端读是否属于"**故意整本读**"（`offset == 0` 且一次要完整个文件、且未超绝对上限）。
+///
+/// 抽成纯函数是为了可测：超上限的情形需要 512 MiB 的真实缓冲区才能端到端构造，
+/// 这里直接用合成数字断言边界。
+fn is_deliberate_whole_file(offset: u64, requested: usize, length: u64) -> bool {
+    offset == 0 && requested as u64 >= length && length <= COVER_WHOLE_FILE_MAX_BYTES
+}
 /// 单次封面抓取的**远端读取次数**上限。
 /// 为什么字节预算不够：实测这些读是 **16KB 级**，115 CDN 单次往返 ~243ms，
 /// 24MB 预算要 1500+ 次 ⇒ 仍是 6 分钟。次数上限才能界定时延。
@@ -1401,7 +1420,20 @@ impl ByteSource for AdapterByteSource {
             .read_calls
             .load(std::sync::atomic::Ordering::Relaxed);
         let elapsed_ms = self.started_at.elapsed().as_millis();
-        if used.saturating_add(requested as u64) > self.read_budget
+        // 2026-09-21（用户决策"取消拒绝"，依赖既有的整本缓存清理机制）：
+        // **故意整本读**（offset 0 且一次就要完整个文件）不再受 64 MiB 字节预算约束。
+        // 只豁免"字节"这一条：次数(384)与时间(30s)两条照旧，所以"尾部 EOCD 扫描"
+        // 这类**很多次小读**的病态访问仍会被挡住（见 `adapter_byte_source_stops_at_the_read_budget`）。
+        let deliberate_whole_file = is_deliberate_whole_file(offset, requested, self.length);
+        if deliberate_whole_file {
+            crate::remote_scan::diag::note(&format!(
+                "cover_whole_file_read bytes={} budget={} calls={calls} asset={}",
+                self.length,
+                self.read_budget,
+                crate::remote_scan::diag::safe_asset_label(&self.path)
+            ));
+        }
+        if (used.saturating_add(requested as u64) > self.read_budget && !deliberate_whole_file)
             || calls >= COVER_READ_BUDGET_READS
             || elapsed_ms > COVER_READ_BUDGET_MS
         {
@@ -3783,6 +3815,97 @@ mod tests {
         // 映射到具体失败码（而不是笼统的打开失败）
         let mapped = cover_open_reason(&anyhow::anyhow!("{error}"));
         assert_eq!(error_code(&mapped), COVER_REASON_READ_BUDGET);
+    }
+
+    /// 2026-09-21（用户决策"取消拒绝"）：**故意整本读**必须放行 ——
+    /// 真机 82.6 MB 的 MOBI 惰性打开被拒后回退整本读，一次请求就该拿到全部字节，
+    /// 而不是被 64 MiB 字节预算拒成 `cover_read_budget_exceeded`。
+    /// 同时锁死绝对上限：超过 [`COVER_WHOLE_FILE_MAX_BYTES`] 的整本读仍要拒绝。
+    #[test]
+    fn deliberate_whole_file_read_bypasses_byte_budget_up_to_the_absolute_cap() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct FillingAdapter {
+            calls: AtomicU64,
+        }
+        impl RemoteProviderAdapter for FillingAdapter {
+            fn list(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<
+                (Vec<crate::remote_scan::model::RemoteEntry>, Option<String>),
+                RemoteScanError,
+            > {
+                Err(RemoteScanError::Unsupported)
+            }
+            fn read_range(
+                &self,
+                _path: &str,
+                _offset: u64,
+                length: u64,
+            ) -> Result<Vec<u8>, RemoteScanError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![7u8; length as usize])
+            }
+            fn read_file_limited(&self, _: &str, _: u64) -> Result<Vec<u8>, RemoteScanError> {
+                panic!("封面路径不得走 read_file_limited")
+            }
+            fn normalize_path(&self, path: &str) -> String {
+                normalize_path(path)
+            }
+            fn capabilities(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<crate::remote_scan::adapter::RemoteCapabilities, RemoteScanError> {
+                Err(RemoteScanError::Unsupported)
+            }
+        }
+
+        let budget = 64 * 1024; // 远小于文件长度
+        let adapter = Arc::new(FillingAdapter {
+            calls: AtomicU64::new(0),
+        });
+        let file_len = 8 * 1024 * 1024; // 8 MiB > budget，但 < 绝对上限
+        let source = AdapterByteSource::with_budget(
+            adapter.clone(),
+            "/big.mobi".into(),
+            file_len,
+            budget,
+        );
+        let mut whole = vec![0u8; file_len as usize];
+        let read = source
+            .read_at(0, &mut whole)
+            .expect("故意整本读不得被字节预算拒绝");
+        assert_eq!(read as u64, file_len, "整本读必须一次拿到全部字节");
+        assert_eq!(whole[0], 7);
+        assert_eq!(whole[whole.len() - 1], 7);
+        assert_eq!(
+            adapter.calls.load(Ordering::SeqCst),
+            1,
+            "整本读应是一次远端读"
+        );
+
+        // 绝对上限之外：不算"故意整本读" ⇒ 字节预算照旧生效（避免"取消拒绝"变成无上限）。
+        let oversized = COVER_WHOLE_FILE_MAX_BYTES + 1;
+        assert!(
+            !is_deliberate_whole_file(0, oversized as usize, oversized),
+            "超过绝对上限的整本读不得豁免字节预算"
+        );
+        // 边界：恰好等于上限要豁免，超过一字节就不豁免。
+        assert!(is_deliberate_whole_file(
+            0,
+            COVER_WHOLE_FILE_MAX_BYTES as usize,
+            COVER_WHOLE_FILE_MAX_BYTES
+        ));
+        // 非整本读（只要一部分）永不豁免 —— 这条正是"病态扫描"的形态。
+        assert!(!is_deliberate_whole_file(0, 16 * 1024, 512 * 1024 * 1024));
+        assert!(!is_deliberate_whole_file(
+            1024,
+            8 * 1024 * 1024,
+            8 * 1024 * 1024
+        ));
     }
 
     /// 超过硬上限的单图必须"不读一个字节"就给具体原因，绝不整包下载。

@@ -67,6 +67,11 @@ pub(crate) fn register_book(book: Box<dyn document::Document>, cache_ns: &str) -
             reader: Arc::clone(&reader),
         },
     );
+    // 2026-09-21（用户要求拓展"整本缓存清理机制"）：每次成功打开书本时做一次
+    // **容量上限兜底**（`cache/raw` 此前只有"读完自动删整包"与手动清空两条路，
+    // 关掉设置或下完没打开就会无限累积）。清理是 best-effort：失败不影响打开。
+    // 只在真的超限时才删除，且始终保留最新的那个包。
+    let _ = crate::cache::enforce_raw_cache_limit(crate::cache::RAW_CACHE_LIMIT_BYTES);
     info
 }
 

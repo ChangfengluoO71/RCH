@@ -514,6 +514,88 @@ pub fn clear_page_cache() -> Result<u64> {
     }
 }
 
+/// `cache/raw`（整本下载包）的容量上限。
+///
+/// 2026-09-21（用户要求"把整本缓存清理机制拓展一下"）：raw 目录此前**只有**两条清理路径 ——
+/// ①Dart 侧设置「阅读完成后自动删除整包」（关闭书本时删）；②缓存管理页手动"清空整本下载缓存"。
+/// 若该设置被关掉、或包是为别的原因下载的（例如只为封面回退而下载一次就再没打开），
+/// 包会**无限累积**。这里补一条兜底：超过上限就按修改时间**从旧到新**整包删除，
+/// 直到降到上限以下（始终保留最新的那个包，避免刚下完就被自己删掉）。
+pub const RAW_CACHE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// 包内最新的修改时间（递归）。目录自身的 mtime 在 Windows 上不可靠，
+/// 所以用"包里最新那个文件"代表这个包最后一次被动过。
+fn newest_mtime(path: &Path) -> std::time::SystemTime {
+    let mut newest = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .unwrap_or(std::time::UNIX_EPOCH);
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let child = entry.path();
+            let candidate = if child.is_dir() {
+                newest_mtime(&child)
+            } else {
+                entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH)
+            };
+            if candidate > newest {
+                newest = candidate;
+            }
+        }
+    }
+    newest
+}
+
+/// 按容量上限清理 `cache/raw`，返回释放的字节数（best-effort，绝不因清理失败而报错）。
+pub fn enforce_raw_cache_limit(limit: u64) -> Result<u64> {
+    let dir = CacheDir::Raw.path();
+    if !dir.exists() {
+        return Ok(0);
+    }
+    // 一个包 = raw/ 下的一个子目录（也可能有零散文件，按同样规则一并计入）。
+    let mut packages: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(&dir)?.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else { continue };
+        let size = if meta.is_dir() {
+            dir_size(&path)
+        } else {
+            meta.len()
+        };
+        let modified = newest_mtime(&path);
+        total = total.saturating_add(size);
+        packages.push((modified, size, path));
+    }
+    if total <= limit {
+        return Ok(0);
+    }
+    // 最旧优先；**至少保留一个**（最新的），避免"刚下载完就被清理"。
+    packages.sort_by_key(|(modified, _, _)| *modified);
+    let mut freed = 0u64;
+    while total > limit && packages.len() > 1 {
+        let (_, size, path) = packages.remove(0);
+        let removed = if path.is_dir() {
+            let inner = remove_dir_contents(&path).unwrap_or(0);
+            let _ = std::fs::remove_dir_all(&path);
+            inner
+        } else {
+            let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(&path).is_ok() {
+                len
+            } else {
+                0
+            }
+        };
+        let removed = if removed == 0 { size } else { removed };
+        total = total.saturating_sub(removed);
+        freed = freed.saturating_add(removed);
+    }
+    Ok(freed)
+}
+
 /// 清空原始文件缓存（raw/）。
 pub fn clear_raw_cache() -> Result<u64> {
     let dir = CacheDir::Raw.path();
@@ -1153,6 +1235,71 @@ mod rg_a_atomic_cache_file_tests {
             part_files(&dir).is_empty(),
             "commit must leave no temp file behind"
         );
+    }
+
+    /// 2026-09-21（用户要求拓展"整本缓存清理机制"）：`cache/raw` 超限时必须
+    /// **最旧优先**整包删除，且**始终保留最新的那个包**（避免刚下完就被自己删掉）。
+    #[test]
+    fn raw_cache_limit_evicts_oldest_packages_and_keeps_the_newest() {
+        use super::{
+            enforce_raw_cache_limit, set_custom_cache_root, CacheDir, RAW_CACHE_LIMIT_BYTES,
+        };
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        struct RootGuard;
+        impl Drop for RootGuard {
+            fn drop(&mut self) {
+                set_custom_cache_root("");
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "rch_raw_limit_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        set_custom_cache_root(root.to_str().unwrap());
+        let _guard = RootGuard;
+
+        let raw = CacheDir::Raw.path();
+        std::fs::create_dir_all(&raw).unwrap();
+        // 三个 1 MiB 的包，文件 mtime 依次递增（old < mid < new）。
+        let base = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        for (index, name) in ["old", "mid", "new"].iter().enumerate() {
+            let dir = raw.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let file = dir.join("book.bin");
+            std::fs::write(&file, vec![0u8; 1024 * 1024]).unwrap();
+            let stamp = base + Duration::from_secs(index as u64 * 60);
+            std::fs::File::options()
+                .write(true)
+                .open(&file)
+                .unwrap()
+                .set_modified(stamp)
+                .unwrap();
+        }
+
+        // 未超限：不动任何东西。
+        assert_eq!(enforce_raw_cache_limit(RAW_CACHE_LIMIT_BYTES).unwrap(), 0);
+        assert!(raw.join("old").exists());
+
+        // 上限 2.5 MiB（三个包共 3 MiB）⇒ 必须删掉最旧的 old，保留 mid/new。
+        let freed = enforce_raw_cache_limit(1024 * 1024 * 5 / 2).unwrap();
+        assert!(freed >= 1024 * 1024, "应释放约 1 MiB，实际 {freed}");
+        assert!(!raw.join("old").exists(), "最旧的包必须先被删");
+        assert!(raw.join("mid").exists() && raw.join("new").exists());
+
+        // 上限极小：仍**至少保留一个**（最新的），绝不把 raw 清空。
+        let _ = enforce_raw_cache_limit(1).unwrap();
+        assert!(
+            raw.join("new").exists(),
+            "无论上限多小，都必须保留最新的那个包"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 失败/提前 Drop ⇒ 目标不存在且临时文件被清理（不留半文件）。

@@ -189,34 +189,59 @@ fn open_lazy(
     cover_only: bool,
 ) -> Option<(LazyMobi, String)> {
     let file_len = src.len();
+    // 诊断（2026-09-21 真机取证）：惰性打开被拒时**必须留下原因**。
+    // 现场：82.6 MB 的 MOBI 走了 `mode=full-fallback`（整本读 82.6 MB）⇒ 直接撞封面 64 MiB
+    // 读预算 ⇒ `cover_read_budget_exceeded`；但"为什么拒绝惰性路径"当时完全不可见。
+    let decline = |reason: &str| -> Option<(LazyMobi, String)> {
+        diag(&format!("mobi_lazy_declined reason={reason} name={stem}"));
+        None
+    };
     if file_len < PALMDB_HEADER_LEN + PALMDB_RECORD_INFO_LEN {
-        return None;
+        return decline("too_small");
     }
 
     // ① PalmDB 头：记录数在偏移 76（u16 BE）。
     let mut header = [0u8; PALMDB_HEADER_LEN as usize];
-    src.read_exact_at(0, &mut header).ok()?;
+    if src.read_exact_at(0, &mut header).is_err() {
+        return decline("header_read");
+    }
     let record_count = u16::from_be_bytes([header[76], header[77]]) as u64;
     if record_count == 0 {
-        return None;
+        return decline("record_count_zero");
     }
 
     // ② 记录表：每条 8 字节，前 4 字节为该记录在文件中的偏移（BE）。
     let table_len = record_count.checked_mul(PALMDB_RECORD_INFO_LEN)?;
-    if PALMDB_HEADER_LEN.checked_add(table_len)? > file_len {
-        return None;
+    let Some(table_limit) = PALMDB_HEADER_LEN.checked_add(table_len) else {
+        return decline("record_table_overflow");
+    };
+    if table_limit > file_len {
+        return decline("record_table_overflow");
     }
     let mut table = vec![0u8; table_len as usize];
-    src.read_exact_at(PALMDB_HEADER_LEN, &mut table).ok()?;
+    if src.read_exact_at(PALMDB_HEADER_LEN, &mut table).is_err() {
+        return decline("record_table_read");
+    }
     let mut offsets = Vec::with_capacity(record_count as usize);
+    let mut clamped_offsets = 0usize;
     for i in 0..record_count as usize {
         let at = i * PALMDB_RECORD_INFO_LEN as usize;
         let offset =
             u32::from_be_bytes([table[at], table[at + 1], table[at + 2], table[at + 3]]) as u64;
+        // **不弃权**：偏移 ≥ 文件长度是合法写法（0 长度的收尾/EOF 记录）。
+        // 早期实现直接 `return None` ⇒ 真机 82.6 MB 的书整条惰性路径被废、退回整本读。
+        // 这里按"零长度记录"处理（夹到文件尾，后面的区间计算自然得到空区间并跳过）。
         if offset >= file_len {
-            return None;
+            clamped_offsets += 1;
+            offsets.push(file_len);
+        } else {
+            offsets.push(offset);
         }
-        offsets.push(offset);
+    }
+    if clamped_offsets > 0 {
+        diag(&format!(
+            "mobi_lazy_clamped_offsets count={clamped_offsets} name={stem}"
+        ));
     }
 
     // ③ MOBI 头的两个候选起点（第 81 轮真机修因）：
@@ -249,8 +274,12 @@ fn open_lazy(
             break;
         }
     }
-    let base = base?;
-    let probe = probe_holder?;
+    let Some(base) = base else {
+        return decline("no_mobi_magic");
+    };
+    let Some(probe) = probe_holder else {
+        return decline("no_mobi_magic");
+    };
     let record0_start = base;
     let first_image_index = u32::from_be_bytes([
         probe[RECORD0_FIRST_IMAGE_INDEX as usize],
@@ -260,7 +289,7 @@ fn open_lazy(
     ]) as u64;
     // 第一张图片必须是 record 0 之后的合法记录号，否则说明布局不是我们解析的那一种。
     if first_image_index == 0 || first_image_index >= record_count {
-        return None;
+        return decline("first_image_index");
     }
 
     // ④ 逐条区间：offset[i+1] - offset[i]，最后一条到文件尾。
@@ -319,19 +348,33 @@ fn open_lazy(
     //    仍是"从 first_image_index 起、可解码的图片记录"。
     // 候选区间（含每条记录的 `(offset, len)`）；任一条长度非法 ⇒ 与旧实现一致地整体弃权。
     let mut candidates: Vec<(u64, u64)> = Vec::new();
+    let mut skipped_ranges = 0usize;
     for i in first_image_index as usize..record_count as usize {
-        let Some(range) = range_of(i) else {
-            return None;
-        };
-        candidates.push(range);
+        match range_of(i) {
+            Some(range) => candidates.push(range),
+            // **不弃权**：零长度/逆序区间是合法存在的（填充、EOF、被裁剪过的写入器）。
+            // 一条坏记录不该废掉整条惰性路径（真机 82.6 MB 的书正是这样退回整本读的）。
+            None => skipped_ranges += 1,
+        }
+    }
+    if skipped_ranges > 0 {
+        diag(&format!(
+            "mobi_lazy_skipped_ranges count={skipped_ranges} name={stem}"
+        ));
     }
 
     let decodable = if cover_only {
         // 封面只读第一张图：串行探测到第一张可解码图片就停（通常 1–3 次读）。
-        serial_probe_until_first_image(&src, &candidates)?
+        match serial_probe_until_first_image(&src, &candidates) {
+            Some(decodable) => decodable,
+            None => return decline("probe_failed"),
+        }
     } else {
         // 完整打开：并发探测（见 `MAGIC_PROBE_WORKERS`）。
-        concurrent_probe(&src, &candidates)?
+        match concurrent_probe(&src, &candidates) {
+            Some(decodable) => decodable,
+            None => return decline("probe_failed"),
+        }
     };
     let mut records: Vec<(u64, u64)> = Vec::new();
     for (index, (offset, len)) in candidates.iter().enumerate() {
@@ -340,7 +383,7 @@ fn open_lazy(
         }
     }
     if records.is_empty() {
-        return None;
+        return decline("no_decodable_image");
     }
     if !cover_only {
         // 只缓存**完整**页表：封面入口只探到第一张，缓存它会把页表截断。
@@ -894,6 +937,57 @@ mod tests {
             second_src.total_calls()
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 2026-09-21（真机取证）：记录表里的**零长度 / 越界偏移**是合法写法
+    /// （填充、EOF 收尾、被裁剪过的写入器），**不得**因此废掉整条惰性路径。
+    ///
+    /// 现场：82.6 MB 的 MOBI 惰性被拒 ⇒ 退回整本读 82.6 MB ⇒ 一次请求就撞封面 64 MiB
+    /// 读预算 ⇒ `cover_read_budget_exceeded`（`mobi_diag.log` 里能看到
+    /// `mode=full-fallback size=82609433`）。本用例锁死"坏记录只跳过、不弃权"。
+    #[test]
+    fn lazy_open_tolerates_zero_length_and_out_of_range_records() {
+        let (_root, _guard) = use_temp_cache_root("lenient");
+        let table = PALMDB_HEADER_LEN as usize;
+
+        // ① 中段零长度记录：把第 2 条的偏移改成与第 3 条相同（区间长度为 0）。
+        let mut fixture = synth_mobi(4, 512 * 1024);
+        let record3 = u32::from_be_bytes([
+            fixture[table + 3 * 8],
+            fixture[table + 3 * 8 + 1],
+            fixture[table + 3 * 8 + 2],
+            fixture[table + 3 * 8 + 3],
+        ]);
+        fixture[table + 2 * 8..table + 2 * 8 + 4].copy_from_slice(&record3.to_be_bytes());
+        let src = Arc::new(CountingSource::new(fixture));
+        let book = MobiBook::open(Arc::clone(&src) as Arc<dyn ByteSource>, "lenient.mobi")
+            .expect("零长度记录不得让惰性路径弃权");
+        assert_eq!(book.page_count(), 3, "零长度记录不该算作一页");
+        assert!(
+            src.total_calls() <= 12,
+            "必须仍走惰性路径（实际 {} 次读）",
+            src.total_calls()
+        );
+
+        // ② 末条偏移 == 文件长度（EOF 收尾的合法写法）：夹到文件尾并跳过。
+        let mut fixture = synth_mobi(4, 512 * 1024);
+        let file_len = fixture.len() as u32;
+        fixture[table + 4 * 8..table + 4 * 8 + 4].copy_from_slice(&file_len.to_be_bytes());
+        let src = Arc::new(CountingSource::new(fixture));
+        let book = MobiBook::open(Arc::clone(&src) as Arc<dyn ByteSource>, "eof.mobi")
+            .expect("越界偏移（EOF 收尾）不得让惰性路径弃权");
+        assert_eq!(book.page_count(), 3, "空区间记录不该算作一页");
+        assert!(
+            src.total_calls() <= 12,
+            "必须仍走惰性路径（实际 {} 次读）",
+            src.total_calls()
+        );
+
+        // ③ 对照：正常的 4 条记录仍然是 4 页（宽松处理不能把空区间当成页）。
+        let src = Arc::new(CountingSource::new(synth_mobi(4, 512 * 1024)));
+        let book = MobiBook::open(Arc::clone(&src) as Arc<dyn ByteSource>, "normal.mobi")
+            .expect("正常夹具");
+        assert_eq!(book.page_count(), 4);
     }
 
     /// 2026-09-21（用户："mobi 还是慢"）：**完整打开**的逐条魔数探测必须并发取

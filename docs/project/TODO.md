@@ -102,6 +102,13 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 94 轮补充结论（2026-09-21）
+- [x] **"整本读被字节预算拒掉"已取消**（只豁免 `offset==0` 且一次要完整个文件、≤512 MiB 的情形）；
+      病态扫描仍由 384 次读 + 30 s 两条挡住。
+- [x] **整本缓存清理已拓展**：`cache/raw` 新增 2 GiB 容量上限 + 最旧优先整包淘汰（保留最新包），
+      收口在 `register_book`（每次打开书都会跑，best-effort）。
+- [ ] **真机复验**：刷新夸克目录 ⇒ 那几张 MOBI 封面应能抓好（不再 `cover_read_budget_exceeded`）；
+      若仍失败，`mobi_diag.log` 现在会直接给 `mobi_lazy_declined reason=…`，据此继续。
 ### 第 93 轮补充结论（2026-09-21）
 - [x] **"详情页有封面、墙上显示获取失败"已修**（第93轮）：unified 抛出前补 legacy 纯本地回退。
       真机复验：那几张 MOBI 在墙上应直接出图（不再显示"获取失败"）。

@@ -3504,3 +3504,56 @@ fallback-download"的确凿结论。整本下载方案对 76 MB 书 ≈17 s（�
 
 **交付物**：桌面 Release 重建并重启（PID 48300）；安卓包重建（21:27:09）复制到 Downloads
 （构建过程中手机再次断开 ⇒ 安装待插上）。
+
+
+---
+
+## 2026-09-21｜第94轮：取消封面"整本读"的字节预算拒绝 + 拓展整本缓存清理（容量上限）
+
+**用户当轮（真机 + 决策）**：夸克那几张 MOBI 封面刷新后**仍失败**；看到我准备"取消拒绝"后明确指示：
+"**取消拒绝**，我记得有整本缓存清理机制，你把这机制拓展一下就不用担心了吧"。
+
+**1) 先取证：为什么这几本一定失败（埋点闭环）**
+- `scan_diag.log`：`2026-09-21T13:29:12Z cover_fail ... gen=133 attempt=1 code=cover_read_budget_exceeded
+  asset=32be3e2e096c`（= 本地 21:29，正是那次重试 ⇒ 唤醒顺序修复**确实生效了**，任务真被重排并执行了）；
+- `mobi_diag.log`：同一时刻 `mobi_open mode=full-fallback size=82609433 ms=684`
+  ⇒ **惰性打开被拒 ⇒ 回退整本读 82.6 MB ⇒ 一次请求就被 64 MiB 字节预算拒掉**。
+- 对照：其它 MOBI 是 `mode=lazy pages=188`（35.5 MB/9.3 s、153 MB/19.3 s）⇒ 惰性路径本身可用。
+
+**2) 取消拒绝（只豁免"故意整本读"的字节上限）**
+- 新增谓词 `is_deliberate_whole_file(offset, requested, length)`：
+  `offset == 0 && 一次要完整个文件 && 未超绝对上限`。
+- `AdapterByteSource::read_at`：命中该谓词时**豁免 64 MiB 字节预算**（并写一行
+  `cover_whole_file_read` 诊断），但 **`COVER_READ_BUDGET_READS`(384) 与
+  `COVER_READ_BUDGET_MS`(30s) 两条照旧**，绝对上限 `COVER_WHOLE_FILE_MAX_BYTES = 512 MiB`
+  （与 PDF 的 `COVER_PDF_MAX_BYTES` 同口径）。
+- **为什么不担心"取消就失控"**：病态访问（尾部 EOCD 扫描那类）的特征是**很多次小读**，
+  由次数/时间两条继续兜住 —— 既有用例 `adapter_byte_source_stops_at_the_read_budget`
+  **一行未改、继续通过** ✓；新增用例 `deliberate_whole_file_read_bypasses_byte_budget_up_to_the_absolute_cap`
+  锁死"整本读放行 + 边界（恰好等于上限放行、超一字节不豁免、只要一部分永不豁免）"。
+
+**3) 拓展整本缓存清理（用户要求）**
+- 现状核查：`cache/raw` 此前**只有**两条清理路径 —— ①Dart 设置「阅读完成后自动删除整包」
+  （关闭书本时 `deleteRawPackage`）；②缓存管理页"清空整本下载缓存"。**没有任何容量上限** ⇒
+  关掉设置、或"下完却没打开"的包会无限累积（真缺口）。
+- 新增 `cache::enforce_raw_cache_limit(limit)` + `RAW_CACHE_LIMIT_BYTES = 2 GiB`：
+  按"包内最新 mtime"**从旧到新整包删除**直到降至上限以下，**始终保留最新的那个包**
+  （避免刚下完就被自己删掉）；best-effort、失败不影响任何主流程。
+- 调用点是**单一收口**：`api::book::register_book`（每次成功打开书本都会经过）。
+- 测试 `cache::…::raw_cache_limit_evicts_oldest_packages_and_keeps_the_newest`：
+  未超限不动；3 MiB / 上限 2.5 MiB ⇒ 删最旧的 `old`、保留 `mid`/`new`；上限压到 1 字节 ⇒
+  仍至少保留最新的包。
+- 关于"封面回退整本读"本身：它是**内存读**（`mobi.rs` 的整本回退把内容读进 `Vec<u8>`），
+  **不落 `cache/raw`** ⇒ 不留磁盘垃圾；磁盘侧的整包（阅读用整本下载）由上面三条机制共同兜住。
+
+**4) 附带（同一轮，为定位"为什么惰性被拒"补的埋点与宽松化）**
+- `mobi_lazy_declined reason=…`：惰性打开的**每个拒绝点**都留原因（too_small/header_read/
+  record_count_zero/record_table_overflow/record_table_read/no_mobi_magic/first_image_index/
+  probe_failed/no_decodable_image）；另有 `mobi_lazy_clamped_offsets` 与 `mobi_lazy_skipped_ranges`
+  两个计数行 —— 下一次真机重试即可直接读到"为什么被拒"。
+- **两个过严的拒绝条件改为"跳过"**：①记录偏移 ≥ 文件长度（EOF 收尾的合法写法）；
+  ②区间为空/逆序的记录（填充、被裁剪的写入器）⇒ 一条坏记录不再废掉整条惰性路径。
+  新增回归 `lazy_open_tolerates_zero_length_and_out_of_range_records`
+  （中段零长度、末条 offset==文件长度都必须仍走惰性路径且页数为 3；正常夹具仍为 4 页）。
+
+**门禁**：预算豁免单独跑全量为 **25 套件 / 543 passed / 0 failed**；本轮全部改动后的全量门禁见下。

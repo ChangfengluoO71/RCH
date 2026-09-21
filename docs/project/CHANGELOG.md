@@ -8,9 +8,14 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
-## [0.5.8] — 2026-09-21
+## [0.6.0] — 2026-09-21
 
-> 发布说明（含验证数据）见 [`docs/releases/release_notes_v0.5.8.md`](../releases/release_notes_v0.5.8.md)。
+> **版本规则破例说明**：本仓库自 0.3.0 起约定"每次发布仅递增补丁号"。本次是**有意破例**升
+> 次版本号 —— 这一版把 EPUB/ZIP/PDF/MOBI 的打开路径全部改为惰性按需读、并重做了封面管线
+> （打开成本与文件大小解耦、失败封面可重排），属于**行为与性能层面的里程碑**，用 0.6.0 更能
+> 表达其分量；后续发布继续沿用"递增补丁号"的约定。
+
+> 发布说明（含验证数据）见 [`docs/releases/release_notes_v0.6.0.md`](../releases/release_notes_v0.6.0.md)。
 
 ### Added
 

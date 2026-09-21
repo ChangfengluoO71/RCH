@@ -27,7 +27,7 @@ workspace/
 
 | Developer | Last Active | Sessions | Active File |
 |-----------|-------------|----------|-------------|
-| (none yet) | - | - | - |
+| cfl | 2026-09-21 | 14 | `.trellis/workspace/cfl/journal-1.md` |
 
 ---
 

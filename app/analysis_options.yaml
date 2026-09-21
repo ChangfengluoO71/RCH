@@ -9,6 +9,14 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+# 2026-09-21：**vendored 第三方工具不参与本仓库 lint**。
+# `rust_builder/cargokit/**` 是 Rust/Flutter 桥接（cargokit）随包提供的构建工具，
+# 不是本仓库的代码；它的 lint 风格与本项目无关，却会让 `flutter analyze`（CI 门禁之一）
+# 以几十条无关问题变红。**只排除它自己**，本项目 `lib/`、`test/` 等照常分析。
+analyzer:
+  exclude:
+    - rust_builder/cargokit/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

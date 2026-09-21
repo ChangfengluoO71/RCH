@@ -102,6 +102,16 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 85 轮补充结论（2026-09-21，实测 + 用户真机反馈）
+- [x] **MOBI 阅读慢（首开 RTT 受限）已在第85轮加速**：`concurrent_probe`（默认 4 worker，
+      `RCH_MOBI_PROBE_WORKERS` 可覆盖）。若仍嫌慢，下一步是**页面表缓存**（一次探测、长期复用）。
+- [ ] **手机端剩余"大量封面获取失败"主要在 PDF/ZIP**（真机日志分布 pdf=75 / zip=17 / mobi=9；
+      MOBI 封面已由第83轮解决）：每条封面 5–18 次串行读 × 136–182 ms ⇒ 撞 30 s 挂钟预算。
+      **与 G1 同源**：优先做 G1（元数据读合并 + 钉住/复用头窗口）。
+- [ ] **详情页出图后海报墙不刷新**（真机反馈）：墙上的卡片只在**源级 cover revision** 变化时重读。
+      待查：`mark_job_ready_owned_on` / worker 发布路径是否 bump `view_revision` + notify；
+      若缺，补 bump + 一条"发布即唤醒"的回归测试。
+
 ### 第 84 轮补充结论（2026-09-21，实测）
 - [ ] **G1 是 PDF/EPUB/ZIP 翻页慢的主因（已量化）**：`reads=5` 的 196 页平均 **909 ms**
       （≈182 ms/次串行 Range），而 229 KB 的页 411 ms、4.57 MB 的页 1030 ms ⇒ **与字节数脱钩**。

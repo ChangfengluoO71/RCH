@@ -45,6 +45,19 @@ const RECORD0_FIRST_IMAGE_INDEX: u64 = MOBI_HEADER_IN_RECORD + 92;
 const RECORD0_PROBE_BYTES: u64 = 128;
 /// 探测"本构建可解码的图片"所需头部字节数。
 const MAGIC_PROBE_BYTES: usize = 16;
+
+/// 魔数探测的并发度（2026-09-21："mobi 还是慢"）。
+///
+/// 真实瓶颈是 **RTT 而不是带宽**：实测每次远端读 136–182 ms，却只取约 29 字节
+/// （200–300 条候选记录 ⇒ 串行打开要 30–40 s）。在 16 B/读 的量级上带宽完全不是约束，
+/// 所以并发发这些小探测能把打开时间压到大约 1/workers。
+///
+/// ⚠️ 与第 81 轮续6 的受控 A/B **不矛盾**：那次是把**一次大读**拆成两半并发，瓶颈是
+/// 账号/链路带宽 ⇒ 无收益（`PARALLEL_RANGE_MIN` 默认关闭）。这里并发的是**互不相干的
+/// 小探测**（延迟受限），页数据读取仍然串行。
+///
+/// 可用 `RCH_MOBI_PROBE_WORKERS` 覆盖（受控 A/B 用），默认保守取 4。
+const MAGIC_PROBE_WORKERS: usize = 4;
 /// 书名长度上限（异常值不做大读）。
 const TITLE_MAX_BYTES: u64 = 512;
 
@@ -232,25 +245,26 @@ fn open_lazy(
 
     // ⑤ 只读每条候选记录的头部 16 B 做魔数过滤（与回退路径同一套判定），
     //    保证页序与历史行为一致：仍是"从 first_image_index 起、可解码的图片记录"。
-    let mut records = Vec::new();
+    // 候选区间（含每条记录的 `(offset, len)`）；任一条长度非法 ⇒ 与旧实现一致地整体弃权。
+    let mut candidates: Vec<(u64, u64)> = Vec::new();
     for i in first_image_index as usize..record_count as usize {
-        let Some((offset, len)) = range_of(i) else {
+        let Some(range) = range_of(i) else {
             return None;
         };
-        let probe_len = (MAGIC_PROBE_BYTES as u64).min(len);
-        if probe_len == 0 {
-            continue;
-        }
-        let mut magic = [0u8; MAGIC_PROBE_BYTES];
-        let magic = &mut magic[..probe_len as usize];
-        src.read_exact_at(offset, magic).ok()?;
-        if !crate::decode::image_magic_decodable(crate::decode::sniff_image_magic(magic)) {
-            continue;
-        }
-        records.push((offset, len));
-        if cover_only {
-            // 封面只读第一张图：到这里就够，后面的候选一条都不探测。
-            break;
+        candidates.push(range);
+    }
+
+    let decodable = if cover_only {
+        // 封面只读第一张图：串行探测到第一张可解码图片就停（通常 1–3 次读）。
+        serial_probe_until_first_image(&src, &candidates)?
+    } else {
+        // 完整打开：并发探测（见 `MAGIC_PROBE_WORKERS`）。
+        concurrent_probe(&src, &candidates)?
+    };
+    let mut records: Vec<(u64, u64)> = Vec::new();
+    for (index, (offset, len)) in candidates.iter().enumerate() {
+        if decodable.get(index).copied().unwrap_or(false) {
+            records.push((*offset, *len));
         }
     }
     if records.is_empty() {
@@ -274,6 +288,105 @@ fn open_lazy(
         .unwrap_or_else(|| stem.to_string());
 
     Some((LazyMobi { src, records }, title))
+}
+
+/// 串行探测：从候选区间的**头部**逐条取 16 B 魔数，命中第一张可解码图片就停。
+///
+/// 返回与 `candidates` 等长的"可解码"标记（封面路径只会点亮前若干条）。
+/// 任一次读失败返回 `None` —— 与历史行为一致（整体弃权、交调用方回退整本解析）。
+fn serial_probe_until_first_image(
+    src: &Arc<dyn ByteSource>,
+    candidates: &[(u64, u64)],
+) -> Option<Vec<bool>> {
+    let mut decodable = vec![false; candidates.len()];
+    for (index, (offset, len)) in candidates.iter().enumerate() {
+        let probe_len = (MAGIC_PROBE_BYTES as u64).min(*len) as usize;
+        if probe_len == 0 {
+            continue;
+        }
+        let mut magic = [0u8; MAGIC_PROBE_BYTES];
+        src.read_exact_at(*offset, &mut magic[..probe_len]).ok()?;
+        if !crate::decode::image_magic_decodable(crate::decode::sniff_image_magic(&magic[..probe_len]))
+        {
+            continue;
+        }
+        decodable[index] = true;
+        break;
+    }
+    Some(decodable)
+}
+
+/// 并发探测（`MAGIC_PROBE_WORKERS` 个 worker）：顺序无关的小读并发取，结果按**原索引**
+/// 写回，所以页序与串行版本逐字一致；任一次读失败仍整体返回 `None`（语义不变）。
+fn concurrent_probe(
+    src: &Arc<dyn ByteSource>,
+    candidates: &[(u64, u64)],
+) -> Option<Vec<bool>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    if candidates.is_empty() {
+        return Some(Vec::new());
+    }
+    let workers = std::env::var("RCH_MOBI_PROBE_WORKERS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(MAGIC_PROBE_WORKERS)
+        .min(candidates.len())
+        .max(1);
+
+    let next = AtomicUsize::new(0);
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let buckets: Vec<std::sync::Mutex<Vec<(usize, bool)>>> =
+        (0..workers).map(|_| std::sync::Mutex::new(Vec::new())).collect();
+
+    std::thread::scope(|scope| {
+        for bucket in &buckets {
+            scope.spawn(|| {
+                let mut local: Vec<(usize, bool)> = Vec::new();
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    if index >= candidates.len() || failed.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let (offset, len) = candidates[index];
+                    let probe_len = (MAGIC_PROBE_BYTES as u64).min(len) as usize;
+                    if probe_len == 0 {
+                        continue;
+                    }
+                    let mut magic = [0u8; MAGIC_PROBE_BYTES];
+                    match src.read_exact_at(offset, &mut magic[..probe_len]) {
+                        Ok(()) => local.push((
+                            index,
+                            crate::decode::image_magic_decodable(
+                                crate::decode::sniff_image_magic(&magic[..probe_len]),
+                            ),
+                        )),
+                        Err(_) => {
+                            failed.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                    }
+                }
+                if let Ok(mut slot) = bucket.lock() {
+                    *slot = local;
+                }
+            });
+        }
+    });
+
+    if failed.load(Ordering::Relaxed) {
+        return None;
+    }
+    let mut decodable = vec![false; candidates.len()];
+    for bucket in buckets {
+        for (index, ok) in bucket.into_inner().ok()? {
+            if let Some(slot) = decodable.get_mut(index) {
+                *slot = ok;
+            }
+        }
+    }
+    Some(decodable)
 }
 
 /// 读 MOBI 头里的书名（长度有上限，避免异常值导致大读）。
@@ -344,15 +457,29 @@ mod tests {
         data: Vec<u8>,
         read_bytes: Mutex<u64>,
         read_calls: Mutex<u64>,
+        /// 当前在途读 / 历史最大并发（用于断言"探测是否真的并发"）。
+        in_flight: Mutex<u64>,
+        max_in_flight: Mutex<u64>,
+        /// 人为延迟，模拟远端 RTT（并发才有效）。
+        delay: std::time::Duration,
     }
 
     impl CountingSource {
         fn new(data: Vec<u8>) -> Self {
+            Self::with_delay(data, std::time::Duration::ZERO)
+        }
+        fn with_delay(data: Vec<u8>, delay: std::time::Duration) -> Self {
             CountingSource {
                 data,
                 read_bytes: Mutex::new(0),
                 read_calls: Mutex::new(0),
+                in_flight: Mutex::new(0),
+                max_in_flight: Mutex::new(0),
+                delay,
             }
+        }
+        fn max_in_flight(&self) -> u64 {
+            *self.max_in_flight.lock().unwrap()
         }
         fn total_read(&self) -> u64 {
             *self.read_bytes.lock().unwrap()
@@ -368,14 +495,30 @@ mod tests {
             self.data.len() as u64
         }
         fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
-            let offset = offset as usize;
-            if offset >= self.data.len() {
-                return Ok(0);
+            {
+                let mut current = self.in_flight.lock().unwrap();
+                *current += 1;
+                let mut peak = self.max_in_flight.lock().unwrap();
+                if *current > *peak {
+                    *peak = *current;
+                }
             }
-            let n = buf.len().min(self.data.len() - offset);
-            buf[..n].copy_from_slice(&self.data[offset..offset + n]);
-            *self.read_bytes.lock().unwrap() += n as u64;
-            *self.read_calls.lock().unwrap() += 1;
+            if !self.delay.is_zero() {
+                std::thread::sleep(self.delay);
+            }
+            let offset = offset as usize;
+            let n = if offset >= self.data.len() {
+                0
+            } else {
+                let n = buf.len().min(self.data.len() - offset);
+                buf[..n].copy_from_slice(&self.data[offset..offset + n]);
+                n
+            };
+            *self.in_flight.lock().unwrap() -= 1;
+            if n > 0 {
+                *self.read_bytes.lock().unwrap() += n as u64;
+                *self.read_calls.lock().unwrap() += 1;
+            }
             Ok(n)
         }
     }
@@ -474,6 +617,45 @@ mod tests {
             src_full.total_calls() >= 40,
             "完整打开必须逐条探测全部候选（既有语义，封面入口不改变它）"
         );
+    }
+
+    /// 2026-09-21（用户："mobi 还是慢"）：**完整打开**的逐条魔数探测必须并发取
+    /// （瓶颈是 RTT：实测每次 136–182 ms 却只取 ~29 字节），而**封面入口**必须保持串行
+    /// （探测到第一张就停，绝不能为了并发把 40 条都探一遍）。
+    /// 页序/页数语义与串行版本一致 —— 由既有测试（跳非图片记录、按记录取页）共同锁定。
+    #[test]
+    fn full_open_probes_concurrently_while_cover_open_stays_serial() {
+        let delay = std::time::Duration::from_millis(3);
+
+        let full_src = Arc::new(CountingSource::with_delay(synth_mobi(40, 512 * 1024), delay));
+        let full = MobiBook::open(Arc::clone(&full_src) as Arc<dyn ByteSource>, "t.mobi")
+            .expect("完整打开");
+        assert_eq!(full.page_count(), 40, "页表不得缩水");
+        assert!(
+            full_src.max_in_flight() >= 2,
+            "完整打开的探测必须并发（观测到的最大并发 = {}）",
+            full_src.max_in_flight()
+        );
+
+        let cover_src = Arc::new(CountingSource::with_delay(synth_mobi(40, 512 * 1024), delay));
+        let cover = MobiBook::open_cover(Arc::clone(&cover_src) as Arc<dyn ByteSource>, "t.mobi")
+            .expect("封面打开");
+        assert_eq!(cover.page_count(), 1);
+        assert_eq!(
+            cover_src.max_in_flight(),
+            1,
+            "封面入口必须保持串行：探测到第一张图就停"
+        );
+        assert!(cover_src.total_calls() <= 6, "封面打开仍应是常数级读次数");
+
+        // 并发取回的结果必须逐条就位：第 0 页内容与夹具里第一条图片记录一致。
+        let page = full_page_bytes(&full, 0);
+        assert_eq!(&page[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    fn full_page_bytes(book: &MobiBook, index: u32) -> Vec<u8> {
+        use crate::document::Document;
+        book.page_bytes(index).expect("页字节")
     }
 
     /// 惰性取页只读那一条记录，内容与源一致。

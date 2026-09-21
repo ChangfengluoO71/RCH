@@ -14,12 +14,12 @@ This directory contains guidelines for frontend development. Fill in each file w
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
-| [State Management](./state-management.md) | Local state, global state, server state | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| [Directory Structure](./directory-structure.md) | Module organization and file layout | Filled (2026-09-21) |
+| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Filled (2026-09-21) |
+| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | Filled (2026-09-21) |
+| [State Management](./state-management.md) | Local state, global state, server state | Filled (2026-09-21) |
+| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Filled (2026-09-21) |
+| [Type Safety](./type-safety.md) | Type patterns, validation | Filled (2026-09-21) |
 
 ---
 

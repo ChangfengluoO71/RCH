@@ -1286,11 +1286,32 @@ mod rg_a_atomic_cache_file_tests {
         assert_eq!(enforce_raw_cache_limit(RAW_CACHE_LIMIT_BYTES).unwrap(), 0);
         assert!(raw.join("old").exists());
 
-        // 上限 2.5 MiB（三个包共 3 MiB）⇒ 必须删掉最旧的 old，保留 mid/new。
+        // 2026-09-21：**不假设哪个包最旧**，而是先观测 mtime 排序，再断言"被删的正是最旧的那个"。
+        // 为什么：CI（windows-latest）上曾出现 `set_modified` 未生效 ⇒ 旧写法"old 必须被删"
+        // 变成对环境的断言（假红）。这里断言的是**实现不变量**（最旧优先），与环境无关。
+        let mtime = |name: &str| {
+            std::fs::metadata(raw.join(name).join("book.bin"))
+                .and_then(|m| m.modified())
+                .unwrap()
+        };
+        let mut by_age = [
+            ("old", mtime("old")),
+            ("mid", mtime("mid")),
+            ("new", mtime("new")),
+        ];
+        by_age.sort_by_key(|(_, stamp)| *stamp);
+        let victim = by_age[0].0;
+
+        // 上限 2.5 MiB（三个包共 3 MiB）⇒ 至少删一个包，且被删的是**最旧**那个。
         let freed = enforce_raw_cache_limit(1024 * 1024 * 5 / 2).unwrap();
         assert!(freed >= 1024 * 1024, "应释放约 1 MiB，实际 {freed}");
-        assert!(!raw.join("old").exists(), "最旧的包必须先被删");
-        assert!(raw.join("mid").exists() && raw.join("new").exists());
+        assert!(
+            !raw.join(victim).exists(),
+            "必须删掉按 mtime 最旧的包（{victim}）"
+        );
+        for (name, _) in by_age.iter().skip(1) {
+            assert!(raw.join(name).exists(), "{name} 不该被删");
+        }
 
         // 上限极小：仍**至少保留一个**（最新的），绝不把 raw 清空。
         let _ = enforce_raw_cache_limit(1).unwrap();

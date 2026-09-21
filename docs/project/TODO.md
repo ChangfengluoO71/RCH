@@ -17,6 +17,64 @@
 
 ---
 
+## 交接单（第 81 轮结束 · 提交 `b044679`）
+
+> 接手第一件事：读本节 → `docs/project/LOG.md` 第 79–81 轮（含 6 段续修，起于第 2874 行）
+> → `git log -1`。**不要**重读 79–81 轮的实现细节，LOG 里已写清动机、证据与被门禁挡回的过程。
+
+### A. 仓库状态
+- **已提交未推送**：`b044679`（三轮合并，27 文件 / +2642 −222，含 rename `quark_epub_probe.rs → quark_document_probe.rs`）。
+  推送需用户授权（不要擅自 push）。
+- **工作区唯一脏文件是接手前就存在的**：`app/{linux,macos,windows}/flutter/generated_*` —— 不要提交、不要清理。
+- 分支 `p1-cover-completion`。
+
+### B. 已交付且已验证（都带真机/桌面数据，详见 LOG）
+1. **EPUB**（第 78 轮，`8a8a183`）：打开只读中央目录，真机 219/204 次读 → **4 次读**。
+2. **PDF**（第 79 轮）：`PdfBook::open` pdfium 按需读；真机 57.5 MB 打开+首页 **57.5 MB → 0.29 MB（197×）**，渲染**逐字节一致**；封面按显示宽度渲染（1029 ms → 36 ms）。
+3. **MOBI**（第 81 轮）：`MobiBook` 惰性按需读（PalmDB 头 + 记录表 + record0 探测，**两个候选起点** + 先验后回退），打开只读 **<4 KB**。
+4. **封面口径**：状态读取按 `selection+profile`（契约 STATE-READ-4）；卡片"有缓存直读 / 没缓存获取 / 跨档回退 / 容器卡回退 legacy"（Dart 8 项测试全过）。
+5. **封面重抓**：`remote_cover_reset_to_current_profile`（换档删旧档 + 终态 failed 重排队 attempt 归零）。
+6. **诊断**：`cover_budget detail=<bytes/reads/ms>`（就地记录）+ `cover.fetch.dur_us`。
+7. **否定结论**：并行 Range GET 无收益（同批 PDF 封面 1.45–1.73 s vs 1.60–1.94 s）⇒ 默认关闭，开关 `RCH_RANGE_PARALLEL_MIN` 保留。
+
+### C. 下一步（按优先级，需用户点头的两条已标注）
+1. **大 MOBI/PDF 的"单条记录吞吐"**（`9.mobi` 180 MB 封面 30 s 读不完）：已实测确认瓶颈是**链路/账号总带宽**，代码侧无低风险优化 ⇒ 只剩"减少传输字节"：
+   - 封面**部分解码/缩略图**（项目里已有 `cover_partial_decode_failed` 语义；先探这些 MOBI 的封面 JPEG 是否渐进式）——**动画质，需用户确认**；
+   - 阅读**按屏宽渲染 + 长条切片**（即"任务 3"）——**动画质，需用户确认**。
+2. **重置分批/限流**（item 2）：当前换档会把全库终态失败**一次性**重排队（真机 260 个 background 一起排队 ⇒ 十几分钟占满 4 请求/秒门控、阅读变慢）⇒ 改成只重排"当前可见 + 限量"，其余保持 pending 按需唤醒。
+3. **评审遗留**：C-4（惰性打开把远端 I/O 放进 `PDFIUM_FFI_LOCK`，需两阶段打开/锁外预热）、C-6（`page_bytes_for_display` 在 Rust 侧零断言，`FakeBook` 未实现它）、I-2（目录视图 `cover` 用默认档、与卡片档位不同 ⇒ 可能漏触发刷新）、I-3（跨档回退最多 4 次 `readCover`，DB 锁流量放大）。
+4. **诊断通道开关**：`pdf_diag.log` / `cover_budget` 目前常开（低开销），若要收敛成"仅调试构建"，加一个设置项。
+5. TAR / 7Z / RAR：用户已决定**保持整本下载**（库内 0 样本）；CBZ 与本地/远端文件夹图片**无需改**（已惰性/天然按需）。
+
+### D. 验证命令（照抄即可）
+```bash
+# Rust（**必须** --test-threads=1，并行会因环境变量/DB 争用假失败 13–17 条）
+cd app/rust && cargo build --lib
+cargo test --locked -j 2 -- --test-threads=1          # 全量门禁；exit 0 才算过
+cargo test --locked --test p0_baseline_read_speed -- --test-threads=1   # P0 延迟基线（改共享路径必跑）
+# Dart
+cd app && flutter analyze lib/ui/comic_cover.dart lib/store/remote_cover_repository.dart
+flutter test test/comic_cover_state_consumer_test.dart test/comic_cover_scan_terminal_test.dart test/cover_scan_terminal_integration_test.dart
+# 桌面（带 perf 与 A/B 开关）
+flutter build windows --debug
+$env:RCH_PERF_LOG='D:\Temp\rch-perf-x.jsonl'; $env:RCH_RANGE_PARALLEL_MIN='524288'
+# 手机（必须去掉 release 签名环境变量，否则与已装 debug 签名冲突）
+flutter build apk --profile --target-platform android-arm64
+adb install -r build/app/outputs/flutter-apk/app-profile.apk
+```
+
+### E. 接手须知（踩过的坑，别再踩）
+- **改 Rust API 后必须** `flutter_rust_bridge_codegen generate`（在 `app/` 下），否则生成物报参数数量不匹配。
+- **不要为了让测试过而改测试/放宽阈值**：第 79 轮我改扫页上限时被 `cover_falls_back_to_the_first_decodable_page` 挡回，正确做法是**改成格式感知**而不是改断言。
+- **改共享路径必须跑 P0 基线**：我在每次读里加 `env::var` 曾把 `p0a_single_page_latency_without_background_load` 顶爆。
+- **手机 DB 取证**：`adb exec-out` 拉 `database.db` **必须连 `database.db-journal` 一起拉**，并且用可写方式打开让 SQLite 自己回滚；应用正在写时必然拿到撕裂副本（表现为 `no such table: ...`）。
+- **Android 注不进 `RCH_PERF_LOG`** ⇒ 手机侧只能靠 `pdf_diag.log` / `scan_diag.log`（都在缓存根目录）。缓存根由用户设置决定：桌面 `D:\Documents\RCH`，手机 `/data/data/com.rch.reader/cache/RCH`。
+- **adb 路径**：Git Bash 里 adb 命令前加 `MSYS_NO_PATHCONV=1`，否则 `/data/...` 被当 Windows 路径改写。
+- **`is_archive` 分支**（`api/remote_scan.rs`）：ZIP/CBZ/PDF/MOBI 等**归档**走 `fetch_cover_from_document` → `open_document`（惰性 ✓）；head 窗口阶梯只用于**非归档**（单张图片）。
+- **封面预算语义**：`cover_read_budget_exceeded` 属**可重试**（6h 补偿）；`attempt>=3` 才终态 ⇒ 让路/释放路径**绝不能**消耗 `attempt`（`release_job_lease_on` 已修正为 `MAX(attempt-1,0)`）。
+
+---
+
 ## Doing(进行中)
 
 ### 使用反馈修复（2026-08-17 长风落反馈，任务 08-17-usage-feedback）

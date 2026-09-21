@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
+import 'package:app/src/rust/api/remote_cover.dart' as rust_cover;
 import 'package:app/repository/tag_repository.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/library_store.dart';
@@ -2013,10 +2014,37 @@ class _HomePageState extends State<HomePage> {
               .map((q) => ButtonSegment(value: q, label: Text(q.label)))
               .toList(),
           selected: {s.coverQuality},
-          onSelectionChanged: (qs) {
+          onSelectionChanged: (qs) async {
+            final previous = s.coverQuality;
             s.coverQuality = qs.first;
             LibraryStore.instance.updateSettings(s);
             ComicCover.clear();
+            if (previous == qs.first) return;
+            // 第 80 轮（用户要求）：换档后**删掉旧档封面并让终态失败重新排队**。
+            // 理由：封面档位由这条设置决定（low=170x240 / medium=340x480 / high=510x720），
+            // 而历史抓取可能留在别的档位（实测：扫描按 340 抓、卡片按设置要 170 ⇒ 抓回来的
+            // 图一张都用不上）；更糟的是 `attempt>=3` 的**终态失败**（`next_attempt_at=0`、
+            // 无 6h 补偿）永远不自愈 ——「金牌得主」目录里 `1-7.pdf` 与 8 个 MOBI 就卡死在这种
+            // 状态，只有清掉重排队才有机会。重置幂等、只动封面数据（不碰书架索引）；
+            // 重新入队的任务由既有封面 worker / 卡片请求唤醒继续抓取。
+            try {
+              final result = await rust_cover.remoteCoverResetToCurrentProfile();
+              if (!mounted) return;
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                SnackBar(
+                  content: Text(
+                    '封面档位已切到 ${result.profile}：'
+                    '清理其它档 ${result.purgedVariants} 条、'
+                    '重新排队 ${result.requeuedJobs} 条',
+                  ),
+                ),
+              );
+            } catch (error) {
+              if (!mounted) return;
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                SnackBar(content: Text('封面缓存重置失败：$error')),
+              );
+            }
           },
         ),
       ),

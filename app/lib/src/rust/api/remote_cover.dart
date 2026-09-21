@@ -83,18 +83,44 @@ Stream<CoverRevisionEvent> subscribeCoverRevisions() =>
 ///
 /// 这是 UI 消费 durable truth 的唯一读入口 —— 禁止用 `remote_cover_request`（它会 enqueue）
 /// 代替本函数。
+///
+/// **第 79 轮续（真机 bug 修复）**：必须传入调用方**实际使用**的 `selection` + `profile`。
+/// 曾经这里读的是写死的 `default` / `340x480@1`，而卡片按 `coverQuality` 请求
+/// `170x240@1` ⇒ 图已 ready 但墙面仍按另一 profile 的旧 `failed` 显示"获取失败"。
 Future<RemoteCoverStateDto?> remoteCoverState({
   required String sourceId,
   required String assetId,
+  required CoverSelectionDto selection,
+  required CoverProfileDto profile,
 }) => RustLib.instance.api.crateApiRemoteCoverRemoteCoverState(
   sourceId: sourceId,
   assetId: assetId,
+  selection: selection,
+  profile: profile,
 );
 
 Future<PlatformInt64> remoteViewRevision({required String sourceId}) => RustLib
     .instance
     .api
     .crateApiRemoteCoverRemoteViewRevision(sourceId: sourceId);
+
+/// 第 80 轮：把封面缓存**重置到当前 `coverQuality` 档位**，并让终态失败重新有机会。
+///
+/// 为什么需要（有真机/桌面数据支撑）：
+/// 1. **抓错档**：扫描过去固定抓 340×480，而卡片按设置取图（低 = 170×240）⇒ 实测
+///    「金牌得主」目录 340 档 ready 15 本、170 档只有 15 本而另一批 11 本是预算失败；
+/// 2. **终态失败不会自愈**：`attempt>=3` 判永久失败（`next_attempt_at=0`、无 6h 补偿），
+///    用户库里 `1.pdf`–`7.pdf`（attempt 4–5）与 8 个 MOBI 都卡死在这种状态 ——
+///    清掉它们重新排队，是让"改过上限/修过 bug"之后的重新尝试真正生效的唯一路径。
+///
+/// 做四件事（幂等，只动**封面**数据，不碰书架索引）：
+/// 1. 删除非当前档的 `remote_cover_job` / `remote_cover_variant` 行；
+/// 2. 删除不再被任何变体或引用指向的 `remote_cover_blob` 行，并删除其磁盘文件；
+/// 3. 把当前档里 **`state='failed'`** 的任务重新排队（`attempt=0`、清错误码与租约）；
+///    `blocked`（需重新登录）与 `unsupported`（格式本身给不出封面）保持原样 —— 重试无意义；
+/// 4. bump 各源封面 revision，界面据此重新读 durable state。
+Future<RemoteCoverResetDto> remoteCoverResetToCurrentProfile() =>
+    RustLib.instance.api.crateApiRemoteCoverRemoteCoverResetToCurrentProfile();
 
 class CoverProfileDto {
   final int width;
@@ -176,6 +202,57 @@ class CoverSelectionDto {
           crop == other.crop &&
           explicitAssetId == other.explicitAssetId &&
           revision == other.revision;
+}
+
+/// 第 80 轮：封面缓存"重置到当前档位"的结果摘要（供界面提示与测试断言）。
+class RemoteCoverResetDto {
+  /// 被删除的、**非当前档位**的变体行数。
+  final int purgedVariants;
+
+  /// 被删除的、**非当前档位**的任务行数。
+  final int purgedJobs;
+
+  /// 被删除的孤儿 blob 行数（及其磁盘文件）。
+  final int purgedBlobs;
+
+  /// 重新排队（attempt 归零）的终态失败任务数。
+  final int requeuedJobs;
+
+  /// 被 bump 封面 revision 的源数量。
+  final int sources;
+
+  /// 生效的档位（便于界面显示"已切到 340x480@1"）。
+  final String profile;
+
+  const RemoteCoverResetDto({
+    required this.purgedVariants,
+    required this.purgedJobs,
+    required this.purgedBlobs,
+    required this.requeuedJobs,
+    required this.sources,
+    required this.profile,
+  });
+
+  @override
+  int get hashCode =>
+      purgedVariants.hashCode ^
+      purgedJobs.hashCode ^
+      purgedBlobs.hashCode ^
+      requeuedJobs.hashCode ^
+      sources.hashCode ^
+      profile.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RemoteCoverResetDto &&
+          runtimeType == other.runtimeType &&
+          purgedVariants == other.purgedVariants &&
+          purgedJobs == other.purgedJobs &&
+          purgedBlobs == other.purgedBlobs &&
+          requeuedJobs == other.requeuedJobs &&
+          sources == other.sources &&
+          profile == other.profile;
 }
 
 class RemoteCoverStateDto {

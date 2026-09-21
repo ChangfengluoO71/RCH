@@ -520,8 +520,56 @@ impl QuarkClient {
         classify_range_probe_response(status, content_range, content_length)
     }
 
+    /// 一次大 Range 请求的**并行拆分阈值**（第 81 轮续4）。
+    ///
+    /// **默认关闭**（`usize::MAX`）：受控 A/B 实测结论 —— 同一批 22–32 MB 的 PDF 封面，
+    /// 并行关 1.45–1.73 s、并行开 1.60–1.94 s（**并行略慢 ~8%**）⇒ 瓶颈不是"单连接慢"，
+    /// 而是链路/账号总带宽 ⇒ 并行只多占一条并发、没有收益，故默认不启用 ✗。
+    /// 代码与开关保留，方便日后换网络/换 provider 时**复现这次 A/B**
+    /// （`RCH_RANGE_PARALLEL_MIN=524288` 即为开启）。
+    const PARALLEL_RANGE_MIN: usize = usize::MAX;
+
+    /// 并行拆分阈值；可用环境变量 `RCH_RANGE_PARALLEL_MIN` 覆盖，**专门用于受控 A/B**
+    /// （同一个桌面进程、同一批书，只改这一个数 ⇒ 才能判定"并行有没有用"）。
+    ///
+    /// 只解析一次并缓存（`OnceLock`）：第一版每次读都调 `env::var` ⇒ 每次读多一次
+    /// 系统调用与锁，直接把 P0 单页延迟基线顶爆（门禁当场挡回）。
+    fn parallel_range_min() -> usize {
+        static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *MIN.get_or_init(|| {
+            std::env::var("RCH_RANGE_PARALLEL_MIN")
+                .ok()
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(Self::PARALLEL_RANGE_MIN)
+        })
+    }
+
     /// Range 读直链（带三件套头）；403 视为直链失效，由调用方重取一次。
+    ///
+    /// 第 81 轮续4：大于阈值（默认 [`Self::PARALLEL_RANGE_MIN`]）的读**拆成两半并发**。
+    /// 两半都成功才返回合计长度（任何一半失败即整体失败，语义与单请求版一致）。
     pub fn read_range_url(&self, url: &str, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if buf.len() < Self::parallel_range_min() {
+            return self.read_range_url_single(url, offset, buf);
+        }
+        let mid = buf.len() / 2;
+        let (left, right) = buf.split_at_mut(mid);
+        let second_offset = offset + mid as u64;
+        let (first, second) = std::thread::scope(|scope| {
+            let handle = scope.spawn(move || self.read_range_url_single(url, offset, left));
+            let second = self.read_range_url_single(url, second_offset, right);
+            (handle.join(), second)
+        });
+        let first = first.map_err(|_| io::Error::other("Range 并发读线程 panic"))??;
+        let second = second?;
+        Ok(first + second)
+    }
+
+    /// 单次 Range 请求（原实现，逐字节填满缓冲）。
+    fn read_range_url_single(&self, url: &str, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }

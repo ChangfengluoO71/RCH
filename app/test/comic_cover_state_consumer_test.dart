@@ -89,7 +89,8 @@ void main() {
             return dto(state, ready: ready);
           },
       stateLoader:
-          ({required sourceId, required assetId}) async => dto(state, ready: ready),
+          ({required sourceId, required assetId, required selection, required profile}) async =>
+              dto(state, ready: ready),
       releaseLoader: ({required consumerId}) async {},
     );
     return (repository: repository, reads: reads, requests: requests);

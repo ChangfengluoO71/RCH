@@ -311,10 +311,18 @@ fn representative_for(
 }
 
 /// P1-E：只读读取某 asset 的 durable cover state（供 api 层最薄 wrapper 复用）。
+///
+/// 第 79 轮续（真机 bug）：`selection_revision` 与 `profile` 必须由调用方传入，
+/// **不能写死**。真机现象：卡片按设置 `coverQuality` 请求 `170x240@1`（`low`），
+/// 而这里写死读 `340x480@1` ⇒ 明明 170 的图已 ready，墙面仍显示 340 那条旧的
+/// `failed`（"详情页有图、海报墙获取失败"）。同一 asset 上两个 profile 的状态
+/// 可以完全不同（真机库实测：170 ready / 340 failed 有 7 本）。
 pub(crate) fn cover_state_for(
     conn: &Connection,
     source_id: &str,
     asset_id: Option<&str>,
+    selection_revision: &str,
+    profile: &str,
 ) -> Result<CatalogCoverState> {
     let Some(asset_id) = asset_id else {
         return Ok(CatalogCoverState::default());
@@ -330,9 +338,9 @@ pub(crate) fn cover_state_for(
               AND j.selection_revision=v.selection_revision
               AND j.profile=v.profile
              WHERE v.source_id=?1 AND v.asset_id=?2
-               AND v.selection_revision='default' AND v.profile='340x480@1'
+               AND v.selection_revision=?3 AND v.profile=?4
              ORDER BY v.updated_at DESC LIMIT 1",
-            params![source_id, asset_id],
+            params![source_id, asset_id, selection_revision, profile],
             |r| {
                 Ok((
                     r.get(0)?,
@@ -354,9 +362,9 @@ pub(crate) fn cover_state_for(
             "SELECT state,updated_at,error_code,next_attempt_at
              FROM remote_cover_job
              WHERE source_id=?1 AND asset_id=?2
-               AND selection_revision='default' AND profile='340x480@1'
+               AND selection_revision=?3 AND profile=?4
              ORDER BY updated_at DESC LIMIT 1",
-            params![source_id, asset_id],
+            params![source_id, asset_id, selection_revision, profile],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
@@ -504,7 +512,16 @@ pub fn directory_view_on(
             kind: row.kind,
             size: row.size,
             representative_asset_id: representative.clone(),
-            cover: cover_state_for(conn, source_id, cover_asset)?,
+            // 目录视图里的 cover 只用于"变更检测/预览"（`source_browser.dart` 的 diff），
+            // 墙面芯片显示的状态由卡片自己按**它实际请求的** profile 读取
+            //（`remote_cover_state`）。这里保持默认展示 profile。
+            cover: cover_state_for(
+                conn,
+                source_id,
+                cover_asset,
+                crate::remote_scan::cover_store::DEFAULT_SELECTION_REVISION,
+                crate::remote_scan::cover_store::DEFAULT_COVER_PROFILE,
+            )?,
         });
     }
     Ok(DirectoryView {

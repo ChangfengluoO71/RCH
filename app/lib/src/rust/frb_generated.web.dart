@@ -369,6 +369,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RemoteCoverReconcileDto dco_decode_remote_cover_reconcile_dto(dynamic raw);
 
   @protected
+  RemoteCoverResetDto dco_decode_remote_cover_reset_dto(dynamic raw);
+
+  @protected
   RemoteCoverStateDto dco_decode_remote_cover_state_dto(dynamic raw);
 
   @protected
@@ -856,6 +859,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RemoteCoverReconcileDto sse_decode_remote_cover_reconcile_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  RemoteCoverResetDto sse_decode_remote_cover_reset_dto(
     SseDeserializer deserializer,
   );
 
@@ -1492,6 +1500,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_remote_cover_reconcile_dto(
     RemoteCoverReconcileDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_remote_cover_reset_dto(
+    RemoteCoverResetDto self,
     SseSerializer serializer,
   );
 

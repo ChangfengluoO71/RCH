@@ -1,17 +1,23 @@
-//! 夸克 EPUB 归档探针（**只读诊断**，第 78 轮现场用）
+//! 夸克远端文档探针（**只读诊断**，第 78 轮现场用；第 79 轮加 PDF 模式并更名）
 //!
 //! 用法（对 DB 副本执行，绝不动真实库、不打印 cookie）：
 //! ```text
-//! cargo run --example quark_epub_probe -- \
+//! # EPUB / ZIP：归档结构体检 + 改后 vs 改前的打开读数
+//! cargo run --example quark_document_probe -- \
 //!   --root <DB副本目录> --source quark_xxxxxxxx --fid <资产fid> [--pages 3]
+//! # PDF：惰性按需读 vs 整份读入（打开 + 首页渲染）
+//! cargo run --example quark_document_probe -- \
+//!   --root <DB副本目录> --source quark_xxxxxxxx --fid <资产fid> --pdf [--pages 1]
 //! ```
 //!
-//! 它回答两个问题：
+//! 它回答三类问题：
 //! 1. **归档结构体检**（只读远端 EOCD + 中央目录）：条目数、压缩方式直方图、加密位、
 //!    ZIP64 哨兵、`local_header` 是否可信、CD 与 EOCD 的相对位置（是否夹了前缀数据），
 //!    以及"快路径闸门"逐条判定；
-//! 2. **同一份远端文件上"改后 vs 改前"的打开读数**：`EpubBook::open`（只读中央目录）与
-//!    `EpubBook::open_legacy`（crate 逐条目读 local header）各自几次 Range 读。
+//! 2. **EPUB 打开读数 A/B**：`EpubBook::open`（只读中央目录）与 `EpubBook::open_legacy`
+//!    （crate 逐条目读 local header）各自几次 Range 读；
+//! 3. **PDF 打开/封面成本 A/B**（`--pdf`）：`PdfBook::open`（第 79 轮：pdfium 按需取字节）
+//!    与 `PdfBook::open_eager`（历史：整份读入 ⇒ 1 次读、整个文件大小）。
 
 use rust_lib_app::db;
 use rust_lib_app::document::epub::EpubBook;
@@ -26,6 +32,8 @@ struct Args {
     source: String,
     fid: String,
     pages: u32,
+    /// PDF 模式：只做"惰性按需读 vs 整份读入"的 A/B，跳过 ZIP/EPUB 结构体检。
+    pdf: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -34,6 +42,7 @@ fn parse_args() -> Result<Args, String> {
         source: String::new(),
         fid: String::new(),
         pages: 3,
+        pdf: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -42,6 +51,7 @@ fn parse_args() -> Result<Args, String> {
             "--root" => args.root = value()?,
             "--source" => args.source = value()?,
             "--fid" => args.fid = value()?,
+            "--pdf" => args.pdf = true,
             "--pages" => {
                 args.pages = value()?
                     .parse()
@@ -123,6 +133,92 @@ fn read_range(
     Ok(buf)
 }
 
+/// PDF 模式：在**同一份远端文件**上对比"惰性按需读"（第 79 轮）与"整份读入"（历史行为）
+/// 的打开 + 首页渲染成本。
+///
+/// 远端上用户感知的成本 ≈ `读次数 × RTT + 总字节`：历史行为固定"1 次读、整个文件大小"
+/// （现场库里 609 个远端 PDF，这就是封面每枚 17–34 MB 的来源）。
+fn run_pdf(client: &Arc<QuarkClient>, fid: &str, name: &str, url: &str, size: u64, pages: u32) {
+    println!("\n===== PDF 打开/封面成本 A/B（同一份远端文件）=====");
+    // (标签, 每页渲染字节) —— 两个后端必须在同一份文件上渲染出**逐字节相同**的页面，
+    // 否则说明惰性读取有短读/错页（`m_GetBlock` 的返回值是成功/失败而不是字节数）。
+    let mut rendered: Vec<(&str, Vec<Vec<u8>>)> = Vec::new();
+    for (label, eager) in [("改后(惰性按需读)", false), ("改前(整份读入)", true)] {
+        let file = Arc::new(QuarkFile::new(
+            Arc::clone(client),
+            fid.to_string(),
+            size,
+            url.to_string(),
+        ));
+        let meter = ReadMeter::default();
+        let src = CountingSource::new(Arc::clone(&file), meter.clone());
+        let started = Instant::now();
+        let opened = if eager {
+            rust_lib_app::document::pdf::PdfBook::open_eager(src, name)
+        } else {
+            rust_lib_app::document::pdf::PdfBook::open(src, name)
+        };
+        let book = match opened {
+            Ok(book) => book,
+            Err(error) => {
+                println!("  {label}: 打开失败 {error}");
+                continue;
+            }
+        };
+        let open_ms = started.elapsed().as_millis();
+        let count = book.page_count();
+        println!(
+            "  {label}: 打开 {open_ms} ms / {} 次读 / {} 字节 / 页数 {count}",
+            meter.count(),
+            meter.bytes()
+        );
+        let mut outputs = Vec::new();
+        for index in 0..pages.min(count) {
+            let (before_reads, before_bytes) = (meter.count(), meter.bytes());
+            let started = Instant::now();
+            match book.page_bytes(index) {
+                Ok(bytes) => {
+                    println!(
+                        "      page {index}: {} ms / {} 次读 / {} 字节（输出 {} 字节）",
+                        started.elapsed().as_millis(),
+                        meter.count() - before_reads,
+                        meter.bytes() - before_bytes,
+                        bytes.len()
+                    );
+                    outputs.push(bytes);
+                }
+                Err(error) => println!("      page {index} 渲染失败: {error}"),
+            }
+        }
+        // 封面尺寸（340 宽）渲染同一页：第 79 轮"封面按显示宽度渲染"的直接量化。
+        if pages > 0 && count > 0 {
+            let (before_reads, before_bytes) = (meter.count(), meter.bytes());
+            let started = Instant::now();
+            match book.page_bytes_for_display(0, 340) {
+                Ok(bytes) => println!(
+                    "      cover(340px) page 0: {} ms / {} 次读 / {} 字节（输出 {} 字节）",
+                    started.elapsed().as_millis(),
+                    meter.count() - before_reads,
+                    meter.bytes() - before_bytes,
+                    bytes.len()
+                ),
+                Err(error) => println!("      cover(340px) page 0 渲染失败: {error}"),
+            }
+        }
+        rendered.push((label, outputs));
+    }
+    if rendered.len() == 2 {
+        let (left_label, left) = &rendered[0];
+        let (right_label, right) = &rendered[1];
+        let same = left.len() == right.len() && left.iter().zip(right).all(|(a, b)| a == b);
+        println!(
+            "  内容一致性: {}（{left_label} vs {right_label}，{} 页）",
+            if same { "✓ 逐字节相同" } else { "✗ 不一致" },
+            left.len()
+        );
+    }
+}
+
 fn main() {
     let args = match parse_args() {
         Ok(args) => args,
@@ -165,6 +261,11 @@ fn main() {
     if !supports || size == 0 {
         eprintln!("Range 不可用 / 大小为 0 ⇒ 现场不会走快路径（快路径要求可随机读）");
         std::process::exit(3);
+    }
+
+    if args.pdf {
+        run_pdf(&client, &args.fid, &name, &url, size, args.pages);
+        return;
     }
 
     let quark = client.as_ref();

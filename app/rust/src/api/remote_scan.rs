@@ -467,6 +467,31 @@ fn cover_job_failure_state(
     (decision.state, decision.error_code, decision.retry_after_ms)
 }
 
+/// 扫描/预览创建**封面任务**时使用的 profile：跟随用户设置 `coverQuality`。
+///
+/// 第 79 轮续7（用户确认）：过去这里写死 `340x480@1`，而卡片按设置取图（"低" =
+/// `170x240@1`）⇒ 真机实测 586 本 PDF 里 340 档 ready 142 本、170 档只有 **42** 本 ——
+/// 扫描辛苦抓回来的封面，卡片一张都用不上（要么占位、要么靠跨档回退凑）。
+///
+/// 档位映射与 Dart `CoverQuality.size`（`app/lib/store/models.dart`）保持一致；
+/// 设置缺失/未知时回落到 `DEFAULT_COVER_PROFILE`（= 中档 340x480@1，与历史行为一致）。
+pub(crate) fn cover_quality_profile_on(conn: &rusqlite::Connection) -> String {
+    let quality: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key='coverQuality' AND deleted=0",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    match quality.as_deref().map(str::trim) {
+        Some("low") => "170x240@1".to_string(),
+        Some("high") => "510x720@1".to_string(),
+        _ => crate::remote_scan::cover_store::DEFAULT_COVER_PROFILE.to_string(),
+    }
+}
+
 fn parse_cover_profile(profile: &str) -> (u32, u32) {
     let mut parts = profile.split('@').next().unwrap_or_default().split('x');
     let width = parts.next().and_then(|value| value.parse().ok());
@@ -563,6 +588,10 @@ fn cover_route_for_job(
     route
 }
 
+/// 阅读活跃期：后台封面让路的判定窗口与让路后的重试间隔（第 79 轮，真机驱动）。
+const COVER_BACKGROUND_YIELD_IDLE_MS: i64 = 20_000;
+const COVER_BACKGROUND_YIELD_SLEEP_MS: u64 = 2_000;
+
 fn run_remote_cover_worker(source_id: &str, session: u64) {
     let source_type = db::get().lock().ok().and_then(|conn| {
         conn.query_row(
@@ -627,6 +656,28 @@ fn run_remote_cover_worker(source_id: &str, session: u64) {
             }
             return;
         };
+        // 第 79 轮真机结论：手机上门控 4 请求/秒、2 并发，几百个**后台**封面会把带宽与
+        // CDN 连接吃满，前台翻页只能夹在中间 ⇒ 用户看到"翻页一直转圈"。
+        // 阅读活跃期（最近 COVER_BACKGROUND_YIELD_IDLE_MS 内有过前台网络取页）只让
+        // **visible**（用户正看着的封面）继续，background 释放租约稍后重试 ——
+        // 任务不丢，只是让路。
+        if job.demand_kind == "background"
+            && crate::reader::foreground_read_idle_ms()
+                .is_some_and(|idle| idle < COVER_BACKGROUND_YIELD_IDLE_MS)
+        {
+            if let Ok(conn) = db::get().lock() {
+                let _ = crate::remote_scan::cover_store::release_job_lease_on(
+                    &conn,
+                    &job.key,
+                    &owner,
+                    db::now_ms(),
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(
+                COVER_BACKGROUND_YIELD_SLEEP_MS,
+            ));
+            continue;
+        }
         let route = cover_route_for_job(source_id, &job.key.asset_id);
         let Some((logical_path, provider_id, provider_file_id)) = route else {
             if let Ok(conn) = db::get().lock() {
@@ -1004,7 +1055,7 @@ impl ScanCommitSink for SqliteScanSink {
             asset_id: crate::db::library_index_id(&source_fp, &task.logical_path),
             content_revision: task.fingerprint.clone(),
             selection_revision: "default".into(),
-            profile: "340x480@1".into(),
+            profile: cover_quality_profile_on(&conn),
         };
         crate::remote_scan::cover_store::upsert_job_on(
             &conn,
@@ -1175,9 +1226,16 @@ const COVER_HEAD_MAX_BYTES: u64 = 64 * 1024 * 1024;
 /// 硬上限：超过它就不再尝试读取。128MB 是"覆盖面 × 手机峰值内存"的折中，
 /// 也是唯一需要按设备情况调整的旋钮。
 const COVER_FETCH_LIMIT_BYTES: u64 = 128 * 1024 * 1024;
-/// PDF 必须先整包交给 pdfium（`PdfBook::open` 一次性读入整个文件），不能按图片
-/// 窗口语义截断，所以上限单独设置；超限给具体原因，不做"下载几百 MB 换一张封面"。
-const COVER_PDF_MAX_BYTES: u64 = 128 * 1024 * 1024;
+/// PDF 封面的文件大小上限。
+///
+/// **第 79 轮续8（独立评审 I-1）**：这条上限的前提已经失效 —— 它写于"PDF 必须先整包
+/// 交给 pdfium"的时代（原注释：不做"下载几百 MB 换一张封面"）。改惰性按需读之后，
+/// 一枚 PDF 封面实测只花 **约 292 KB**（`1.pdf` 57.5 MB：打开 8 次读/25 KB + 首页
+/// 3 次读/267 KB），真正的成本护栏是 `COVER_READ_BUDGET_*`。留着 128 MB 的硬拒，
+/// 代价是用户库里最大的三本（`9.pdf` 204 MB / `10.pdf` 180 MB / `8.pdf` 164 MB）
+/// **一枚封面都拿不到**（`cover_pdf_bytes_limit`，终态）—— 恰好是本轮动机点名的文件。
+/// 因此放宽到 512 MB：只挡真正的异常巨物，实际取数由读取预算兜底。
+const COVER_PDF_MAX_BYTES: u64 = 512 * 1024 * 1024;
 /// 快通道允许的单页字节上限（超过就交回常规路径；正常漫画页远小于此）。
 const COVER_FAST_PAGE_MAX_BYTES: usize = 64 * 1024 * 1024;
 /// 解码像素守卫：窗口放大后仍可能碰到"小体积 → 巨大位图"的解压炸弹。
@@ -1253,13 +1311,26 @@ fn cover_fetch_enabled_from_conn(conn: &rusqlite::Connection) -> bool {
 /// （`ready` 长时间为 0，用户体感"很慢"）。
 /// 预算让这类病态归档**快速失败并给出具体码**（`cover_read_budget_exceeded`），
 /// 而不是拖着整条队列。
-const COVER_READ_BUDGET_BYTES: u64 = 24 * 1024 * 1024;
+const COVER_READ_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
 /// 单次封面抓取的**远端读取次数**上限。
 /// 为什么字节预算不够：实测这些读是 **16KB 级**，115 CDN 单次往返 ~243ms，
-/// 24MB 预算要 1500+ 次 ⇒ 仍是 6 分钟。次数上限才能界定时延（192 次 ≈ 最坏 47s）。
-const COVER_READ_BUDGET_READS: u64 = 192;
+/// 24MB 预算要 1500+ 次 ⇒ 仍是 6 分钟。次数上限才能界定时延。
+///
+/// 第 81 轮续（真机，MOBI/PDF 惰性读之后）：归档类封面现在走**惰性文档读**，
+/// 取数被精确到"首页那一条记录/那一张图"。但**单条记录本身可以很大**
+/// （真机 33.9/143/146/180 MB 的 MOBI 全部 `cover_read_budget_exceeded`，
+/// 而 ≤79 MB 的成功 ⇒ 代价与整本大小成正比）：在 4 请求/秒的门控下，
+/// 读一条 5–15 MB 的记录要几十次请求、十几秒 ⇒ 旧的 192 次/15 s 会把**可救**的封面判死。
+/// 因此放宽到 384 次 / 30 s / 64 MB：仍然有界（不会回到分钟级转圈），
+/// 但给"单条大记录"留出空间。真正不可救的仍会快速失败并给出具体码。
+const COVER_READ_BUDGET_READS: u64 = 384;
 /// 单次封面抓取的**挂钟**上限（兜底：远端变慢时也要让 worker 走下一个 job）。
-const COVER_READ_BUDGET_MS: u128 = 45_000;
+///
+/// 第 79 轮续 3（真机）：原值 45 s 在**手机 + 4 请求/秒门控**下意味着"一张卡片转圈
+/// 45 秒以上"（`attempt=2` 再翻倍），用户看到的是"直接一直转圈"。降到 15 s：
+/// 不可救的重封面**快速失败**并给出 `cover_read_budget_exceeded`，不再拖住整条队列与
+/// 共享门控。字节预算（24MB）保持不变 —— 不牺牲"重但可救"的封面成功率。
+const COVER_READ_BUDGET_MS: u128 = 30_000;
 
 /// A bounded random-access source backed by the provider adapter. ZIP/CBZ
 /// parsing can therefore read the tail directory and the first page without
@@ -1329,9 +1400,30 @@ impl ByteSource for AdapterByteSource {
             || calls >= COVER_READ_BUDGET_READS
             || elapsed_ms > COVER_READ_BUDGET_MS
         {
-            return Err(io::Error::other(format!(
-                "cover-read-budget exceeded: {used}/{} bytes, {calls}/{} reads, {elapsed_ms}ms",
+            let detail = format!(
+                "{used}/{} bytes, {calls}/{} reads, {elapsed_ms}ms",
                 self.read_budget, COVER_READ_BUDGET_READS
+            );
+            // 第 81 轮续5：预算失败必须自证"**哪一条**先超"（字节/次数/时间）。
+            // 为什么就地记录：上游 `open_document` 的错误路径会把这段文案**映射成具体码**
+            // （`cover_open_reason` → `cover_read_budget_exceeded`），到 `cover.fetch`
+            // 那个 span 里数字已经丢了 —— 我第一版就是在那里判 `contains` 而永远不成立 ✗。
+            // 就地写诊断（scan_diag.log，桌面与手机都能读）+ 一条 perf 事件（无 provider 原文）。
+            crate::remote_scan::diag::note(&format!(
+                "cover_budget detail={detail} asset={}",
+                crate::remote_scan::diag::safe_asset_label(&self.path)
+            ));
+            if crate::perf::enabled() {
+                let mut fields = serde_json::Map::new();
+                fields.insert("detail".into(), serde_json::json!(detail.clone()));
+                fields.insert(
+                    "asset".into(),
+                    serde_json::json!(crate::remote_scan::diag::safe_asset_label(&self.path)),
+                );
+                crate::perf::event("cover.budget", fields);
+            }
+            return Err(io::Error::other(format!(
+                "cover-read-budget exceeded: {detail}"
             )));
         }
         // 网络读**逐次**持 Cover 许可（归档路径此前完全不持许可；
@@ -1493,6 +1585,23 @@ fn decode_cover_bounded(
 /// 有界（3）保证不会为了封面把整本书扫一遍。
 const COVER_PAGE_SCAN_LIMIT: u32 = 3;
 
+/// **PDF** 封面最多向后扫几页。
+///
+/// 第 79 轮续 3（真机）：PDF 页是整张扫描图，一页的取数窗口就是 1–2.5 MB，扫四页加上
+/// pdfium 的 xref/对象读取，一本就能吃掉 10–24 MB、几十秒 ⇒ 手机上门控被占满、卡片
+/// 长时间转圈。PDF 只试"首页 + 次页"两页；其它格式（记录可能不是图片的 KF8/AZW3）
+/// 仍按 [`COVER_PAGE_SCAN_LIMIT`]。
+const COVER_PDF_PAGE_SCAN_LIMIT: u32 = 1;
+
+/// 按归档类型取封面扫页上限（PDF 收紧，其它格式保持既有契约）。
+fn cover_page_scan_limit(asset_kind: &str) -> u32 {
+    if asset_kind == "pdf" {
+        COVER_PDF_PAGE_SCAN_LIMIT
+    } else {
+        COVER_PAGE_SCAN_LIMIT
+    }
+}
+
 /// 取"第一张真正可解码的页"作为封面：先试用户选择/默认页，再**有界**向后扫。
 /// 只有"这一页不是可解码图片"才换页；上限/像素类失败换页无意义，直接返回。
 fn decode_first_usable_page(
@@ -1501,12 +1610,32 @@ fn decode_first_usable_page(
     cover_width: u32,
     cover_height: u32,
     crop: Option<(f64, f64, f64, f64)>,
+    scan_limit: u32,
 ) -> Result<crate::decode::DecodedImage, RemoteScanError> {
     let mut last = cover_reason(COVER_REASON_PAGE_RENDER);
-    for offset in 0..=COVER_PAGE_SCAN_LIMIT {
+    for offset in 0..=scan_limit {
         let page = first_page.saturating_add(offset);
-        let Ok(bytes) = document.page_bytes(page) else {
+        if page >= document.page_count() {
             break; // 没有更多页
+        }
+        // 第 79 轮：按封面尺寸取页（`page_bytes_for_display`）。对 PDF 而言这是"让 pdfium
+        // 直接按 340 宽栅格化"，而不是先渲染 1600px 长条页再缩小 —— 真机实测单页
+        // 0.7–6.8 s / 输出最大 7.3 MB，栅格化面积按宽度平方降下来（长条页实测 ≈15×）。
+        //
+        // 第 79 轮续8（独立评审 C-3）：取页**失败**必须带着自己的码上抛，不能 `break`。
+        // PDF 改惰性读之后，读取预算烧穿/网络失败都发生在**取页**阶段，而旧写法把它们
+        // 一律吞成 `cover_page_render_failed`（**不在可重试表**⇒永久失败），恰好与
+        // "快速失败并给具体码、重但可救的封面能自愈"的意图相反。
+        let bytes = match document.page_bytes_for_display(page, cover_width) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let text = format!("{error:#}").to_ascii_lowercase();
+                return Err(if text.contains("cover-read-budget") {
+                    cover_reason(COVER_REASON_READ_BUDGET)
+                } else {
+                    cover_reason(COVER_REASON_PAGE_RENDER)
+                });
+            }
         };
         match decode_cover_bounded(&bytes, cover_width, cover_height, crop, false) {
             Ok(image) => return Ok(image),
@@ -1670,17 +1799,46 @@ fn fetch_cover_from_document(
     // 115/夸克/百度 use an opaque id as the logical path; dispatch the
     // parser by the real file name stored in library_index.
     // 封面页取"第一张真正可解码的图"（有界向后扫），见 `decode_first_usable_page`。
+    // 扫页上限按格式取：PDF 收紧（页是整张扫描图，扫多了会烧穿封面读取预算）。
+    let scan_limit = cover_page_scan_limit(asset_kind);
     let outcome = crate::document::open_document(source, document_name)
         .map_err(|error| cover_open_reason(&error))
         .and_then(|document| {
-            decode_first_usable_page(document.as_ref(), page, cover_width, cover_height, crop)
+            decode_first_usable_page(
+                document.as_ref(),
+                page,
+                cover_width,
+                cover_height,
+                crop,
+                scan_limit,
+            )
         });
     match &outcome {
         Ok(_) => {
             span.end();
         }
         Err(error) => {
-            span.field_str("code", error_code(error)).end();
+            let mut span = span.field_str("code", error_code(error));
+            // 第 81 轮续2（用户要求：先补诊断）：预算类失败必须能自证"是**哪一条**先超" ——
+            // 字节(64MB) / 次数(384) / 时间(30s)。此前只落一个笼统的
+            // `cover_read_budget_exceeded`，只能靠猜（真机 `2.mobi` 放宽预算后仍失败，
+            // 无法判断是单条记录太大还是次数/时间不够）。
+            //
+            // 这段文字由**本模块**生成（`AdapterByteSource::read_at`），只含
+            // used/budget/reads/elapsed 数字，不含 provider 原文、URL 或 Cookie ——
+            // 与 perf / diag 的脱敏约束一致；错误码本身仍留在白名单内（不被污染）。
+            let text = format!("{error:#}");
+            if text.contains("cover-read-budget") {
+                let detail = text.trim().replace(['\n', '\r'], " ");
+                span = span.field_str("budget", detail.clone());
+                crate::remote_scan::diag::note(&format!(
+                    "cover_budget source={} code={} detail={}",
+                    trace.source_id,
+                    error_code(error),
+                    detail
+                ));
+            }
+            span.end();
             crate::perf::bump(crate::perf::Counter::CoverFailures);
         }
     }
@@ -2572,7 +2730,7 @@ fn consume_staged_covers(
                 asset_id: crate::db::library_index_id(&source_fp, &task.logical_path),
                 content_revision: task.fingerprint.clone(),
                 selection_revision: "default".into(),
-                profile: "340x480@1".into(),
+                profile: cover_quality_profile_on(&conn),
             }
             .encode(),
         ) {
@@ -3394,20 +3552,90 @@ mod tests {
                 encoded.into_inner(),
             ],
         };
-        let cover =
-            decode_first_usable_page(&book, 0, REMOTE_COVER_WIDTH, REMOTE_COVER_HEIGHT, None)
-                .expect("第三页是可解码 PNG，应作为封面");
+        let cover = decode_first_usable_page(
+            &book,
+            0,
+            REMOTE_COVER_WIDTH,
+            REMOTE_COVER_HEIGHT,
+            None,
+            COVER_PAGE_SCAN_LIMIT,
+        )
+        .expect("第三页是可解码 PNG，应作为封面");
         assert_eq!((cover.width, cover.height), (340, 480));
 
         let broken = FakeBook {
             pages: vec![b"<html>".to_vec(), b"not an image".to_vec()],
         };
-        let outcome =
-            decode_first_usable_page(&broken, 0, REMOTE_COVER_WIDTH, REMOTE_COVER_HEIGHT, None);
+        let outcome = decode_first_usable_page(
+            &broken,
+            0,
+            REMOTE_COVER_WIDTH,
+            REMOTE_COVER_HEIGHT,
+            None,
+            COVER_PAGE_SCAN_LIMIT,
+        );
         match outcome {
             Ok(_) => panic!("没有任何可解码页时不得判为成功"),
             Err(error) => assert_eq!(error_code(&error), COVER_REASON_DECODE),
         }
+    }
+
+    /// 第 79 轮续 3：扫页上限按格式取 —— PDF 收紧（真机：长条扫描本扫四页就能吃掉
+    /// 10–24 MB、几十秒），其它格式保持既有契约（KF8/AZW3 的记录可能不是图片）。
+    #[test]
+    fn pdf_cover_scan_limit_is_tighter_than_other_archives() {
+        assert_eq!(cover_page_scan_limit("pdf"), COVER_PDF_PAGE_SCAN_LIMIT);
+        assert_eq!(cover_page_scan_limit("archive"), COVER_PAGE_SCAN_LIMIT);
+        assert!(
+            COVER_PDF_PAGE_SCAN_LIMIT < COVER_PAGE_SCAN_LIMIT,
+            "PDF 必须比其它归档更紧，否则封面读取预算仍会被烧穿"
+        );
+    }
+
+    /// 第 79 轮续7（用户确认）：扫描/预览建封面任务用的 profile 必须跟随设置
+    /// `coverQuality`。真机证据：固定 340 档时，586 本 PDF 里 340 ready 142 本而
+    /// 卡片要的 170 档只有 42 本 ⇒ 抓回来的图卡片用不上。
+    #[test]
+    fn scan_cover_profile_follows_cover_quality_setting() {
+        let conn = db::get().lock().unwrap();
+        let setting = "coverQuality";
+        let restore: Option<String> = conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key=?1",
+                [setting],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        let set = |value: Option<&str>| {
+            conn.execute("DELETE FROM app_settings WHERE key=?1", [setting])
+                .unwrap();
+            if let Some(value) = value {
+                conn.execute(
+                    "INSERT INTO app_settings(key,value,updated_at) VALUES(?1,?2,0)",
+                    rusqlite::params![setting, value],
+                )
+                .unwrap();
+            }
+        };
+
+        set(Some("low"));
+        assert_eq!(cover_quality_profile_on(&conn), "170x240@1");
+        set(Some("high"));
+        assert_eq!(cover_quality_profile_on(&conn), "510x720@1");
+        set(Some("medium"));
+        assert_eq!(
+            cover_quality_profile_on(&conn),
+            crate::remote_scan::cover_store::DEFAULT_COVER_PROFILE
+        );
+        set(None);
+        assert_eq!(
+            cover_quality_profile_on(&conn),
+            crate::remote_scan::cover_store::DEFAULT_COVER_PROFILE,
+            "设置缺失时必须回落到历史默认档"
+        );
+
+        set(restore.as_deref());
     }
 
     /// ② 策略：**可修复的失败**必须拿到 6h 长期补偿资格，否则永久结案、永不自愈

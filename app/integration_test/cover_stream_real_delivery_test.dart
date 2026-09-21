@@ -353,9 +353,21 @@ void main() {
       await tester.pump();
 
       // 观察窗**已结束**后才做诊断性读取（用于判断失败层级：durable 未 ready vs UI 未跟随）。
+      // 第 79 轮续：状态读取必须带卡片实际使用的 selection + profile（档位来自设置
+      // `coverQuality`），否则会读到另一档位的状态，诊断结论会失真。
+      final quality = LibraryStore.instance.settings.coverQuality.size;
       final durable = await rust_cover.remoteCoverState(
         sourceId: source.id,
         assetId: series.assetId,
+        selection: const rust_cover.CoverSelectionDto(
+          page: 0,
+          revision: 'default',
+        ),
+        profile: rust_cover.CoverProfileDto(
+          width: quality.$1,
+          height: quality.$2,
+          decoderVersion: 1,
+        ),
       );
       final aggregate = RemoteScanCoordinator.instance.statusFor(source.id).value;
       // ignore: avoid_print

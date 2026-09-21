@@ -1576,6 +1576,13 @@ pub fn recover_expired_leases_on(conn: &Connection, now: i64) -> rusqlite::Resul
 /// Return a claimed job to the durable queue without consuming a retry. This
 /// is used when a provider/account budget says the request is not runnable
 /// yet; the worker can sleep outside SQLite and claim it again later.
+///
+/// 第 79 轮续8（独立评审 C-2）：认领（`claim_next_job_for_source_session_on`）
+/// 每次都会 `attempt = attempt + 1`，所以"不消耗重试"必须**把这次认领的计数补回去**
+/// （`attempt = MAX(attempt-1, 0)`）。否则：让路每 2 s 一次、阅读可持续数十分钟 ⇒
+/// 后台任务被反复"让路"就等价于反复失败，一旦 `attempt >= 3`，
+/// `cover_job_failure_decision` 会把任何瞬时网络错误判成**永久失败**（无 6h 补偿），
+/// 表现与"封面怎么都出不来"一模一样。provider-budget 的让路路径同样受益。
 pub fn release_job_lease_on(
     conn: &Connection,
     key: &CoverJobKey,
@@ -1584,7 +1591,8 @@ pub fn release_job_lease_on(
 ) -> rusqlite::Result<bool> {
     let changed = conn.execute(
         "UPDATE remote_cover_job SET state='pending',lease_owner=NULL,
-             lease_until=NULL,next_attempt_at=NULL,updated_at=?1
+             lease_until=NULL,next_attempt_at=NULL,
+             attempt=MAX(attempt-1,0),updated_at=?1
          WHERE job_key=?2 AND state='running' AND lease_owner=?3",
         params![now, key.encode(), owner],
     )?;

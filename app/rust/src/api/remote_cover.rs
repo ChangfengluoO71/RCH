@@ -589,18 +589,26 @@ pub fn subscribe_cover_revisions(sink: StreamSink<CoverRevisionEvent>) {
 ///
 /// 这是 UI 消费 durable truth 的唯一读入口 —— 禁止用 `remote_cover_request`（它会 enqueue）
 /// 代替本函数。
+///
+/// **第 79 轮续（真机 bug 修复）**：必须传入调用方**实际使用**的 `selection` + `profile`。
+/// 曾经这里读的是写死的 `default` / `340x480@1`，而卡片按 `coverQuality` 请求
+/// `170x240@1` ⇒ 图已 ready 但墙面仍按另一 profile 的旧 `failed` 显示"获取失败"。
 pub fn remote_cover_state(
     source_id: String,
     asset_id: String,
+    selection: CoverSelectionDto,
+    profile: CoverProfileDto,
 ) -> Result<Option<RemoteCoverStateDto>, String> {
     let source_id = source_id.trim().to_string();
     let asset_id = asset_id.trim().to_string();
     if source_id.is_empty() || asset_id.is_empty() {
         return Ok(None);
     }
+    let selection_revision = selection_key(&selection);
+    let profile_key = profile_key(&profile);
     let conn = db::get().lock().map_err(|error| error.to_string())?;
     // "no job" 必须按**是否存在任何相关 durable 记录**判定，而不是猜测某个 state 字符串。
-    // 谓词与读路径自身使用的 default-profile 选择完全一致（只读 EXISTS，无副作用）。
+    // 谓词与读路径自身使用的键完全一致（只读 EXISTS，无副作用）。
     let exists: bool = conn
         .query_row(
             "SELECT EXISTS(
@@ -611,24 +619,257 @@ pub fn remote_cover_state(
                  SELECT 1 FROM remote_cover_variant
                   WHERE source_id=?1 AND asset_id=?2
                     AND selection_revision=?3 AND profile=?4)",
-            params![
-                source_id,
-                asset_id,
-                crate::remote_scan::cover_store::DEFAULT_SELECTION_REVISION,
-                crate::remote_scan::cover_store::DEFAULT_COVER_PROFILE
-            ],
+            params![source_id, asset_id, selection_revision, profile_key],
             |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
     if !exists {
         return Ok(None);
     }
-    let state = catalog::cover_state_for(&conn, &source_id, Some(&asset_id))
-        .map_err(|error| error.to_string())?;
+    let state = catalog::cover_state_for(
+        &conn,
+        &source_id,
+        Some(&asset_id),
+        &selection_revision,
+        &profile_key,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(Some(cover_dto(state)))
 }
 
 pub fn remote_view_revision(source_id: String) -> Result<i64, String> {
     let conn = db::get().lock().map_err(|e| e.to_string())?;
     cover_store::view_revision(&conn, &source_id).map_err(|e| e.to_string())
+}
+
+/// 第 80 轮：封面缓存"重置到当前档位"的结果摘要（供界面提示与测试断言）。
+pub struct RemoteCoverResetDto {
+    /// 被删除的、**非当前档位**的变体行数。
+    pub purged_variants: u32,
+    /// 被删除的、**非当前档位**的任务行数。
+    pub purged_jobs: u32,
+    /// 被删除的孤儿 blob 行数（及其磁盘文件）。
+    pub purged_blobs: u32,
+    /// 重新排队（attempt 归零）的终态失败任务数。
+    pub requeued_jobs: u32,
+    /// 被 bump 封面 revision 的源数量。
+    pub sources: u32,
+    /// 生效的档位（便于界面显示"已切到 340x480@1"）。
+    pub profile: String,
+}
+
+/// 第 80 轮：把封面缓存**重置到当前 `coverQuality` 档位**，并让终态失败重新有机会。
+///
+/// 为什么需要（有真机/桌面数据支撑）：
+/// 1. **抓错档**：扫描过去固定抓 340×480，而卡片按设置取图（低 = 170×240）⇒ 实测
+///    「金牌得主」目录 340 档 ready 15 本、170 档只有 15 本而另一批 11 本是预算失败；
+/// 2. **终态失败不会自愈**：`attempt>=3` 判永久失败（`next_attempt_at=0`、无 6h 补偿），
+///    用户库里 `1.pdf`–`7.pdf`（attempt 4–5）与 8 个 MOBI 都卡死在这种状态 ——
+///    清掉它们重新排队，是让"改过上限/修过 bug"之后的重新尝试真正生效的唯一路径。
+///
+/// 做四件事（幂等，只动**封面**数据，不碰书架索引）：
+/// 1. 删除非当前档的 `remote_cover_job` / `remote_cover_variant` 行；
+/// 2. 删除不再被任何变体或引用指向的 `remote_cover_blob` 行，并删除其磁盘文件；
+/// 3. 把当前档里 **`state='failed'`** 的任务重新排队（`attempt=0`、清错误码与租约）；
+///    `blocked`（需重新登录）与 `unsupported`（格式本身给不出封面）保持原样 —— 重试无意义；
+/// 4. bump 各源封面 revision，界面据此重新读 durable state。
+pub fn remote_cover_reset_to_current_profile() -> Result<RemoteCoverResetDto, String> {
+    let conn = db::get().lock().map_err(|error| error.to_string())?;
+    let profile =
+        crate::api::remote_scan::cover_quality_profile_on(&conn);
+    let now = db::now_ms();
+
+    // 1) 非当前档的任务与变体。
+    let purged_jobs = conn
+        .execute("DELETE FROM remote_cover_job WHERE profile <> ?1", params![profile])
+        .map_err(|error| error.to_string())? as u32;
+    let purged_variants = conn
+        .execute(
+            "DELETE FROM remote_cover_variant WHERE profile <> ?1",
+            params![profile],
+        )
+        .map_err(|error| error.to_string())? as u32;
+
+    // 2) 孤儿 blob：先取出路径，删行，再删文件（文件删不掉不阻塞 —— 下次启动的 GC 会再试）。
+    let orphans: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT blob_key,relative_path FROM remote_cover_blob
+                  WHERE blob_key NOT IN (
+                        SELECT blob_key FROM remote_cover_variant
+                         WHERE blob_key IS NOT NULL AND blob_key <> ''
+                        UNION
+                        SELECT blob_key FROM remote_cover_ref)",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+        let mut paths = Vec::new();
+        for (blob_key, relative_path) in rows {
+            conn.execute(
+                "DELETE FROM remote_cover_blob WHERE blob_key=?1",
+                params![blob_key],
+            )
+            .map_err(|error| error.to_string())?;
+            if !relative_path.is_empty() {
+                paths.push(relative_path);
+            }
+        }
+        paths
+    };
+    let root = crate::cache::cache_root();
+    for relative_path in &orphans {
+        let _ = std::fs::remove_file(root.join(relative_path));
+    }
+
+    // 3) 当前档的终态失败 ⇒ 重新排队。
+    let requeued_jobs = conn
+        .execute(
+            "UPDATE remote_cover_job
+                SET state='pending',attempt=0,error_code=NULL,next_attempt_at=NULL,
+                    lease_owner=NULL,lease_until=NULL,long_retry_pending=0,
+                    long_retry_consumed=0,long_retry_not_before=NULL,updated_at=?1
+              WHERE profile=?2 AND state='failed'",
+            params![now, profile],
+        )
+        .map_err(|error| error.to_string())? as u32;
+
+    // 4) 让界面重新读 durable state。
+    let sources: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT source_id FROM remote_cover_job GROUP BY source_id
+                 UNION
+                 SELECT source_id FROM remote_cover_variant GROUP BY source_id",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+        rows
+    };
+    for source_id in &sources {
+        // listing_generation 用 0：重置不改变目录清单，只让封面 revision 前进，
+        // 界面据此重读 durable state（与扫描完成时的 bump 同一张表）。
+        let _ = cover_store::bump_view_revision_on(&conn, source_id, 0, now);
+    }
+
+    Ok(RemoteCoverResetDto {
+        purged_variants,
+        purged_jobs,
+        purged_blobs: orphans.len() as u32,
+        requeued_jobs,
+        sources: sources.len() as u32,
+        profile,
+    })
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+    use crate::remote_scan::cover_model::{CoverJobKey, CoverJobState};
+    use crate::remote_scan::cover_state::CoverJobUpsertCause;
+
+    /// 第 80 轮：重置只清"非当前档"，当前档的 ready 必须原样保留，
+    /// 当前档的终态 failed 必须重新排队（attempt 归零），blocked/unsupported 不动。
+    #[test]
+    fn reset_purges_other_profiles_and_requeues_terminal_failures() {
+        // 注意：API 自己会锁 `db::get()`，所以播种必须在**作用域内**完成并释放锁，
+        // 否则 std::sync::Mutex 不可重入 ⇒ 自死锁（第一版就是这样挂住的）。
+        let source = "reset-contract";
+        let current;
+        let other;
+        {
+            let conn = db::get().lock().unwrap();
+            crate::remote_scan::persistence::migrate(&conn).unwrap();
+            cover_store::migrate(&conn).unwrap();
+            for table in ["remote_cover_job", "remote_cover_variant", "remote_scan_epoch"] {
+                conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source])
+                    .unwrap();
+            }
+            let key = |profile: &str, asset: &str| CoverJobKey {
+                source_id: source.into(),
+                asset_id: asset.into(),
+                content_revision: "c1".into(),
+                selection_revision: cover_store::DEFAULT_SELECTION_REVISION.into(),
+                profile: profile.into(),
+            };
+            let seed = |profile: &str, asset: &str, state: CoverJobState| {
+                cover_store::upsert_job_on(
+                    &conn,
+                    &key(profile, asset),
+                    state,
+                    "visible",
+                    300,
+                    1,
+                    "e1",
+                    1_000,
+                    CoverJobUpsertCause::Demand,
+                )
+                .unwrap();
+            };
+            current = crate::api::remote_scan::cover_quality_profile_on(&conn);
+            other = if current == "170x240@1" { "340x480@1" } else { "170x240@1" };
+            seed(&current, "keep-ready", CoverJobState::Ready);
+            seed(&current, "requeue-me", CoverJobState::Failed);
+            seed(&current, "stay-blocked", CoverJobState::Blocked);
+            seed(other, "other-ready", CoverJobState::Ready);
+            seed(other, "other-failed", CoverJobState::Failed);
+        }
+
+        let result = remote_cover_reset_to_current_profile().unwrap();
+        assert_eq!(result.profile, current);
+        assert!(result.purged_jobs >= 2, "另一档的两条必须被清掉");
+        assert!(result.requeued_jobs >= 1, "当前档的 failed 必须重新排队");
+
+        let conn = db::get().lock().unwrap();
+        let key = |profile: &str, asset: &str| CoverJobKey {
+            source_id: source.into(),
+            asset_id: asset.into(),
+            content_revision: "c1".into(),
+            selection_revision: cover_store::DEFAULT_SELECTION_REVISION.into(),
+            profile: profile.into(),
+        };
+        let other_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM remote_cover_job WHERE profile=?1",
+                params![other],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(other_rows, 0, "非当前档不得残留");
+
+        let (state, attempt): (String, i64) = conn
+            .query_row(
+                "SELECT state,attempt FROM remote_cover_job WHERE job_key=?1",
+                params![key(&current, "requeue-me").encode()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "pending");
+        assert_eq!(attempt, 0, "重排队必须把 attempt 归零（否则又会被 attempt>=3 判死）");
+
+        let blocked: String = conn
+            .query_row(
+                "SELECT state FROM remote_cover_job WHERE job_key=?1",
+                params![key(&current, "stay-blocked").encode()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(blocked, "blocked", "blocked 重试无意义，必须保持原样");
+
+        let ready: String = conn
+            .query_row(
+                "SELECT state FROM remote_cover_job WHERE job_key=?1",
+                params![key(&current, "keep-ready").encode()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ready, "ready", "当前档已 ready 的封面不得被动到");
+    }
 }

@@ -49,6 +49,8 @@ typedef RemoteCoverStateLoader =
     Future<rust.RemoteCoverStateDto?> Function({
       required String sourceId,
       required String assetId,
+      required rust.CoverSelectionDto selection,
+      required rust.CoverProfileDto profile,
     });
 
 typedef RemoteCoverReleaseLoader =
@@ -126,15 +128,34 @@ class RemoteCoverRepository {
   ///
   /// 不 enqueue、不 request、不建 session、不访问 provider、不改 durable state ——
   /// 这是"后续 wake 只重读、绝不重复 request"所依赖的读入口。
+  ///
+  /// 第 79 轮续（真机 bug）：`selection` + `profile` 必须与卡片**实际请求/读取图片**
+  /// 用的那组键一致。此前 Rust 侧写死读 `default`/`340x480@1`，而卡片按
+  /// `coverQuality`（low=170x240）取图 ⇒ 图已 ready 但墙面仍按另一 profile 的旧
+  /// `failed` 显示"获取失败"。
   Future<rust.RemoteCoverStateDto?> readState({
     required String sourceId,
     required String assetId,
-  }) => _stateLoader(sourceId: sourceId, assetId: assetId);
+    required rust.CoverSelectionDto selection,
+    required rust.CoverProfileDto profile,
+  }) => _stateLoader(
+    sourceId: sourceId,
+    assetId: assetId,
+    selection: selection,
+    profile: profile,
+  );
 
   static Future<rust.RemoteCoverStateDto?> _defaultStateLoader({
     required String sourceId,
     required String assetId,
-  }) => rust.remoteCoverState(sourceId: sourceId, assetId: assetId);
+    required rust.CoverSelectionDto selection,
+    required rust.CoverProfileDto profile,
+  }) => rust.remoteCoverState(
+    sourceId: sourceId,
+    assetId: assetId,
+    selection: selection,
+    profile: profile,
+  );
 
   Future<rust.RemoteCoverStateDto> requestCover({
     required BookSource source,

@@ -2472,3 +2472,522 @@ Critical/Important。复审另给 9 条 Minor，可当场收敛的已处理：
 "ZIP/CBZ 零行为改动"应修正为"**干净归档零行为改动**（严格规则先命中、零额外读）"；对
 "EOCD 后有多余字节"的归档，CBZ 侧一并受益（同样从逐条目读变为只读中央目录）。
 新增诊断工具 `examples/quark_epub_probe.rs` 一并入库。
+
+---
+
+## 2026-09-20｜第79轮：PDF 惰性按需读（远端 PDF 打开/封面不再整包下载）
+
+**本轮目标**：用户指示"提交更新并开始其他漫画格式的改正"。开工前先按**真实库分布**校准时序
+（`library_index` 全库统计）：`.zip` 786 / **`.pdf` 609** / `.cbz` 240 / `.mobi` 19 / `.epub` 20 /
+`.rar`·`.cbr` **0**。交接单里"RAR 最严重"是按症状排序，而用户库里根本没有 RAR ⇒ **改按证据排序：
+先 PDF**（其次 MOBI，RAR 降到最后）。这一点已在给用户的报告里说明。
+
+**现状（改前）**：`PdfBook::open` 把整份文件读进内存再 `load_pdf_from_byte_vec`
+（峰值内存 = 文件大小）；封面侧归档分支 `windows = Vec::new()` ⇒ 走同一条 `open_document`，
+再叠一条 `COVER_PDF_MAX_BYTES = 128MB` 硬拒与 24MB/192 次/45s 预算 ⇒ 现场实测"PDF 封面
+`CoverBytesFetched` 恰等于文件大小"（`LOG.md:1251`）。用户库里最大的几本：`9.pdf` 204MB、
+`10.pdf` 180MB、`8.pdf` 164MB。
+
+**侦察（独立子代理 + 我逐条复核）**：
+- `pdfium-render 0.9.3` 的 `load_pdf_from_reader`（`src/pdfium.rs:371-393`）走
+  `FPDF_LoadCustomDocument` + `FPDF_FILEACCESS.m_GetBlock`，**惰性**：只 `seek(End(0))` 取一次
+  长度（`src/utils.rs:297-300`），其余由 pdfium 按需回调（`src/utils.rs:359-379`），reader 由
+  文档持有（`src/pdf/document.rs:174,222-224`）⇒ 不需要新增 feature，桌面/Android 都可用
+  （`load_pdf_from_fetch` 仅 WASM）。
+- **最关键契约**：`m_GetBlock` 的返回值语义是"成功/失败"（非零即成功），而 pdfium-render 把
+  `Read::read` 的返回值**直接透传**（`utils.rs` 的 `read_block_from_callback`：
+  `reader.read(..).unwrap_or(0) as c_int`）⇒ **短读会被 pdfium 当成整块成功**，缓冲区尾部
+  留下未初始化字节 = 解析错误或**静默错页**。因此适配器必须"填满或报错"，正是
+  `ByteSource::read_exact_at` 的语义。
+
+**改动（最小面，`app/rust/src/document/pdf.rs`）**：
+1. 新增私有 `PdfFetchReader<S: ByteSource>`：内部就是 `SourceReader<Arc<S>>`（复用既有的
+   元数据小窗口 64B–16KB / 顺序预读 256KB–1MB，把 pdfium 的随机小块读摊薄成少量远端请求），
+   `Read::read` 用 `read_exact` 实现**填满或报错**（`Err` 会被 pdfium-render 映射成 0 = 失败），
+   `Seek` 直接转发。
+2. `PdfBook::open` 改为**惰性为主**：`load_pdf_from_reader(PdfFetchReader::new(Arc<S>))`；
+   失败时 `tracing::warn!` 并**回退**到原来的整份读入（`load_eager`），保证不劣化。
+3. 新增 `pub fn open_eager`（= 历史行为，逐字节等价）供 A/B 量化；公开签名只加 `+ 'static`
+   约束 ⇒ `document/mod.rs:56`、`api/remote_scan.rs:1673`、`api/source.rs` 各流式分支**零改动**。
+4. `page_count`/`page_bytes`/`metadata`/`Drop`/`PDFIUM_FFI_LOCK` 一行未改（页渲染本来就是懒的）。
+
+**真机实测**（夸克 `1.pdf`，57,506,080 B / 230 页；`examples/quark_document_probe.rs --pdf`）：
+
+| | 打开 | 首页渲染 | 打开+首页字节 | 内容比对 |
+|---|---|---|---|---|
+| 改前（整份读入） | 7127 ms / 1 次读 / 57,506,080 B | 830 ms / 0 次读 | 57.5 MB | 基线 |
+| **改后（惰性按需读）** | **1119 ms / 8 次读 / 25,004 B** | 1110 ms / 3 次读 / 266,752 B | **291,756 B（197× 更少）** | **✓ 逐字节相同** |
+
+"内容逐字节相同"是对上面那条**短读契约**的直接反证：惰性读与整份读在同一份文件上渲染出完全
+一致的 WebP ✓。封面侧同路径受益：打开+首页只花 292 KB / 11 次读，24MB/192 次预算不再被大 PDF
+撞穿（`COVER_PDF_MAX_BYTES` 保留，无害）。阅读器侧同样受益（115/夸克/SFTP/WebDAV 的流式分支
+都直接 `open_document`）。
+
+**工具**：`examples/quark_epub_probe.rs`（第 78 轮）`git mv` 为
+**`examples/quark_document_probe.rs`**，新增 `--pdf` 模式（惰性 vs 整份的读数/字节 A/B +
+逐页内容一致性判定）；EPUB 模式与归档结构体检原样保留。
+
+**验收**：`cargo test --locked -j 2 -- --test-threads=1` **exit 0**（394 lib + 19 P0 基线 +
+9 P0-B2 + 全部契约套件）；`document::` 36 passed（含 PDF 既有 3 条）。
+
+**遗留**：
+1. PDF 惰性适配器只有"真实文件逐字节一致"这一层证据，缺**仓库内夹具级**回归（页渲染需要
+   pdfium.dll，CI 上会跳过）——backlog：手写一份两页多对象的极小 PDF 夹具 + 断言
+   `open`/`open_eager` 渲染一致（`PdfDocument::new` 在 0.9.3 不可用，需自造字节）。
+2. 封面预算 24MB/192 次/45s 是"整包时代"的旋钮，现在可依实测下调；另开一轮处理。
+3. 加密 PDF 走 custom file access 的错误码映射未专项验证（回退路径会接住）。
+4. RAR/CBR：用户库 0 样本，按证据降到最后；若将来出现样本再按 EPUB 的思路做（RAR 无中央目录，
+   需要在"头部顺序扫描 + 按需单文件提取"上另设计）。
+5. MOBI（19 个）：`document/mobi.rs` 已有 `image_records` 过滤，待评估其打开成本后另开一轮。
+
+### 第79轮续（同日，真机反馈驱动）：后台封面让路 + 封面按显示宽度渲染
+
+**真机反馈**：用户报告"手机还是卡、封面也没出来"。先把诊断做到真机上（Android 注不进
+`RCH_PERF_LOG` 环境变量），于是给 PDF 打开/取页加了一份 `<cache_root>/pdf_diag.log`
+（1 行/次打开 + 1 行/次取页，超 1 MB 自截断），APK 与桌面版都带它。
+
+**真机日志推翻了我原来的假设**：
+- `pdf_open mode=lazy` **8/8**、`mode=eager` 0 次 ⇒ **惰性读在 Android 上确实生效**，
+  打开 1.0–1.6 s / 10–13 次读 / **3.6–23 KB**（不是"回退整份读入"）；
+- 真正贵的是**取页**：1600px 宽 + 2 万像素高的长条页（手机 `readMode=webtoon`），
+  单页 **0.7–6.8 s**、`ask_bytes` 0.24–2.5 MB、输出 WebP **最大 7.27 MB**；
+- 封面任务队列 **495 个**（408 `background` + 87 `visible`）：门控只有 4 请求/秒、2 并发，
+  后台封面把带宽与连接吃满 ⇒ 前台翻页夹在中间排队、封面也慢慢出。
+- 口径修正：我此前"封面只花 0.3 MB"只对 `1.pdf` 成立（它首页小），**不适用于首页 1–2.5 MB
+  的扫描本**；那部分数据量是 PDF 页对象本身，无法再省。
+
+**改动（按用户确认的 1 + 2 一起做）**：
+1. **后台封面给阅读让路**：`reader.rs` 新增前台读页时间戳（`load_claimed` 里
+   `priority == Foreground` **且磁盘未命中**时打点 —— 磁盘命中不占网络，后台可继续跑）；
+   `api::remote_scan::run_remote_cover_worker` 在认领任务后判定：`demand_kind == "background"`
+   且最近 20 s 内有过前台网络取页 ⇒ 释放租约、睡 2 s 重试（任务不丢，只让路）。
+   `visible`（用户正看着的封面）不受影响。
+2. **封面按显示宽度渲染**：`Document` 新增带默认实现的
+   `page_bytes_for_display(index, target_width)`（默认回退 `page_bytes`，其它格式行为不变）；
+   `PdfBook` 覆盖它，让 pdfium 直接按目标宽度栅格化；封面管线
+   `decode_first_usable_page` 改用它（`cover_width` = 340）。
+   真机同源 PDF 实测：`page 0` 1600px = **1029 ms / 输出 3,358,274 B** →
+   340px = **36 ms / 输出 264,824 B**（渲染 **28×**、输出 **12.7×**；数据量不变，
+   该页数据在两次渲染间已被窗口缓存，故 0 次读）。
+   数字订正：我最初写"栅格化面积降 22×"，实际 **≈15×** —— 1600px 那条路本身已被
+   `WEBP_MAX_DIMENSION` 截断（1600×20000 → 1311×16383），分母比理论值小；
+   新增单测 `cover_render_dimensions_shrink_long_strip_raster_area` 固定这个口径。
+
+**验收**：`cargo test --locked -j 2 -- --test-threads=1` **exit 0**（395 lib + 19 P0 基线 +
+9 P0-B2 + 全部契约套件）；`document::` 37 passed。手机 APK 与桌面 Debug 均已重建安装，
+待用户复测。
+
+**仍未做（第 79 轮之后）**：阅读页按屏宽渲染 + webtoon 长条切片（任务 3，会动画质，单独评估）；
+PDF 夹具级单测；封面预算下调；`pdf_diag.log` 的取舍（诊断期保留）。
+
+### 第79轮续2（同日，真机 bug）：海报墙显示"获取失败"但详情页有图
+
+**现象**（用户报告，并以为"以前修过"）：同一本书在**漫画详细界面能看到封面**，**海报墙卡片却显示
+"获取失败"**。
+
+**静态分析 + 真机取证（先分析后动手）**：
+- 两个界面用的是**同一个 `ComicCover`**（`book_detail_page.dart:422` `force: true`；墙面
+  `source_browser.dart:1884` 不传 force），都靠 durable state 决定显示什么；
+- 卡片的**请求 profile 由设置 `coverQuality` 决定**（`comic_cover.dart:638-641` →
+  `models.dart:268`：`low=(170,240)` / `medium=(340,480)` / `high=(510,720)`）。真机设置是
+  `low` ⇒ 取的是 **`170x240@1`**；
+- 但 Rust 的**状态读取把键写死**成 `selection_revision='default'` + `profile='340x480@1'`
+  （`remote_scan/catalog.rs:333`），且 `remote_cover_state(source_id, asset_id)` 根本收不到键。
+- 真机 DB 交叉验证：同一 asset 上两个 profile 的状态**可以相反** —— 实测 **7 本**
+  `170x240@1=ready` 而 `340x480@1=failed`（`002 黑白漫画.pdf`、`1/4/6/7/9/10.epub`），
+  正是"详情页有图、墙面失败"的那些书。
+- 排查中**排除**了两个假设（都有数据）：不存在"variant 标 failed 但 blob 真实存在"的行
+  （0 条）；不存在其它 `selection_revision`（只有 `default`）。
+
+**修法（用户选定 A：把实际使用的键传进去）**：
+- Rust：`catalog::cover_state_for` 增加 `selection_revision` / `profile` 参数（两条 SQL 由
+  写死改为绑定参数）；`remote_cover_state(source_id, asset_id, selection, profile)` 用既有
+  `selection_key` / `profile_key` 换算（EXISTS 谓词同源）。
+- Dart：`RemoteCoverRepository.readState` 与 `RemoteCoverStateLoader` typedef 增加
+  `selection` / `profile`；卡片 wake 路径传入**它自己正在用的**那组键（`comic_cover.dart`）。
+- FRB codegen（`flutter_rust_bridge_codegen generate`，2.12.0）：只动 3 个生成文件、
+  +26/−4 行，纯签名变化（已核对 diff 无漂移）。
+- 目录视图内嵌的 `cover` 字段仍用默认展示键（它只用于变更检测/预览，已在代码注释注明；
+  墙面芯片状态由卡片自己按实际 profile 读）。
+
+**回归测试**：`tests/remote_cover_state_read_contract.rs` 新增 **STATE-READ-4** —— 同一 asset
+上 `170x240@1=ready` / `340x480@1=failed`，断言两次读取**各读各的**（旧实现两次都会返回 340 的
+failed）。该契约文件 4 passed。
+
+**验收**：`cargo test --locked -j 2 -- --test-threads=1` **exit 0**（395 lib + 全部契约套件）；
+`flutter analyze`（改动文件）No issues；手机 APK 与桌面 Debug 均已重建安装，待用户复验那 7 本的
+墙面显示。
+
+### 第79轮续3（同日，真机"一直转圈"）：封面预算与扫页上限收紧
+
+**现象**（用户报告）：手机上"直接一直转圈"。
+
+**取证（手机 DB）**：`state=running` + `error_code=cover_read_budget_exceeded`、`attempt=2`、
+`profile=170x240@1`、`demand_kind=visible`，租约剩 307 s / 已跑 293 s；另有 5 条同因 `pending`。
+
+**机制（三处代码串起来）**：
+1. 卡片**只有 `running` 显示转圈**（`comic_cover.dart:949`，设计如此）；
+2. 一次封面抓取的预算是 **24 MB / 192 次读 / 45 s**（`remote_scan.rs:1282-1288`）—— 192 次读在
+   **4 请求/秒**门控下 ≈ 48 s ⇒ 单本重封面就要转 45 s 以上，`attempt=2` 再翻倍 ⇒ 分钟级转圈；
+3. 我上一轮加的"后台封面让路"只覆盖 `background`，屏幕上这些是 **visible**（不受让路影响）⇒
+   它们轮流各烧几十秒，**同时占满共享门控**，连阅读一起拖慢。
+   预算为何被烧穿：pdfium 按窗口（256 KB–1 MB）跨 trailer/xref/页对象取数，叠加封面**最多扫 4 页**
+   （`COVER_PAGE_SCAN_LIMIT = 3`）找"可解码的那一页" ⇒ 一本扫描本 10–24 MB。
+   （上一轮把封面**渲染**降到 340 px 是省 CPU（1029→36 ms），**取数没降**，所以预算照旧被烧穿。）
+
+**改动（用户确认 1–3）**：
+- `COVER_READ_BUDGET_MS`：**45 s → 15 s** —— 不可救的重封面**快速失败**并给具体码，不再拖住队列；
+- **扫页上限按格式收紧**：新增 `COVER_PDF_PAGE_SCAN_LIMIT = 1`（PDF 最多试"首页 + 次页"），
+  其它归档保持既有 `COVER_PAGE_SCAN_LIMIT = 3` —— 由 `cover_page_scan_limit(asset_kind)` 分派。
+  为什么不是全局改 1：**门禁先把我挡回来了** —— 既有契约测试
+  `cover_falls_back_to_the_first_decodable_page` 明确要求"第三页是可解码 PNG 时也应作为封面"
+  （MOBI/KF8 的记录可能不是图片，需要向后扫）。为配合我的改动去改这条测试属于放宽既有契约，
+  不允许；改成格式感知后，PDF（页是整张扫描图、扫多了必烧预算）收紧到 1，其它格式契约不变，
+  并新增 `pdf_cover_scan_limit_is_tighter_than_other_archives` 固定这个分派。
+- `COVER_READ_BUDGET_BYTES` **保持 24 MB 不变** —— 不牺牲"重但可救"的封面成功率。
+- 保留上一轮的"后台封面让路"（它没错，只是管不到 visible）。
+
+**立刻解卡**：重启 App 会回收滞留的封面租约（第 61 轮机制）；设置里临时关"远程封面抓取"也能
+让墙与阅读立刻安静。
+
+**验收**：`cargo test --locked -j 2 -- --test-threads=1` **exit 0**（395 lib + 全部契约套件，
+预算相关契约（`calls <= 8`、错误文案）不依赖具体阈值 ⇒ 未受影响）；手机 APK 与桌面 Debug 重建安装，
+待用户复验墙面与阅读手感。
+
+### 第79轮续4（同日，真机"海报墙封面还是没读取"）：ready 之后必须直读缓存图
+
+**现象**（用户报告 + 原话给出了期望语义）："变快了，但海报墙封面还是没读取……明明是很简单的
+逻辑，没缓存就获取，有缓存就直读"。
+
+**静态分析（决定性）**：
+- 墙面的**文件卡片确实带 `remoteAssetId`**（`source_browser.dart:1503`）⇒ 走**统一远程**路径
+  （`remoteAssetId != null && needsSession` → `_loadUnifiedRemoteCover`）；
+- 而该函数里"已发过请求 ⇒ 只重读 durable state"的分支**无条件抛异常**：
+  ```dart
+  final current = await repository.readState(...);
+  _coverState = current?.state;
+  throw _RemoteCoverStateException(...);   // ← state 已经 ready 也照样抛
+  ```
+  ⇒ 图早就抓好、卡片却永远停在占位（`ready` 不在 `_placeholder()` 的文案表里 ⇒ 落到
+  `uncachedPlaceholder()`）—— 这正是"有缓存也不读"；
+- 为什么**详情页有图**：详情的 `ComicCover` 没传 `preferUnifiedRemote`（且 `force: true`），
+  走的是 legacy 路径的"本地 miss ⇒ 直接取"，语义恰好是用户期望的那个"没缓存就获取"。
+  ⇒ 两个界面的差别不在权限、不在缓存，而在**这条分支从不读缓存**。
+
+**修复（`comic_cover.dart`，Dart-only）**：
+`ready` ⇒ **直接 `readCover` 读缓存图并返回**；`ready` 但读不到缓存（blob 被清理/迁移）⇒
+**不抛**，落到下面的 `requestCover` 分支重新物化一次 —— 正好补齐用户说的两句：
+"有缓存就直读 / 没缓存就获取"。其它状态仍按原样抛 `_RemoteCoverStateException` 渲染各自文案。
+
+**验收**：`flutter analyze`（改动文件）No issues；本次只动 Dart（Rust 未改）⇒ 全量门禁沿用上一轮
+的 exit 0；桌面 Debug 已重建（PID 44172）、手机 APK 已构建（待设备接入后 `adb install -r`）。
+
+**遗留（另一处设计取舍，未动）**：容器文件夹卡片在 `preferUnifiedRemote && needsSession &&
+remoteAssetId == null` 时**有意早退**（`comic_cover.dart:587-594`，为避免 legacy 请求风暴）⇒
+那种卡片会一直占位。若用户墙面出现"文件夹卡片无图"，需确认是否允许回退 legacy 取图。
+
+### 第79轮续5（同日，用户确认）：容器文件夹卡片回退 legacy 取图
+
+**改动**（用户批准"允许它回退 legacy 取图"）：
+1. **删掉那处早退**：`preferUnifiedRemote && needsSession && remoteAssetId == null` 不再 `return`
+   停在占位，而是继续走既有链路（本地磁盘 → legacy 本地 → **legacy 远程取图**）——与详情页
+   同一条"没缓存就获取"的路径。当年担心的"legacy 请求风暴"现在有护栏：卡片加载统一经
+   `_CoverLoadQueue.scheduler` 并发限流（第 38 轮引入）。
+2. **`didUpdateWidget` 的加载条件补上 `remoteAssetId`**：目录视图稍后补上稳定 asset id 时必须
+   重载，否则卡片会永远停在"回退 legacy"那条路径上、切不回统一路径（统一路径先读缓存，
+   因此切换不会重复下载）。
+
+**验收**：`flutter analyze`（改动文件）No issues；桌面 Debug 已重建（PID 43932）；手机 APK 已构建
+（设备未接入，待插上安装）。本次仍只动 Dart。
+
+### 第79轮续6（同日，用户确认）：卡片允许跨 profile 回退
+
+**真机取证（这次拿到了完整 DB 副本）**：586 本夸克 PDF 里 —— **340×480@1**：ready 142（都有 blob）/
+`provider:other` 等失败 142；**170×240@1**：ready **42** / 失败 20。⇒ 后台扫描按常量 340×480 抓，
+而卡片档位由设置 `coverQuality`（手机 = 低 = 170×240）决定 ⇒ **已经抓好的 142 张封面躺在另一个
+profile 下，卡片完全用不上**。这也是"明明有图却显示不出来"的一个真来源。
+（同时排除：`library_index.id` 与 `remote_cover_job.asset_id` id 空间一致，都是 64 位、能对上。）
+
+**改动（Dart-only，`comic_cover.dart`）**：新增 `_readAnyCachedCover` + `_profileCandidates`
+—— 读缓存时**本档优先，其后其余标准档（340×480 → 510×720 → 170×240，按尺寸去重）依次尝试**，
+命中即用（`RawImage(BoxFit.cover)` 负责缩放到卡片尺寸）。两处调用点（首次加载的缓存读取、
+wake 后 `ready` 的读图）都改用它 ⇒ "有图就用，别等重抓"。
+
+**为什么放在 Dart 而不是 Rust**：`remote_cover_state`/`read_cached_cover` 的语义是"按精确键读"，
+在 Rust 层跨档回退会让所有调用方都改变语义（含目录视图的变更检测）；Dart 层只影响卡片的显示
+选择，风险面最小，且无需再次 codegen。
+
+**验收**：`flutter analyze`（改动文件）No issues；桌面 Debug 已重建（PID 41820）；手机 APK 已构建
+（设备未接入）。
+
+**未做（等用户决定）**：让**后台扫描按 `coverQuality` 的 profile 抓**（现在固定 340 ⇒ 白抓一半）；
+跨档回退只是"用已有的"，不解决"抓错档"。
+
+**验证受阻（如实记录）**：手机 DB 连续 4 次 `adb exec-out cat` 只拿到**残缺副本**
+（`no such table: remote_cover_job`）—— 应用持续写库时这样拉必然撕裂。可靠做法：先划掉应用
+（停止写入）再拉，或在桌面端用同一套表验证。
+
+### 第79轮续7（同日，用户确认）：扫描抓取跟随 `coverQuality`
+
+**改动**：新增 `cover_quality_profile_on(conn)`（读 `app_settings.coverQuality`：low→`170x240@1`、
+high→`510x720@1`、其它/缺失→`DEFAULT_COVER_PROFILE` = `340x480@1` 保持历史行为），并替换两处
+**生产代码**里写死的 `"340x480@1"`（预览建任务 `remote_scan.rs:1053` 一带、封面消费查任务
+`remote_scan.rs:2656` 一带）。新增单测 `scan_cover_profile_follows_cover_quality_setting`
+（low/high/medium/缺失四种取值）。
+
+**为什么**：续 6 的真机证据 —— 扫描按 340 抓、卡片按设置要 170 ⇒ 抓回来的图卡片一张都用不上。
+
+**未做（用户已要求，下一轮）**：**更改封面质量后删除旧档封面并重新全量扫描**（需要新增 FRB
+接口 + Dart 设置页接线 + 只删"其它档"的变体/任务/blob 与其文件，并复用既有 blob GC）。
+
+### 第79轮续8（同日，独立评审后的修复）
+
+**评审结论（新上下文、只读）**：不算自洽 —— 2 条硬阻断 + 3 条 Important 回归；同时**确认两条
+关键契约未被削弱**（`cover_falls_back_to_the_first_decodable_page` 原断言保留；`remote_cover_state_read_contract`
+4 项实跑通过，STATE-READ-1/2/3 未放松），并指出 `"flutter analyze"` 此前只分析了改动文件
+⇒ 漏掉消费者。本轮修掉其中 4 条：
+
+1. **C-1（硬阻断）Dart 测试套件编译失败**：`stateLoader` 的签名变更漏改 4 个消费者 ——
+   `test/comic_cover_state_consumer_test.dart`、`test/comic_cover_scan_terminal_test.dart`、
+   `test/cover_scan_terminal_integration_test.dart` 补 `required selection/profile`；
+   `integration_test/cover_stream_real_delivery_test.dart` 的 `remoteCoverState(...)` 按设置档位补参。
+   **补跑门禁**：`flutter analyze` 全仓在这些文件上 **0 error**；
+   `flutter test`（三个卡片行为测试文件）**All tests passed（8 项）**，含 `E-STATE-MATRIX`、
+   `E-NO-POLL`、`F-SCAN-TERMINAL` —— 即续 4/续 5/续 6 的改动**没有**破坏这些冻结契约。
+2. **C-2（我引入的真回归）让路把"认领"当"重试"**：`release_job_lease_on` 承诺"不消耗重试"，
+   但 SQL 不重置 `attempt`，而认领每次 `attempt+1` ⇒ 让路每 2 s 一次等于反复失败，
+   `attempt>=3` 后任何瞬时错误被判**永久失败**。修法：释放时 `attempt=MAX(attempt-1,0)`
+   （provider-budget 让路路径同样受益）。
+3. **C-3（真回归）PDF 取页错误被吞成永久失败**：`decode_first_usable_page` 里
+   `let Ok(bytes) = ... else { break }` 把"读取预算烧穿/网络失败"吞成 `cover_page_render_failed`
+   （**不在可重试表**⇒永久失败）。修法：越界才 `break`（先查 `page_count()`），真错误按文本映射
+   上抛（`cover-read-budget` → `COVER_REASON_READ_BUDGET`，其余 → `COVER_REASON_PAGE_RENDER`）。
+4. **I-1 `COVER_PDF_MAX_BYTES` 128MB 硬拒正好挡住用户库里最大的三本**（`9.pdf` 204MB /
+   `10.pdf` 180MB / `8.pdf` 164MB ⇒ `cover_pdf_bytes_limit` 终态，一枚封面都拿不到）。
+   该上限写于"PDF 必须整包交给 pdfium"的时代，前提已失效（实测一枚封面 ≈292 KB）⇒ 放宽到 512 MB，
+   实际取数由 `COVER_READ_BUDGET_*` 兜底。
+5. **C-5（措辞）**：`comic_cover.dart` 里"绝不再轮询、也绝不重复 request"与续 4 新增的
+   "ready 但读不到缓存 ⇒ 重新物化"冲突 ⇒ 把不变量收窄写明（唤醒只重读；仅 ready 且本地无字节时
+   允许重新物化一次），与 `E-REQUEST-ONCE` 一致。
+
+**验收**：`cargo test --locked -j 2 -- --test-threads=1` **exit 0**（397 lib + 全部契约套件）；
+`flutter analyze`（本轮涉及文件）0 error；`flutter test`（卡片行为三文件）8 项全过。
+
+**计数更正（评审 M-4）**：续 1/续 2/续 3 写的 "395 lib" 是当时的实测值；随新增测试递增，
+现在为 **397**（`scan_cover_profile_follows_cover_quality_setting` + `pdf_cover_scan_limit_…`）。
+LOG 只追加，故在此更正而不改历史行。
+
+**仍未做（评审遗留，按优先级）**：
+- **C-4**：惰性打开把远端 I/O 挪进了 `PDFIUM_FFI_LOCK`（真机开一本 57.5 MB PDF 约 1.1 s 全在锁内，
+  最坏 15 s；且锁内会等 governor 许可）⇒ 需要"两阶段打开"或锁外预热，**未实测爆炸半径**；
+- **C-6**：`page_bytes_for_display(page, cover_width)` 这条核心链路在 Rust 侧零断言
+  （`FakeBook` 只实现 `page_bytes`）⇒ 需补 target_width/调用次数断言；
+- **I-2**：目录视图 `cover` 字段仍用默认档（只用于变更检测，键与卡片档位不同 ⇒ 可能漏触发刷新）；
+- **I-3**：跨档回退最多 4 次 `readCover`（DB 锁流量放大），可压到"本档 + 340"两档；
+- **M-1/M-2/M-5**：`pdf_diag.log` 截断失败静默、"ask_reads/ask_bytes" 差值在多线程下不可靠、
+  探针"内容一致性"在两侧都失败时会空泛成立（`0 == 0`）；
+- **续 7 的后续**：改质量后删旧档 + 重新全量扫描（用户已要求）。
+
+---
+
+## 2026-09-20｜第80轮：封面重抓能力（换档即重置 + 终态失败重排队）
+
+**本轮目标（用户指示）**：① 扫描抓取跟随设置 `coverQuality`（已在第 79 轮续 7 完成）；
+② **改档后删除旧档封面并重新全量扫描**。
+
+**桌面端取证（用户指定验「金牌得主」的 MOBI/PDF 目录，`coverQuality = medium`）**：
+
+| 格式 | 结果 |
+|---|---|
+| EPUB | **20/20 ready** ✓ |
+| MOBI | 10 ready / **8 failed** = `cover_read_budget_exceeded`（attempt 3–4）|
+| PDF | `0/8/9.pdf` = `cover_pdf_bytes_limit`（164–204 MB，撞 128 MB 硬拒）；`1–7.pdf`（46–60 MB）= **`cover_read_budget_exceeded`**（attempt 3–5）|
+
+**关键发现：这些失败全是"终态"** —— `next_attempt_at = 0`、长期补偿 = 0 ⇒ **永远不会自愈**。
+且 `1.pdf`/`2.pdf` 的 `attempt` 已到 5 ⇒ 正是第 79 轮续 8 修掉的 C-2 回归（让路把"认领"当"重试"
+烧）把它们推过了 `attempt>=3` 的永久失败门槛。**清掉旧记录重新排队，是让已修的 bug 与新上限
+真正生效的唯一路径** —— 这正好与用户要求的"删旧档 + 重抓"是同一件事。
+
+**本轮实现（Rust 侧 + 单测 + Dart 接线，均已落地验证）**：
+- 新增 FRB 接口 `remote_cover_reset_to_current_profile() -> RemoteCoverResetDto`：
+  1. 删除**非当前档**的 `remote_cover_job` / `remote_cover_variant` 行；
+  2. 删除不再被任何变体/引用指向的 `remote_cover_blob` 行**及其磁盘文件**（路径来自既有
+     `cache::remote_cover_cache_relative_path`；文件删不掉不阻塞 —— 启动 GC 会再试）；
+  3. 把当前档 **`state='failed'`** 的任务重新排队（`attempt=0`、清错误码/租约/长期补偿标记）；
+     `blocked`（需重新登录）与 `unsupported`（格式本身给不出封面）**保持原样** —— 重试无意义；
+  4. bump 各源封面 revision，界面据此重读 durable state。
+  幂等、只动封面数据，**不碰书架索引**。
+- Dart：设置页「封面质量」切换后调用该接口，并用 SnackBar 反馈"清理 N 条 / 重新排队 M 条"；
+  必须先 `updateSettings`（Rust 从 `app_settings` 读新档位）再调接口 —— 顺序在代码注释里写明。
+- FRB codegen（2.12.0）重新生成 6 个文件（`remote_cover.dart` / `remote_scan.dart` /
+  `frb_generated.*` / `frb_generated.rs`）。
+
+**验收**：`cargo test --locked -j 2 -- --test-threads=1` **exit 0**；新增单测
+`reset_purges_other_profiles_and_requeues_terminal_failures`（另一档被清空、当前档 `failed`
+重排队且 `attempt` 归零、`blocked` 不动、当前档 `ready` 不受影响）通过；
+`flutter analyze`（`home_page.dart` / `comic_cover.dart`）No issues。
+
+**过程中的一次自伤（如实记录）**：该单测第一版在**持有 `db::get()` 锁**时调用同样加锁的 API
+⇒ `std::sync::Mutex` 不可重入，测试**死锁**（600 s 超时）。改成"播种在作用域内、释放锁后再调
+API"，并在测试里写明原因。
+
+**仍未做（下一片）**：
+- **换档后触发全量扫描**：`remoteScanStart` 需要每个源的 `session`（`sourceType/session/rootPath/
+  mode`），放在设置页里拿不到 ⇒ 计划与"重抓全部封面"按钮一起做（用已有的 session helper 逐源启动
+  `mode='full'`）。当前实现只做"重置 + 重排队"，重新入队的任务由既有封面 worker / 卡片请求唤醒继续。
+- **MOBI 整份读入**：8 个 MOBI 仍超预算（`MobiBook::open` 不是惰性的）⇒ 需要照 PDF 的思路做
+  "按记录偏移惰性读"（MOBI 的记录索引在文件头部 ⇒ 可 seek）。
+- **PDF 封面 24 MB 预算之谜**：`1–7.pdf` 打开+首页实测仅 ~0.3 MB，封面却烧穿 24 MB ⇒
+  需要用桌面 perf 日志抓一次封面读取轨迹（怀疑 `AdapterByteSource` 的窗口放大 + 扫页叠加）。
+- 评审遗留：C-4（锁内网络 I/O）、C-6（`page_bytes_for_display` 断言）、I-2（目录视图键不一致）、
+  I-3（跨档回退读放大）、M-1/M-2/M-5。
+
+### 第80轮补记：真机截图 + DB 对照，锁定 MOBI 的真实瓶颈
+
+**用户截图（桌面夸克「金牌得主」MOBI 目录）**：`2/3/4/5/6.mobi`（74.9–79.0 MB）**有封面** ✓；
+`7.mobi`（33.9 MB）、`8.mobi`（143.4 MB）、`10.mobi`（146.2 MB）、`9.mobi`（180.7 MB）显示
+**"获取失败"** ✗；同目录 PDF **全部正常** ✓。
+
+**DB 对照（同一时刻）**：上述失败项此刻已全部是 `state=pending`（第 80 轮的重置刚把它们重新排队），
+"获取失败"是**重置前的终态记录**残留；而 `5/3/4/2/6.mobi` 是 `ready`。
+
+**根因（尺寸相关性 + 常量对照，决定性）**：
+- `MobiBook::open` 目前**整份读入**文件（不是惰性的）；
+- 封面路径的上限是 `COVER_FETCH_LIMIT_BYTES = 128 MB`（硬拒）；
+- ⇒ **≤79 MB 的 MOBI 恰好读得下来（因此有封面，但代价是整本 74–79 MB）；>128 MB 的三本直接
+  被拒**（143/146/180 MB）—— 截图里的分界与这条阈值**完全吻合**。
+- 7.mobi（33.9 MB）属另一类：体积远小于阈值却失败 ⇒ 需要单独看它的记录布局（封面可能不在
+  期望的记录上），这一条留待 MOBI 专项轮。
+
+**结论（回答"两者有没有关系"）**：**有，且是同一类问题的两个阶段**。PDF 本轮已改成
+"惰性按需读"（真机打开 8 次读/25 KB、首页 3 次读/267 KB）；MOBI 仍是"整份读入"⇒
+①**每枚封面 = 整本书**（74–180 MB），这就是 MOBI 慢的原因；②超过 128 MB 直接被拒。
+
+**MOBI 提速方案（下一轮，与 PDF 那轮同构）**：MOBI/PalmDB 的**记录偏移表在文件头部**
+（78 字节头 + 记录表）⇒ 可以只读"头 + 记录表 + 封面记录"（封面记录通常 100 KB–2 MB），
+把每枚封面的取数从 **74–180 MB 降到 ~1 MB（约 100×）**，并顺带解决 >128 MB 被拒的问题
+（不再整包读，也就不撞硬拒）。改动面与 PDF 同构：`mobi.rs` 改成基于 `ByteSource` 的按需读，
+保留既有 `image_records` 过滤与 KF8/AZW3 双头处理。
+
+---
+
+## 2026-09-20｜第81轮：MOBI 惰性按需读（+ 全格式"整份读入"体检）
+
+**本轮目标（用户指示）**：直接开 MOBI 轮；并评估其它格式是否有同类问题、差异大不大。
+
+**全格式体检结论（写进 `TODO.md` 2b 节）**：
+- 已惰性：`zip.rs` / `epub.rs` / `pdf.rs`（+ CBZ 走 zip、本地/远端文件夹图片天然按需）；
+- **同形但难度差异很大**：`mobi.rs` / `sevenz.rs` / `tar.rs` / `rar.rs` 四个的开头**一字不差**
+  都是 `vec![0u8; len]` + `read_exact_at(0, …)`（症状同为"打开即整包 + 峰值=文件大小"），
+  但 MOBI 头部有记录表可 seek（中）、TAR 要分批扫头（中）、7Z 头在文件尾且可能固实压缩（难）、
+  RAR 被 `unrar` 的"只吃文件"接口卡死（最难）⇒ **不一起改**；
+- **用户决定**：TAR/7Z/RAR **保持整本下载阅读**（库内 0 样本）。
+
+**实现（`document/mobi.rs`，惰性路径 + 整份回退）**：
+1. 字段偏移**取自 mobi crate 自身解析序列**（`mobi-0.8.0/src/headers/mobih.rs` 的 `MobiHeader::parse`
+   按字段顺序顺序读取），**不靠记忆** ⇒ 相对 record 0：`name_offset=+84`、`name_length=+88`、
+   `first_image_index=+108`（= PalmDOC 头 16 + MOBI 头内 92）；
+2. 惰性打开只读：PalmDB 头 78 B（记录数在偏移 76，u16 BE）+ 记录表 8 B/条 + record 0 前 128 B
+   + 每条候选记录头部 16 B（魔数过滤）⇒ 页表 = 图片记录的 `(offset, len)` 区间；
+3. **先验后回退**：记录数/偏移越界、record 0 无 `MOBI` 魔数、`first_image_index` 越界、
+   一条可解码图片都没有 —— 任一不满足就整份回退到 crate 解析（与第 70/78 轮 ZIP/EPUB 同套路），
+   **保证不劣化**；
+4. `pages: Vec<Vec<u8>>` 换成区间表 ⇒ 顺带消掉"每张图再复制一份"的 2× 内存；
+5. 书名优先读 MOBI 头的 full name（长度上限 512 B），异常时退回文件名。
+
+**验收**：`cargo build --lib` 无警告；`document::mobi` **4 passed**，其中核心断言
+`lazy_open_reads_only_the_header_and_probes`：**12 MB 合成文件打开只读 < 4096 字节**（过去是整份
+12 MB + 每图复制）；另有"取页只读那条记录""非图片记录被跳过（页序与回退一致）"
+"布局异常时放弃惰性路径"三条；**全量门禁 `--test-threads=1` exit 0**（402 lib + 全部套件）。
+手机 APK 已装（13:13:11）、桌面 Debug 已重建（PID 48744）。
+
+**下一轮（本轮的剩余项）**：
+- **真机/桌面复验**：夸克「金牌得主」MOBI 目录 —— 预期 `8/9/10.mobi`（143/146/180 MB）**能出封面**了，
+  且每枚封面只拉 ~1 MB（不再撞 128 MB 硬拒）；`7.mobi`（33.9 MB，封面不在期望记录上）仍需单独看；
+- **换档后逐源触发全量扫描**（第 80 轮遗留，需要每源 session）；
+- 第 79/80/81 轮改动**尚未提交**（累计约 28 个文件）。
+
+### 第81轮补记：真机封面仍超预算 ⇒ 定位到"MOBI 头起点"猜错
+
+**现象（用户截图 + 桌面 DB/perf 日志）**：
+- 海报墙汇总显示 **封面可用 255/255**，但 `7/8/9/10.mobi` 卡片仍"获取失败"；
+- DB：这 4 本在 **两个档位都是 `cover_read_budget_exceeded`**（13:14–13:16，即装了我这版之后）；
+- perf 日志：4 条 `cover.fetch` 全部 `code=cover_read_budget_exceeded`，且失败集合是
+  **33.9 / 143.4 / 146.2 / 180.7 MB**，而 ≤79 MB 的五本全部成功 ⇒
+  **封面代价与"整本大小"严格成正比**。
+
+**结论**：这是"惰性路径被弃权、退回整份解析"的指纹 —— 只有"MOBI 头起点猜错"能解释它。
+
+**修因（读 crate 源码得到权威事实）**：`mobi-0.8.0/src/headers/palmdoch.rs` 的注释写明
+PalmDoc 头（继而 MOBI 头）在 **`80 + 8 × 记录数`**（PalmDB 记录表之后还有 **2 字节填充**），
+crate 就是从这个位置顺序读头的；而我只用了"记录表里 record 0 的偏移"这一个起点 ⇒
+两者不一致的书上魔数校验失败 ⇒ 弃权 ⇒ 整份读。
+
+**修法**：候选起点改为 **两个** —— `80 + 8×记录数`（crate 权威位置）与 record 0 偏移，
+**谁先命中 `MOBI` 魔数用谁**（书名、`first_image_index` 都以命中的那个为基准）。
+新增回归测试 `lazy_open_accepts_crate_style_header_position`（假 record0 偏移 + 头在
+`80+8N`），钉住这个真机修因。
+
+**验收**：`document::mobi` **5 passed**；全量门禁 **exit 0**（**403** lib + 全部套件）；
+手机 APK 已装、桌面 Debug 已重建（PID 25624）。待用户复验：那 4 本是否出封面，
+且每枚封面**只拉 ~1 MB**（不再与整本大小成正比）。
+
+**过程中自查修掉两处自伤**（如实记录）：`probe_holder` 未声明 + 一行冗余；以及新测试里
+把"假 record0 偏移"放到了文件尾之外，触发越界守卫反而走不到被测分支。
+
+### 第81轮续：封面预算按"惰性单条记录"重校（并更正一处误判）
+
+**先更正自己的一处误判（如实记录）**：我在报告里说"封面管线绕过了惰性读、走 head 窗口阶梯" ✗。
+重读 `api/remote_scan.rs:1870-1881` 后确认：**`is_archive` 的格式（含 MOBI/PDF）确实走
+`fetch_cover_from_document` → `open_document` → 惰性 `MobiBook`** ✓，head 窗口阶梯只用于
+**非归档**（单张图片文件）✓。所以惰性读是生效的，问题不在这里。
+
+**真正的余因**：惰性路径只读"首页那**一条**记录/那一张图"，但**单条记录本身就很大** ——
+真机 33.9/143/146/180 MB 的 MOBI 全 `cover_read_budget_exceeded`、≤79 MB 的全成功，
+代价与整本大小成正比（同一工具产出的书，图片体积随总大小放大）。在 **4 请求/秒**门控下，
+读一条 5–15 MB 的记录要几十次请求、十几秒 ⇒ 旧的 **192 次 / 15 s / 24 MB** 会把**可救**的
+封面判成终态失败。
+
+**改动（只动三个常量，均在 `api/remote_scan.rs`）**：
+`COVER_READ_BUDGET_BYTES` 24 MB → **64 MB**、
+`COVER_READ_BUDGET_READS` 192 → **384**、
+`COVER_READ_BUDGET_MS` 15 s → **30 s**。
+理由：惰性化之后"读取量"已经被精确到单条记录，预算的职责从"防整包"变成"防无界"；
+30 s 仍然有界（不会回到当初 45 s 那种分钟级转圈），但给单条大记录留出空间。
+注释里把这段因果写清楚了，避免以后又被当成"随手放宽阈值"。
+
+**验收**：`cargo build --lib` 无警告；全量门禁 `--test-threads=1` **exit 0**；
+手机 APK 已装、桌面 Debug 已重建（PID 46540，perf 日志 `rch-perf-mobi3.jsonl`）。
+
+**复验提示**：那 4 本的任务在 DB 里是**终态 failed**，不会自动重试 ⇒ 需要触发第 80 轮的重置
+（在设置里把"封面质量"切一下即可：它会删掉其它档并**把 failed 重新排队、attempt 归零**），
+随后封面 worker 会按新的预算重抓。
+
+### 第81轮续6：并行 Range GET 的受控 A/B（结论：无收益，默认关闭）
+
+**动机**：真机大 MOBI（180 MB，单条图片记录 5–15 MB）封面 30 秒读不完 ⇒ 猜测"单连接慢"，
+把 ≥512 KB 的 Range 读**拆两半并发**（门控允许 2 并发），期望 ≈2×。
+
+**方法（受控 A/B：同一个桌面进程、同一批书、只改一个数）**：阈值走环境变量
+`RCH_RANGE_PARALLEL_MIN`（`OnceLock` 只解析一次），A 组设 999999999（关）、B 组默认（开），
+各跑 100 秒，读 perf 日志里同一批 22–32 MB PDF 封面的 `cover.fetch.dur_us`。
+
+| 组 | 同批 PDF 封面耗时 | 事件数 |
+|---|---|---|
+| A 并行关 | 1.45 / 1.51 / 1.54 / 1.73 s | 49 |
+| B 并行开 | 1.60 / 1.63 / 1.66 / 1.94 s | 53 |
+
+⇒ **并行略慢 ~8%**：瓶颈不是"单连接慢"，而是链路/账号总带宽（或门控）。
+**处理**：`PARALLEL_RANGE_MIN` 默认改为 `usize::MAX`（关闭），代码与开关保留，
+便于日后换网络/provider 时复现这次 A/B。
+
+**过程中两处自伤与修正（如实记录）**：
+1. 第一版在**每次读**里调 `std::env::var`（每次读多一次系统调用+锁）⇒ 冻结的 P0 延迟契约
+   `p0a_single_page_latency_without_background_load` 当场失败 ✗；改成 `OnceLock` 只解析一次后
+   P0 套件 19 passed ✓。
+2. "预算明细丢失"的真因：上游 `cover_open_reason` 会把 "cover-read-budget…" **先映射成具体码**，
+   所以在 `cover.fetch` span 里判 `contains("cover-read-budget")` **永远不成立** ✗ ⇒ 改为
+   **在预算触发处就地记录**（`scan_diag.log` 的 `cover_budget detail=…` + 一条 `cover.budget`
+   perf 事件），数字不过任何映射 ⇒ 下次失败能自证"字节/次数/时间"哪条先超 ✓。
+
+**验收**：`cargo build --lib` 无警告；P0 套件 **19 passed**；全量门禁 `--test-threads=1` exit 0。

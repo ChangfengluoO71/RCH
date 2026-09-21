@@ -97,7 +97,7 @@ void main() {
             return stateDto(holder.state, ready: false);
           },
       stateLoader:
-          ({required sourceId, required assetId}) async =>
+          ({required sourceId, required assetId, required selection, required profile}) async =>
               stateDto(holder.state, ready: holder.state == 'ready'),
       releaseLoader: ({required consumerId}) async {},
     );

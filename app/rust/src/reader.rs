@@ -7,6 +7,7 @@ use crate::document::Document;
 use anyhow::{bail, Result};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -16,6 +17,25 @@ const CACHE_CAP: usize = 24;
 const PREFETCH_RADIUS: i64 = 3;
 const REQUEST_GOVERNOR_CAPACITY: usize = 3;
 const REQUEST_GOVERNOR_QUEUE_CAPACITY: usize = 64;
+
+/// 最近一次**前台**网络取页的时间戳（毫秒；0 = 从未）。
+///
+/// 第 79 轮真机结论：手机上门控只有 4 请求/秒、2 并发，几百个后台封面任务会把带宽与
+/// CDN 连接吃满，前台翻页只能排在它们中间 ⇒ 表现为"翻页一直转圈"。
+/// 后台封面任务据此让路（见 `api::remote_scan::run_remote_cover_worker`）。
+static LAST_FOREGROUND_READ_MS: AtomicI64 = AtomicI64::new(0);
+
+fn note_foreground_read() {
+    LAST_FOREGROUND_READ_MS.store(crate::db::now_ms(), Ordering::Relaxed);
+}
+
+/// 距上一次前台网络取页的毫秒数；从未取过返回 `None`。
+pub fn foreground_read_idle_ms() -> Option<i64> {
+    match LAST_FOREGROUND_READ_MS.load(Ordering::Relaxed) {
+        0 => None,
+        last => Some((crate::db::now_ms() - last).max(0)),
+    }
+}
 
 /// Priority for blocking work that might make a remote document request.
 ///
@@ -316,6 +336,11 @@ impl Reader {
             if let Some(bytes) = self.disk_get(index) {
                 disk_hit = true;
                 return Ok(Arc::new(bytes));
+            }
+            // 真正要上网取页了：前台请求据此让后台封面让路（磁盘命中不算 —— 那种情况下
+            // 不占网络，后台封面可以继续跑）。
+            if priority == RequestPriority::Foreground {
+                note_foreground_read();
             }
             let _permit = self.governor.acquire(priority)?;
             governor_wait_us = governor_enter.elapsed().as_micros() as u64;

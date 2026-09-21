@@ -495,6 +495,9 @@ class _ComicCoverState extends State<ComicCover> {
         oldWidget.path != widget.path ||
         oldWidget.force != widget.force ||
         oldWidget.preferUnifiedRemote != widget.preferUnifiedRemote ||
+        // 第 79 轮续5：目录视图稍后补上 asset id 时必须重载 —— 否则卡片会一直停在
+        // "回退 legacy" 的那条路径上，切不回统一路径（统一路径先读缓存，不重复下载）。
+        oldWidget.remoteAssetId != widget.remoteAssetId ||
         newKey != _lastCacheKey) {
       // 路径变化：取消旧队列任务，重新加载
       if (widget.remoteAssetId != oldWidget.remoteAssetId) {
@@ -584,14 +587,13 @@ class _ComicCoverState extends State<ComicCover> {
     //    · legacy：local miss + offline → 直接抛 `_RemoteCoverFetchDisabled`（不取 session）
     //    · local/custom：无网络能力，直接执行
     //    · unified：本地读在 `_loadUnifiedRemoteCover` 内部先于开关判定
-    if (widget.preferUnifiedRemote &&
-        widget.source.needsSession &&
-        widget.remoteAssetId == null) {
-      // The online listing arrives before the local route table. Keep this
-      // card on the placeholder until the catalog refresh supplies a stable
-      // asset id, preventing a burst of legacy provider cover requests.
-      return;
-    }
+    // 第 79 轮续5（用户确认）：`preferUnifiedRemote && needsSession && remoteAssetId == null`
+    // 过去在这里**直接 return**（"等目录视图补上稳定的 asset id"），代价是这类卡片
+    // （典型：容器文件夹卡 = 用第一个漫画文件当封面）**永远停在占位**。
+    // 现在改为**回退 legacy 取图**（与详情页同一条"没缓存就获取"的路径）：
+    //   · 并发由 `_CoverLoadQueue.scheduler` 统一限流 —— 这正是当年担心的"legacy 请求风暴"的护栏；
+    //   · 目录视图随后补上 asset id 时，`didUpdateWidget` 会重载并切回统一路径
+    //     （统一路径先读缓存，因此不会重复下载）。
 
     // 入队：并发控制在队列内部
     _lease = _CoverLoadQueue.scheduler.acquire(key, _load);
@@ -850,6 +852,50 @@ class _ComicCoverState extends State<ComicCover> {
     }
   }
 
+  /// 候选 profile：本档优先，其后是其余标准档（先大后小，尺寸去重）。
+  List<rust.CoverProfileDto> _profileCandidates(rust.CoverProfileDto exact) {
+    const standard = [(340, 480), (510, 720), (170, 240)];
+    final result = <rust.CoverProfileDto>[exact];
+    for (final (w, h) in standard) {
+      if (w == exact.width && h == exact.height) continue;
+      result.add(
+        rust.CoverProfileDto(
+          width: w,
+          height: h,
+          decoderVersion: exact.decoderVersion,
+        ),
+      );
+    }
+    return result;
+  }
+
+  /// 跨 profile 读取**已缓存**的封面（纯本地读，零网络）。
+  ///
+  /// 第 79 轮续6（真机 + 用户确认）：后台扫描按固定 340×480 抓图，而卡片档位由设置
+  /// `coverQuality` 决定（"低" = 170×240）⇒ 已经抓好的封面躺在另一个 profile 下，
+  /// 卡片完全用不上（真机实测：586 本 PDF 里 340 档 ready 142 本，170 档只有 42 本）。
+  /// 这里"本档优先、其余标准档依次尝试"，命中即用 —— `RawImage(BoxFit.cover)` 会把它
+  /// 缩放到卡片尺寸，等于"有图就用，别等重抓"。
+  Future<ui.Image?> _readAnyCachedCover({
+    required RemoteCoverRepository repository,
+    required String assetId,
+    required rust.CoverSelectionDto selection,
+    required rust.CoverProfileDto profile,
+  }) async {
+    for (final candidate in _profileCandidates(profile)) {
+      final cached = await repository.readCover(
+        sourceId: widget.source.id,
+        assetId: assetId,
+        selection: selection,
+        profile: candidate,
+      );
+      if (cached != null) {
+        return rgbaToImage(cached.rgba, cached.width, cached.height);
+      }
+    }
+    return null;
+  }
+
   Future<ui.Image> _loadUnifiedRemoteCover({
     required String assetId,
     required BigInt? session,
@@ -869,32 +915,54 @@ class _ComicCoverState extends State<ComicCover> {
       decoderVersion: 1,
     );
     final repository = widget.coverRepository;
-    final cached = await repository.readCover(
-      sourceId: widget.source.id,
+    final cached = await _readAnyCachedCover(
+      repository: repository,
       assetId: assetId,
       selection: selection,
       profile: profile,
     );
-    if (cached != null) {
-      return rgbaToImage(cached.rgba, cached.width, cached.height);
-    }
+    if (cached != null) return cached;
     if (_remoteCoverNetworkPaused) throw const _RemoteCoverFetchDisabled();
     final liveSession = session ?? await _createRemoteSession();
     // P1-E：**删除 30 × 350ms 轮询**。`requestCover` 只负责"首次确保任务存在"；
     // 之后的状态推进一律由 source-level cover revision wake 驱动
     //（`RemoteScanCoordinator.coverRevisionFor` → `_onCoverRevisionChanged`），
-    // 绝不再轮询、也绝不重复 request。这里只渲染它返回的 durable state。
+    // 绝不再轮询。不变量（第 79 轮续8 收窄并写明，与 E-REQUEST-ONCE 一致）：
+    // **唤醒只重读 durable state；仅当"state 已 ready 但本地读不到任何缓存字节"
+    // 时，才允许重新物化一次**（否则卡片会永远停在占位）。
     if (_coverRequestIssued) {
       // P1-E：wake 驱动的刷新**只重读** durable state，绝不重复 requestCover。
+      // 第 79 轮续：必须带上本卡片**实际使用**的 selection + profile —— 否则会读到
+      // 另一 profile 的旧状态（真机 bug：170 的图已 ready，墙面却按 340 的 failed
+      // 显示"获取失败"）。
+      //
+      // 第 79 轮续4（真机 bug"海报墙封面没读取"）：state 变 `ready` 之后必须
+      // **直接读缓存图**。旧实现无论 state 是什么都抛异常 ⇒ 图已经抓好、卡片却永远
+      // 停在占位（用户原话："没缓存就获取，有缓存就直读"）。`ready` 但读不到缓存
+      // （blob 被清理/迁移）时**不抛**，落到下面的 request 分支重新物化一次，
+      // 正好是"没缓存就获取"。
       final current = await repository.readState(
         sourceId: widget.source.id,
         assetId: assetId,
+        selection: selection,
+        profile: profile,
       );
       _coverState = current?.state;
-      throw _RemoteCoverStateException(
-        current?.state ?? '',
-        current?.errorCode,
-      );
+      if (current?.ready ?? false) {
+        // 跨 profile 回退：本档的图读不到时，用其它档现成的（第 79 轮续6）。
+        final cached = await _readAnyCachedCover(
+          repository: repository,
+          assetId: assetId,
+          selection: selection,
+          profile: profile,
+        );
+        if (cached != null) return cached;
+      } else {
+        throw _RemoteCoverStateException(
+          current?.state ?? '',
+          current?.errorCode,
+        );
+      }
     }
     _coverRequestIssued = true;
     final durable = await repository.requestCover(

@@ -3173,3 +3173,41 @@ D6 locked-frame 推 notifier、D7 单条大记录不可分片（需画质口径�
 - **"详情页出图后海报墙不刷新"**：墙上的卡片只在**源级 cover revision** 变化时重读；详情页走的是
   按需取图，若 `mark_job_ready_owned_on`/发布路径没有推进源级 `view_revision`（或没有 notify），
   墙就不会知道 ⇒ 下一轮先静态核对"ready 发布路径的 bump + notify"，再补一条"发布后必须唤醒"的回归测试。
+
+
+---
+
+## 2026-09-21｜第86轮：无 asset id 卡片的封面唤醒修复（"详情页出图后墙不刷新"）+ 双端重建
+
+**用户当轮反馈**：桌面端也重建；"mobi 还是慢"；手机仍有大量封面获取失败（详情页等一会能出图），
+**出图后海报墙不立刻刷新**，要求优化速度。
+
+**1) 先证伪了两个假设（避免改错地方）**
+- 假设 A："worker 成功发布 `ready` 后没 bump/notify" ⇒ **证伪**：`cover_store::mark_job_ready_owned_on`
+  在同一事务里 `bump_cover_revision_for_job_on`（:546-547），提交后 `notify_cover_revision`（:564-569），
+  正是 commit-after-emit 契约。
+- 假设 B："ready 任务属于旧 generation ⇒ bump 落在旧代际行上" ⇒ **证伪**：`bump_view_revision_on`
+  是**每源一行**自增（`ON CONFLICT(source_id) DO UPDATE revision=revision+1`），`view_revision(source_id)`
+  读同一行，与 generation 无关。
+
+**2) 真根因（第三个假设，代码即证据）：没有 asset id 的卡片根本不挂监听**
+- `comic_cover.dart::_attachCoverRevision()` 第一行 `if (widget.remoteAssetId == null) return;`
+  ⇒ 墙上"容器文件夹"漫画这类拿不到稳定 asset id 的卡片**从不订阅 cover revision**，
+  封面就绪后永远收不到唤醒，只能等下一次扫描的大 revision 顺带更新 = 用户看到的"过很久才刷新"。
+- 修法（两处早退一起放开：`:391` 与 `_onCoverRevisionChanged` 里的 `remoteAssetId == null`）：
+  改为"只要该源需要 session 就挂监听"；唤醒后重跑一次取图（本地优先，`_CoverLoadQueue` 限流，
+  零 provider 请求）。D4 之后卡片在非 ready 时也会先做纯本地读，所以这次唤醒能直接命中
+  详情页刚抓好的那份字节。
+
+**3) 验证与诚实说明**
+- `flutter analyze` 干净；封面/详情相关 **37 项测试全过**（11 个文件）。
+- **本修复暂无自动化回归**：我写了 `test/comic_cover_assetless_revision_test.dart`，但夹具在测试环境
+  到不了无 asset id 卡片的取图出口（`_readLocalDiskCover` 走原生桥、测试里直接失败 ⇒ 注入的
+  `legacyRemoteCoverLoader` 永不被调用）。**不能留一个假绿或必挂的测试**，因此删除该文件并在
+  TODO 记"待补夹具"。这是一处"已实现、未由测试锁定"的改动，特此标注。
+- Rust 全量门禁本轮未受影响（纯 Dart 改动）：沿用上一轮 24 套件 535 passed / 0 failed。
+
+**4) 交付物**
+- 桌面 Release 重建（`data/app.so` 17:33:08）并重启（PID 38164）。
+- 安卓 release 包重建并**已装到手机**（`adb install -r` → Success，`lastUpdateTime 17:34:04`），
+  同时复制到 `C:/Users/cfl/Downloads/RCH-0.5.8+100508-20260921.apk`（116.2 MB）。

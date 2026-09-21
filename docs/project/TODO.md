@@ -102,6 +102,11 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 86 轮补充结论（2026-09-21）
+- [x] **"详情页出图后墙不刷新"已修（第86轮）**：无 asset id 的卡片不再早退，改挂 revision 监听 +
+      唤醒后重跑取图（本地优先）。**待补自动化回归**：需要一个能让无 asset id 卡片走到取图出口的
+      widget 测试夹具（测试环境里 `_readLocalDiskCover` 的原生读会先失败）。
+- [ ] **手机端剩余封面失败（pdf/zip 为主）仍待 G1**：见第 85 轮结论。
 ### 第 85 轮补充结论（2026-09-21，实测 + 用户真机反馈）
 - [x] **MOBI 阅读慢（首开 RTT 受限）已在第85轮加速**：`concurrent_probe`（默认 4 worker，
       `RCH_MOBI_PROBE_WORKERS` 可覆盖）。若仍嫌慢，下一步是**页面表缓存**（一次探测、长期复用）。

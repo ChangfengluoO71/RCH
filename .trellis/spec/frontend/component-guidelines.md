@@ -1,62 +1,58 @@
-# Component Guidelines
+# Component Guidelines（Flutter 组件约定）
 
-> How components are built in this project.
-
----
+> 2026-09-21 补实（替换原模板）。每条都能指向真实组件。
 
 ## Overview
 
-<!--
-Document your project's component conventions here.
+本项目没有组件库/设计系统层，组件就是 `lib/ui/` 下的 widget：
+- 页面：`*_page.dart`（`BookDetailPage` / `ReaderPage` / `CoverEditorPage` / `HomePage`）；
+- 可复用控件：同目录的普通文件（`ComicCover` / `RemoteScanStatusPanel` / `Cloud115CookieQrScanDialog`）。
 
-Questions to answer:
-- What component patterns do you use?
-- How are props defined?
-- How do you handle composition?
-- What accessibility standards apply?
--->
+约定：**无状态优先**；需要异步或订阅时用 `StatelessWidget` + `FutureBuilder` / `ValueListenableBuilder`，
+只有真正持有可变状态（页码、裁剪框）才用 `StatefulWidget`。
 
-(To be filled by the team)
+## Component Structure（一个组件文件的固定骨架）
 
----
+```dart
+class XxxPanel extends StatelessWidget {
+  const XxxPanel({
+    super.key,
+    required this.sourceName,        // 必需数据：required + 具体类型
+    this.onRetry,                    // 可选回调：可空 + 命名
+    this.stateListenable,            // 订阅源：ValueListenable 而不是裸值
+  });
 
-## Component Structure
+  final String sourceName;
+  final Future<void> Function()? onRetry;
+  final ValueListenable<RemoteScanViewState?>? stateListenable;
 
-<!-- Standard structure of a component file -->
+  @override
+  Widget build(BuildContext context) { /* 只做布局与订阅，不做 I/O */ }
+}
+```
 
-(To be filled by the team)
-
----
+- **构造参数即 props**：全部命名参数；必需项 `required`；类型写具体（不用 `dynamic` / 裸 `Map`）；
+- **可测性**：需要 I/O 或平台能力的组件必须暴露**可注入边界**，例
+  `ComicCover(legacyLocalCoverReader:, legacyRemoteCoverLoader:, coverRepository:)`
+  —— 生产默认走 Rust FRB，测试注入假实现（见 `test/comic_cover_legacy_fallback_test.dart`）。
 
 ## Props Conventions
 
-<!-- How props should be defined and typed -->
-
-(To be filled by the team)
-
----
+- 不传 `BuildContext` 之外的环境对象；不把 store/单例当参数传（直接 `LibraryStore.instance`）；
+- 回调命名 `onXxx`，返回 `Future<void>` 的用 `Future<void> Function()?`（便于 `await` 与测试断言）；
+- 尺寸约束交给父级（`SizedBox(width: 220, height: 310, child: ComicCover(...))`），组件内部不写死布局尺寸。
 
 ## Styling Patterns
 
-<!-- How styles are applied (CSS modules, styled-components, Tailwind, etc.) -->
+- **颜色/文字样式一律取主题**：`Theme.of(context).colorScheme.onSurfaceVariant`、`textTheme`；
+  **禁止**硬编码 `Colors.grey` 之类（对比度问题曾因此返工）；
+- 提示/无障碍：可点击图标要有 `tooltip`（中文，如 `'重试远程扫描'`）；
+- 文案面向用户、中文、可被测试断言（`find.text('获取失败')` / `find.byTooltip('重试远程扫描')`）；
+- 空态/失败态要有明确文案（`等待扫描` / `获取失败` / `暂不支持`），不要留空白容器。
 
-(To be filled by the team)
+## 反模式
 
----
-
-## Accessibility
-
-<!-- A11y requirements and patterns -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- Component-related mistakes your team has made -->
-
-- **photo_view 0.15 共享 controller 翻页后缩放失效**：翻页时只 `reset()` `PhotoViewController` 不够——内部 `PhotoViewScaleStateController` 会残留 zoomedIn，换图后 `PhotoViewCore` 跳过缩放重算（`markNeedsScaleRecalc` 仅在非 zooming 状态生效），新页沿用上一页缩放。必须在翻页/跳转/复位时同时 reset 两个 controller（参见 `app/lib/ui/reader_page.dart` 的 `_go`/`_zoomReset`）。
-- **InteractiveViewer 双页模式拖动失效**：阅读器双页拼接的 `InteractiveViewer` 曾写死 `panEnabled: false`，键盘缩放后无法拖动查看细节。启用 pan 时必须确认缩放矩阵的锚点与边界钳制（原点锚定缩放时只能朝一个方向拖动），`panEnabled` 不应与缩放功能耦合关闭。
-
-(To be filled by the team)
+- 组件内部起定时器/轮询推进数据（订阅 notifier 或 revision 唤醒）；
+- 在 `build` 内发起网络/DB/原生调用；
+- 直接在 UI 里 new 出 repository/网络客户端（必须可注入）；
+- 一个文件塞多个页面（设置项过多时按类别折叠，见 `home_page.dart`）。

@@ -135,8 +135,23 @@ const META_NEAR_SLACK: u64 = 4 * 1024;
 /// 2 已足够：ZIP 打开期只有两类交错访问——文件尾的 central directory 流与分散的
 /// local header 读。命中会刷新 LRU 触碰，因此被反复使用的目录窗口不会被分散读淘汰。
 ///
+/// **2026-09-21（G1）实测复核后提到 4**：真机一次阅读会话里 `source.read_at` 有
+/// **72% 是 <512 B 的小读、却吃掉 62% 的读时长**，且同一 `offset=0` 被重取 108–135 次
+/// —— 说明两类交错访问（目录流 / local header）之外还有第三、第四类（页对象、trailer），
+/// 2 个槽会互相挤掉。槽数只影响"保留多少已取到的数据"，**不会多发起任何请求**。
+///
 /// **刻意不是通用缓存系统**：槽数固定、无淘汰策略配置、不增长、不参与淘汰统计。
-const META_WINDOWS: usize = 2;
+const META_WINDOWS: usize = 4;
+
+/// 钉住的**文件头窗口**上限（字节）。
+///
+/// 2026-09-21（G1）：真机同一 `offset=0` 被反复重取 108–135 次，每次一份 RTT
+/// （实测 136–182 ms）—— PDF 的 trailer/xref 与 ZIP 的 local header 都会反复回到文件头，
+/// 而大窗口/元数据窗口互相挤掉，头部于是被反复重下。
+///
+/// 契约：**自然取到的**、覆盖 `offset 0` 的那个窗口就地钉住、永不淘汰。
+/// 因此**不额外发起任何请求、不额外多读一个字节**，只是不再丢掉已经拿到的数据。
+const HEAD_PIN_MAX_BYTES: usize = 256 * 1024;
 
 /// 窗口内数据的区间。
 struct Window {
@@ -173,6 +188,8 @@ pub struct SourceReader<S: ByteSource> {
     /// 顺序读的大窗口。
     buf_start: u64,
     buf: Vec<u8>,
+    /// 钉住的文件头窗口（见 [`HEAD_PIN_MAX_BYTES`]）；只由 `Clone` 之外的实例持有。
+    head: Option<Window>,
     /// 非顺序读的小窗口（固定槽数 + LRU 触碰）。
     meta: [Option<Window>; META_WINDOWS],
     meta_clock: u64,
@@ -198,6 +215,7 @@ impl<S: ByteSource + Clone> Clone for SourceReader<S> {
             len: self.len,
             buf_start: 0,
             buf: Vec::new(),
+            head: None,
             meta: std::array::from_fn(|_| None),
             meta_clock: 0,
             last_end: None,
@@ -216,6 +234,10 @@ impl<S: ByteSource> SourceReader<S> {
             len,
             buf_start: 0,
             buf: Vec::new(),
+            // 刻意**不**复制头窗口：clone 是"每页一个读取器"的用法，复制会成倍占内存
+            // （与"Archive clones must not duplicate the read-ahead buffer"同一口径）。
+            // 受益者是长生命周期的读取器（PDF 整本文档共用一个）。
+            head: None,
             meta: std::array::from_fn(|_| None),
             meta_clock: 0,
             last_end: None,
@@ -349,6 +371,20 @@ impl<S: ByteSource> Read for SourceReader<S> {
             return Ok(self.serve(start, len, out, None));
         }
 
+        // 1.5) 钉住的文件头窗口命中（最便宜的一档：数据已经在内存里，且永不淘汰）。
+        if let Some(head) = &self.head {
+            let head_len = head.data.len() as u64;
+            if self.pos >= head.start && end <= head.start + head_len {
+                let offset = (self.pos - head.start) as usize;
+                let n = out.len().min(head.data.len() - offset);
+                out[..n].copy_from_slice(&head.data[offset..offset + n]);
+                self.pos += n as u64;
+                self.last_end = Some(head.start + head_len);
+                self.fresh = false;
+                return Ok(n);
+            }
+        }
+
         // 2) 非顺序小窗口命中。
         if let Some(index) = self.meta_hit(self.pos, end) {
             let window = self.meta[index].as_ref().expect("meta window");
@@ -405,7 +441,25 @@ impl<S: ByteSource> Read for SourceReader<S> {
             window.max(out.len() as u64)
         };
         let size = want.min(self.len - self.pos).max(1);
+        let covers_head = self.pos == 0;
         let data = self.fetch(size, out.len())?;
+
+        // 钉住"覆盖文件头"的那个窗口（见 [`HEAD_PIN_MAX_BYTES`]）：只是留下已有数据，
+        // 不额外请求。更大的窗口到来时可以替换（头部的解析通常先小后大）。
+        if covers_head {
+            let pin_len = data.len().min(HEAD_PIN_MAX_BYTES);
+            let should_pin = match &self.head {
+                Some(window) => window.data.len() < pin_len,
+                None => pin_len > 0,
+            };
+            if should_pin {
+                self.head = Some(Window {
+                    start: 0,
+                    data: data[..pin_len].to_vec(),
+                    touched: 0,
+                });
+            }
+        }
 
         if !meta_read {
             self.buf_start = self.pos;

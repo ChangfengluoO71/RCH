@@ -353,7 +353,7 @@ fn run_cloud(args: &Args) {
             let mut total = 0u128;
             for index in 0..args.pages {
                 let started = Instant::now();
-                match book_page(handle.handle, index).await {
+                match book_page(handle.handle, index, None).await {
                     Ok(bytes) => {
                         let elapsed = started.elapsed().as_millis();
                         total += elapsed;

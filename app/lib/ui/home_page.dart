@@ -1678,7 +1678,12 @@ class _HomePageState extends State<HomePage> {
             title: '阅读',
             icon: Icons.menu_book_outlined,
             initiallyExpanded: true,
-            children: [_readingDefaults(s), _keybinds(s), _coverQuality(s)],
+            children: [
+              _readingDefaults(s),
+              _keybinds(s),
+              _renderWidth(s),
+              _coverQuality(s),
+            ],
           ),
           _settingsCategory(
             title: '书源与网络',
@@ -1995,6 +2000,39 @@ class _HomePageState extends State<HomePage> {
         ),
       ],
     ),
+  );
+
+  /// D7（2026-09-21）：阅读页渲染宽度。一页 1600 宽的渲染结果约 1.9 MB 要经 FRB
+  /// 交给 Dart（外加解码/上传），是"翻页重"的主要来源；宽度越小结省越多、清晰度越低。
+  Widget _renderWidth(AppSettings s) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        '阅读渲染宽度',
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        '影响翻页时每页交给界面的数据量（标准 1600 约 1.9 MB/页）。'
+        '「省流」约省一半、翻页更轻，代价是清晰度；换档后重新翻开该书生效。',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      const SizedBox(height: 10),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SegmentedButton<RenderWidth>(
+          segments: RenderWidth.values
+              .map((m) => ButtonSegment(value: m, label: Text(m.label)))
+              .toList(),
+          selected: {s.renderWidth},
+          onSelectionChanged: (ms) {
+            s.renderWidth = ms.first;
+            LibraryStore.instance.updateSettings(s);
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+    ],
   );
 
   Widget _coverQuality(AppSettings s) => Column(

@@ -261,7 +261,6 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
     super.initState();
     _listener = AppLifecycleListener(
       onHide: _flush,
-      onPause: _flush,
       onDetach: _flush,
     );
     final pending = widget.startupPending;

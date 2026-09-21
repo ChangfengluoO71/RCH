@@ -656,12 +656,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 刷新：重新列出目录；本地来源且开启"自动转 CBZ"时，后台转换后再次列出。
   Future<void> _refresh() async {
-    // 2026-09-21（真机："墙上大片获取失败，可图其实抓得到"）：刷新时顺带把该源**当前档**的
-    // 终态失败封面重新排队 —— 失败是粘性的（只有 6h 补偿/重置才会重来），而失败原因往往
-    // 早已修好（真机 DB 里成片的 `cover_native_lib_missing` 就是缺 pdfium.dll 那几分钟留下的）。
-    // 这是轻量逃生口：不动其它档位、不清任何缓存。
-    unawaited(_retryFailedCovers());
     await _relist();
+    // 2026-09-21（真机："墙上大片获取失败，可图其实抓得到" + "反复刷新也没用"）：
+    // 刷新时顺带把该源**当前档**的终态失败封面重新排队 —— 失败是粘性的（只有 6h 补偿/重置
+    // 才会重来），而失败原因往往早已修好（DB 里成片的 `cover_native_lib_missing` 就是缺
+    // pdfium.dll 那几分钟留下的）。
+    //
+    // ⚠️ 必须在 `_relist()`（建立/复用会话）**之后**：Rust 侧 `wake_cover_worker_for_source`
+    // 要求存在可用的会话绑定，**没有活会话时它直接返回**（绝不伪造 session）⇒ 任务只会停在
+    // pending、没人去抓，表现就是"反复刷新也没用"（这就是真机上遇到的那个 bug）。
+    unawaited(_retryFailedCovers());
     if (!mounted || _offlineMode || !widget.source.isLocalFs) return;
     await _autoConvertToCbz();
     if (mounted) await _relist();
@@ -1384,29 +1388,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
                           .viewStateFor(widget.source.id),
                       // Offline browsers have no live provider session. Keep
                       // the status visible, but don't expose no-op controls.
-                      onPause: _session == null
-                          ? null
-                          : () => RemoteScanCoordinator.instance.pause(
-                              widget.source.id,
-                            ),
-                      onResume: _session == null
-                          ? null
-                          : () => RemoteScanCoordinator.instance.resume(
-                              widget.source.id,
-                            ),
+                      // 2026-09-21（用户要求）：扫描自动运行 ⇒ 状态栏不再提供
+                      // "暂停/继续 / 增量重扫 / 全量重扫"三个按钮（只保留"重试远程扫描"）。
                       onRetry: _session == null
                           ? null
                           : () => RemoteScanCoordinator.instance.retry(
-                              widget.source,
-                              _session!,
-                            ),
-                      onRescanIncremental: _session == null
-                          ? null
-                          : () => RemoteScanCoordinator.instance
-                                .rescanIncremental(widget.source, _session!),
-                      onRescanFull: _session == null
-                          ? null
-                          : () => RemoteScanCoordinator.instance.rescanFull(
                               widget.source,
                               _session!,
                             ),

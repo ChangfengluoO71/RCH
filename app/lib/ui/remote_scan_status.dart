@@ -10,22 +10,14 @@ class RemoteScanStatusPanel extends StatelessWidget {
     required this.sourceName,
     required this.stateListenable,
     this.idleMessage = '等待扫描',
-    this.onPause,
-    this.onResume,
     this.onRetry,
-    this.onRescanIncremental,
-    this.onRescanFull,
     this.compact = false,
   });
 
   final String sourceName;
   final ValueListenable<RemoteScanViewState?> stateListenable;
   final String idleMessage;
-  final Future<void> Function()? onPause;
-  final Future<void> Function()? onResume;
   final Future<void> Function()? onRetry;
-  final Future<void> Function()? onRescanIncremental;
-  final Future<void> Function()? onRescanFull;
   final bool compact;
 
   @override
@@ -34,9 +26,7 @@ class RemoteScanStatusPanel extends StatelessWidget {
       valueListenable: stateListenable,
       builder: (context, state, _) {
         if (state == null) return _idlePanel();
-        final canPause = _canPause(state.status);
         final normalizedStatus = state.status.trim().toLowerCase();
-        final paused = normalizedStatus == 'paused';
         final discovering = state.total <= 0 && _canPause(state.status);
         final hasDetailedProgress =
             state.directoriesChecked > 0 ||
@@ -89,22 +79,7 @@ class RemoteScanStatusPanel extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (paused && onResume != null)
-                  _iconButton(
-                    context: context,
-                    icon: Icons.play_arrow,
-                    tooltip: '继续远程扫描',
-                    onPressed: onResume!,
-                    failureMessage: '扫描控制失败，请稍后重试',
-                  )
-                else if (canPause && onPause != null)
-                  _iconButton(
-                    context: context,
-                    icon: Icons.pause,
-                    tooltip: '暂停远程扫描',
-                    onPressed: onPause!,
-                    failureMessage: '扫描控制失败，请稍后重试',
-                  ),
+                // 2026-09-21（用户要求）：扫描是自动运行的 ⇒ 移除"暂停/继续"按钮。
                 if (_canRetryState(state) && onRetry != null)
                   _iconButton(
                     context: context,
@@ -113,22 +88,7 @@ class RemoteScanStatusPanel extends StatelessWidget {
                     onPressed: onRetry!,
                     failureMessage: '重新扫描失败，请稍后重试',
                   ),
-                if (onRescanIncremental != null)
-                  _iconButton(
-                    context: context,
-                    icon: Icons.update,
-                    tooltip: '增量重新扫描',
-                    onPressed: onRescanIncremental!,
-                    failureMessage: '重新扫描失败，请稍后重试',
-                  ),
-                if (onRescanFull != null)
-                  _iconButton(
-                    context: context,
-                    icon: Icons.restart_alt,
-                    tooltip: '全量重新扫描',
-                    onPressed: onRescanFull!,
-                    failureMessage: '重新扫描失败，请稍后重试',
-                  ),
+                // 2026-09-21（用户要求）：移除"增量/全量重新扫描"按钮（扫描自动运行）。
               ],
             ),
           ),

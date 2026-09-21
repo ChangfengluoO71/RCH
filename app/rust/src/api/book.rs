@@ -90,13 +90,21 @@ pub async fn open_local_book(path: String) -> Result<BookInfo> {
 
 /// 读取一页的原始图片字节(优先命中缓存/预取,翻页秒出)。
 /// 返回 ZIP 内该页的原始字节(JPEG/PNG 等);像素解码由 Flutter 侧完成(自带 image cache)。
-pub async fn book_page(handle: u64, index: u32) -> Result<Vec<u8>> {
+/// `target_width`（D7）：`None` = 沿用文档默认渲染宽度（PDF 为 1600，页缓存路径不变）；
+/// `Some(w)` = 按该像素宽渲染（省流 1080 / 跟随屏幕的像素值由 Dart 计算后传入）。
+pub async fn book_page(handle: u64, index: u32, target_width: Option<u32>) -> Result<Vec<u8>> {
     let reader = {
         let g = sessions().lock().unwrap();
         g.get(&handle).map(|s| Arc::clone(&s.reader))
     };
     let reader = reader.ok_or_else(|| anyhow::anyhow!("无效的书句柄: {handle}"))?;
-    let bytes = tokio::task::spawn_blocking(move || reader.get_page(index)).await??;
+    let bytes = tokio::task::spawn_blocking(move || {
+        if let Some(width) = target_width {
+            reader.set_display_width(width);
+        }
+        reader.get_page(index)
+    })
+    .await??;
     Ok((*bytes).clone())
 }
 

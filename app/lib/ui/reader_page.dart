@@ -295,9 +295,26 @@ class _ReaderPageState extends State<ReaderPage> {
     });
   }
 
+  /// D7：把设置里的渲染宽度模式解析成像素宽。
+  ///
+  /// `null` = 沿用 Rust 侧默认（1600，页缓存路径与历史一致）；
+  /// 省流档给 1080；跟随屏幕按"逻辑宽 × DPR"算（Rust 侧按宽度分目录，互不污染）。
+  int? _renderWidthPixelsForDisplay() {
+    final media = MediaQuery.of(context);
+    return renderWidthPixels(
+      LibraryStore.instance.settings.renderWidth,
+      screenWidth: media.size.width,
+      devicePixelRatio: media.devicePixelRatio,
+    );
+  }
+
   void _ensure(int i) { final b=_book; if(b==null||i<0||i>=b.pageCount)return;
     if(_bytes.containsKey(i)||_loading.contains(i))return;_loading.add(i);
-    bookPage(handle: b.handle, index: i).then((d) async {
+    bookPage(
+      handle: b.handle,
+      index: i,
+      targetWidth: _renderWidthPixelsForDisplay(),
+    ).then((d) async {
       if (!mounted) return;
       if (i == _page) _completion.observeStablePage(i);
       if (widget.skipAiCache || !_useAiVersion) {

@@ -219,6 +219,48 @@ class ReadRecord {
 /// 封面质量(影响扫描速度与清晰度)。
 enum CoverQuality { low, medium, high }
 
+/// 阅读页渲染宽度（2026-09-21，D7）。
+///
+/// 背景：一页 1600 宽的渲染结果约 **1.9 MB** 要经 FRB 交给 Dart（外加解码/上传），
+/// 这才是"翻页重"的主要来源（网络那部分已由 G1 / 页表缓存处理）。
+/// 降低渲染宽度能显著减小这笔开销，代价是清晰度 —— 因此交给用户选。
+enum RenderWidth {
+  /// 省流：1080 px（约省一半字节，长条页尤其明显）。
+  dataSaver(1080, '省流 1080'),
+
+  /// 标准：沿用既有行为（1600 px，**不改变任何缓存路径**）。
+  standard(0, '标准 1600'),
+
+  /// 跟随屏幕：按"逻辑宽 × 设备像素比"渲染（上限 4096、下限 640）。
+  screen(0, '跟随屏幕');
+
+  const RenderWidth(this.fixedPixels, this.label);
+
+  /// 固定像素宽；0 表示"需要按屏幕计算 / 沿用默认"。
+  final int fixedPixels;
+  final String label;
+}
+
+/// 把渲染宽度模式解析成**具体像素宽**；`null` 表示"沿用 Rust 侧默认（1600）"。
+///
+/// 单独抽成纯函数是为了可测：标准档必须返回 `null`，这样页缓存的命名空间
+/// 与历史完全一致（否则会一次性作废用户已有的页缓存）。
+int? renderWidthPixels(
+  RenderWidth mode, {
+  required double screenWidth,
+  required double devicePixelRatio,
+}) {
+  switch (mode) {
+    case RenderWidth.dataSaver:
+      return 1080;
+    case RenderWidth.standard:
+      return null;
+    case RenderWidth.screen:
+      final px = (screenWidth * devicePixelRatio).round();
+      return px.clamp(640, 4096);
+  }
+}
+
 /// 远程书源（WebDAV / SFTP）打开书籍的策略。
 enum BookOpenStrategy {
   /// 自动（默认）：**流式优先**（第 69 轮语义翻转）——命中 raw 缓存则本地打开，
@@ -324,6 +366,9 @@ class KeyBinds {
 /// 应用设置。
 class AppSettings {
   CoverQuality coverQuality;
+
+  /// 阅读页渲染宽度（默认标准 1600，与历史行为一致）。
+  RenderWidth renderWidth;
   String themeMode; // 'light' | 'dark'
   ReadMode readMode; // 阅读模式:日漫/美漫/条漫
   bool invertTap; // 日漫模式下点击区是否反向
@@ -346,6 +391,7 @@ class AppSettings {
 
   AppSettings({
     this.coverQuality = CoverQuality.low,
+    this.renderWidth = RenderWidth.standard,
     this.themeMode = 'dark',
     this.readMode = ReadMode.manga,
     this.invertTap = false,
@@ -373,6 +419,7 @@ class AppSettings {
 
   Map<String, dynamic> toJson() => {
     'coverQuality': coverQuality.name,
+    'renderWidth': renderWidth.name,
     'themeMode': themeMode,
     'readMode': readMode.name,
     'invertTap': invertTap,
@@ -393,6 +440,10 @@ class AppSettings {
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
+    renderWidth: RenderWidth.values.firstWhere(
+      (q) => q.name == j['renderWidth'],
+      orElse: () => RenderWidth.standard,
+    ),
     coverQuality: CoverQuality.values.firstWhere(
       (q) => q.name == j['coverQuality'],
       orElse: () => CoverQuality.low,

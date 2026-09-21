@@ -3388,3 +3388,78 @@ fallback-download"的确凿结论。整本下载方案对 76 MB 书 ≈17 s（�
 - 结论：D7 待选方案（省流宽度 / 默认 1600 / 长条页切片）已挂 TODO，等用户选。
 
 **交付物**：桌面 Release 与安卓包按本轮重建（含 G1）。
+
+
+---
+
+## 2026-09-21｜第91轮：D7 —— 阅读渲染宽度交给用户选（省流 1080 / 标准 1600 / 跟随屏幕）
+
+**用户当轮**：在 D7 的三个选项里选了 **①"加渲染宽度/清晰度设置"**。
+
+**为什么是"设置"而不是"按屏宽渲染"**（第90轮已实测纠正）：本机 2560 物理宽 > 现有渲染宽 1600
+⇒ 按屏宽渲染反而**更多**字节；真正的成本是阅读页 `out_bytes ≈ 1.9 MB/页`（经 FRB 交给 Dart +
+解码/上传）。因此把宽度做成用户可选的画质权衡，而不是替他决定。
+
+**做了什么**：
+- **设置模型**（`lib/store/models.dart`）：新增 `enum RenderWidth { dataSaver(1080) / standard(1600) /
+  screen }` 与 `AppSettings.renderWidth`（默认 `standard`，与历史行为一致），JSON 往返 + 未知值回落。
+- **纯函数 `renderWidthPixels(mode, screenWidth, devicePixelRatio)`**：
+  省流 ⇒ 1080；**标准 ⇒ `null`**（关键：`null` 让 Rust 走历史代码路径与历史页缓存目录，
+  不一次性作废用户已有的页缓存）；跟随屏幕 ⇒ `逻辑宽 × DPR` 夹取到 `[640, 4096]`。
+- **Rust 取页 API**：`book_page(handle, index, target_width: Option<u32>)`（FRB 已重新生成绑定）；
+  `None` = 文档默认渲染宽度，`Some(w)` = 按该宽渲染。
+- **Reader 会话状态**：`display_width: AtomicU32`（0 = 未指定）。前台取页设置它，**预取沿用同一个值**
+  ⇒ 同一本书不会因前台/预取写出两套尺寸的页；**换宽度时清空 L1**，绝不混用新旧尺寸。
+- **页缓存按宽度分目录**：宽度 0 ⇒ 历史布局 `page/<ns>/<index>.bin`；否则 `page/<ns>/w<宽>/<index>.bin`
+  ⇒ 换档既不误用旧尺寸，也不作废标准档缓存。
+- **设置界面**：`home_page` 新增"阅读渲染宽度"分段控件（放在"封面质量"之前），文案说明权衡与"重新翻开生效"。
+- 只有 PDF 覆写 `page_bytes_for_display`（其余格式沿用默认 = `page_bytes`），因此该设置**只影响 PDF/长条页渲染**。
+
+**验证**：
+- Rust `reader::tests::display_width_is_forwarded_and_partitions_the_page_cache`：
+  标准档走 `page_bytes` 落历史目录；1080 走 `page_bytes_for_display(1080)` 落 `w1080/`；
+  换到 1600 后**L1 被清空**、新页落 `w1600/`、旧宽度缓存保留互不干扰 —— 8 项 reader 测试全过。
+- Dart 4 项新用例：三档映射与夹取、JSON 往返与未知值回落（默认必须是 standard）。
+- Dart 相关 6 个文件 23 项、`flutter analyze` 干净；Rust 全量门禁见下。
+
+**验收口径（真机）**：`pdf_diag.log` 里阅读页的 `width=` 应变成所选档位（省流=1080），
+`out_bytes` 应从约 1.9 MB 降到约 0.9 MB；标准档必须与历史完全一致（`width=1600`、目录不变）。
+
+**交付物**：桌面 Release 与安卓包按本轮重建；手机（已连接）`adb install -r` 安装。
+
+
+---
+
+## 2026-09-21｜第92轮：删掉扫描状态栏三个按钮 + 修"反复刷新也没用"（重试唤醒的会话顺序）
+
+**用户当轮**：① 扫描既然是自动运行的，状态栏右边"增量重新扫描 / 全量重新扫描 / 暂停"三个按钮可以删掉；
+② 问刷新按钮现在是不是既负责封面失败重试也负责书源更新；③ **夸克源里仍有几张 MOBI 封面失败，
+反复刷新也没用**。
+
+**1) 删除三个按钮（用户要求）**
+- `lib/ui/remote_scan_status.dart`：移除"暂停/继续远程扫描"与"增量/全量重新扫描"两组图标按钮，
+  以及随之不再使用的构造参数 `onPause / onResume / onRescanIncremental / onRescanFull`
+  （连带删掉 `source_browser.dart` 里对应的实参块与两个不再使用的局部变量）。
+- **保留**"重试远程扫描"按钮（`onRetry`，只在可重试状态出现，管的是扫描失败重试）与状态文案。
+- `flutter analyze lib/ui/` 干净。
+
+**2) "反复刷新也没用"的真因（真机 bug，已修）**
+- 现象：DB 里那几张 MOBI 的失败行（`cover_read_budget_exceeded` / `cover_native_lib_missing`）
+  在刷新后**没有产生任何新的 `cover_fail`/成功记录** ⇒ 任务只是被排回 `pending`，**没人去抓**。
+- 根因：我把"重试失败封面"挂在了 `_refresh()` 的**最前面**，而 Rust 侧
+  `wake_cover_worker_for_source`（`api/remote_scan.rs:168-192`）**没有可用会话绑定时直接返回**
+  （设计如此：绝不伪造 session）⇒ 排在 `await _relist()` **之前**调用时还没有活会话，唤醒是空操作。
+- 修法：把 `unawaited(_retryFailedCovers())` 移到 `await _relist()` **之后**（会话已建立），并写清注释
+  防止回退。⇒ 刷新一次应能立刻看到"已重新排队 N 张失败封面"，随后 worker 真的去抓。
+- 注：即使唤醒被跳过，任务也仍会在下一次扫描/会话事件时被抓——只是达不到"刷新即生效"。
+
+**3) 刷新按钮的语义（回答用户提问）**
+- 现在确实是"两件事"：`_refresh()` = ①`_relist()`（重新列目录/书源内容，必要时建立或复用会话）
+  ②重试该源**当前档**的终态失败封面（轻量：不动其它档、不清缓存）。
+- 状态栏的"重试远程扫描"是另一件事（扫描失败重试），三按钮删除后它仍保留。
+
+**4) 本轮同时完成 D7**（详见第 91 轮条目）：阅读渲染宽度设置（省流 1080 / 标准 1600 / 跟随屏幕），
+门禁 Rust **25 套件 / 541 passed / 0 failed**（含新增的宽度转发/分目录/清 L1 断言与 Dart 4 项新用例）。
+
+**门禁踩坑记录**：改 `book_page` 签名后 `cargo build --lib` 通过，但全量门禁挂在
+`examples/read_profile.rs`（旧签名 E0061）——再次说明"必须跑全量门禁，不能只 build lib"。

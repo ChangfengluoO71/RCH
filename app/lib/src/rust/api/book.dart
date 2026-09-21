@@ -16,8 +16,17 @@ Future<BookInfo> openLocalBook({required String path}) =>
 
 /// 读取一页的原始图片字节(优先命中缓存/预取,翻页秒出)。
 /// 返回 ZIP 内该页的原始字节(JPEG/PNG 等);像素解码由 Flutter 侧完成(自带 image cache)。
-Future<Uint8List> bookPage({required BigInt handle, required int index}) =>
-    RustLib.instance.api.crateApiBookBookPage(handle: handle, index: index);
+/// `target_width`（D7）：`None` = 沿用文档默认渲染宽度（PDF 为 1600，页缓存路径不变）；
+/// `Some(w)` = 按该像素宽渲染（省流 1080 / 跟随屏幕的像素值由 Dart 计算后传入）。
+Future<Uint8List> bookPage({
+  required BigInt handle,
+  required int index,
+  int? targetWidth,
+}) => RustLib.instance.api.crateApiBookBookPage(
+  handle: handle,
+  index: index,
+  targetWidth: targetWidth,
+);
 
 /// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
 /// 若 path 为目录,走 Folder 格式。

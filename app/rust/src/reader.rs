@@ -228,6 +228,13 @@ pub struct Reader {
     inflight_done: Condvar,
     /// 该书的磁盘缓存目录(原始页字节)。
     disk_dir: PathBuf,
+    /// 当前显示宽度（0 = 未指定 ⇒ 沿用文档默认渲染宽度 1600）。
+    ///
+    /// D7（2026-09-21）：阅读页一页 1600 宽的渲染结果约 1.9 MB 要经 FRB 交给 Dart，
+    /// 是"翻页重"的主要来源；把宽度交给用户选（省流 1080 / 标准 1600 / 跟随屏幕）。
+    /// 宽度是**每个 Reader 的会话状态**：前台取页设置它，预取沿用同一个值，
+    /// 这样同一本书不会因为前台/预取而写出两套尺寸的页。
+    display_width: std::sync::atomic::AtomicU32,
     governor: Arc<BlockingRequestGovernor>,
 }
 
@@ -255,6 +262,7 @@ impl Reader {
             inflight: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: dir,
+            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: blocking_request_governor(),
         }
     }
@@ -386,22 +394,65 @@ impl Reader {
         }
     }
 
+    /// 当前显示宽度（0 = 未指定）。
+    pub fn display_width(&self) -> u32 {
+        self.display_width.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 设置显示宽度（0 = 回到默认）。**变化时清空 L1**，避免新旧尺寸混用同一页。
+    ///
+    /// 只清内存缓存：L2 页缓存按宽度分目录（见 [`Reader::page_disk_path`]），
+    /// 因此换宽度既不误用旧尺寸的页，也不作废标准档已有的缓存。
+    pub fn set_display_width(&self, width: u32) {
+        let previous = self
+            .display_width
+            .swap(width, std::sync::atomic::Ordering::Relaxed);
+        if previous != width {
+            // `Lru` 没有 clear()：直接换一个新的（容量常量复用同一处定义）。
+            *self.cache.lock().unwrap() = Lru::new(CACHE_CAP);
+        }
+    }
+
+    /// 一页在磁盘缓存里的路径。
+    ///
+    /// 宽度为 0（标准档）时**沿用历史布局** `page/<ns>/<index>.bin`，
+    /// 否则放进 `page/<ns>/w<width>/<index>.bin`（不会与标准档互相污染）。
+    fn page_disk_path(&self, index: u32) -> PathBuf {
+        let width = self.display_width();
+        let dir = if width == 0 {
+            self.disk_dir.clone()
+        } else {
+            self.disk_dir.join(format!("w{width}"))
+        };
+        dir.join(format!("{index}.bin"))
+    }
+
     /// 读一页:L2 磁盘命中则直接用,否则从书源下载并写盘。
     fn read_page(&self, index: u32) -> Result<Arc<Vec<u8>>> {
         if let Some(bytes) = self.disk_get(index) {
             return Ok(Arc::new(bytes));
         }
-        let bytes = self.book.page_bytes(index)?;
+        let width = self.display_width();
+        let bytes = if width == 0 {
+            self.book.page_bytes(index)?
+        } else {
+            // 只有显式指定显示宽度时才走"按显示尺寸渲染"（目前仅 PDF 覆写）。
+            self.book.page_bytes_for_display(index, width)?
+        };
         self.disk_put(index, &bytes);
         Ok(Arc::new(bytes))
     }
 
     fn disk_get(&self, index: u32) -> Option<Vec<u8>> {
-        std::fs::read(self.disk_dir.join(format!("{index}.bin"))).ok()
+        std::fs::read(self.page_disk_path(index)).ok()
     }
 
     fn disk_put(&self, index: u32, data: &[u8]) {
-        let _ = std::fs::write(self.disk_dir.join(format!("{index}.bin")), data);
+        let path = self.page_disk_path(index);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, data);
     }
 
     /// 后台并行预取 index 前后各 PREFETCH_RADIUS 页。
@@ -533,6 +584,71 @@ mod tests {
         release_page1: Arc<(Mutex<bool>, Condvar)>,
     }
 
+    /// D7（2026-09-21）：显示宽度必须 (a) 真的传给文档的"按显示尺寸渲染"入口，
+    /// (b) 让不同宽度的页落在**不同的磁盘目录**（互不污染、也不作废标准档已有缓存）。
+    struct WidthDoc {
+        widths: Arc<std::sync::Mutex<Vec<Option<u32>>>>,
+    }
+
+    impl crate::document::Document for WidthDoc {
+        fn page_count(&self) -> u32 {
+            2
+        }
+        fn page_bytes(&self, index: u32) -> anyhow::Result<Vec<u8>> {
+            self.widths.lock().unwrap().push(None);
+            Ok(vec![index as u8; 4])
+        }
+        fn page_bytes_for_display(&self, index: u32, target_width: u32) -> anyhow::Result<Vec<u8>> {
+            self.widths.lock().unwrap().push(Some(target_width));
+            Ok(vec![index as u8; 8])
+        }
+    }
+
+    #[test]
+    fn display_width_is_forwarded_and_partitions_the_page_cache() {
+        let widths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let disk_dir = std::env::temp_dir().join(format!(
+            "rch_reader_width_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        let reader = Arc::new(Reader {
+            book: Box::new(WidthDoc {
+                widths: Arc::clone(&widths),
+            }),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+            display_width: std::sync::atomic::AtomicU32::new(0),
+            governor: Arc::new(BlockingRequestGovernor::new(4, 16)),
+        });
+
+        // 标准档（宽度 0）：走 `page_bytes`，落在历史目录。
+        reader.get_page(0).unwrap();
+        assert_eq!(widths.lock().unwrap().as_slice(), &[None]);
+        assert!(disk_dir.join("0.bin").exists(), "标准档沿用历史布局");
+
+        // 省流档：走 `page_bytes_for_display(1080)`，落进 w1080 子目录。
+        reader.set_display_width(1080);
+        reader.get_page(1).unwrap();
+        assert_eq!(widths.lock().unwrap().as_slice(), &[None, Some(1080)]);
+        assert!(disk_dir.join("w1080").join("1.bin").exists());
+        assert!(!disk_dir.join("1.bin").exists(), "不得与标准档混用同一目录");
+
+        // 换宽度必须清空 L1：否则会拿旧尺寸的页当新尺寸用。
+        reader.set_display_width(1600);
+        assert!(!reader.cache.lock().unwrap().contains(&1));
+        reader.get_page(1).unwrap();
+        assert!(disk_dir.join("w1600").join("1.bin").exists());
+        assert!(disk_dir.join("w1080").join("1.bin").exists(), "旧宽度缓存保留，互不干扰");
+
+        let _ = std::fs::remove_dir_all(disk_dir);
+    }
+
     #[test]
     fn disk_hit_does_not_wait_for_network_permits() {
         let (started_tx, _) = mpsc::channel();
@@ -554,6 +670,7 @@ mod tests {
             inflight: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
+            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::clone(&governor),
         });
         let (tx, rx) = mpsc::channel();
@@ -615,6 +732,7 @@ mod tests {
             inflight: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
+            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::new(BlockingRequestGovernor::new(3, 8)),
         });
 
@@ -682,6 +800,7 @@ mod tests {
             inflight: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
+            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::clone(&governor),
         });
         let worker = std::thread::spawn(move || reader.get_page(0));
@@ -712,6 +831,7 @@ mod tests {
             inflight: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
+            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::clone(&governor),
         });
         reader.warm_up();

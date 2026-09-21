@@ -172,6 +172,32 @@ git push origin master --tags
 # 3. 检查 GitHub Actions Release 工作流结果，必要时在 Release 页补 notes 后发布
 ```
 
+### CI 门禁（**发布前必读**，2026-09-21 补）
+
+打 tag 之前，`ci.yml` 必须在 `master` 上**全绿**（Flutter Analyze / Rust Test / Windows Build，
+以及 Android 构建）。两条容易踩的坑：
+
+1. **CI 的 Rust Test 带 `RUSTFLAGS: -D warnings`**（由 `actions-rust-lang/setup-rust-toolchain` 设置）
+   ⇒ **任何 warning 都是错误**。本地 `cargo test` 不带该策略，所以**本地绿 ≠ CI 绿**。
+   发布前本地先复检一次：
+
+   ```powershell
+   cd app/rust
+   $env:RUSTFLAGS="-D warnings"; cargo check --locked --all-targets
+   ```
+
+   诊断用的字段/方法若确实暂时不读，加 `#[allow(dead_code)]` 并写明用途，不要留着让 CI 变红。
+2. **Rust 工程在 `app/rust`，仓库根没有 `Cargo.toml`**。`setup-rust-toolchain` step 必须显式声明
+   `cache-workspaces: app/rust`，否则新版 action 会在仓库根探测 workspace 并调用 `cargo`，
+   直接以 `could not find Cargo.toml` 失败（浮动 `@v1` 曾因此让 Flutter Analyze job 变红）。
+
+查看状态：
+
+```powershell
+gh run list --branch master --limit 5
+gh run watch <run-id> --exit-status
+```
+
 版本号约定：tag 去掉 `v` 前缀即为版本（如 `v0.4.0` → `0.4.0`），构建号按
 `主版本*10000 + 次版本*100 + 修订号` 注入（`0.4.0` → `400`），保证 Android
 versionCode 单调递增。

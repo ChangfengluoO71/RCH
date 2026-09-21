@@ -3587,3 +3587,38 @@ pdfium-render 的**任何库内错误**文案里都含 "pdfium"（例如 `Pdfium
   所以那次"通过"没有意义；已改用原地临时回退重做。）
 
 **门禁**：见本轮全量结果。
+
+
+---
+
+## 2026-09-21｜第96轮：发布 v0.6.0（版本号破例升次版本）+ 契约规范回写
+
+**用户当轮**：① "提交更新啥的之前文档应该有规范，你可以看一看"；② 发布版本号"用 0.6.0"。
+
+**1) 读了项目的规范体系并按其执行**
+- 流程规范：根 `CLAUDE.md`（LOG/LOG-INDEX/README/SPEC/DECISION/TODO 的更新时机、删除功能/改 API 需确认）、
+  `.trellis/workflow.md`（Spec 系统 + Task 系统 + "捕获经验回写 spec"）、
+  `docs/development/setup.md`（发布流程：只改 `app/pubspec.yaml` → 打 tag → CI 出包）。
+- **关键发现**：`.trellis/spec/backend/remote-cover-update-contracts.md` 是**冻结契约**，其中写着
+  "封面请求绝不整本下载 / Range 不支持就返回 typed 失败"，而本轮"取消整本读预算拒绝"恰好动到这条边界
+  ⇒ 按 Trellis"新技术决定必须回写 spec"的要求，**追加 Superseding Addendum**（英文，与原文同风格）：
+  预算豁免的精确边界（`offset==0` + 一次要完整个文件 + ≤512 MiB；次数/时间两条照旧）、
+  "仍是**文档内存读**、绝不调用整本下载策略"（保住原不变量）、MOBI 惰性宽松化与拒绝原因、
+  页表缓存键与自校验、卡片唤醒与 legacy 纯本地回退不变量、手动重试 API 与会话顺序要求、
+  失败码精确性（只有自家加载器文案才算缺库）、`cache/raw` 上限与页缓存按宽度分目录、
+  G1 头窗口钉住不变量，末尾列出**可执行边界**（对应测试名）。
+- 另修 `.trellis/spec/backend/index.md` 漏登记该契约文件的问题。
+
+**2) v0.6.0 发布准备**
+- 版本号：`app/pubspec.yaml` `0.5.8+100508` → **`0.6.0+100600`**（versionCode 规则
+  `100000 + major*10000 + minor*100 + patch`，100600 > 历史下限 2507 ✓）。
+- **规则破例并写明理由**：仓库自 0.3.0 起约定"只递增补丁号"；本次升次版本是因为
+  EPUB/ZIP/PDF/MOBI 打开路径全部改为惰性按需读 + 封面管线重做（打开成本与文件大小解耦），
+  属行为/性能里程碑 ⇒ 已在 `docs/project/CHANGELOG.md` 的 0.6.0 条目顶部写明破例理由，
+  后续继续沿用"递增补丁号"。
+- 发布说明：`docs/releases/release_notes_v0.6.0.md`（CI 会把它作为 Release 正文）。
+- `CHANGELOG.md`：新增 0.6.0 条目（Added/Changed/Fixed/Removed）并**回填 0.5.7**
+  （此前已发布却未记入本文件）；`README.md` 的"当前稳定版本/下载表/更新重点"升到 v0.6.0。
+
+**3) 发布执行（按 setup.md）**：推分支 → 快进合并 master → 推 master → 等 CI 绿 → 打 tag `v0.6.0` 并推 →
+CI `release.yml` 构建 Windows 安装包 + 分 ABI 的 3 个 APK 并发布 Release。

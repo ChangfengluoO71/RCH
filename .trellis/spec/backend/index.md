@@ -29,6 +29,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 ---
 
 | [Source Refresh and Stale-Data Cleanup](./source-refresh-cleanup.md) | Source CRUD completion, 115/Quark effective roots, and safe cleanup boundaries | Filled |
+| [Remote Cover / Reader Budget / Update Handoff Contracts](./remote-cover-update-contracts.md) | Frozen cover-read, budget, wake/fallback, retry, and cache-governance contracts (+ v0.6.0 addendum) | Filled |
 
 ## How to Fill These Guidelines
 

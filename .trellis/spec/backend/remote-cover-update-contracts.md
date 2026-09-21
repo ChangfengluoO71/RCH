@@ -219,3 +219,110 @@ retention rules are more specific.
 The provider-labelled fake matrix and the Flutter coordinator/status contract
 tests are the executable boundary for these rules; release evidence remains
 pending until real provider/device validation is recorded separately.
+
+## Superseding Addendum — v0.6.0 Opening Speed & Cover Pipeline (2026-09-21)
+
+### Cover document-open read budget
+
+- The 64 MiB `COVER_READ_BUDGET_BYTES` cap must **not** reject a *deliberate
+  whole-file read*: `offset == 0` and a single request for the entire file,
+  bounded by `COVER_WHOLE_FILE_MAX_BYTES` (512 MiB, same order as the PDF cap).
+  The read-count cap (384) and the wall-clock cap (30 s) still apply, so
+  pathological archives (a tail EOCD sweep = many small reads) stay rejected.
+  Predicate: `is_deliberate_whole_file(offset, requested, length)`.
+- This is a **document read**, not a download strategy: the cover path must
+  still never call the provider's whole-book raw-cache download. The original
+  "a cover request never becomes a whole-book download" invariant is preserved.
+- Rationale (real device, 2026-09-21): an 82.6 MB MOBI whose lazy open was
+  declined fell back to the whole-file read; that single 82.6 MB request was
+  rejected by the byte cap, so the cover failed forever
+  (`cover_read_budget_exceeded`) even though the same book's cover needs one
+  page. After the exemption the same book opens its cover in 719 ms and reads
+  page 0 in 198 ms.
+
+### MOBI lazy-open leniency
+
+- A record whose offset is >= file length (a legal zero-length EOF/padding
+  entry) and a candidate range that is empty or inverted must be **skipped**,
+  never a reason to decline the whole lazy path. Declining sends the book into
+  the whole-file fallback, which is exactly the failure mode above.
+- Every decline path must log `mobi_lazy_declined reason=<code>` (too_small,
+  header_read, record_count_zero, record_table_overflow, record_table_read,
+  no_mobi_magic, first_image_index, probe_failed, no_decodable_image) plus
+  `mobi_lazy_clamped_offsets` / `mobi_lazy_skipped_ranges` counters, so the
+  reason is read from a log instead of guessed.
+
+### MOBI page-table cache
+
+- Key: `stable_hash(path|file_len)` under `cache/mobi_table/<hash>.table`.
+  Self-validation: the file stores `sha256(PalmDB header ‖ full record table)`
+  and is only reused when version, length, and digest all match (a replaced file
+  with an identical length therefore invalidates it). Ranges are additionally
+  checked for non-empty, monotonic, in-file intervals.
+- Writes are atomic (`.tmp` then rename) and best-effort. The cover-only entry
+  point must **not** write the table: it probes only until the first image and
+  would persist a truncated page list.
+
+### Card wake and local-fallback invariants
+
+- Every remote card subscribes to its source's cover revision, **including
+  cards without a stable asset id** (container-folder comics). A wake re-reads
+  durable state only; it never re-issues `requestCover` on its own.
+- If the unified cache holds no bytes for the requested selection/profile, the
+  card must fall back to the **legacy pure-local cover cache** before rendering
+  a failure placeholder. That legacy read is local-only by contract: no session,
+  no provider request, no job, no wake, no durable write.
+- Rationale: the detail page resolves covers through the legacy path while wall
+  cards use the unified path; the two caches are independent, so a card that
+  only consults the unified side can show "获取失败" for a book whose bytes are
+  on disk and visible on the detail page.
+
+### Manual cover retry
+
+- `remote_cover_retry_failed(source_id, limit)` requeues terminal `failed`
+  rows of that source's **current profile only**, resets attempt/backoff/long
+  retry, bumps the source revision, and never purges caches or touches other
+  profiles, states, or sources. `limit` is clamped to 1..500.
+- A wake requires a live session binding (`wake_cover_worker_for_source`
+  returns silently without one and must never fabricate a session), therefore
+  callers must invoke the retry **after** the source session exists (Dart:
+  after `_relist()`), otherwise rows sit in `pending` and nothing fetches them.
+
+### Failure-code accuracy
+
+- `cover_native_lib_missing` may only be produced from the shared loader marker
+  `PDFIUM_LOAD_FAILURE_MARKER`. Any other pdfium message — pdfium-render emits
+  "pdfium" in every library error — maps to `cover_document_open_failed`
+  (terminal, still manually retryable). Mislabeling library errors as a
+  deployment problem previously sent investigation after a missing DLL while
+  the same process rendered PDF pages normally.
+
+### Cache governance
+
+- `cache/raw` (whole-book packages) has a 2 GiB cap: over the cap, whole
+  packages are evicted oldest-first by the newest mtime inside the package, and
+  the newest package is always kept. Enforcement is best-effort and runs at the
+  single open choke point (`register_book`). The cover whole-file read above is
+  in-memory and therefore leaves no package to clean.
+- The page cache is partitioned by render width: width 0 keeps the historical
+  `page/<ns>/<index>.bin` layout, any explicit width uses
+  `page/<ns>/w<width>/<index>.bin`, so switching width neither reuses the wrong
+  size nor invalidates the standard-tier cache.
+
+### Reader request-merge invariant (G1)
+
+- The file-head window, once fetched naturally (a window fetched at offset 0),
+  is **pinned** and never evicted; serving a head read from it must not issue a
+  new remote request. Metadata window slots are 4. Both changes only retain
+  already-fetched data — they must never increase request count or bytes.
+
+Executable boundary for this addendum: `document::mobi::tests::page_table_cache_*`,
+`lazy_open_tolerates_zero_length_and_out_of_range_records`,
+`full_open_probes_concurrently_while_cover_open_stays_serial`,
+`source_reader_head_pin_contract`, `adapter_byte_source_stops_at_the_read_budget`,
+`deliberate_whole_file_read_bypasses_byte_budget_up_to_the_absolute_cap`,
+`archive_open_failures_separate_missing_native_lib_from_document_errors`,
+`requeue_failed_for_source_only_touches_current_profile_failures`,
+`raw_cache_limit_evicts_oldest_packages_and_keeps_the_newest`,
+`display_width_is_forwarded_and_partitions_the_page_cache`, and the Dart
+`comic_cover_legacy_fallback_test`.

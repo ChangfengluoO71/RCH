@@ -3211,3 +3211,51 @@ D6 locked-frame 推 notifier、D7 单条大记录不可分片（需画质口径�
 - 桌面 Release 重建（`data/app.so` 17:33:08）并重启（PID 38164）。
 - 安卓 release 包重建并**已装到手机**（`adb install -r` → Success，`lastUpdateTime 17:34:04`），
   同时复制到 `C:/Users/cfl/Downloads/RCH-0.5.8+100508-20260921.apk`（116.2 MB）。
+
+
+---
+
+## 2026-09-21｜第87轮：给"MOBI 打开到底走了哪条路"补埋点（reader_diag / mobi_diag）
+
+**用户当轮反馈 + 提问**："mobi 流式阅读加载时间还是长，有时候十几秒"；怀疑**是不是已经转整本下载**
+（"现在不是自动模式吗？超过十秒就直接整本下载阅读，反正有阅读完就删缓存的机制"），
+并怀疑"读起来很流畅不像流式、像本地缓存"，要求我查日志。
+
+**1) 先查清"为什么日志里查不到"（本轮最重要的发现）**
+- 打开策略的三个出口只有 `tracing::info!/warn!`（`api/source.rs` 的 `OpenStrategy::Auto` 分支），
+  但全仓**没有任何 `tracing_subscriber` 初始化**（`grep -rn "tracing_subscriber\|with_writer\|init_logging"`
+  ⇒ 零命中）⇒ **这些行不落任何文件**，"流式成功 / 回退整本下载"事后完全无法查证。
+- 现场旁证（`D:/Documents/RCH`）：
+  - `cache/raw/` **空**（0 文件）；但阅读器退出时确实会删 raw 包（`reader_page.dart:427` `deleteRawPackage`）
+    ⇒ **空目录不能证明"没整本下载过"** —— 用户的直觉是对的，这也是必须补埋点的原因。
+  - `cache/page/` 426 MB / 635 文件，其中 **121 个是 17:00 之后新增**（目录 mtime 17:30–17:35）
+    ⇒ 用户刚才阅读时**逐页缓存正在增长**：即使纯流式，每页读一次即落盘，回看/重进就是本地读，
+    这足以解释"加载完很流畅"，**不需要**整本下载。
+  - `pdf_diag.log` 正在记录当前阅读：`width=1600 ms=780–824 ask_reads=6 ask_bytes≈1 MB/页`
+    ⇒ 每页 ~0.8 s（与第84轮同口径）。
+
+**2) 本轮补的埋点（照 `pdf_diag.log` 的既有写法，超 1 MB 自动截断、绝不影响打开流程）**
+- **`reader_diag.log`**（`api/source.rs::reader_diag`）：记录远端书打开的**模式与耗时**——
+  `reader_open mode=raw-cache|stream|fallback-download stream_ms=… download_ms=… name=…`。
+  这一行直接回答"有没有转整本下载"。
+- **`mobi_diag.log`**（`document/mobi.rs::diag`）：
+  `mobi_open mode=lazy|cover-lazy|full-fallback pages=… size=… ms=… name=…`（回退整本读会记 `full-fallback`）
+  与 `mobi_page index=… bytes=… ms=…`（每页 = 一条记录的远端读，真机单条 5–15 MB）。
+- 门禁：`cargo build --lib` ✓、MOBI 单测 7 项 ✓、全量门禁见下。
+
+**3) 对"超过 10 秒就整本下载"的量化判断（暂不建议做）**
+- 实测吞吐（`pdf_diag`：4.5 MB / 1030 ms ≈ **4.4 MB/s**）⇒ **76 MB 的 MOBI 整本下载 ≈ 17 s**，
+  比当前"探测 ~10 s + 首屏"更慢；只有小书（约 <40 MB）才可能更快。
+- raw 包**读完即删** ⇒ 整本下载每次打开都要重付；而探测结果/页缓存可复用。
+- ⇒ 建议的下一步仍是**页面表缓存**（首次 ~10 s、之后秒开），可做成开关；
+  若用户仍要"超时转整本"，可加 `RCH_READ_FALLBACK_AFTER_MS` 之类的开关（默认关）。
+
+**4) 交付物**：桌面 Release 重建（`rust_lib_app.dll` 18,972,160 B / 17:42:24）并重启（PID 37464）；
+安卓包重建并装到手机（`adb install -r` → Success / `lastUpdateTime 17:44:50`），
+复制到 `C:/Users/cfl/Downloads/RCH-0.5.8+100508-20260921.apk`。
+
+**5) 门禁异常（诚实记录）**：全量门禁首次跑挂 **`p0a_single_page_latency_without_background_load`**，
+查明是**下限断言**导致的既有 flake：该用例要求"至少一页 ≥500 ms"（`tests/p0_baseline_read_speed.rs:862`），
+本次实测 `page_ms=[8,397,102]` ⇒ **机器太快就失败**，与本次改动无关
+（P0 走 CBZ + 本机 mock CDN，不经过 MOBI 路径）。这与交接单"clean HEAD 上 5 跑 4 挂"完全一致；
+**没有**改阈值，改为 `--no-fail-fast` 复跑取全貌（结果见 LOG 下一行/口头汇报）。

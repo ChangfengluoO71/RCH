@@ -94,13 +94,23 @@ impl MobiBook {
     }
 
     fn open_with(src: impl ByteSource + 'static, path: &str, cover_only: bool) -> Result<Self> {
+        let started = std::time::Instant::now();
         let src: Arc<dyn ByteSource> = Arc::new(src);
         let stem = std::path::Path::new(path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
+        let file_len = src.len();
 
         if let Some((lazy, title)) = open_lazy(Arc::clone(&src), &stem, cover_only) {
+            diag(&format!(
+                "mobi_open mode={} pages={} size={} ms={} name={}",
+                if cover_only { "cover-lazy" } else { "lazy" },
+                lazy.records.len(),
+                file_len,
+                started.elapsed().as_millis(),
+                stem
+            ));
             return Ok(MobiBook {
                 lazy: Some(lazy),
                 pages: Vec::new(),
@@ -109,6 +119,13 @@ impl MobiBook {
         }
 
         // 回退：历史行为（整份读入 + crate 解析）。
+        // ⚠️ 这一行是"为什么 MOBI 打开要十几秒"的关键嫌疑：回退 = 整本远端读。
+        diag(&format!(
+            "mobi_open mode=full-fallback size={} ms={} name={}",
+            file_len,
+            started.elapsed().as_millis(),
+            stem
+        ));
         let len = src.len() as usize;
         let mut data = vec![0u8; len];
         src.read_exact_at(0, &mut data)
@@ -389,6 +406,32 @@ fn concurrent_probe(
     Some(decodable)
 }
 
+/// 现场诊断：把 MOBI 打开/取页的关键读数追加到 `<cache_root>/mobi_diag.log`。
+///
+/// 为什么需要（2026-09-21 用户："mobi 流式阅读加载时间还是长，有时候十几秒"）：
+/// MOBI 路径此前**零埋点**（PDF 有 `pdf_diag.log`），"到底走了惰性还是回退整本读"、
+/// "一次打开探测了多少条候选记录"都无从查证 —— 与 `pdf_diag` 同一套路子。
+/// 只记计数与耗时；超过上限自动截断，绝不影响打开流程。
+fn diag(line: &str) {
+    use std::io::Write;
+    const MOBI_DIAG_MAX_BYTES: u64 = 1024 * 1024;
+    let path = crate::cache::cache_root().join("mobi_diag.log");
+    if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > MOBI_DIAG_MAX_BYTES {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let _ = writeln!(file, "{now} {line}");
+    }
+}
+
 /// 读 MOBI 头里的书名（长度有上限，避免异常值导致大读）。
 fn read_title(
     src: &Arc<dyn ByteSource>,
@@ -420,6 +463,7 @@ impl Document for MobiBook {
 
     fn page_bytes(&self, index: u32) -> Result<Vec<u8>> {
         if let Some(lazy) = &self.lazy {
+            let started = std::time::Instant::now();
             let (offset, len) = lazy
                 .records
                 .get(index as usize)
@@ -429,6 +473,13 @@ impl Document for MobiBook {
             lazy.src
                 .read_exact_at(offset, &mut buf)
                 .with_context(|| format!("读取 MOBI 第 {index} 页失败"))?;
+            // 现场读数：一次取页 = **一条记录**（可能 5–15 MB）的远端读，见 `mobi_diag.log`。
+            diag(&format!(
+                "mobi_page index={} bytes={} ms={}",
+                index,
+                buf.len(),
+                started.elapsed().as_millis()
+            ));
             return Ok(buf);
         }
         self.pages

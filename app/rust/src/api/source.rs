@@ -212,6 +212,40 @@ pub async fn webdav_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
         .collect())
 }
 
+/// 日志里只写文件名（不含完整路径），与 `pdf_diag` 的 `name=` 口径一致。
+fn file_stem(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// 现场诊断：把"远端书打开到底走了哪条路"追加到 `<cache_root>/reader_diag.log`。
+///
+/// 为什么需要（2026-09-21 用户："mobi 加载十几秒，怀疑是不是已经转整本下载了"）：
+/// 这几个分支只有 `tracing::info!/warn!`，而全仓**没有任何 `tracing_subscriber` 初始化**
+/// ⇒ 这些行不落任何文件，"流式成功 / 回退整本下载"事后完全查不到。
+/// 只记模式、字节数、耗时与文件名（不含完整路径），超过上限自动截断。
+pub(crate) fn reader_diag(line: &str) {
+    use std::io::Write;
+    const READER_DIAG_MAX_BYTES: u64 = 1024 * 1024;
+    let path = crate::cache::cache_root().join("reader_diag.log");
+    if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > READER_DIAG_MAX_BYTES {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let _ = writeln!(file, "{now} {line}");
+    }
+}
+
 /// 打开 WebDAV 上的书籍。
 /// 策略(strategy): "auto" **流式优先**（第 69 轮语义翻转）：命中 raw 缓存则本地打开，
 /// 否则先按需 range 流式读，失败才整本下载到 raw/ 缓存
@@ -1554,6 +1588,8 @@ pub async fn open_quark_book(session: u64, path: String, strategy: String) -> Re
                     let src = crate::source::local::LocalFile::open(&local_path)?;
                     document::open_document(src, &name)
                 };
+            // 计时从闭包入口开始（只排除 spawn 开销），供 reader_diag 记录真实打开耗时。
+            let started = std::time::Instant::now();
             let open_stream = |client: Arc<QuarkClient>| -> Result<Box<dyn document::Document>> {
                 let name = client.resolve_name(&path)?;
                 let info = client.downlink(&path)?;
@@ -1583,17 +1619,35 @@ pub async fn open_quark_book(session: u64, path: String, strategy: String) -> Re
                 OpenStrategy::Auto => match quark_source::raw_cache_path(&client.origin(), &path) {
                     Some(local_path) => {
                         tracing::info!("夸克网盘命中缓存，直接本地打开: {}", local_path.display());
+                        reader_diag(&format!(
+                            "reader_open mode=raw-cache ms={} name={}",
+                            started.elapsed().as_millis(),
+                            file_stem(&path)
+                        ));
                         open_local(local_path)
                     }
                     None => match open_stream(Arc::clone(&client)) {
                         Ok(book) => {
                             tracing::info!("夸克网盘流式打开成功");
+                            reader_diag(&format!(
+                                "reader_open mode=stream ms={} name={}",
+                                started.elapsed().as_millis(),
+                                file_stem(&path)
+                            ));
                             Ok(book)
                         }
                         Err(e) => {
                             tracing::warn!("夸克网盘流式失败，回退整本下载: {e}");
+                            let fallback_started = std::time::Instant::now();
                             let local_path = client.download_to_raw_cache(&path, progress)?;
                             tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
+                            reader_diag(&format!(
+                                "reader_open mode=fallback-download stream_ms={} download_ms={} total_ms={} name={}",
+                                started.elapsed().as_millis(),
+                                fallback_started.elapsed().as_millis(),
+                                started.elapsed().as_millis(),
+                                file_stem(&path)
+                            ));
                             open_local(local_path)
                         }
                     }

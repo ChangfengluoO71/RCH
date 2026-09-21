@@ -102,6 +102,16 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 87 轮补充结论（2026-09-21）
+- [x] **可观测性补齐**：`reader_diag.log`（打开模式/耗时）+ `mobi_diag.log`（惰性/回退、每页 bytes/ms）。
+      下一步实测"MOBI 到底走 stream 还是 fallback-download"只需用户再读一本。
+- [ ] **页面表缓存（推荐下一步）**：MOBI 首次打开仍要 ~300 次探测（4 并发 ≈10 s）。缓存页表
+      ⇒ 首次 ~10 s、之后秒开。需要先定缓存键与失效口径（建议 `source_id + path + 文件长度`）。
+- [ ] **"超过 N 秒转整本下载"开关（暂缓，预期收益为负）**：实测吞吐 4.4 MB/s ⇒ 76 MB ≈17 s，
+      比现状更慢；且 raw 包读完即删 ⇒ 每次打开重付。若要做，默认关闭。
+- [ ] **P0 flake 记账**：`p0a_single_page_latency_without_background_load` 是**下限**断言
+      （要求至少一页 ≥500 ms，`tests/p0_baseline_read_speed.rs:862`），机器快就挂。
+      可选修法：改为断言机制量（range 请求数/门控等待）而不是墙钟下限 —— **需用户拍板**（属 P0 装置）。
 ### 第 86 轮补充结论（2026-09-21）
 - [x] **"详情页出图后墙不刷新"已修（第86轮）**：无 asset id 的卡片不再早退，改挂 revision 监听 +
       唤醒后重跑取图（本地优先）。**待补自动化回归**：需要一个能让无 asset id 卡片走到取图出口的

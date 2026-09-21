@@ -102,6 +102,13 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 89 轮补充结论（2026-09-21）
+- [x] **MOBI 页表缓存已实现**（第89轮）：首次打开仍逐条探测，**之后同一本书零探测打开**
+      （单测 45 → 5 次远端读，≈9 倍）。验收口径：`mobi_diag.log` 第二次打开应为
+      `mode=lazy-cached cache=hit`，`ms` 从 ~10 s 掉到 <1 s。
+- [ ] **待真机复验**：桌面已装并重启（PID 15952）；手机包在
+      `C:/Users/cfl/Downloads/RCH-0.5.8+100508-20260921.apk`（手机未插，插上即 `adb install -r`）。
+- [ ] 首次打开还能更快：`RCH_MOBI_PROBE_WORKERS`（默认 4）可调；缓存命中后与它无关。
 ### 第 88 轮补充结论（2026-09-21）
 - [x] **115/夸克"原文件名显示 id"已修**（第88轮）：判定放宽 + 向前找第一个非 id 段 + 3 个新用例。
 - [x] **失败封面可重试**（第88轮）：`remote_cover_retry_failed` 挂到源浏览器"刷新"动作。

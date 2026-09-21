@@ -3463,3 +3463,44 @@ fallback-download"的确凿结论。整本下载方案对 76 MB 书 ≈17 s（�
 
 **门禁踩坑记录**：改 `book_page` 签名后 `cargo build --lib` 通过，但全量门禁挂在
 `examples/read_profile.rs`（旧签名 E0061）——再次说明"必须跑全量门禁，不能只 build lib"。
+
+
+---
+
+## 2026-09-21｜第93轮：修"详情页有封面、海报墙却显示获取失败"（unified 与 legacy 两套缓存不互通）
+
+**用户当轮（真机）**：夸克那几张 MOBI 封面刷新后**仍然失败**，而且"**明明阅读详细界面已经有了，
+海报墙却不读取**"。
+
+**静态分析（根因，代码即证据）**：
+- **详情页**（`book_detail_page.dart:450`）的 `ComicCover(source:, path:, force: true)` **不传**
+  `remoteAssetId` ⇒ 走 **legacy 路径**（`_readLegacyCoverLocal` → Rust
+  `api/source.rs:1833 read_legacy_cover_local`，键 = `authority + 逻辑路径`，硬契约是**纯本地**：
+  不建 session、不联网、不建 job、不 wake worker、不改任何 durable state）。
+- **墙上卡片**（`ComicCover` 带 `remoteAssetId`）走 **unified 路径**：读 `remote_cover_job/variant`
+  的 durable state + unified 缓存 `cache/cover/<sha256(5 段键)>.cover-v2`。
+- ⇒ **两套缓存互不相通**。同一本书：legacy 那份字节在本地（详情页因此能出图），
+  而 unified 这条链路没有字节/状态是 failed ⇒ 卡片渲染"获取失败"。这完全解释了用户看到的分裂现象。
+
+**修法（`lib/ui/comic_cover.dart`）**：在 `_loadUnifiedRemoteCover` 的**两个抛出点之前**
+（"非 ready 的 durable 状态"与"重新物化一次之后仍失败"）各补一次
+`_readLegacyCoverFallback(page, width, height, crop)`：
+- 只在 `legacyCoverKindOf(widget.source) != null` 时尝试（quark/115/115web/webdav/sftp/baidu）；
+- 内部 try/catch，回退失败不影响原有占位/失败语义；
+- **零网络成本**：调用的是纯本地的 legacy 缓存查找（不建 session、不联网、不建 job、不发事件）。
+
+**测试**：新增 `test/comic_cover_legacy_fallback_test.dart`
+1. unified 状态 `failed` + unified 三个入口都读不到 + legacy 本地有图 ⇒ 必须渲染 `RawImage`
+   且**不得**出现"获取失败"文本；
+2. legacy 也没有字节 ⇒ 保持原有失败语义（仍显示"获取失败"，不回退成怪状态）。
+- **验证测试本身**：把修复 `git stash` 掉后重跑 ⇒ 第 1 条**确实失败**
+  （"unified 失败后必须尝试 legacy 纯本地回退: Actual 0"）；恢复后通过。
+- 封面相关 **12 个文件 49 项测试全过**；`flutter analyze` 干净。
+
+**遗留（下一轮入口）**：这条修复解决的是"**有字节却不显示**"；但 unified 链路对这几本 MOBI
+**仍然没抓好**（刷新重排后依旧失败，只是现在墙上有 legacy 兜底了）。要定位 unified 侧的真实错误码，
+需要在**桌面**上对同一批书点一次刷新，然后看 `D:\Documents\RCH\scan_diag.log` 里该资产最新的
+`cover_fail`（`cover_read_budget_exceeded` = 往返/字节预算；`cover_native_lib_missing` = 部署问题）。
+
+**交付物**：桌面 Release 重建并重启（PID 48300）；安卓包重建（21:27:09）复制到 Downloads
+（构建过程中手机再次断开 ⇒ 安装待插上）。

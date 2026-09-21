@@ -987,6 +987,15 @@ class _ComicCoverState extends State<ComicCover> {
           profile: profile,
         );
         if (local != null) return local;
+        // 2026-09-21（真机："详情页已经有封面了，海报墙却显示获取失败"）：
+        // unified 缓存与 **legacy 缓存是两套互不相通的东西** —— Rust `read_legacy_cover_local`
+        // 以 `authority + 逻辑路径` 为键读 legacy 封面缓存，且硬契约是**纯本地**：
+        // 不建 session、不联网、不建 job、不 wake worker、不改任何 durable state。
+        // 详情页（不传 `remoteAssetId`）走的正是 legacy 路径 ⇒ 同一本书它能出图，
+        // 而墙上卡片走 unified 路径却停在"获取失败"。
+        // ⇒ 抛之前补一次 legacy 纯本地回退：零网络成本，命中即出图。
+        final legacy = await _readLegacyCoverFallback(page, width, height, crop);
+        if (legacy != null) return legacy;
         throw _RemoteCoverStateException(
           current?.state ?? '',
           current?.errorCode,
@@ -1014,7 +1023,34 @@ class _ComicCoverState extends State<ComicCover> {
         return rgbaToImage(image.rgba, image.width, image.height);
       }
     }
+    final legacyAfterRequest = await _readLegacyCoverFallback(
+      page,
+      width,
+      height,
+      crop,
+    );
+    if (legacyAfterRequest != null) return legacyAfterRequest;
     throw _RemoteCoverStateException(durable.state, durable.errorCode);
+  }
+
+  /// unified 路径确实拿不到字节时的**最后一道纯本地回退**（legacy 封面缓存）。
+  ///
+  /// 为什么需要（2026-09-21，真机）：详情页（legacy 路径、不传 asset id）能显示封面，
+  /// 墙上卡片（unified 路径）却显示"获取失败" —— 两套缓存互不相通，而 legacy 那份
+  /// 字节本来就在本地。`read_legacy_cover_local` 是纯本地读，因此这里**零网络成本**。
+  Future<ui.Image?> _readLegacyCoverFallback(
+    int page,
+    int w,
+    int h,
+    CropRect? crop,
+  ) async {
+    if (legacyCoverKindOf(widget.source) == null) return null;
+    try {
+      return await _readLegacyCoverLocal(page, w, h, crop);
+    } catch (_) {
+      // 回退失败不影响主流程：仍旧走原来的占位/失败语义。
+      return null;
+    }
   }
 
   Future<BigInt> _createRemoteSession() async {

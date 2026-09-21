@@ -3646,3 +3646,26 @@ CI `release.yml` 构建 Windows 安装包 + 分 ABI 的 3 个 APK 并发布 Rele
 
 **教训（写进本轮）**：CI 用 `-D warnings` 而本地门禁不用 ⇒ **本地绿≠CI 绿**；
 发布前必须看 Actions 结果（`setup.md` 发布流程第 3 步本来就写了，本轮踩到才真正落实）。
+
+
+---
+
+## 2026-09-21｜第98轮：workflow 失效根因——我插入的注释里未转义的 `\a` 变成控制字符 BEL
+
+**现象**：修完 `-D warnings` 后再推 master，新的 CI run **没有 job、日志 `log not found`**，
+且 `release.yml`（本应只在 tag 时触发）也出现在 push 事件里。
+
+**根因（我的 bug）**：我在两个 workflow 的 `setup-rust-toolchain` step 里加注释时写了
+`could not find Cargo.toml in D:\a\RCH\RCH`，这段文本是经 **Python 非 raw 字符串**写入的 ⇒
+`\a` 被解释成 **BEL(0x07)**、`\R` 触发 `SyntaxWarning: invalid escape sequence`
+⇒ **两个 workflow 文件含有控制字符 ⇒ GitHub 认为 YAML 非法 ⇒ 整个 workflow 不执行**（无 job）。
+本地 `yaml.safe_load` 复现：`unacceptable character #x0007: special characters are not allowed`
+（ci.yml position 569 / release.yml 642）。
+
+**修法**：清除两个 workflow 与相关文档里的全部控制字符；注释里不再写 Windows 路径
+（改成不含反斜杠的表述）。复检：`yaml.safe_load` 通过且 jobs 齐全
+（ci: analyze/rust-test/build-windows/build-android；release: build-windows/build-android）；
+`grep -rlP '[\x00-\x08...]' .github docs` 为空。
+
+**教训（与第 97 轮并列）**：**用脚本改 YAML/CI 配置时，反斜杠路径必须用 raw 字符串或双反斜杠**；
+改完 workflow 必须本地 `yaml.safe_load` 校验一次 —— 否则 GitHub 只会"静默不跑"。

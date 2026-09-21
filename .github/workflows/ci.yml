@@ -24,7 +24,7 @@ jobs:
           toolchain: stable
           # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
           # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
-          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # "could not find Cargo.toml（仓库根）D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
           # 显式声明 workspace 路径后不再依赖它在根目录探测。
           cache-workspaces: app/rust
 
@@ -61,7 +61,7 @@ jobs:
           toolchain: stable
           # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
           # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
-          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # "could not find Cargo.toml（仓库根）D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
           # 显式声明 workspace 路径后不再依赖它在根目录探测。
           cache-workspaces: app/rust
 
@@ -86,7 +86,7 @@ jobs:
           toolchain: stable
           # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
           # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
-          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # "could not find Cargo.toml（仓库根）D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
           # 显式声明 workspace 路径后不再依赖它在根目录探测。
           cache-workspaces: app/rust
 
@@ -122,7 +122,7 @@ jobs:
           toolchain: stable
           # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
           # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
-          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # "could not find Cargo.toml（仓库根）D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
           # 显式声明 workspace 路径后不再依赖它在根目录探测。
           cache-workspaces: app/rust
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android

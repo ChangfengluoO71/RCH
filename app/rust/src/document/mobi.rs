@@ -64,13 +64,30 @@ struct LazyMobi {
 
 impl MobiBook {
     pub fn open(src: impl ByteSource + 'static, path: &str) -> Result<Self> {
+        Self::open_with(src, path, false)
+    }
+
+    /// 封面专用打开（2026-09-21，修"MOBI 封面不显示 / 部分文件封面获取失败"）。
+    ///
+    /// 封面只用 **page 0**，而惰性打开要逐条探测候选记录的魔数——远端每条一次 Range 往返。
+    /// 一本 300 页的漫画 MOBI 因此要 200–300 次往返（实测平均每次只取 28.8 字节、约 30 s）
+    /// ⇒ 撞穿封面 30 s 挂钟预算，`cover_read_budget_exceeded` 在真机日志里累计 281 条。
+    /// 封面只要**第一张**可解码图片 ⇒ 探测到它就停（通常 1–3 次）。
+    ///
+    /// **不改变阅读路径**：完整打开仍走 [`MobiBook::open`]（逐条探测全部候选，页序不变）。
+    /// 注意：`page_count()` 在本入口下是 1，这是刻意的——调用方只用 page 0。
+    pub fn open_cover(src: impl ByteSource + 'static, path: &str) -> Result<Self> {
+        Self::open_with(src, path, true)
+    }
+
+    fn open_with(src: impl ByteSource + 'static, path: &str, cover_only: bool) -> Result<Self> {
         let src: Arc<dyn ByteSource> = Arc::new(src);
         let stem = std::path::Path::new(path)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
 
-        if let Some((lazy, title)) = open_lazy(Arc::clone(&src), &stem) {
+        if let Some((lazy, title)) = open_lazy(Arc::clone(&src), &stem, cover_only) {
             return Ok(MobiBook {
                 lazy: Some(lazy),
                 pages: Vec::new(),
@@ -123,7 +140,11 @@ impl MobiBook {
 }
 
 /// 尝试惰性打开。返回 `(LazyMobi, 标题)`；不可行时返回 `None`（调用方整份回退）。
-fn open_lazy(src: Arc<dyn ByteSource>, stem: &str) -> Option<(LazyMobi, String)> {
+fn open_lazy(
+    src: Arc<dyn ByteSource>,
+    stem: &str,
+    cover_only: bool,
+) -> Option<(LazyMobi, String)> {
     let file_len = src.len();
     if file_len < PALMDB_HEADER_LEN + PALMDB_RECORD_INFO_LEN {
         return None;
@@ -227,6 +248,10 @@ fn open_lazy(src: Arc<dyn ByteSource>, stem: &str) -> Option<(LazyMobi, String)>
             continue;
         }
         records.push((offset, len));
+        if cover_only {
+            // 封面只读第一张图：到这里就够，后面的候选一条都不探测。
+            break;
+        }
     }
     if records.is_empty() {
         return None;
@@ -318,6 +343,7 @@ mod tests {
     struct CountingSource {
         data: Vec<u8>,
         read_bytes: Mutex<u64>,
+        read_calls: Mutex<u64>,
     }
 
     impl CountingSource {
@@ -325,10 +351,15 @@ mod tests {
             CountingSource {
                 data,
                 read_bytes: Mutex::new(0),
+                read_calls: Mutex::new(0),
             }
         }
         fn total_read(&self) -> u64 {
             *self.read_bytes.lock().unwrap()
+        }
+        /// 第 82 轮补：**读次数**才是远端成本的真身（每次 = 一个 Range 往返）。
+        fn total_calls(&self) -> u64 {
+            *self.read_calls.lock().unwrap()
         }
     }
 
@@ -344,6 +375,7 @@ mod tests {
             let n = buf.len().min(self.data.len() - offset);
             buf[..n].copy_from_slice(&self.data[offset..offset + n]);
             *self.read_bytes.lock().unwrap() += n as u64;
+            *self.read_calls.lock().unwrap() += 1;
             Ok(n)
         }
     }
@@ -402,13 +434,45 @@ mod tests {
         let file_len = fixture.len() as u64;
         let src = Arc::new(CountingSource::new(fixture));
         let (lazy, title) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t").expect("合成文件应走惰性路径");
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).expect("合成文件应走惰性路径");
         assert_eq!(lazy.records.len(), 3, "三条图片记录都要进页表");
         assert_eq!(title, "Fixture MOBI Title");
         let read = src.total_read();
         assert!(
             read < 4096,
             "打开只应读头部与探测字节，实际读了 {read} 字节（文件 {file_len}）"
+        );
+    }
+
+    /// 第 82 轮补：**封面专用打开**只探测到第一张可解码图片就停。
+    ///
+    /// 真机签名：完整惰性打开对每条候选记录各发一次远端 Range 探测，300 页的漫画 MOBI
+    /// ⇒ 200–300 次往返、约 30 s ⇒ 撞穿封面 30 s 预算（`cover_read_budget_exceeded` 281 条）。
+    /// 夹具刻意把记录间隔设成 512 KB（"图很大"的真实形状）：**合并读窗口救不了这种形状**
+    /// （记录头相距几百 KB，一次窗口只能覆盖一条），唯一的杠杆是"少探测"。
+    #[test]
+    fn cover_open_probes_only_until_the_first_image() {
+        let src = Arc::new(CountingSource::new(synth_mobi(40, 512 * 1024)));
+        let cover = MobiBook::open_cover(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi")
+            .expect("封面专用打开应走惰性路径");
+        assert_eq!(cover.page_count(), 1, "封面入口只保证 page 0");
+        let calls = src.total_calls();
+        assert!(
+            calls <= 6,
+            "封面打开只该探测到第一张图为止（头/记录表/record0/首条魔数），实际 {calls} 次读"
+        );
+        let bytes = src.total_read();
+        assert!(bytes < 4096, "封面打开读字节应保持 KB 级，实际 {bytes}");
+
+        // 对照：完整打开仍逐条探测全部候选（40 条 ⇒ ≥40 次读），
+        // 证明封面入口没有把**阅读**路径的页序/探测语义改掉。
+        let src_full = Arc::new(CountingSource::new(synth_mobi(40, 512 * 1024)));
+        let full = MobiBook::open(Arc::clone(&src_full) as Arc<dyn ByteSource>, "t.mobi")
+            .expect("完整打开");
+        assert_eq!(full.page_count(), 40, "完整打开的页表不得缩水");
+        assert!(
+            src_full.total_calls() >= 40,
+            "完整打开必须逐条探测全部候选（既有语义，封面入口不改变它）"
         );
     }
 
@@ -420,7 +484,7 @@ mod tests {
         fixture[second + 8] = 0xAB; // 魔数之后（前 8 字节是 PNG 魔数，不能动）
         let src = Arc::new(CountingSource::new(fixture));
         let (lazy, _) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t").expect("惰性路径");
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).expect("惰性路径");
         let (offset, len) = lazy.records[1];
         let mut buf = vec![0u8; len as usize];
         src.read_exact_at(offset, &mut buf).unwrap();
@@ -436,7 +500,7 @@ mod tests {
         fixture[first..first + 8].fill(0); // 擦掉第一条的 PNG 魔数
         let src = Arc::new(CountingSource::new(fixture));
         let (lazy, _) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t").expect("仍有一条可解码图片");
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).expect("仍有一条可解码图片");
         assert_eq!(lazy.records.len(), 1, "不可解码的那条必须被跳过");
     }
 
@@ -448,7 +512,7 @@ mod tests {
         fixture[table_len + MOBI_HEADER_IN_RECORD as usize] = b'X'; // 破坏 "MOBI"
         let src = Arc::new(CountingSource::new(fixture));
         assert!(
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t").is_none(),
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).is_none(),
             "魔数不对时必须返回 None ⇒ 调用方整份回退"
         );
     }
@@ -485,7 +549,7 @@ mod tests {
             data[at..at + 8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         }
         let src = Arc::new(CountingSource::new(data));
-        let (lazy, _) = open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t")
+        let (lazy, _) = open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false)
             .expect("crate 式布局必须被接受（否则真机上会退回整份读）");
         assert_eq!(lazy.records.len(), 2);
         assert_eq!(lazy.records[0].0, image_at as u64);

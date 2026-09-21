@@ -1806,7 +1806,10 @@ fn fetch_cover_from_document(
     // 封面页取"第一张真正可解码的图"（有界向后扫），见 `decode_first_usable_page`。
     // 扫页上限按格式取：PDF 收紧（页是整张扫描图，扫多了会烧穿封面读取预算）。
     let scan_limit = cover_page_scan_limit(asset_kind);
-    let outcome = crate::document::open_document(source, document_name)
+    // 2026-09-21：封面走**专用入口**——MOBI 只探测到第一张图就停，避免
+    // "每条候选记录一次远端 Range"把 30 s 封面预算烧穿（真机 281 条超时）。
+    // 其它格式行为不变（见 `document::open_cover_document`）。
+    let outcome = crate::document::open_cover_document(source, document_name)
         .map_err(|error| cover_open_reason(&error))
         .and_then(|document| {
             decode_first_usable_page(

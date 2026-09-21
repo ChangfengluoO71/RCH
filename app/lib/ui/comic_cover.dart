@@ -968,6 +968,19 @@ class _ComicCoverState extends State<ComicCover> {
         );
         if (cached != null) return cached;
       } else {
+        // 第 82 轮补（D4）：**没有 durable 行 ≠ 没有字节**。换档 purge 只删
+        // `remote_cover_job/variant`，磁盘上的 `.cover-v2` 与 `remote_cover_ref`
+        // 都还在（真机实测：variant=0 而 blob/ref=1061、共 1.2 GB）⇒ 卡片此前
+        // 在这里直接抛异常、永远显示占位，尽管图就在本地。
+        // 这里先做一次**纯本地读**（零网络、不产生任何 provider 请求；Rust 侧会按
+        // ref 反推 content_revision 读同一份字节），命中就直接出图；确实没有才回退占位。
+        final local = await _readAnyCachedCover(
+          repository: repository,
+          assetId: assetId,
+          selection: selection,
+          profile: profile,
+        );
+        if (local != null) return local;
         throw _RemoteCoverStateException(
           current?.state ?? '',
           current?.errorCode,

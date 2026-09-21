@@ -102,8 +102,12 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
-### 第 82 轮审计遗留（2026-09-21，只读审计结论，**均未修**）
-- [ ] **D1a MOBI 接入 `SourceReader` / 合并魔数探测**（收益最大）：`document/mobi.rs:215-230`
+### 第 82 轮审计遗留（2026-09-21）
+- [x] **PDF 打不开（Release 缺 `pdfium.dll`，第83轮已修）**：`app/windows/CMakeLists.txt` 新增
+      `install(FILES pdfium.dll)`（来源 `app/windows/pdfium/win-x64/`，已 gitignore），Debug/Release
+      都自动带上；此前只有 Debug 有那份历史手工拷贝。**教训：切构建档位后必须核对运行时依赖是否齐全。**
+
+- [x] **D1a MOBI 封面少探测（2026-09-21 第83轮已修）**：原方案"合并探测窗口"经测算**无效**（记录头隔着整张图 ⇒ 读次数不变），改为 `MobiBook::open_cover` + `document::open_cover_document`：封面只探测到第一张可解码图片就停（1–3 次读 vs 200–300 次），阅读路径不变；回归测试 `cover_open_probes_only_until_the_first_image`。**原条目保留供追溯**：：`document/mobi.rs:215-230`
       现在对**每条候选记录各发一次 16 B 远端读**（200–300 次 Range × ~136 ms）⇒ 撞穿封面 30 s
       预算（`cover_read_budget_exceeded` 281 条）并让打开变慢；zip/epub/pdf 都接了
       `SourceReader`（256 KiB 预读 + 小窗口合并），**只有 MOBI 裸读**。目标：任意页数下
@@ -114,7 +118,7 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
       88–150 ms；EPUB 会话 906/1265 次是 <512 B 小读（占 62% 耗时）；同一 `offset=0` 被重取
       108–135 次（`SourceReader` 仅 2 个元数据窗口槽）。改造方向：元数据读合并、钉住/复用头窗口、
       按条目一次性读。**并行 Range 已被第 81 轮 A/B 否掉（慢 ~8%），不要再提**。
-- [ ] **D4 磁盘已有封面读不出来**：`remote_cover_variant=0` 而 `blob=1061/ref=1061`（1.2 GB）；
+- [x] **D4 磁盘已有封面读不出来（2026-09-21 第83轮已修）**：Rust `read_cached_cover` 在无 durable ready 行时用 `remote_cover_ref.owner_key` 反推 content_revision 读同一份字节（纯只读），Dart 卡片在非 ready 时先做一次纯本地读再回退占位；回归测试 `ref_backed_read_serves_bytes_when_durable_rows_were_purged`。**原条目保留供追溯**：：`remote_cover_variant=0` 而 `blob=1061/ref=1061`（1.2 GB）；
       读图被 durable `state='ready'` 门控（`cover_service.rs:110-148`）。方案：用 ref+blob 重建
       variant 行，或读路径加只读回退。
 - [ ] **D3 读路径不再回写状态**：`cover_service.rs:159-208` 的 `ready→pending` 对账 + bump + notify

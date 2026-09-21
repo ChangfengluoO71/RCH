@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# PDF 运行时依赖（本地按 docs/development/setup.md 放置；CI 自行下载）
+windows/pdfium/

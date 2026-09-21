@@ -3045,3 +3045,53 @@ Dart `flutter analyze` 干净；10 个封面相关测试文件 **34 项全过**�
 
 **未完成/遗留**：D1a/D1b（MOBI 接 `SourceReader` + 合并探测 + 探测失败不整体回退）、G1（元数据读合并、
 钉住头窗口）、D4（ref+blob 回建 variant 或只读回退）、D3、D6（locked-frame 不推 notifier）、D7/D8、mobi_diag。
+
+
+---
+
+## 2026-09-21｜第83轮：Release 缺 pdfium.dll 修复 + MOBI 封面专用打开（D1a）+ 已下载封面只读回退（D4）
+
+**目标（用户当轮）**：① 切 Release 后"pdf 漫画无法打开"；② 开工 D1a（MOBI 封面不显示/打开慢）
+与 D4（磁盘上有封面却读不出来）。
+
+**1) PDF 打不开 —— 根因是 Release 产物缺 `pdfium.dll`**
+- 事实：`build/windows/x64/runner/Debug/` 有 `pdfium.dll`（7.26 MB，09-19 手工放入、未进 git），
+  **Release 目录里没有**；而 PDF 解析是**运行时**动态加载（`document/pdf.rs:152-185` 依次找
+  NATIVE_LIB_DIR → cwd → exe 同目录 → PATH → 系统目录）⇒ Release 下 PDF 必然失败。
+  `docs/development/setup.md:95-106` 只写了"拷进 Debug"，CI（`.github/workflows/release.yml:45-51`）
+  才管 Release ⇒ 本地 Release 一直是缺的。
+- 修法：`app/windows/CMakeLists.txt` 新增 `install(FILES pdfium.dll)` 规则，
+  **Debug/Release 都自动带上**（来源 `app/windows/pdfium/win-x64/`，已加 `.gitignore`；
+  缺失时静默跳过、不影响无 PDF 需求的构建）。已重建 Release 并核对产物内有该 dll。
+
+**2) D1a：MOBI 封面专用打开（方案经实测修正）**
+- **先纠正原计划**："合并探测窗口"对 MOBI **无效**：记录头之间隔着整张图（真机单条 5–15 MB），
+  一次 64 KB 窗口只能覆盖一条 ⇒ **读次数不变**；上游 `mobi` crate 的 `is_image_record()`
+  （`record.rs:42-58`）也只按**前 4 字节黑名单**分类 ⇒ "分类必须读记录头"是信息论下限。
+- ⇒ 改做**少探测**：新增 `MobiBook::open_cover` + `document::open_cover_document`，
+  封面路径探测到**第一张可解码图片**就停（1–3 次读，此前 200–300 次）；`api/remote_scan.rs`
+  的封面抓取改走该入口。**阅读路径逐字不变**（完整打开仍逐条探测、页序一致）。
+- 回归测试 `cover_open_probes_only_until_the_first_image`：40 条记录、每条间隔 512 KB
+  （"图很大"的真实形状）⇒ 封面入口 **≤6 次读**、完整打开 **≥40 次读**且页表仍是 40 页。
+
+**3) D4：磁盘上 1061 张封面一张也读不出（纯只读回退）**
+- 事实：`remote_cover_variant = 0`，而 `remote_cover_blob = remote_cover_ref = 1061`（1.2 GB）——
+  第 80 轮换档 purge 只删 job/variant，字节被 `remote_cover_ref` 留着；而读图被 durable
+  `state='ready'` 门控 ⇒ 卡片读不到 ready **直接抛异常**、永远停在占位。
+- 修法（**不写任何 durable 行、不 bump、不发事件**）：
+  ① Rust `cover_service::read_cached_cover`：没有 ready 行时用 `remote_cover_ref.owner_key`
+  （=`CoverJobKey::encode()`：`源|资产|content_revision|selection|profile`，每段 `len:value`）
+  反推 `content_revision`，再按缓存文件名规则读同一份 `.cover-v2`（文件名本就由这 5 段派生）；
+  ② Dart 卡片：state 不 ready 时**先做一次纯本地读**（零网络）再回退占位——延续第 79 轮
+  "有缓存就直读"的口径。
+- 回归测试 `ref_backed_read_serves_bytes_when_durable_rows_were_purged`：复现真实形状
+  （job/variant 全删、只剩 ref + 磁盘字节）⇒ 必须读得出；反例：别的档位不得误命中。
+
+**门禁**：Rust 全量 `cargo test --locked -j 2 -- --test-threads=1` **exit 0（24 套件 / 534 passed / 0 failed**，
+较上轮 +2 即上述两条新回归）；Dart `flutter analyze` 干净；10 个封面相关测试文件 **34 项全过**。
+桌面已重建 Release（`rust_lib_app.dll` 18,998,272 B / 16:23、`app.so` 16:23:57、包内 `pdfium.dll` 就位）
+并从 Release 目录重启。
+
+**遗留（未做）**：D1b 探测失败不整体回退、G1 元数据读合并/钉头窗口（"别的文件也慢"）、D3 读路径回写、
+D6 locked-frame 推 notifier、D7 单条大记录不可分片（需画质口径）、D8 流式下误导性"下载整本"文案、
+`mobi_diag` 埋点。

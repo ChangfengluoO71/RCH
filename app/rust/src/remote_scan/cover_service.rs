@@ -134,6 +134,14 @@ pub fn read_cached_cover(
         .map_err(|error| error.to_string())?
         .collect::<rusqlite::Result<Vec<(String, i64)>>>()
         .map_err(|error| error.to_string())?;
+    // 第 82 轮补（D4）：**只读回退的候选**。换档 purge 只删 `remote_cover_job`/`variant`，
+    // 磁盘上的 `.cover-v2` 与 `remote_cover_ref`(role='variant') 都还在（真机实测：
+    // `variant=0` 而 `blob=ref=1061`、1.2 GB）⇒ 全库封面在卡片上退化成"等待/获取失败"，
+    // 尽管字节就在本地。`owner_key` 是 `CoverJobKey::encode()`（`源|资产|content_revision|
+    // selection|profile`，每段 `len:value`），缓存文件名又正是由这 5 段派生
+    // （`cache::remote_cover_cache_filename`）⇒ 不需要 variant 行也能读到同一份字节。
+    // 这里只**在锁内取候选**，文件读取放到锁外（与既有设计一致：不持锁做 I/O）。
+    let ref_backed = ref_backed_revisions_on(&conn, source_id, asset_id, selection_revision, profile);
     drop(stmt);
     drop(conn);
     for (revision, observed_at) in revisions {
@@ -207,5 +215,66 @@ pub fn read_cached_cover(
         // transition，必须唤醒消费者；此处 asset 唯一确定。
         crate::remote_scan::cover_revision_stream::notify_cover_revision(source_id, Some(asset_id));
     }
+    // 第 82 轮补（D4）：durable 行没了但字节还在 ⇒ 纯只读地把它读出来（不写行、不 bump、不发事件）。
+    for content_revision in ref_backed {
+        if let Some(image) = crate::cache::remote_cover_cache_read(
+            source_id,
+            asset_id,
+            &content_revision,
+            selection_revision,
+            profile,
+        ) {
+            return Ok(Some(image));
+        }
+    }
     Ok(None)
+}
+
+/// 用 `remote_cover_ref`(role='variant') 反推**候选 content_revision**（第 82 轮补/D4）。
+///
+/// 纯只读；只返回与调用方 `(selection, profile)` 完全一致的那些 ref —— 跨档位/跨选择
+/// 的字节由 Dart 侧既有的 `_readAnyCachedCover` 负责，这里不越权。
+fn ref_backed_revisions_on(
+    conn: &rusqlite::Connection,
+    source_id: &str,
+    asset_id: &str,
+    selection_revision: &str,
+    profile: &str,
+) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT owner_key FROM remote_cover_ref
+          WHERE source_id=?1 AND asset_id=?2 AND role='variant'",
+    ) else {
+        return Vec::new();
+    };
+    let keys: Vec<String> = match stmt.query_map(params![source_id, asset_id], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(rows) => rows.filter_map(Result::ok).collect(),
+        Err(_) => return Vec::new(),
+    };
+    keys.iter()
+        .filter_map(|owner_key| cover_owner_tail(owner_key))
+        .filter(|(_, selection, owner_profile)| {
+            selection == selection_revision && owner_profile == profile
+        })
+        .map(|(content_revision, _, _)| content_revision)
+        .collect()
+}
+
+/// 解析 `CoverJobKey::encode()` 的形状，取回 `(content_revision, selection_revision, profile)`。
+///
+/// 每段都是 `len:value`（`cover_model.rs` 的 `encode`）；这里**按声明长度校验**而不是
+/// 朴素按 `:` 切，值里含 `:` 时也会被判为不合法而不是误解析。
+fn cover_owner_tail(owner_key: &str) -> Option<(String, String, String)> {
+    let parts: Vec<&str> = owner_key.split('|').collect();
+    if parts.len() != 5 {
+        return None;
+    }
+    let field = |raw: &str| -> Option<String> {
+        let (len_text, value) = raw.split_once(':')?;
+        let len: usize = len_text.parse().ok()?;
+        (value.len() == len).then(|| value.to_string())
+    };
+    Some((field(parts[2])?, field(parts[3])?, field(parts[4])?))
 }

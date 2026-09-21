@@ -72,3 +72,23 @@ pub fn open_document<S: ByteSource + 'static>(src: S, path: &str) -> Result<Box<
         anyhow::bail!("暂不支持的格式(本期支持 ZIP/CBZ/EPUB/CB7/CBT/PDF/CBR/MOBI): {path}")
     }
 }
+
+/// 封面专用打开（2026-09-21）：只保证 **page 0** 可读且是可解码图片。
+///
+/// 为什么需要单独的入口：封面抓取有 **30 s 挂钟预算**（`COVER_READ_BUDGET_MS`），
+/// 而 MOBI 的惰性打开要**逐条探测候选记录的魔数**——远端每条一次 Range 往返。
+/// 一本 300 页的漫画 MOBI 因此要 200–300 次往返（实测平均每次仅 28.8 字节、合计约 30 s）
+/// ⇒ 必然撞穿预算（真机 `cover_read_budget_exceeded` 累计 281 条，MOBI 封面长期不显示）。
+/// 封面只用第一张图，所以 MOBI 走"探测到第一张就停"；**其它格式行为完全不变**
+/// （它们的 page 0 本来就不需要逐条探测）。
+pub fn open_cover_document<S: ByteSource + 'static>(
+    src: S,
+    path: &str,
+) -> Result<Box<dyn Document>> {
+    let lower = path.to_lowercase();
+    if lower.ends_with(".mobi") || lower.ends_with(".azw") || lower.ends_with(".azw3") {
+        Ok(Box::new(mobi::MobiBook::open_cover(src, path)?))
+    } else {
+        open_document(src, path)
+    }
+}

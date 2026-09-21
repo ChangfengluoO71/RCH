@@ -1782,9 +1782,17 @@ fn cover_open_reason(error: &anyhow::Error) -> RemoteScanError {
     if text.contains("cover-read-budget") {
         // 预算中止是**我们自己**的决定，不是文件损坏：给独立码（终态）。
         cover_reason(COVER_REASON_READ_BUDGET)
-    } else if text.contains("pdfium") {
+    } else if text.contains(&crate::document::pdf::PDFIUM_LOAD_FAILURE_MARKER.to_ascii_lowercase())
+    {
+        // 只有**我们自己的加载器**文案才算"部署缺库"。
         cover_reason(COVER_REASON_NATIVE_LIB_MISSING)
     } else {
+        // 2026-09-21 修正（真机 `4.pdf`）：旧实现用 `text.contains("pdfium")` 判定缺库，
+        // 而 pdfium-render 的**任何库内错误**文案里都含 "pdfium"（例如
+        // `PdfiumLibraryInternalError(...)`）⇒ 页渲染/解析错误被误标成"原生库缺失"，
+        // 直接把排查引向部署（当时同进程的 `pdf_diag` 显示 PDF 渲染完全正常，落库却是缺库）。
+        // 现在：含 pdfium 但**不是**自家加载器文案的，一律归到"文档打不开"。
+        // 该码是**终态**（确定性失败，不再自动重试），用户仍可用"刷新"手动重排。
         cover_reason(COVER_REASON_DOCUMENT_OPEN)
     }
 }
@@ -3537,8 +3545,10 @@ mod tests {
     /// 落进同一个笼统码，无法自证）。
     #[test]
     fn archive_open_failures_separate_missing_native_lib_from_document_errors() {
+        // 用**同一个常量**拼夹具：文案改了这里跟着改，分类不会静默失效。
         let missing = anyhow::anyhow!(
-            "无法加载 pdfium 动态库，请将 pdfium.dll 放在 RCH.exe 同目录。bind failed"
+            "{}，请将 pdfium.dll 放在 RCH.exe 同目录。bind failed",
+            crate::document::pdf::PDFIUM_LOAD_FAILURE_MARKER
         );
         assert_eq!(
             error_code(&cover_open_reason(&missing)),
@@ -3550,6 +3560,20 @@ mod tests {
             error_code(&cover_open_reason(&broken)),
             COVER_REASON_DOCUMENT_OPEN
         );
+
+        // 2026-09-21 回归（真机 `4.pdf`）：pdfium **库内错误**文案里也含 "pdfium"，
+        // 绝不能被当成"部署缺库"（否则会把排查引向 dll，而实际是文件/渲染问题）。
+        for library_error in [
+            "PdfiumLibraryInternalError(FormatError)",
+            "PdfiumError: page render failed (pdfium internal)",
+            "pdfium: data format error while loading page 0",
+        ] {
+            assert_eq!(
+                error_code(&cover_open_reason(&anyhow::anyhow!(library_error))),
+                COVER_REASON_DOCUMENT_OPEN,
+                "库内错误不得被标成缺库: {library_error}"
+            );
+        }
 
         // 安全性质：分类结果里不得出现原文片段。
         let classified = format!("{:?}", cover_open_reason(&missing));

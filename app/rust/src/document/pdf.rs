@@ -147,6 +147,13 @@ pub fn set_native_lib_dir(dir: String) {
     let _ = NATIVE_LIB_DIR.set(dir);
 }
 
+/// **加载失败**的文案标记（单一事实来源）。
+///
+/// 为什么必须共用同一份：上游 `cover_open_reason` 只能靠文案把"部署缺库"与"文件打不开"
+/// 分开；如果两边各写一份，任何一次文案改动都会让分类**静默失效**（真机教训见
+/// `cover_open_reason` 的注释：pdfium-render 的库内错误文案里也含 "pdfium"）。
+pub const PDFIUM_LOAD_FAILURE_MARKER: &str = "无法加载 pdfium 动态库";
+
 fn get_pdfium() -> Result<&'static Pdfium> {
     PDFIUM
         .get_or_init(|| {
@@ -175,7 +182,7 @@ fn get_pdfium() -> Result<&'static Pdfium> {
             match Pdfium::bind_to_system_library() {
                 Ok(bindings) => Ok(Pdfium::new(bindings)),
                 Err(e) => Err(format!(
-                    "无法加载 pdfium 动态库，请将 pdfium.dll 放在 RCH.exe 同目录（从 \
+                    "{PDFIUM_LOAD_FAILURE_MARKER}，请将 pdfium.dll 放在 RCH.exe 同目录（从 \
                      bblanchon/pdfium-binaries 下载 win-x64 版本）。{last_err} {e}"
                 )),
             }

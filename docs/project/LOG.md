@@ -3557,3 +3557,33 @@ fallback-download"的确凿结论。整本下载方案对 76 MB 书 ≈17 s（�
   （中段零长度、末条 offset==文件长度都必须仍走惰性路径且页数为 3；正常夹具仍为 4 页）。
 
 **门禁**：预算豁免单独跑全量为 **25 套件 / 543 passed / 0 failed**；本轮全部改动后的全量门禁见下。
+
+
+---
+
+## 2026-09-21｜第95轮：修 `cover_native_lib_missing` 误标（pdfium 库内错误被当成"部署缺库"）
+
+**用户当轮**："修掉"（指上一轮报告的新发现）。
+
+**问题（真机证据）**：`4.pdf` 在 21:43:12 落库为 `cover_native_lib_missing`，但**同一进程**
+21:43:07 的 `pdf_diag` 显示 `pdf_open mode=lazy ms=1611` + `pdf_page width=170 … out_bytes=73462`
+⇒ PDF 渲染完全正常，`pdfium.dll` 也在 `Release/` 里（7,262,720 B）⇒ 这是**误标**。
+根因：`cover_open_reason` 用 `text.contains("pdfium")` 判定"部署缺库"，而
+pdfium-render 的**任何库内错误**文案里都含 "pdfium"（例如 `PdfiumLibraryInternalError(...)`）。
+
+**修法（单一事实来源 + 精确判定）**：
+- `document/pdf.rs` 新增 `pub const PDFIUM_LOAD_FAILURE_MARKER = "无法加载 pdfium 动态库"`，
+  加载失败的 `format!` 与上游分类**共用同一个常量** ⇒ 文案改动不会让分类静默失效。
+- `cover_open_reason` 改为：`cover-read-budget` → 预算码；**含自家标记** → `cover_native_lib_missing`；
+  其余（含"含 pdfium 但不是自家文案"的库内错误）→ `cover_document_open_failed`（终态，
+  用户仍可用"刷新"手动重排）。
+
+**测试与"验证测试本身"**：
+- 既有用例改为用常量拼夹具，并新增回归：`PdfiumLibraryInternalError(FormatError)`、
+  `pdfium: data format error while loading page 0` 等**库内错误**必须落 `cover_document_open_failed`。
+- 纪律验证：只把映射那一行临时改回 `contains("pdfium")`（保留新测试）⇒ 用例**确实失败**并给出误标
+  证据（`left: "cover_native_lib_missing"` / `right: "cover_document_open_failed"`）；恢复后通过。
+  （注：第一次用 `git stash` 验证是**无效的** —— 测试与被测代码同在一个文件，stash 把测试一起回退了，
+  所以那次"通过"没有意义；已改用原地临时回退重做。）
+
+**门禁**：见本轮全量结果。

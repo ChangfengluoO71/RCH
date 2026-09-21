@@ -102,6 +102,11 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 95 轮补充结论（2026-09-21）
+- [x] **缺库误标已修**：只有自家加载器文案才判 `cover_native_lib_missing`；
+      pdfium 库内错误归 `cover_document_open_failed`（终态 —— 但"刷新"可手动重排）。
+- [ ] 真机复验：`4.pdf` 这类之前被误标为"缺库"的书，重排后若仍失败，错误码应变成
+      `cover_document_open_failed`，据此可判断是文件本身/pdfium 解析问题（而非部署）。
 ### 第 94 轮补充结论（2026-09-21）
 - [x] **"整本读被字节预算拒掉"已取消**（只豁免 `offset==0` 且一次要完整个文件、≤512 MiB 的情形）；
       病态扫描仍由 384 次读 + 30 s 两条挡住。

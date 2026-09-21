@@ -49,3 +49,7 @@ build_artifacts/*
 
 # Graphify 代码知识图谱（派生产物，不入库；见 .trellis/spec 的交接说明）
 graphify-out/
+
+# 原始数据 dump（catalog 干跑/落地记录等，体积大且非源码）
+# 2026-09-21 批 3：历史文件已移出工作树并在本地归档；git 历史里仍存在（瘦身需单独评估）
+docs/reports/*.json

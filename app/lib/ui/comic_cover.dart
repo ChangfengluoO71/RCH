@@ -388,7 +388,13 @@ class _ComicCoverState extends State<ComicCover> {
   /// P1-E：订阅 source-level cover revision（wake-up）。事件不携带状态，
   /// 收到后只**重读** durable state（`readCover` 命中即显示）。
   void _attachCoverRevision() {
-    if (widget.remoteAssetId == null) return;
+    // 2026-09-21（真机："详情页出图后海报墙不刷新"）：**不再按 asset id 早退**。
+    // 墙上"容器文件夹"漫画这类卡片拿不到稳定的 asset id，旧实现在这里直接 return
+    // ⇒ 它们从不挂 revision 监听、封面就绪后永远收不到唤醒（只有等下一次扫描的
+    // 大 revision 才顺带更新，表现为"过很久才刷新"）。
+    // 没有 asset id 的卡片同样有本地/legacy 取图路径（`_load` 里本地优先），
+    // 所以让它们照样被唤醒是安全的：一次唤醒 = 一次本地读（`_CoverLoadQueue` 限流）。
+    if (!widget.source.needsSession) return;
     final listenable = RemoteScanCoordinator.instance.coverRevisionFor(
       widget.source.id,
     );
@@ -413,7 +419,7 @@ class _ComicCoverState extends State<ComicCover> {
     final value = _coverRevision?.value ?? 0;
     if (value == _lastCoverRevision) return;
     _lastCoverRevision = value;
-    if (!mounted || widget.remoteAssetId == null) return;
+    if (!mounted) return;
     // durable cover truth 可能变了 ⇒ 重读一次（**不** request、**不** 轮询）。
     _future = null;
     _loadFailed = false;

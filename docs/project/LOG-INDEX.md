@@ -100,3 +100,4 @@
 | 2026-09-21 | 第 98 轮：**workflow 失效根因＝我插入注释时未转义的 \a 变成 BEL(0x07)**（Python 非 raw 字符串写入 Windows 路径 D:/a/RCH/RCH）⇒ GitHub 判定 YAML 非法 ⇒ 新 run 无 job、日志 log not found；已清除控制字符并复检 yaml.safe_load（jobs 齐全） | 3655 | 3671 | (见提交) |
 | 2026-09-21 | 第 99 轮：**文档整理批 2** —— `docs/superpowers/{plans,specs}`（8）与 `docs/reports/{p0,p1,rg-b}`（24）+ 3 份根报告按任务并入 `.trellis/tasks/*/research/`（git mv 保历史）；旧位置留跳转说明；引用修复 16 个文件（含两处 Rust 注释）；不改 LOG 历史路径（append-only）；证据文档内部的"当时 git status"属历史叙述，故意不改 | 3674 | 3698 | (见提交) |
 | 2026-09-21 | 第 100 轮：**发布说明按用户视角重写**（依据 v0.5.7..v0.6.0 全部 81 个提交；按"打开更快/封面终于稳了/新增设置/缓存更省心/其它修复/升级说明"组织，并同步更新 GitHub Release 正文）+ **文档整理批 3**（`catalog-*.json` 6 份约 13.6 MB 移出仓库并 gitignore，本地归档；git 历史体积需 filter-repo 瘦身，未执行待决） | 3693 | 3723 | (见提交) |
+| 2026-09-21 | 第 101 轮：**README 加入 5 张真机截图**（海报墙×2+详情页 → 漫画库；设置页 → 新增"设置"小节；添加书源 → 远程书架；原图 1136KB 压到 368KB 存 `docs/images/v0.6.0/`；read_image 回读核对 + 引用 5/5 解析） | 3725 | 3745 | (见提交) |

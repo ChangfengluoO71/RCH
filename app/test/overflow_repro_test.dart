@@ -53,4 +53,41 @@ void main() {
     expect(find.text('用户命名标题.cbz'), findsOneWidget);
     expect(find.byKey(const Key('copy_original_filename')), findsOneWidget);
   });
+
+  /// 2026-09-21（用户报告 + 真机截图）：夸克等网盘的"容器文件夹"路径末段是 provider 的
+  /// 不透明 id（32/64 位 hex），原来会被当成"原文件名"显示成一串哈希
+  /// （`c680a216916d4ef88e1526e45ea49861`）。现在回退到目录项名称（调用点传入的 `title`）。
+  testWidgets('末段是 provider id 时显示目录名而不是哈希', (tester) async {
+    final source = BookSource(
+      id: 'container_id_test',
+      type: 'local',
+      name: 't',
+      path: r'C:\comics',
+    );
+    const hash = 'c680a216916d4ef88e1526e45ea49861';
+    const name = 'W-舞冰的祈愿-金牌得主';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BookDetailPage(
+          source: source,
+          path: '/39954038cd1c43a09eb2fd254668a1bb/$hash',
+          title: name,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('原文件名：'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate((w) => w is SelectableText && w.data == name),
+      findsOneWidget,
+      reason: '原文件名应回退到目录项名称',
+    );
+    expect(
+      find.text(hash),
+      findsNothing,
+      reason: '不得把 provider id 当原文件名显示',
+    );
+  });
 }

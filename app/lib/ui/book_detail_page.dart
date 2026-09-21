@@ -283,12 +283,29 @@ class _BookDetailPageState extends State<BookDetailPage> {
   /// final segment.
   String _originalFilename() {
     final raw = widget.path.trim();
-    if (raw.isEmpty) return widget.title.trim();
+    final fallback = widget.title.trim();
+    if (raw.isEmpty) return fallback;
     final normalized = raw.replaceAll('\\', '/');
     final withoutTrailing = normalized.replaceFirst(RegExp(r'/+$'), '');
     final segment = withoutTrailing.split('/').last.trim();
-    return segment.isEmpty ? widget.title.trim() : segment;
+    if (segment.isEmpty) return fallback;
+    // 2026-09-21（用户报告，真机截图）：夸克等网盘的"容器文件夹"路径最后一段是
+    // provider 的**不透明 id**（32/64 位 hex），直接显示就成了 `c680a216…` 这种哈希。
+    // 此时回退到**目录项名称**——各调用点传进来的 `title` 就是目录里的 `e.name`
+    //（如「W-舞冰的祈愿-金牌得主」），这才是有意义的"原文件名"。
+    if (_looksLikeOpaqueProviderId(segment)) {
+      return fallback.isEmpty ? segment : fallback;
+    }
+    return segment;
   }
+
+  /// provider 的不透明 id 判定（真实文件名不会长成 32/64 位纯 hex 或长串纯数字）。
+  static final RegExp _opaqueProviderId = RegExp(
+    r'^(?:[0-9a-fA-F]{24,}|[0-9]{16,})$',
+  );
+
+  static bool _looksLikeOpaqueProviderId(String value) =>
+      _opaqueProviderId.hasMatch(value);
 
   Future<void> _copyOriginalFilename(String filename) async {
     if (filename.isEmpty) return;

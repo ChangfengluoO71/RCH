@@ -102,6 +102,18 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 84 轮补充结论（2026-09-21，实测）
+- [ ] **G1 是 PDF/EPUB/ZIP 翻页慢的主因（已量化）**：`reads=5` 的 196 页平均 **909 ms**
+      （≈182 ms/次串行 Range），而 229 KB 的页 411 ms、4.57 MB 的页 1030 ms ⇒ **与字节数脱钩**。
+      目标：每页往返 5–6 次 → 1–2 次（翻页 ~0.9 s → ~0.2–0.4 s）。旁证：`pdf_open mode=lazy`
+      本身正常（12–18 次读 / 19–27 KB / 1.1–1.6 s）。
+- [ ] **MOBI 阅读慢 ≠ G1**：第83轮只修了**封面**入口（`open_cover`），阅读仍在 `open_lazy` 逐条探测
+      全部候选记录（N≈页数）。三选一：**(a) 页面表缓存**（推荐，需定键与失效口径）、
+      (b) 渐进打开（先探前 K 条、其余后台补齐并更新页数）、(c) 信任 `first_image_index..end`
+      不探测（最省但可能多出资源记录造成的空页）。
+- [ ] **D7（长条页字节量）**：宽 170 的页仍 `ask_bytes` 1.9–3.1 MB；按屏宽渲染/切片可减少传输，
+      但属**画质口径**，需用户拍板（与交接单 C.1 同源）。
+
 ### 第 82 轮审计遗留（2026-09-21）
 - [x] **PDF 打不开（Release 缺 `pdfium.dll`，第83轮已修）**：`app/windows/CMakeLists.txt` 新增
       `install(FILES pdfium.dll)`（来源 `app/windows/pdfium/win-x64/`，已 gitignore），Debug/Release

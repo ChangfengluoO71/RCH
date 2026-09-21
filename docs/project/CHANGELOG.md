@@ -8,6 +8,49 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.5.8] — 2026-09-21
+
+> 发布说明（含验证数据）见 [`docs/releases/release_notes_v0.5.8.md`](../releases/release_notes_v0.5.8.md)。
+
+### Added
+
+- 新增「阅读渲染宽度」设置（省流 1080 / 标准 1600 / 跟随屏幕）；页缓存按宽度分目录，标准档与历史行为完全一致。
+- 新增 `pdf_diag.log` / `reader_diag.log` / `mobi_diag.log` 现场诊断；MOBI 惰性打开的拒绝原因、封面读取预算"哪一条先超"都会落盘。
+- 新增 MOBI 页表缓存（`cache/mobi_table/`，自校验 digest + 原子写）：同一本书第二次打开零探测。
+- 新增 `cache/raw` 容量上限（2 GiB）与最旧优先整包淘汰。
+- 失败封面可一键重排（源浏览器「刷新」），只动该源当前档的终态失败任务。
+
+### Changed
+
+- 默认流式阅读（`auto` = 流式优先，失败转整本）；EPUB/ZIP/PDF/MOBI 打开改为惰性按需读。
+- MOBI 完整打开的逐条魔数探测改为并发取；封面只探测到第一张图。
+- 读取合并（G1）：钉住文件头窗口 + 元数据窗口槽 2 → 4，消掉反复重取文件头的往返。
+- 扫描状态栏移除「暂停/继续、增量重扫、全量重扫」（扫描自动运行）。
+- 取消"故意整本读"的封面字节预算拒绝（保留 384 次读 / 30 s 两条兜住病态归档）。
+
+### Fixed
+
+- 修复 Release 版缺 `pdfium.dll` 导致 PDF 打不开/封面失败。
+- 修复"详情页出图后海报墙不刷新"（无 asset id 的卡片也订阅封面 revision）。
+- 修复"详情页有封面、海报墙显示获取失败"（unified 无字节时回退 legacy 纯本地缓存）。
+- 修复"失败封面重排后没人抓"（唤醒必须发生在会话建立之后）。
+- 修复 MOBI 惰性打开被越界偏移/空区间记录整条弃权、退回整本读并撞预算的问题。
+- 修复 `cover_native_lib_missing` 误标（pdfium 库内错误被当成部署缺库）。
+- 修复 115/夸克「原文件名」显示 provider id。
+
+### Removed
+
+- 移除阅读器「未缓存」占位文案（统一为「等待扫描」）。
+
+## [0.5.7] — 2026-08-28
+
+> 本条为回填（该版本已发布但此前未记入本文件），内容取自 [`docs/releases/release_notes_v0.5.7.md`](../releases/release_notes_v0.5.7.md)。
+
+### Improved
+
+- 显著缩短 Android 冷启动关键路径：首页首帧不再等待目录快照、资料库树、同步管理器、AI 队列恢复与自动同步/刮削完成（真机冷启动 `WaitTime` 平均约 10093.7 ms → 349.3 ms）。
+- Android 正式发布版采用新的单调递增 `versionCode` 规则：`100000 + (major × 10000 + minor × 100 + patch)`。
+
 ## [0.5.6] — 2026-08-28
 
 ### Fixed

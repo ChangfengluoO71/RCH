@@ -57,4 +57,71 @@ void main() {
       expect(back.remoteCoverFetchEnabled, isFalse);
     },
   );
+
+  /// D7（2026-09-21）：阅读渲染宽度的设置与解析。
+  group('阅读渲染宽度（D7）', () {
+    test('标准档返回 null（保持历史页缓存路径不变）', () {
+      expect(
+        renderWidthPixels(
+          RenderWidth.standard,
+          screenWidth: 2048,
+          devicePixelRatio: 1.25,
+        ),
+        isNull,
+      );
+    });
+
+    test('省流档固定 1080', () {
+      expect(
+        renderWidthPixels(
+          RenderWidth.dataSaver,
+          screenWidth: 2048,
+          devicePixelRatio: 1.25,
+        ),
+        1080,
+      );
+    });
+
+    test('跟随屏幕 = 逻辑宽 × DPR，并夹取到 [640, 4096]', () {
+      expect(
+        renderWidthPixels(
+          RenderWidth.screen,
+          screenWidth: 2048,
+          devicePixelRatio: 1.25,
+        ),
+        2560,
+      );
+      expect(
+        renderWidthPixels(
+          RenderWidth.screen,
+          screenWidth: 100,
+          devicePixelRatio: 1,
+        ),
+        640,
+      );
+      expect(
+        renderWidthPixels(
+          RenderWidth.screen,
+          screenWidth: 4000,
+          devicePixelRatio: 4,
+        ),
+        4096,
+      );
+    });
+
+    test('JSON 往返保留 renderWidth，缺失/未知值回落到标准档', () {
+      final s = AppSettings();
+      expect(s.renderWidth, RenderWidth.standard, reason: '默认必须与历史行为一致');
+
+      s.renderWidth = RenderWidth.dataSaver;
+      expect(AppSettings.fromJson(s.toJson()).renderWidth, RenderWidth.dataSaver);
+
+      final json = s.toJson();
+      json.remove('renderWidth');
+      expect(AppSettings.fromJson(json).renderWidth, RenderWidth.standard);
+
+      json['renderWidth'] = '不存在的档位';
+      expect(AppSettings.fromJson(json).renderWidth, RenderWidth.standard);
+    });
+  });
 }

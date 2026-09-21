@@ -222,3 +222,104 @@ fn ready_publish_records_blob_metadata_and_reference_atomically() {
         .unwrap();
     assert_eq!(refs, 1);
 }
+
+/// 2026-09-21（真机："手机墙上大量获取失败，可图其实抓得到"）：用户主动"重试失败封面"
+/// 必须把**该源当前档的终态失败**重新排队（attempt/退避/长期补偿一并重置 + 推进 revision），
+/// 且**绝不动**其它档位、其它状态、其它源。
+#[test]
+fn requeue_failed_for_source_only_touches_current_profile_failures() {
+    let conn = Connection::open_in_memory().unwrap();
+    cover_store::migrate(&conn).unwrap();
+    let key = |source: &str, asset: &str, profile: &str| CoverJobKey {
+        source_id: source.into(),
+        asset_id: asset.into(),
+        content_revision: "v1".into(),
+        selection_revision: "default".into(),
+        profile: profile.into(),
+    };
+    let state_of = |key: &CoverJobKey| -> String {
+        conn.query_row(
+            "SELECT state FROM remote_cover_job WHERE job_key=?1",
+            [key.encode()],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+
+    // 目标：本源当前档的两条 failed（其中一条带长期补偿标记，必须一并清掉）
+    let a = key("s1", "a", "170x240@1");
+    let b = key("s1", "b", "170x240@1");
+    for (k, attempt) in [(&a, 3_i64), (&b, 1_i64)] {
+        cover_store::upsert_job_on(
+            &conn, k, CoverJobState::Failed, "background", 10, 1, "e1", attempt,
+            CoverJobUpsertCause::Demand,
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "UPDATE remote_cover_job SET long_retry_pending=1,long_retry_consumed=1,
+                long_retry_not_before=99 WHERE job_key=?1",
+        [a.encode()],
+    )
+    .unwrap();
+
+    // 干扰项：其它档位的 failed、其它状态的 pending、其它源的 failed
+    let other_profile = key("s1", "c", "340x480@1");
+    let other_state = key("s1", "d", "170x240@1");
+    let other_source = key("s2", "e", "170x240@1");
+    cover_store::upsert_job_on(
+        &conn, &other_profile, CoverJobState::Failed, "background", 10, 1, "e1", 1,
+        CoverJobUpsertCause::Demand,
+    )
+    .unwrap();
+    cover_store::upsert_job_on(
+        &conn, &other_state, CoverJobState::Pending, "background", 10, 1, "e1", 0,
+        CoverJobUpsertCause::Demand,
+    )
+    .unwrap();
+    cover_store::upsert_job_on(
+        &conn, &other_source, CoverJobState::Failed, "background", 10, 1, "e1", 1,
+        CoverJobUpsertCause::Demand,
+    )
+    .unwrap();
+
+    let revision_before = cover_store::view_revision(&conn, "s1").unwrap();
+    let requeued =
+        cover_store::requeue_failed_for_source_on(&conn, "s1", "170x240@1", 10, 5_000).unwrap();
+
+    assert_eq!(requeued, 2, "只应重排该源当前档的两条 failed");
+    assert_eq!(state_of(&a), "pending");
+    assert_eq!(state_of(&b), "pending");
+    assert_eq!(state_of(&other_profile), "failed", "其它档位不得被动");
+    assert_eq!(state_of(&other_state), "pending", "非 failed 状态不得被动");
+    assert_eq!(state_of(&other_source), "failed", "其它源不得被动");
+    assert!(
+        cover_store::view_revision(&conn, "s1").unwrap() > revision_before,
+        "必须推进 revision，界面才能重读 durable state"
+    );
+
+    // attempt/退避/长期补偿三列都要归零，否则重试一次又会被挡回去。
+    let (attempt, long_pending, long_consumed, long_not_before): (i64, i64, i64, Option<i64>) = conn
+        .query_row(
+            "SELECT attempt,long_retry_pending,long_retry_consumed,long_retry_not_before
+               FROM remote_cover_job WHERE job_key=?1",
+            [a.encode()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(attempt, 0);
+    assert_eq!(long_pending, 0);
+    assert_eq!(long_consumed, 0);
+    assert_eq!(long_not_before, None);
+
+    // 幂等：再点一次不应再改动任何行。
+    assert_eq!(
+        cover_store::requeue_failed_for_source_on(&conn, "s1", "170x240@1", 10, 6_000).unwrap(),
+        0
+    );
+    // limit=0 是明确的无操作（避免误传一把清空）。
+    assert_eq!(
+        cover_store::requeue_failed_for_source_on(&conn, "s1", "340x480@1", 0, 6_000).unwrap(),
+        0
+    );
+}

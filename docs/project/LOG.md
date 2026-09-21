@@ -3259,3 +3259,47 @@ D6 locked-frame 推 notifier、D7 单条大记录不可分片（需画质口径�
 本次实测 `page_ms=[8,397,102]` ⇒ **机器太快就失败**，与本次改动无关
 （P0 走 CBZ + 本机 mock CDN，不经过 MOBI 路径）。这与交接单"clean HEAD 上 5 跑 4 挂"完全一致；
 **没有**改阈值，改为 `--no-fail-fast` 复跑取全貌（结果见 LOG 下一行/口头汇报）。
+
+
+---
+
+## 2026-09-21｜第88轮：115「原文件名」显示 id 修复 + 失败封面"轻量重试"逃生口
+
+**用户当轮两件事**：① 封面还是"获取失败"，"明明都是有缓存的"；② 115 和夸克一样，详情页显示 id
+而不是原文件名（"顺便修一下这个bug"）；③ 要求这两件完成后分析"速度还是慢"的原因。
+
+**1) 115 的 id 形状（真机 DB 取证）**
+- `library_index` 里 115 源的路径就是 **19 位纯数字 id**（`3491122006131214136`、`3502050240473597592`…，
+  863 行里 271 行末段是 ≥16 位数字），name 列本身是正常名字（`name 像 id 的行 = 0`）。
+- 第 84 轮的判定只放行 "≥24 位 hex / ≥16 位数字"，覆盖不全；本轮改为：
+  **≥24 位纯 hex ∪ ≥16 位纯数字 ∪ ≥20 位无点的 `[A-Za-z0-9_-]`**，并且**从末段往前找第一个不是 id 的段**
+  （`/3491…/3502…/金牌得主` ⇒ `金牌得主`），整条路径都是 id 时才退回目录项名称（`title`=`e.name`）。
+- 测试：`overflow_repro_test.dart` 新增 3 个用例（19 位单段 id、全 id 多段、混合路径）+ 原有 2 个，
+  **4 项全过**；analyze 干净。
+
+**2) "有缓存却获取失败"的根因：终态 `failed` 是粘性的**
+- 真机 DB 证据：失败行集中在两类码 —— **`cover_native_lib_missing`**（= 切 Release 后缺 `pdfium.dll`
+  的那几分钟留下的，第 83 轮已修根因）与 `cover_read_budget_exceeded`（旧版 30 s 预算）。
+- 而终态失败**只有两条出路**：6 小时长期补偿、或"重置到当前档位"（会清掉其它档的缓存）⇒
+  **根因修好了也没有轻量逃生口**，墙上就一直显示"获取失败"。
+- 本轮补上：
+  - Rust 新 API `remote_cover_retry_failed(source_id, limit)`；核在 store：
+    `cover_store::requeue_failed_for_source_on(conn, source_id, profile, limit, now)`
+    ⇒ **只动该源当前档的 `failed`**（attempt/退避/长期补偿三列一并归零），上限 500，
+    并推进该源封面 revision + notify + 唤醒 worker。**不清任何缓存、不碰其它档/其它状态/其它源。**
+  - FRB 重新生成绑定（`flutter_rust_bridge_codegen generate` ✓）。
+  - Dart 仓库入口 `RemoteCoverRepository.retryFailed(sourceId, limit)`（limit 夹到 1..500）。
+  - UI：**源浏览器"刷新"动作**顺带调用（`_refresh()` → `_retryFailedCovers()`），
+    重排 >0 时提示"已重新排队 N 张失败封面"。
+  - 测试：Rust 契约 `requeue_failed_for_source_only_touches_current_profile_failures`
+    （含"其它档/其它状态/其它源不得被动"的反断言 + 幂等 + limit=0 无操作）；Dart 夹取上限用例。
+- **门禁**：Rust 全量（`--no-fail-fast`）**24 套件 / 536 passed / 0 failed**；Dart 16 + 3 项全过。
+
+**3) 交付物**：桌面 Release 重建（`rust_lib_app.dll` 18,976,256 B / 18:02）并重启（PID 39432）；
+安卓包重建（116.2 MB / 18:05:03）复制到 `C:/Users/cfl/Downloads/RCH-0.5.8+100508-20260921.apk`
+—— **手机此时已被拔出（adb 无设备），尚未安装**，插上即可 `adb install -r`。
+
+**4) 速度原因分析（用户要求，见下一轮/口头汇报）**：结论是"首次打开=页表探测 ~10 s（已从 40 s 降下来）"，
+"读完流畅=逐页缓存"（`cache/page` 426 MB，17:00 后新增 121 文件），**与整本下载无关**；
+`reader_diag.log`/`mobi_diag.log` 已就位，用户用 18:0x 版本读一本 MOBI 即可给出"stream vs
+fallback-download"的确凿结论。整本下载方案对 76 MB 书 ≈17 s（实测 4.4 MB/s）**反而更慢**。

@@ -570,6 +570,45 @@ pub fn mark_job_ready_owned_on(
     Ok(true)
 }
 
+/// 用户主动"重试失败封面"（2026-09-21 真机："手机墙上大量获取失败，可图其实抓得到"）。
+///
+/// 背景：终态 `failed` 是**粘性**的 —— 只有 6h 长期补偿、或"重置到当前档位"（会清掉其它档的
+/// 缓存）才会重新排队。于是一旦失败原因已被修好（真机实测：`cover_native_lib_missing` =
+/// 切 Release 后缺 `pdfium.dll` 的那几分钟；以及旧版 30 s 预算超时），用户**没有轻量逃生口**，
+/// 墙上会一直显示"获取失败"，即使现在抓得动、甚至字节本来就在本地。
+///
+/// 本函数只做一件事：把该源**当前档**的终态失败重新排队（attempt/退避/长期补偿三列一并重置），
+/// 并推进该源的封面 revision（界面据此重读 durable state）。
+/// **不动其它档位、不清任何缓存、不碰非 `failed` 状态**；`limit` 上限 500，避免一次点全库。
+pub fn requeue_failed_for_source_on(
+    conn: &Connection,
+    source_id: &str,
+    profile: &str,
+    limit: u32,
+    now: i64,
+) -> rusqlite::Result<u32> {
+    if source_id.trim().is_empty() || profile.trim().is_empty() || limit == 0 {
+        return Ok(0);
+    }
+    let limit = limit.min(500) as i64;
+    let requeued = conn.execute(
+        "UPDATE remote_cover_job
+            SET state='pending',attempt=0,error_code=NULL,next_attempt_at=NULL,
+                lease_owner=NULL,lease_until=NULL,long_retry_pending=0,
+                long_retry_consumed=0,long_retry_not_before=NULL,updated_at=?1
+          WHERE job_key IN (
+                SELECT job_key FROM remote_cover_job
+                 WHERE source_id=?2 AND profile=?3 AND state='failed'
+                 ORDER BY updated_at ASC LIMIT ?4)",
+        params![now, source_id, profile, limit],
+    )? as u32;
+    if requeued > 0 {
+        // listing_generation 用 0：不改目录清单，只让封面 revision 前进（与重置同一张表）。
+        bump_view_revision_on(conn, source_id, 0, now)?;
+    }
+    Ok(requeued)
+}
+
 /// A cover result must belong to the epoch that produced the route.  The
 /// helper is tolerant of isolated queue fixtures created before the scan
 /// epoch table existed, but production databases always have that table and

@@ -143,4 +143,25 @@ void main() {
     );
     expect(requestedLimit, 200);
   });
+
+  /// 2026-09-21（真机："墙上大片获取失败，可图其实抓得到"）：用户主动重试失败封面的入口
+  /// 必须**夹取上限**（防止一次误传把整库重排），并把 sourceId/limit 原样交给 loader。
+  test('retryFailed clamps the limit and forwards the source id', () async {
+    final calls = <String>[];
+    var seenLimit = 0;
+    final repository = RemoteCoverRepository(
+      retryFailedLoader: ({required sourceId, required limit}) async {
+        calls.add(sourceId);
+        seenLimit = limit;
+        return 3;
+      },
+    );
+
+    expect(await repository.retryFailed(sourceId: 'quark_1', limit: 9999), 3);
+    expect(calls, ['quark_1']);
+    expect(seenLimit, 500, reason: '上限必须夹到 500');
+
+    await repository.retryFailed(sourceId: 'quark_1', limit: 0);
+    expect(seenLimit, 1, reason: '下限必须夹到 1（0 会被后端当成无操作）');
+  });
 }

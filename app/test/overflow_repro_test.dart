@@ -90,4 +90,67 @@ void main() {
       reason: '不得把 provider id 当原文件名显示',
     );
   });
+
+  /// 2026-09-21（用户报告）：**115 的目录/文件 id 是 19 位纯数字**
+  /// （真机 DB 实测 `3491122006131214136`、`3502050240473597592`）。
+  /// 与夸克（32 位 hex）同类：末段是 id 时不得直接当"原文件名"显示。
+  testWidgets('115 的 19 位数字 id 末段回退到目录名', (tester) async {
+    final source = BookSource(
+      id: '115_id_test',
+      type: '115',
+      name: 't',
+      path: '0',
+    );
+
+    // ① 单段 id 路径（115 的目录/文件路径就是这个形状）
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BookDetailPage(
+          source: source,
+          path: '/3491122006131214136',
+          title: '日漫',
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.byWidgetPredicate((w) => w is SelectableText && w.data == '日漫'),
+      findsOneWidget,
+      reason: '115 的 19 位 id 必须回退到目录名',
+    );
+    expect(find.text('3491122006131214136'), findsNothing);
+
+    // ② 多段全 id：向前找不到正常名字 ⇒ 退回目录项名称
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BookDetailPage(
+          source: source,
+          path: '/3491082995119425384/3502050240473597592',
+          title: '画集',
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.byWidgetPredicate((w) => w is SelectableText && w.data == '画集'),
+      findsOneWidget,
+    );
+    expect(find.text('3502050240473597592'), findsNothing);
+
+    // ③ 混合路径：向前走找到第一个正常名字就用它（比目录项名称更贴近真实路径）
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BookDetailPage(
+          source: source,
+          path: '/3491082995119425384/金牌得主',
+          title: '不一致的标题',
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.byWidgetPredicate((w) => w is SelectableText && w.data == '金牌得主'),
+      findsOneWidget,
+    );
+  });
 }

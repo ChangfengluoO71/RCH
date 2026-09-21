@@ -287,21 +287,32 @@ class _BookDetailPageState extends State<BookDetailPage> {
     if (raw.isEmpty) return fallback;
     final normalized = raw.replaceAll('\\', '/');
     final withoutTrailing = normalized.replaceFirst(RegExp(r'/+$'), '');
-    final segment = withoutTrailing.split('/').last.trim();
-    if (segment.isEmpty) return fallback;
-    // 2026-09-21（用户报告，真机截图）：夸克等网盘的"容器文件夹"路径最后一段是
-    // provider 的**不透明 id**（32/64 位 hex），直接显示就成了 `c680a216…` 这种哈希。
-    // 此时回退到**目录项名称**——各调用点传进来的 `title` 就是目录里的 `e.name`
-    //（如「W-舞冰的祈愿-金牌得主」），这才是有意义的"原文件名"。
-    if (_looksLikeOpaqueProviderId(segment)) {
-      return fallback.isEmpty ? segment : fallback;
+    final segments = withoutTrailing
+        .split('/')
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    if (segments.isEmpty) return fallback;
+    // 2026-09-21（用户报告）：网盘的"容器文件夹/文件夹"路径末段常常是 provider 的
+    // **不透明 id** —— 夸克是 32 位 hex，115 是 19 位纯数字（真机 DB 实测
+    // `3491122006131214136`、`3502050240473597592`）⇒ 直接显示就是一串哈希/数字。
+    // 修法：从末段往前找**第一个不是 id 的段**（`/3491…/3502…/金牌得主` ⇒ 金牌得主）；
+    // 整条路径都是 id 时退回目录项名称（各调用点传入的 `title` = `e.name`）。
+    for (final segment in segments.reversed) {
+      if (!_looksLikeOpaqueProviderId(segment)) return segment;
     }
-    return segment;
+    return fallback.isEmpty ? segments.last : fallback;
   }
 
-  /// provider 的不透明 id 判定（真实文件名不会长成 32/64 位纯 hex 或长串纯数字）。
+  /// provider 的不透明 id 判定：
+  /// · ≥24 位纯 hex（夸克/百度常见的 32 位；客户端 sha256 指纹是 64 位）
+  /// · ≥16 位纯数字（115 的 19 位文件/目录 id）
+  /// · ≥20 位 `[A-Za-z0-9_-]` 且**没有点**（无扩展名的长 token）
+  ///
+  /// 真实文件名不会命中：`2.mobi`/`01.zip` 有点，`W-舞冰的祈愿-金牌得主` 含 CJK，
+  /// 带空格或括号的名字含非 `[A-Za-z0-9_-]` 字符。
   static final RegExp _opaqueProviderId = RegExp(
-    r'^(?:[0-9a-fA-F]{24,}|[0-9]{16,})$',
+    r'^(?:[0-9a-fA-F]{24,}|[0-9]{16,}|[A-Za-z0-9_-]{20,})$',
   );
 
   static bool _looksLikeOpaqueProviderId(String value) =>

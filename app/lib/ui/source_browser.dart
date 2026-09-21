@@ -656,10 +656,31 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 刷新：重新列出目录；本地来源且开启"自动转 CBZ"时，后台转换后再次列出。
   Future<void> _refresh() async {
+    // 2026-09-21（真机："墙上大片获取失败，可图其实抓得到"）：刷新时顺带把该源**当前档**的
+    // 终态失败封面重新排队 —— 失败是粘性的（只有 6h 补偿/重置才会重来），而失败原因往往
+    // 早已修好（真机 DB 里成片的 `cover_native_lib_missing` 就是缺 pdfium.dll 那几分钟留下的）。
+    // 这是轻量逃生口：不动其它档位、不清任何缓存。
+    unawaited(_retryFailedCovers());
     await _relist();
     if (!mounted || _offlineMode || !widget.source.isLocalFs) return;
     await _autoConvertToCbz();
     if (mounted) await _relist();
+  }
+
+  /// 主动重试失败封面（见 `RemoteCoverRepository.retryFailed`）。
+  Future<void> _retryFailedCovers() async {
+    if (!widget.source.needsSession) return;
+    try {
+      final requeued = await RemoteCoverRepository.instance.retryFailed(
+        sourceId: widget.source.id,
+      );
+      if (!mounted || requeued == 0) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已重新排队 $requeued 张失败封面')));
+    } catch (_) {
+      // 重试失败不影响刷新主流程。
+    }
   }
 
   /// 生成离线索引（本地化）：从本地浏览快照构建，零网络请求（ADR-029）。

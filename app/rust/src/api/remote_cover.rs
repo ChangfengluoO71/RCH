@@ -487,6 +487,30 @@ pub fn remote_cover_release(consumer_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 用户主动"重试失败封面"：把该源**当前档**的终态失败重新排队，返回本次排队数。
+///
+/// 为什么需要（2026-09-21 真机）：失败是粘性的，而失败原因可能早已修好
+/// （真机 DB 里成片的 `cover_native_lib_missing` 就是 Release 缺 pdfium.dll 那几分钟留下的），
+/// 界面却一直显示"获取失败"——需要一个**轻量**逃生口（不清缓存、不动其它档）。
+pub fn remote_cover_retry_failed(source_id: String, limit: u32) -> Result<u32, String> {
+    let source_id = source_id.trim().to_string();
+    if source_id.is_empty() {
+        return Ok(0);
+    }
+    let now = db::now_ms();
+    let requeued = {
+        let conn = db::get().lock().map_err(|error| error.to_string())?;
+        let profile = crate::api::remote_scan::cover_quality_profile_on(&conn);
+        cover_store::requeue_failed_for_source_on(&conn, &source_id, &profile, limit, now)
+            .map_err(|error| error.to_string())?
+    };
+    if requeued > 0 {
+        crate::remote_scan::cover_revision_stream::notify_cover_revision(&source_id, None);
+        crate::api::remote_scan::wake_cover_worker_for_source(&source_id);
+    }
+    Ok(requeued)
+}
+
 pub fn remote_cover_retry(
     source_id: String,
     session: u64,

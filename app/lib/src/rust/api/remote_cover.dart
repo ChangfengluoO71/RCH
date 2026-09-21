@@ -55,6 +55,19 @@ Future<void> remoteCoverRelease({required String consumerId}) => RustLib
     .api
     .crateApiRemoteCoverRemoteCoverRelease(consumerId: consumerId);
 
+/// 用户主动"重试失败封面"：把该源**当前档**的终态失败重新排队，返回本次排队数。
+///
+/// 为什么需要（2026-09-21 真机）：失败是粘性的，而失败原因可能早已修好
+/// （真机 DB 里成片的 `cover_native_lib_missing` 就是 Release 缺 pdfium.dll 那几分钟留下的），
+/// 界面却一直显示"获取失败"——需要一个**轻量**逃生口（不清缓存、不动其它档）。
+Future<int> remoteCoverRetryFailed({
+  required String sourceId,
+  required int limit,
+}) => RustLib.instance.api.crateApiRemoteCoverRemoteCoverRetryFailed(
+  sourceId: sourceId,
+  limit: limit,
+);
+
 Future<void> remoteCoverRetry({
   required String sourceId,
   required BigInt session,

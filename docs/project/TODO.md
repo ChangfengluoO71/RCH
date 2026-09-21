@@ -102,6 +102,14 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Backlog(待办)
 
+### 第 88 轮补充结论（2026-09-21）
+- [x] **115/夸克"原文件名显示 id"已修**（第88轮）：判定放宽 + 向前找第一个非 id 段 + 3 个新用例。
+- [x] **失败封面可重试**（第88轮）：`remote_cover_retry_failed` 挂到源浏览器"刷新"动作。
+      ⇒ 下次真机复验：刷新一次应看到"已重新排队 N 张失败封面"，墙上随之翻牌。
+- [ ] **速度分析结论（待真机日志确认）**：首次打开 ≈ 页表探测 200–300 次（4 并发 ≈10 s）；
+      "读完流畅" = 逐页缓存（与整本下载无关）。`reader_diag.log`/`mobi_diag.log` 已就位，
+      需要用户用最新版读一本 MOBI 取"stream vs fallback-download"的证据。
+      下一步最优先仍是**页面表缓存**（首次 ~10 s、之后秒开）。
 ### 第 87 轮补充结论（2026-09-21）
 - [x] **可观测性补齐**：`reader_diag.log`（打开模式/耗时）+ `mobi_diag.log`（惰性/回退、每页 bytes/ms）。
       下一步实测"MOBI 到底走 stream 还是 fallback-download"只需用户再读一本。

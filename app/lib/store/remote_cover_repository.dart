@@ -53,6 +53,10 @@ typedef RemoteCoverStateLoader =
       required rust.CoverProfileDto profile,
     });
 
+/// 主动重试失败封面：返回本次重新排队的任务数（0 = 没有可重排的失败）。
+typedef RemoteCoverRetryFailedLoader =
+    Future<int> Function({required String sourceId, required int limit});
+
 typedef RemoteCoverReleaseLoader =
     Future<void> Function({required String consumerId});
 
@@ -67,7 +71,9 @@ class RemoteCoverRepository {
     RemoteCoverRequestLoader? requestLoader,
     RemoteCoverReleaseLoader? releaseLoader,
     RemoteCoverStateLoader? stateLoader,
-  }) : _directoryLoader = directoryLoader ?? _defaultDirectoryLoader,
+    RemoteCoverRetryFailedLoader? retryFailedLoader,
+  }) : _retryFailedLoader = retryFailedLoader ?? _defaultRetryFailedLoader,
+       _directoryLoader = directoryLoader ?? _defaultDirectoryLoader,
        _readLoader = readLoader ?? _defaultReadLoader,
        _localReadLoader = localReadLoader ?? readLoader ?? _defaultReadLoader,
        _requestLoader = requestLoader ?? _defaultRequestLoader,
@@ -82,6 +88,12 @@ class RemoteCoverRepository {
   final RemoteCoverRequestLoader _requestLoader;
   final RemoteCoverReleaseLoader _releaseLoader;
   final RemoteCoverStateLoader _stateLoader;
+  final RemoteCoverRetryFailedLoader _retryFailedLoader;
+
+  /// 用户主动"重试失败封面"（2026-09-21 真机：墙上大片"获取失败"，而失败原因早已修好，
+  /// 终态 failed 却是粘性的）。轻量：只重排该源**当前档**的失败，不动其它档、不清缓存。
+  Future<int> retryFailed({required String sourceId, int limit = 200}) =>
+      _retryFailedLoader(sourceId: sourceId, limit: limit < 1 ? 1 : (limit > 500 ? 500 : limit));
 
   Future<rust.RemoteDirectoryViewDto> directoryView({
     required BookSource source,
@@ -144,6 +156,11 @@ class RemoteCoverRepository {
     selection: selection,
     profile: profile,
   );
+
+  static Future<int> _defaultRetryFailedLoader({
+    required String sourceId,
+    required int limit,
+  }) => rust.remoteCoverRetryFailed(sourceId: sourceId, limit: limit);
 
   static Future<rust.RemoteCoverStateDto?> _defaultStateLoader({
     required String sourceId,

@@ -42,10 +42,23 @@ Future<void> UpdateManager.confirmDialogDownload();
 Future<void> UpdateManager.install();
 ```
 
-The update manager accepts injectable `UpdatePlatform` and
-`UpdateDownloadTransport` implementations for tests. `CoverEditorPage` uses
-typed `CustomCoverOpenDecision`, `CustomCoverReady`, and
-`NeedsWholeBookDownload` decisions.
+As implemented (2026-09-21): `UpdateManager` is a private-constructor
+singleton (`UpdateManager._()` / `UpdateManager.instance`) whose testable
+surface is the set of side-effect-free statics — `parseVersion`,
+`isNewerVersion`, `pickAssetForPlatform`, `downloadCandidates`,
+`buildDownloadUrl`. `CoverEditorPage` takes `{source, path, title}` only.
+
+> **Known gaps (2026-09-21, measured).** Earlier revisions of this contract
+> described injectable `UpdatePlatform` / `UpdateDownloadTransport`
+> implementations and typed `CustomCoverOpenDecision` / `CustomCoverReady` /
+> `NeedsWholeBookDownload` decisions. **None of them exist in `lib/`.** The
+> consequences are not cosmetic: test files written against that design could
+> never compile, so the concurrent-download, Android-handoff-retry,
+> sha256-verification, and cover-editor-consent behaviours have **no executable
+> tests**, and the stale tests were a CI release-gate failure (64 analyzer
+> errors). Those files now pin only the real surfaces and record the gaps.
+> Implement the seams (or amend this contract) before claiming those
+> behaviours are covered.
 
 ## 3. Contracts (request / response / environment)
 

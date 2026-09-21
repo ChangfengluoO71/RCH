@@ -1,6 +1,16 @@
 # 零散文档整理进 Trellis 体系 —— 方案（2026-09-21）
 
 > 状态：**方案待批**（本文档只做分析与路由，不移动任何现有文件）。
+>
+> **进展记录（2026-09-21 晚，v0.6.0 发布后）**：
+> - 批 1（spec 补实）：**部分完成** —— `.trellis/spec/backend/remote-cover-update-contracts.md`
+>   已回写（该契约与代码不一致处改为 *as implemented* 并新增 **Known gaps**），
+>   `spec/backend/index.md` 的漏登记已补；**其余模板骨架仍未补实**。
+> - 批 2（文件移动进 `.trellis/tasks/*/research/`）：**未开始**（`docs/reports` 36 文件、
+>   `docs/superpowers` 8 文件，均原位）。
+> - 批 3（14 MB JSON 体积治理）：**未开始**。
+> - 动因说明：批 1 的那两处并非为整理而做，而是修 CI 门禁时发现"契约文档描述了未实现的
+>   设计"（导致 5 个测试文件写不出来）而必须回写。
 > 依据：`.trellis/workflow.md`、`AGENTS.md` 的知识归位规则、以及 `trellis-spec-bootstrap` 技能的五步流程
 > （确认初始化 → 分析仓库 → 按包/层分解 → 写实 spec → 校验无占位）。
 

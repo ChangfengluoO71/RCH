@@ -22,6 +22,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+          # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
+          # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
+          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # 显式声明 workspace 路径后不再依赖它在根目录探测。
+          cache-workspaces: app/rust
 
       - uses: subosito/flutter-action@v2
         with:
@@ -54,6 +59,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+          # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
+          # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
+          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # 显式声明 workspace 路径后不再依赖它在根目录探测。
+          cache-workspaces: app/rust
 
       - name: Cargo test
         # 必须串行：`cache::set_custom_cache_root` 是**进程级全局**，并行 test 线程会互相
@@ -74,6 +84,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+          # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
+          # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
+          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # 显式声明 workspace 路径后不再依赖它在根目录探测。
+          cache-workspaces: app/rust
 
       - uses: subosito/flutter-action@v2
         with:
@@ -105,6 +120,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+          # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
+          # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
+          # "could not find Cargo.toml in D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # 显式声明 workspace 路径后不再依赖它在根目录探测。
+          cache-workspaces: app/rust
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
 
       - uses: subosito/flutter-action@v2

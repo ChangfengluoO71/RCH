@@ -3622,3 +3622,27 @@ pdfium-render 的**任何库内错误**文案里都含 "pdfium"（例如 `Pdfium
 
 **3) 发布执行（按 setup.md）**：推分支 → 快进合并 master → 推 master → 等 CI 绿 → 打 tag `v0.6.0` 并推 →
 CI `release.yml` 构建 Windows 安装包 + 分 ABI 的 3 个 APK 并发布 Release。
+
+
+---
+
+## 2026-09-21｜第97轮：修 CI 红线（分支上积累的 -D warnings 违规 + 浮动 action 在仓库根探测 Rust workspace）
+
+**背景**：v0.6.0 合并到 master 后 CI **红**（Rust Test / Flutter Analyze 失败，两个 build job skipped），
+**因此没有打 tag、没有发布**（等 CI 绿）。
+
+**两个真因（都不是本地能看到的）**：
+1. **CI 带 `RUSTFLAGS: -D warnings`**（`actions-rust-lang/setup-rust-toolchain` 的默认策略），
+   而分支上积累了几处**历史轮次**测试文件的 warning ⇒ 全部变成错误：
+   `tests/remote_cover_progress_contract.rs` / `remote_cover_availability_contract.rs` 未使用的
+   `Connection` 导入；`tests/remote_cover_stream_contract.rs` 两处"赋值后从未被读"的 `rev`/`wake`；
+   `tests/p0b2_zip_read_trace.rs` 未使用的 `Document` 导入与从未被读的 `t_us` 字段；
+   `tests/p0_baseline_read_speed.rs` 两个未使用的方法。本地门禁不带 `-D warnings` ⇒ 一直没暴露。
+   **修法**：删无用导入与死赋值；诊断结构体的字段/方法加 `#[allow(dead_code)]` 并写明用途。
+   复检命令：`RUSTFLAGS="-D warnings" cargo check --locked --all-targets` ⇒ 0 error。
+2. **浮动 `@v1` action 行为漂移**：新版会在**仓库根**探测 Rust workspace 并调用 `cargo`
+   ⇒ `could not find Cargo.toml in D:\a\RCH\RCH`（Rust 工程在 `app/rust`）⇒ Flutter Analyze job 直接失败。
+   **修法**：6 处 toolchain step 显式声明 `cache-workspaces: app/rust`，不再依赖它在根目录探测。
+
+**教训（写进本轮）**：CI 用 `-D warnings` 而本地门禁不用 ⇒ **本地绿≠CI 绿**；
+发布前必须看 Actions 结果（`setup.md` 发布流程第 3 步本来就写了，本轮踩到才真正落实）。

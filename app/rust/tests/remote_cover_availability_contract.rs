@@ -3,7 +3,7 @@
 //! 它必须：不 bump revision、不产生 wake、不改任何 durable state、不建 session。
 //! 同时钉住"有字节 ⇒ true / 无字节 ⇒ false"。
 
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
 use rust_lib_app::remote_scan::cover_revision_stream::{reset_wake_decided_count, wake_decided_count};
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;

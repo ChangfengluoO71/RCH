@@ -11,7 +11,7 @@
 //! * 不变量：`available + waiting + active + failed + unsupported + blocked + other
 //!   == discovered_books`。
 
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use rust_lib_app::api::remote_scan::remote_scan_status;
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;

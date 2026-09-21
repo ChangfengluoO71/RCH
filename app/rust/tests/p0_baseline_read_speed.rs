@@ -185,6 +185,8 @@ impl MockCdn {
     }
 
     /// 计数：`method` 精确匹配；`ranged` = Some(true) 只数带 Range、Some(false) 只数不带、None 不限。
+    /// 诊断辅助：当前用例未使用，保留给后续 P0 复测脚本。
+    #[allow(dead_code)]
     fn request_count_of(&self, method: &str, ranged: Option<bool>) -> usize {
         self.requests()
             .into_iter()
@@ -194,6 +196,8 @@ impl MockCdn {
             .count()
     }
 
+    /// 诊断辅助：当前用例未使用，保留给后续 P0 复测脚本。
+    #[allow(dead_code)]
     fn clear_requests(&self) {
         self.state.requests.lock().unwrap().clear();
     }

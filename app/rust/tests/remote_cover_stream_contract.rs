@@ -194,8 +194,6 @@ fn stream_1d_failure_and_state_transitions_wake_once() {
     )
     .unwrap();
     assert_sync(rev, wake, &conn, "source", "STREAM-1D running -> retry_wait");
-    rev = revision(&conn, "source");
-    wake = woken();
 
     cover_store::claim_next_job_for_source_session_on(&conn, "source", "worker", 3_000, 60_000, 42)
         .unwrap();
@@ -213,8 +211,6 @@ fn stream_1d_failure_and_state_transitions_wake_once() {
     )
     .unwrap();
     assert_sync(rev, wake, &conn, "source", "STREAM-1D running -> failed");
-    rev = revision(&conn, "source");
-    wake = woken();
 
     let b = job_key("source", "b");
     seed(&conn, &b, CoverJobState::Pending, 5_000);

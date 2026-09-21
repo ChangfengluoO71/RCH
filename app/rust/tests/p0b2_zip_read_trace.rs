@@ -22,7 +22,7 @@
 //! cargo test --test p0b2_zip_read_trace -- --nocapture --test-threads=1
 //! ```
 
-use rust_lib_app::document::{open_document, Document};
+use rust_lib_app::document::open_document;
 use rust_lib_app::source::ByteSource;
 use std::io::{self, Write as _};
 use std::sync::{Arc, Mutex};
@@ -44,6 +44,8 @@ struct ReadRecord {
     operation: String,
     /// 上一窗口 (offset, fetched)，用于观察 thrashing。
     previous_window: Option<(u64, u64)>,
+    /// 记录时刻（微秒）。诊断结构体保留完整字段，当前仅打印用不到的字段。
+    #[allow(dead_code)]
     t_us: u64,
 }
 

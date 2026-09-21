@@ -77,6 +77,8 @@ pub enum CacheDir {
     Ai,
     /// AI 超分临时文件（输入/输出中间产物）。
     Temp,
+    /// MOBI 页表缓存（首次打开的逐条魔数探测结果，见 `document/mobi.rs`）。
+    MobiTable,
 }
 
 impl CacheDir {
@@ -87,6 +89,7 @@ impl CacheDir {
             CacheDir::Cover => "cover",
             CacheDir::Ai => "ai",
             CacheDir::Temp => "temp",
+            CacheDir::MobiTable => "mobi_table",
         }
     }
 
@@ -534,6 +537,18 @@ pub fn clear_cover_cache() -> Result<u64> {
 /// 清空 AI 结果缓存（ai/）。
 pub fn clear_ai_cache() -> Result<u64> {
     let dir = CacheDir::Ai.path();
+    if dir.exists() {
+        remove_dir_contents(&dir)
+    } else {
+        Ok(0)
+    }
+}
+
+/// 清空 MOBI 页表缓存（mobi_table/）。
+///
+/// 页表只影响"首次打开要不要重新探测"，删掉只会让下次打开慢一点，**不影响正确性**。
+pub fn clear_mobi_table_cache() -> Result<u64> {
+    let dir = CacheDir::MobiTable.path();
     if dir.exists() {
         remove_dir_contents(&dir)
     } else {

@@ -46,6 +46,9 @@ const RECORD0_PROBE_BYTES: u64 = 128;
 /// 探测"本构建可解码的图片"所需头部字节数。
 const MAGIC_PROBE_BYTES: usize = 16;
 
+/// MOBI 页表缓存的头行（版本化；格式变化时旧缓存自动失效）。
+const PAGE_TABLE_CACHE_HEADER: &str = "RCHMOBITABLE 1";
+
 /// 魔数探测的并发度（2026-09-21："mobi 还是慢"）。
 ///
 /// 真实瓶颈是 **RTT 而不是带宽**：实测每次远端读 136–182 ms，却只取约 29 字节
@@ -73,6 +76,8 @@ struct LazyMobi {
     src: Arc<dyn ByteSource>,
     /// 每个图片记录的 `(offset, len)`，按记录顺序即页序。
     records: Vec<(u64, u64)>,
+    /// 页表来自缓存（true）还是本次逐条探测（false）。仅用于诊断。
+    cache_hit: bool,
 }
 
 impl MobiBook {
@@ -102,13 +107,20 @@ impl MobiBook {
             .unwrap_or_else(|| path.to_string());
         let file_len = src.len();
 
-        if let Some((lazy, title)) = open_lazy(Arc::clone(&src), &stem, cover_only) {
+        if let Some((lazy, title)) = open_lazy(Arc::clone(&src), path, &stem, cover_only) {
             diag(&format!(
-                "mobi_open mode={} pages={} size={} ms={} name={}",
-                if cover_only { "cover-lazy" } else { "lazy" },
+                "mobi_open mode={} pages={} size={} ms={} cache={} name={}",
+                if cover_only {
+                    "cover-lazy"
+                } else if lazy.cache_hit {
+                    "lazy-cached"
+                } else {
+                    "lazy"
+                },
                 lazy.records.len(),
                 file_len,
                 started.elapsed().as_millis(),
+                if lazy.cache_hit { "hit" } else { "miss" },
                 stem
             ));
             return Ok(MobiBook {
@@ -172,6 +184,7 @@ impl MobiBook {
 /// 尝试惰性打开。返回 `(LazyMobi, 标题)`；不可行时返回 `None`（调用方整份回退）。
 fn open_lazy(
     src: Arc<dyn ByteSource>,
+    path: &str,
     stem: &str,
     cover_only: bool,
 ) -> Option<(LazyMobi, String)> {
@@ -260,8 +273,50 @@ fn open_lazy(
         Some((start, end - start))
     };
 
-    // ⑤ 只读每条候选记录的头部 16 B 做魔数过滤（与回退路径同一套判定），
-    //    保证页序与历史行为一致：仍是"从 first_image_index 起、可解码的图片记录"。
+    // ⑤ 页表缓存（2026-09-21，用户："mobi 首开十几秒"）。
+    //
+    // 页表只由**文件内容**决定（头 78 B + 记录表 + 每条候选记录的魔数），与档位/会话/账号无关
+    // ⇒ 首次逐条探测后写盘；同一本书（同 path + 同长度 + 同 digest）之后**零探测**打开。
+    // digest 覆盖头 78 B + 整张记录表 ⇒ 文件被替换/改写时缓存自动失效（长度相同也不会误用）。
+    let digest = {
+        use sha2::Digest as _;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(header);
+        hasher.update(&table);
+        format!("{:x}", hasher.finalize())
+    };
+
+    // ⑥ 标题：优先用 MOBI 头的 full name（偏移相对 record 0），越界/为空则退回文件名。
+    let name_offset = u32::from_be_bytes([
+        probe[RECORD0_NAME_OFFSET as usize],
+        probe[RECORD0_NAME_OFFSET as usize + 1],
+        probe[RECORD0_NAME_OFFSET as usize + 2],
+        probe[RECORD0_NAME_OFFSET as usize + 3],
+    ]) as u64;
+    let name_length = u32::from_be_bytes([
+        probe[RECORD0_NAME_LENGTH as usize],
+        probe[RECORD0_NAME_LENGTH as usize + 1],
+        probe[RECORD0_NAME_LENGTH as usize + 2],
+        probe[RECORD0_NAME_LENGTH as usize + 3],
+    ]) as u64;
+    let title = read_title(&src, record0_start, name_offset, name_length)
+        .unwrap_or_else(|| stem.to_string());
+
+    if !cover_only {
+        if let Some(cached) = load_page_table(path, file_len, &digest) {
+            return Some((
+                LazyMobi {
+                    src,
+                    records: cached,
+                    cache_hit: true,
+                },
+                title,
+            ));
+        }
+    }
+
+    // ⑦ 逐条魔数探测（与回退路径同一套判定），保证页序与历史行为一致：
+    //    仍是"从 first_image_index 起、可解码的图片记录"。
     // 候选区间（含每条记录的 `(offset, len)`）；任一条长度非法 ⇒ 与旧实现一致地整体弃权。
     let mut candidates: Vec<(u64, u64)> = Vec::new();
     for i in first_image_index as usize..record_count as usize {
@@ -287,24 +342,94 @@ fn open_lazy(
     if records.is_empty() {
         return None;
     }
+    if !cover_only {
+        // 只缓存**完整**页表：封面入口只探到第一张，缓存它会把页表截断。
+        store_page_table(path, file_len, &digest, &records);
+    }
 
-    // ⑥ 标题：优先用 MOBI 头的 full name（偏移相对 record 0），越界/为空则退回文件名。
-    let name_offset = u32::from_be_bytes([
-        probe[RECORD0_NAME_OFFSET as usize],
-        probe[RECORD0_NAME_OFFSET as usize + 1],
-        probe[RECORD0_NAME_OFFSET as usize + 2],
-        probe[RECORD0_NAME_OFFSET as usize + 3],
-    ]) as u64;
-    let name_length = u32::from_be_bytes([
-        probe[RECORD0_NAME_LENGTH as usize],
-        probe[RECORD0_NAME_LENGTH as usize + 1],
-        probe[RECORD0_NAME_LENGTH as usize + 2],
-        probe[RECORD0_NAME_LENGTH as usize + 3],
-    ]) as u64;
-    let title = read_title(&src, record0_start, name_offset, name_length)
-        .unwrap_or_else(|| stem.to_string());
+    Some((
+        LazyMobi {
+            src,
+            records,
+            cache_hit: false,
+        },
+        title,
+    ))
+}
 
-    Some((LazyMobi { src, records }, title))
+/// 页表缓存文件路径：`cache/mobi_table/<stable_hash(path|len)>.table`。
+///
+/// 键里带**文件长度**，内容再靠 digest 自校验（见 [`load_page_table`]）。
+/// 这一层只看得到路径（`open_document` 的接口如此），而同一路径在同一书源里唯一。
+fn page_table_cache_path(path: &str, file_len: u64) -> std::path::PathBuf {
+    crate::cache::CacheDir::MobiTable.path().join(format!(
+        "{}.table",
+        crate::cache::stable_hash(&format!("{path}|{file_len}"))
+    ))
+}
+
+/// 读缓存页表：版本 / 长度 / digest 任一不符即视为未命中（**绝不影响打开流程**）。
+///
+/// 还做防御性校验：区间必须非空、单调递增、且落在文件内（缓存被截断或篡改即失效）。
+fn load_page_table(path: &str, file_len: u64, digest: &str) -> Option<Vec<(u64, u64)>> {
+    let text = std::fs::read_to_string(page_table_cache_path(path, file_len)).ok()?;
+    let mut lines = text.lines();
+    if lines.next()?.trim() != PAGE_TABLE_CACHE_HEADER {
+        return None;
+    }
+    if lines.next()?.trim() != format!("len {file_len}") {
+        return None;
+    }
+    if lines.next()?.trim() != format!("digest {digest}") {
+        return None;
+    }
+    let count: usize = lines.next()?.trim().strip_prefix("n ")?.parse().ok()?;
+    if count == 0 {
+        return None;
+    }
+    let mut records = Vec::with_capacity(count);
+    let mut previous_end = 0_u64;
+    for line in lines.take(count) {
+        let mut parts = line.split_whitespace();
+        let offset: u64 = parts.next()?.parse().ok()?;
+        let len: u64 = parts.next()?.parse().ok()?;
+        if len == 0 || offset < previous_end || offset.checked_add(len)? > file_len {
+            return None;
+        }
+        previous_end = offset + len;
+        records.push((offset, len));
+    }
+    (records.len() == count).then_some(records)
+}
+
+/// 写缓存页表（best-effort：缓存写失败绝不影响打开）。
+///
+/// 先写临时文件再 `rename`，避免"半个文件"被下一次打开当成有效缓存。
+fn store_page_table(path: &str, file_len: u64, digest: &str, records: &[(u64, u64)]) {
+    if records.is_empty() {
+        return;
+    }
+    let target = page_table_cache_path(path, file_len);
+    let Some(parent) = target.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let mut body = String::with_capacity(records.len() * 24 + 128);
+    body.push_str(PAGE_TABLE_CACHE_HEADER);
+    body.push('\n');
+    body.push_str(&format!("len {file_len}\n"));
+    body.push_str(&format!("digest {digest}\n"));
+    body.push_str(&format!("n {}\n", records.len()));
+    for (offset, len) in records {
+        body.push_str(&format!("{offset} {len}\n"));
+    }
+    let tmp = target.with_extension("table.tmp");
+    if std::fs::write(&tmp, body).is_err() {
+        return;
+    }
+    let _ = std::fs::rename(&tmp, &target);
 }
 
 /// 串行探测：从候选区间的**头部**逐条取 16 B 魔数，命中第一张可解码图片就停。
@@ -624,11 +749,13 @@ mod tests {
     /// **不随图片记录体积增长**（过去是整份读入，还要把每张图再复制一份）。
     #[test]
     fn lazy_open_reads_only_the_header_and_probes() {
+        // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
+        let (_root, _guard) = use_temp_cache_root("lazy_open_reads_only_the_header_and_probes");
         let fixture = synth_mobi(3, 4 * 1024 * 1024); // 3 条各约 4 MB
         let file_len = fixture.len() as u64;
         let src = Arc::new(CountingSource::new(fixture));
         let (lazy, title) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).expect("合成文件应走惰性路径");
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).expect("合成文件应走惰性路径");
         assert_eq!(lazy.records.len(), 3, "三条图片记录都要进页表");
         assert_eq!(title, "Fixture MOBI Title");
         let read = src.total_read();
@@ -646,6 +773,8 @@ mod tests {
     /// （记录头相距几百 KB，一次窗口只能覆盖一条），唯一的杠杆是"少探测"。
     #[test]
     fn cover_open_probes_only_until_the_first_image() {
+        // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
+        let (_root, _guard) = use_temp_cache_root("cover_open_probes_only_until_the_first_image");
         let src = Arc::new(CountingSource::new(synth_mobi(40, 512 * 1024)));
         let cover = MobiBook::open_cover(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi")
             .expect("封面专用打开应走惰性路径");
@@ -670,12 +799,111 @@ mod tests {
         );
     }
 
+    /// 独占一个临时缓存根，测完（含 panic）必须还原，避免污染同一测试二进制里的其它用例。
+    struct CacheRootGuard;
+
+    impl Drop for CacheRootGuard {
+        fn drop(&mut self) {
+            crate::cache::set_custom_cache_root("");
+        }
+    }
+
+    fn use_temp_cache_root(tag: &str) -> (std::path::PathBuf, CacheRootGuard) {
+        let root = std::env::temp_dir().join(format!(
+            "rch_mobi_table_{tag}_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        crate::cache::set_custom_cache_root(root.to_str().unwrap());
+        (root, CacheRootGuard)
+    }
+
+    /// 2026-09-21（用户："mobi 首次打开十几秒"）：页表缓存命中时，第二次打开**不再逐条探测**。
+    ///
+    /// 夹具刻意让 40 条记录各隔 512 KB（探测点相距很远，"合并窗口"救不了），
+    /// 因此第一次打开必然要 40+ 次远端读，而命中缓存后只剩"头 + 记录表 + record0 探测 + 书名"
+    /// 这几笔常数级读。页序/页内容必须与第一次完全一致。
+    #[test]
+    fn page_table_cache_makes_the_second_open_probe_free() {
+        let (root, _guard) = use_temp_cache_root("hit");
+        let fixture = synth_mobi(40, 512 * 1024);
+
+        let first_src = Arc::new(CountingSource::new(fixture.clone()));
+        let first = MobiBook::open(Arc::clone(&first_src) as Arc<dyn ByteSource>, "t.mobi")
+            .expect("首次打开");
+        assert_eq!(first.page_count(), 40);
+        let first_calls = first_src.total_calls();
+        assert!(
+            first_calls >= 40,
+            "首次打开必须逐条探测（实际 {first_calls} 次读）"
+        );
+
+        let second_src = Arc::new(CountingSource::new(fixture));
+        let second = MobiBook::open(Arc::clone(&second_src) as Arc<dyn ByteSource>, "t.mobi")
+            .expect("命中缓存打开");
+        assert_eq!(second.page_count(), 40, "缓存页表不得缩水");
+        let second_calls = second_src.total_calls();
+        assert!(
+            second_calls <= 8,
+            "命中缓存后只应有常数级读（头/记录表/record0/书名），实际 {second_calls} 次"
+        );
+        assert!(
+            second_calls * 4 < first_calls,
+            "命中缓存必须显著减少远端读：first={first_calls} second={second_calls}"
+        );
+        println!(
+            "PAGE-TABLE-CACHE reads: first={first_calls} second={second_calls} pages={}",
+            second.page_count()
+        );
+
+        // 页内容一致（第 0 页 = 第一条图片记录）。
+        use crate::document::Document as _;
+        assert_eq!(
+            first.page_bytes(0).unwrap(),
+            second.page_bytes(0).unwrap(),
+            "缓存页表与现场探测必须给出同一页"
+        );
+
+        // 缓存文件确实落盘（诊断/排障用）。
+        let cached_files = std::fs::read_dir(crate::cache::CacheDir::MobiTable.path())
+            .map(|dir| dir.count())
+            .unwrap_or(0);
+        assert!(cached_files >= 1, "页表缓存应已落盘");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 记录表被改写（文件被替换/损坏）时，缓存必须**失效**并回落到逐条探测 —— 绝不静默用错页表。
+    #[test]
+    fn page_table_cache_is_invalidated_when_the_record_table_changes() {
+        let (root, _guard) = use_temp_cache_root("stale");
+        let fixture = synth_mobi(40, 512 * 1024);
+
+        let first_src = Arc::new(CountingSource::new(fixture.clone()));
+        let _ = MobiBook::open(Arc::clone(&first_src) as Arc<dyn ByteSource>, "t.mobi").expect("首次");
+
+        // 篡改记录表里第二条记录的偏移（长度不变 ⇒ 只靠 digest 才能发现）。
+        let mut tampered = fixture;
+        let table_entry = PALMDB_HEADER_LEN as usize + 8 + 4;
+        tampered[table_entry] ^= 0x01;
+
+        let second_src = Arc::new(CountingSource::new(tampered));
+        let second = MobiBook::open(Arc::clone(&second_src) as Arc<dyn ByteSource>, "t.mobi");
+        assert!(
+            second.is_err() || second_src.total_calls() >= 40,
+            "记录表变了 ⇒ 缓存必须失效并重新逐条探测（实际 {} 次读）",
+            second_src.total_calls()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// 2026-09-21（用户："mobi 还是慢"）：**完整打开**的逐条魔数探测必须并发取
     /// （瓶颈是 RTT：实测每次 136–182 ms 却只取 ~29 字节），而**封面入口**必须保持串行
     /// （探测到第一张就停，绝不能为了并发把 40 条都探一遍）。
     /// 页序/页数语义与串行版本一致 —— 由既有测试（跳非图片记录、按记录取页）共同锁定。
     #[test]
     fn full_open_probes_concurrently_while_cover_open_stays_serial() {
+        // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
+        let (_root, _guard) = use_temp_cache_root("full_open_probes_concurrently_while_cover_open_stays_serial");
         let delay = std::time::Duration::from_millis(3);
 
         let full_src = Arc::new(CountingSource::with_delay(synth_mobi(40, 512 * 1024), delay));
@@ -712,12 +940,14 @@ mod tests {
     /// 惰性取页只读那一条记录，内容与源一致。
     #[test]
     fn lazy_page_bytes_reads_only_that_record() {
+        // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
+        let (_root, _guard) = use_temp_cache_root("lazy_page_bytes_reads_only_that_record");
         let mut fixture = synth_mobi(2, 4096);
         let second = first_image_offset(&fixture) + 4096; // 第 2 条图片记录
         fixture[second + 8] = 0xAB; // 魔数之后（前 8 字节是 PNG 魔数，不能动）
         let src = Arc::new(CountingSource::new(fixture));
         let (lazy, _) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).expect("惰性路径");
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).expect("惰性路径");
         let (offset, len) = lazy.records[1];
         let mut buf = vec![0u8; len as usize];
         src.read_exact_at(offset, &mut buf).unwrap();
@@ -728,24 +958,28 @@ mod tests {
     /// 魔数不是图片的记录必须被跳过（与回退路径同一判定，保证页序一致）。
     #[test]
     fn lazy_open_skips_records_that_are_not_decodable_images() {
+        // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
+        let (_root, _guard) = use_temp_cache_root("lazy_open_skips_records_that_are_not_decodable_images");
         let mut fixture = synth_mobi(2, 512);
         let first = first_image_offset(&fixture);
         fixture[first..first + 8].fill(0); // 擦掉第一条的 PNG 魔数
         let src = Arc::new(CountingSource::new(fixture));
         let (lazy, _) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).expect("仍有一条可解码图片");
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).expect("仍有一条可解码图片");
         assert_eq!(lazy.records.len(), 1, "不可解码的那条必须被跳过");
     }
 
     /// 布局不符合预期（record 0 没有 MOBI 魔数）必须放弃惰性路径，交给回退。
     #[test]
     fn lazy_open_declines_when_layout_is_unexpected() {
+        // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
+        let (_root, _guard) = use_temp_cache_root("lazy_open_declines_when_layout_is_unexpected");
         let mut fixture = synth_mobi(1, 512);
         let table_len = PALMDB_HEADER_LEN as usize + 2 * 8;
         fixture[table_len + MOBI_HEADER_IN_RECORD as usize] = b'X'; // 破坏 "MOBI"
         let src = Arc::new(CountingSource::new(fixture));
         assert!(
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false).is_none(),
+            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).is_none(),
             "魔数不对时必须返回 None ⇒ 调用方整份回退"
         );
     }
@@ -755,6 +989,8 @@ mod tests {
     /// 只认后者会让真机上的书"弃权 ⇒ 退回整份读"（封面代价与整本大小成正比）。
     #[test]
     fn lazy_open_accepts_crate_style_header_position() {
+        // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
+        let (_root, _guard) = use_temp_cache_root("lazy_open_accepts_crate_style_header_position");
         // 手工搭一个"头在 80+8N"的布局：记录表的 record0 偏移故意指向别处。
         let record_count = 3usize;
         let table_len = PALMDB_HEADER_LEN as usize + record_count * 8;
@@ -782,7 +1018,7 @@ mod tests {
             data[at..at + 8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         }
         let src = Arc::new(CountingSource::new(data));
-        let (lazy, _) = open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t", false)
+        let (lazy, _) = open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false)
             .expect("crate 式布局必须被接受（否则真机上会退回整份读）");
         assert_eq!(lazy.records.len(), 2);
         assert_eq!(lazy.records[0].0, image_at as u64);

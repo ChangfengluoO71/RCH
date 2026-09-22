@@ -27,6 +27,10 @@ import 'package:app/store/webdav_session.dart';
 /// 预热填充它 ✓、浏览器直接命中它 ✓、连接失败时由调用方清除 ✓（自愈）。
 final Map<String, BigInt> _sessionCache = {};
 
+/// 记录一个已建立的会话（浏览器自己登录成功后写回，供之后进源直接命中）。
+void cacheRemoteSession(String sourceId, BigInt session) =>
+    _sessionCache[sourceId] = session;
+
 /// 清除某个书源的会话缓存（凭据变更、连接失败、断开时调用，避免复用失效会话）。
 void evictRemoteSession(String sourceId) => _sessionCache.remove(sourceId);
 

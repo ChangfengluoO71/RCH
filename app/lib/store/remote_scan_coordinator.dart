@@ -393,7 +393,10 @@ class RemoteScanCoordinator {
         failures.add('${source.type}:$errorClass');
         await appendScanDiag(
           'session_warmup_fail type=${source.type} '
-          'src=${_shortSourceId(source.id)} class=$errorClass',
+          'src=${_shortSourceId(source.id)} class=$errorClass '
+          // kind/msg_len 是**绝对安全**的两个字段：只有类型名与长度，
+          // 既不含消息内容，也不含 URL / 凭据 / provider 原文（见 logging-guidelines 红线）。
+          'kind=${error.runtimeType} msg_len=${error.toString().length}',
         );
         debugPrint('[RemoteScanCoordinator] session warm-up failed: $error');
         continue;

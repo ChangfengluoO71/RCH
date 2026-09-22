@@ -93,6 +93,7 @@ pub async fn eh_plan_book_live(
     work_title: String,
     creators_json: String,
     snapshot_json: String,
+    number: String,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let rules = rules_from_arg(rules_json)?;
@@ -101,7 +102,7 @@ pub async fn eh_plan_book_live(
         let snapshot: crate::eh_import::BookSnapshot = serde_json::from_str(&snapshot_json)
             .map_err(|e| format!("snapshot 解析失败：{e}"))?;
         let (decision, semantic, anchor_kind) =
-            eh::match_gallery_full(&rules, &work_title, &creators)?;
+            eh::match_gallery_full(&rules, &work_title, &creators, &number)?;
         let mut plan = crate::eh_import::plan_import(&snapshot, &semantic, &decision);
         // 命中依据必须如实：创作者兜底 ≠ 作品名命中（后者才允许自动写入）
         if anchor_kind == "creator" {

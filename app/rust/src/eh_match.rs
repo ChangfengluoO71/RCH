@@ -236,6 +236,101 @@ fn strip_markers(s: &str) -> String {
     cleaned.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string()
 }
 
+
+/// 数字加权：候选标题里**含有**本地卷/话号时加分（放宽策略——不匹配也不判死，
+/// 只是排在后面，避免"拼数字导致正确作品掉出阈值"）。
+pub const NUMBER_BOOST: f64 = 0.05;
+
+/// 数字是否"命中"：候选的数字串集合包含本地数字。
+fn number_hits(local_number: &str, candidate_norm: &str) -> bool {
+    let n = local_number.trim();
+    if n.is_empty() {
+        return false;
+    }
+    digit_runs(candidate_norm).contains(n)
+}
+
+/// 带卷/话号的判定：数字只用于**加分与排序**，仅当"唯一候选且数字明确冲突"时才判
+/// `Ambiguous`（安全兜底，不影响正常搜索匹配）。
+pub fn decide_with_number(
+    local_title: &str,
+    local_number: &str,
+    candidates: &[(String, String, String)],
+) -> MatchDecision {
+    let mut hits: Vec<MatchHit> = candidates
+        .iter()
+        .filter_map(|(gid, title, jpn)| {
+            let mut score = score_candidate(local_title, jpn, title);
+            let norm = normalize_title(if jpn.trim().is_empty() { title } else { jpn });
+            if number_hits(local_number, &norm) {
+                score = (score + NUMBER_BOOST).min(1.0);
+            }
+            (score >= MATCH_THRESHOLD).then(|| MatchHit {
+                gid: gid.clone(),
+                title: title.clone(),
+                title_jpn: jpn.clone(),
+                score,
+            })
+        })
+        .collect();
+    if hits.is_empty() {
+        return MatchDecision::Unmatched;
+    }
+    hits.sort_by(|x, y| y.score.partial_cmp(&x.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    // 数字命中者优先（已通过加分排前）；只有当**最高分候选数字明确冲突**且没有命中者时才需人工确认
+    let top_norm = normalize_title(&hits[0].title_jpn);
+    let any_number_hit = hits
+        .iter()
+        .any(|h| number_hits(local_number, &normalize_title(&h.title_jpn)));
+    // 注意：卷号是**单独传入**的，不与标题混在一起，所以这里用 local_number 与候选数字比较
+    //（用标题比较的话本地标题通常没有数字 → 冲突永不触发）。
+    if !local_number.trim().is_empty()
+        && !any_number_hit
+        && volume_conflict(&normalize_title(local_number), &top_norm)
+    {
+        return MatchDecision::Ambiguous(hits);
+    }
+
+    if hits.len() >= 2 {
+        let second = &hits[1];
+        let second_norm = normalize_title(&second.title_jpn);
+        if second_norm != top_norm && hits[0].score - second.score < TIE_MARGIN {
+            return MatchDecision::Ambiguous(hits);
+        }
+    }
+    let same_work: Vec<MatchHit> = hits
+        .iter()
+        .filter(|h| normalize_title(&h.title_jpn) == top_norm)
+        .cloned()
+        .collect();
+    if same_work.len() > 1 {
+        MatchDecision::Editions(same_work)
+    } else {
+        MatchDecision::Matched(hits.remove(0))
+    }
+}
+
+/// 带卷/话号的锚点：**先带数字搜**（便于命中对应卷/话），再退回纯作品名，最后创作者。
+pub fn search_anchors_with_number(
+    work_title: &str,
+    creators: &[String],
+    number: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let work = strip_markers(work_title);
+    let n = number.trim();
+    if !work.is_empty() && !n.is_empty() {
+        out.push(format!("{work} {n}"));
+    }
+    for a in search_anchors(work_title, creators) {
+        if !out.iter().any(|x| x == &a) {
+            out.push(a);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,4 +465,39 @@ mod tests {
         assert_eq!(decide("", &[]), MatchDecision::Unmatched);
         assert_eq!(decide("x", &[]), MatchDecision::Unmatched);
     }
+
+    #[test]
+    fn number_helps_ranking_but_does_not_hard_fail() {
+        // 放宽策略：数字只加分/排序，不把正确作品踢出阈值
+        let cands = vec![
+            hit("v1", "作品名 1 [中国翻訳]", ""),
+            hit("v2", "作品名 2 [中国翻訳]", ""),
+        ];
+        match decide_with_number("作品名", "2", &cands) {
+            MatchDecision::Matched(h) => assert_eq!(h.gid, "v2", "卷号命中者应排前"),
+            other => panic!("应命中卷 2，实得 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn anchors_put_number_variant_first() {
+        let a = search_anchors_with_number("作品名", &["作者".into()], "3");
+        assert_eq!(a[0], "作品名 3", "先带数字搜索以提升对应卷的召回");
+        assert!(a.contains(&"作品名".to_string()), "仍保留纯作品名兜底");
+        assert!(a.contains(&"作者".to_string()));
+        // 没数字时不产生多余锚点
+        let b = search_anchors_with_number("作品名", &[], "");
+        assert_eq!(b, vec!["作品名".to_string()]);
+    }
+
+    #[test]
+    fn conflicting_number_without_match_still_needs_review() {
+        // 唯一候选且卷号明确冲突 → 仍交人工确认（安全兜底）
+        let cands = vec![hit("v5", "孕ませ屋 5 [中国翻訳]", "")];
+        match decide_with_number("孕ませ屋", "2", &cands) {
+            MatchDecision::Ambiguous(_) => {}
+            other => panic!("卷号冲突应需人工确认，实得 {other:?}"),
+        }
+    }
+
 }

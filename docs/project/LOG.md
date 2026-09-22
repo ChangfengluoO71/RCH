@@ -4684,3 +4684,30 @@ E 站自动刮削目录；只对"作品名命中且唯一"自动写；命名空�
 1. **Dart 侧 `BookMeta` 增加 volume/chapter 并往返**（当前靠 SQL 空值不覆盖兜住，不会丢数据，但 Dart 读不到）。
 2. **导入侧真正用它**：把解析出的卷号用于 `volume_conflict` 保护（相似度仍只用 work_title，
    不把数字拼进匹配串），从而拦住"同系列不同卷"的错配。
+
+## 2026-09-22｜第130轮：卷/话落库打通到匹配（放宽策略）— Dart 往返 + 数字进搜索词
+
+**用户口径**：不必严格按"第几话"，**加个数字就行、放宽点方便搜索匹配**。
+
+**修改**
+- **Dart `BookMeta`** 增加 `volume` / `chapter` 字段（构造默认空、`toJson`/`fromJson` 往返、
+  `library_store._metaDto` 与 `book_repository` 的 `BookMetaDto` 构造同步）——
+  否则卷号到不了匹配层；即便漏了也有第 129 轮的 SQL"空值不覆盖"兜底，不会丢数据。
+- **匹配层放宽**（`eh_match.rs`）：
+  - `search_anchors_with_number()`：把 **"作品名 + 数字"作为首个搜索锚点**（提升对应卷/话的召回），
+    再退回纯作品名、创作者锚点。
+  - `decide_with_number()`：候选标题含该数字时 **+0.05 加分**（`NUMBER_BOOST`），
+    **不因数字不匹配就判死**（避免"拼数字导致正确作品掉出阈值"）；
+    仅当"没有任何候选命中该数字，且最高分候选数字明确冲突"时才判 `Ambiguous`（安全兜底）。
+  - 修正冲突判定：卷号是**单独传入**的，`volume_conflict` 必须与**传入卷号**比较
+    （用本地标题比较的话本地标题通常无数字 → 冲突永不触发；这是上一版的实际缺陷）。
+- **接线**：`match_gallery_full(.., number)` → `eh_plan_book_live(.., number)` → store
+  `planImportLive(number:)` → 详情页与「E 站自动刮削」批量都传
+  `chapter`（优先）或 `volume`。
+
+**验证**
+- `cargo test --lib eh_` → **40 passed, 1 ignored**（新增 3 项：数字命中者排前、锚点先带数字、
+  唯一候选数字冲突仍交人工确认）。
+- `flutter analyze` 全量 → **No issues found**；`flutter build windows --release` → exit 0；codegen 干净。
+- 过程中自查并修掉自己引入的两处接线错误：`number` 误加到 manifest 方法、`BookMetaDto` 构造漏字段。
+- **未验证**：真机"金牌得主/1.pdf ↔ E 站第 1 卷"的实际命中与卷号加分效果（需联网跑）。

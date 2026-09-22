@@ -276,6 +276,7 @@ class EhSubscriptionStore extends ChangeNotifier {
     required String workTitle,
     required List<String> creators,
     required Map<String, dynamic> snapshot,
+    String number = '',
   }) async {
     if (!rulesLoaded) await init();
     final raw = await eh_api.ehPlanBookLive(
@@ -283,6 +284,7 @@ class EhSubscriptionStore extends ChangeNotifier {
       workTitle: workTitle,
       creatorsJson: jsonEncode(creators),
       snapshotJson: jsonEncode(snapshot),
+      number: number,
     );
     return Map<String, dynamic>.from(jsonDecode(raw) as Map);
   }

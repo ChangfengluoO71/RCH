@@ -1088,6 +1088,8 @@ class LibraryStore extends ChangeNotifier {
 
   static BookMetaDto _metaDto(BookMeta m) => BookMetaDto(
     key: m.key,
+    volume: m.volume,
+    chapter: m.chapter,
     coverPage: m.coverPage,
     cropX: m.cropX,
     cropY: m.cropY,

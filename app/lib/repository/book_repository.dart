@@ -332,6 +332,8 @@ class BookRepository {
           author: m.author,
           genre: m.genre,
           series: m.series,
+          volume: m.volume,
+          chapter: m.chapter,
           title: m.title,
           chineseTitle: m.chineseTitle,
           summary: m.summary,

@@ -50,11 +50,13 @@ Future<String> ehPlanBookLive({
   required String workTitle,
   required String creatorsJson,
   required String snapshotJson,
+  required String number,
 }) => RustLib.instance.api.crateApiEhSubscriptionEhPlanBookLive(
   rulesJson: rulesJson,
   workTitle: workTitle,
   creatorsJson: creatorsJson,
   snapshotJson: snapshotJson,
+  number: number,
 );
 
 /// 影子模式：从已落盘的 manifest 规划"将要导入什么"（**不写库**）。

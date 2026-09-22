@@ -499,6 +499,7 @@ abstract class RustLibApi extends BaseApi {
     required String workTitle,
     required String creatorsJson,
     required String snapshotJson,
+    required String number,
   });
 
   Future<String> crateApiEhSubscriptionEhPlanImport({
@@ -4309,6 +4310,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String workTitle,
     required String creatorsJson,
     required String snapshotJson,
+    required String number,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -4318,6 +4320,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(workTitle, serializer);
           sse_encode_String(creatorsJson, serializer);
           sse_encode_String(snapshotJson, serializer);
+          sse_encode_String(number, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -4330,7 +4333,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiEhSubscriptionEhPlanBookLiveConstMeta,
-        argValues: [rulesJson, workTitle, creatorsJson, snapshotJson],
+        argValues: [rulesJson, workTitle, creatorsJson, snapshotJson, number],
         apiImpl: this,
       ),
     );
@@ -4339,7 +4342,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiEhSubscriptionEhPlanBookLiveConstMeta =>
       const TaskConstMeta(
         debugName: "eh_plan_book_live",
-        argNames: ["rulesJson", "workTitle", "creatorsJson", "snapshotJson"],
+        argNames: [
+          "rulesJson",
+          "workTitle",
+          "creatorsJson",
+          "snapshotJson",
+          "number",
+        ],
       );
 
   @override

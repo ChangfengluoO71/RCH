@@ -731,7 +731,7 @@ pub fn match_gallery(
     work_title: &str,
     creators: &[String],
 ) -> Result<crate::eh_match::MatchDecision, String> {
-    match_gallery_full(rules, work_title, creators).map(|(d, _, _)| d)
+    match_gallery_full(rules, work_title, creators, "").map(|(d, _, _)| d)
 }
 
 /// 与 [`match_gallery`] 相同，但**同时返回命中画廊的语义层**（标签/作者/系列/语言…）。
@@ -742,12 +742,15 @@ pub fn match_gallery_full(
     rules: &EhRules,
     work_title: &str,
     creators: &[String],
+    number: &str,
 ) -> Result<(crate::eh_match::MatchDecision, EhSemantic, String), String> {
     use crate::eh_match::{self, MatchDecision};
 
     let host = if rules.host.trim().is_empty() { DEFAULT_HOST } else { rules.host.trim() };
     let client = Client::new(host, rules.interval())?;
-    let anchors = match_gallery_anchors(work_title, creators);
+    // 放宽策略：先把"作品名 + 卷/话号"作为首个锚点（便于命中对应卷/话），
+    // 再退回纯作品名与创作者锚点。
+    let anchors = crate::eh_match::search_anchors_with_number(work_title, creators, number);
     if anchors.is_empty() {
         return Ok((MatchDecision::Unmatched, EhSemantic::default(), String::new()));
     }
@@ -795,7 +798,7 @@ pub fn match_gallery_full(
                 .map(|it| derive_semantic(it, true, &rules.out_dir))
                 .unwrap_or_default()
         };
-        match eh_match::decide(work_title, &candidates) {
+        match eh_match::decide_with_number(work_title, number, &candidates) {
             MatchDecision::Matched(h) => {
                 let sem = semantic_of(&h.gid);
                 return Ok((MatchDecision::Matched(h), sem, anchor_kind.to_string()));

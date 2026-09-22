@@ -137,6 +137,9 @@ class _EhAutoScrapePanelState extends State<EhAutoScrapePanel> {
           workTitle: row.title,
           creators: creators,
           snapshot: snapshot,
+          number: (meta?.chapter.trim().isNotEmpty ?? false)
+              ? meta!.chapter.trim()
+              : (meta?.volume.trim() ?? ''),
         );
         row.plan = plan;
         // 只对"作品名命中且唯一"自动写

@@ -518,6 +518,10 @@ class BookMeta {
   String author; // 作者
   String genre; // 类别
   String series; // 系列
+  /// 卷（M8 解析产物 `semantic.volume`，物化落库）。
+  String volume;
+  /// 话/章（M8 解析产物 `semantic.chapter`，物化落库）。
+  String chapter;
   String summary; // 简介
   String comment; // 感想
   String title; // 标题(默认原文件名)
@@ -535,6 +539,8 @@ class BookMeta {
     this.author = '',
     this.genre = '',
     this.series = '',
+    this.volume = '',
+    this.chapter = '',
     this.summary = '',
     this.comment = '',
     this.title = '',
@@ -561,6 +567,8 @@ class BookMeta {
     'author': author,
     'genre': genre,
     'series': series,
+    'volume': volume,
+    'chapter': chapter,
     'title': title,
     'chineseTitle': chineseTitle,
     'summary': summary,

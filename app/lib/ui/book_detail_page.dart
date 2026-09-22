@@ -408,6 +408,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
         workTitle: identity.title,
         creators: identity.creators,
         snapshot: snapshotWithIdentity,
+        // 卷/话号（物化落库；放宽策略：只帮搜索与排序，不做硬判）
+        number: _meta.chapter.trim().isNotEmpty ? _meta.chapter.trim() : _meta.volume.trim(),
       );
     } catch (e) {
       // 离线/失败时回退到落盘 manifest（可复现但覆盖窄）

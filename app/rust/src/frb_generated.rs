@@ -3778,6 +3778,7 @@ fn wire__crate__api__eh_subscription__eh_plan_book_live_impl(
             let api_work_title = <String>::sse_decode(&mut deserializer);
             let api_creators_json = <String>::sse_decode(&mut deserializer);
             let api_snapshot_json = <String>::sse_decode(&mut deserializer);
+            let api_number = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, String>(
@@ -3787,6 +3788,7 @@ fn wire__crate__api__eh_subscription__eh_plan_book_live_impl(
                             api_work_title,
                             api_creators_json,
                             api_snapshot_json,
+                            api_number,
                         )
                         .await?;
                         Ok(output_ok)

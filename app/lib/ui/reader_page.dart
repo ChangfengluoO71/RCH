@@ -376,11 +376,20 @@ class _ReaderPageState extends State<ReaderPage> {
       final src=widget.source;if(src!=null){await LibraryStore.instance.recordRead(source:src,path:widget.path,title:widget.title,page:n);}
       return;
     }
-    final n=(_page+d).clamp(0,b.pageCount-1);
+    // 用**视口序号**推进，而不是页号加减：
+    //   · 双页模式下 1 个视口 = 2 页，按页号 +2 可能落到"配对越界"的页
+    //     （实测：200 页的书出现 200-201/200 → 请求不存在的第 201 页 → 永远加载中）；
+    //   · 视口推进先做越界判断，越界即"翻过最后一页"，直接提示，不再请求坏页。
+    final curView = _viewOfPage(_page);
+    final targetView = curView + (d >= 0 ? 1 : -1);
+    if (targetView < 0 || targetView >= _viewCount()) {
+      // 已到视口边界：只有"继续前进"方向才提示（后退到头不是读完了）。
+      final advancing = _mode == ReadMode.manga ? -1 : 1;
+      if (d.sign == advancing) _maybePromptEnd();
+      return;
+    }
+    final n = _pageOfView(targetView);
     if(n==_page){
-      // 请求移动但被夹住 = 已经在该方向的边界。
-      // 只有"继续前进"方向才提示；"后退到头"不提示（那不是读完了）。
-      // 方向随模式镜像：漫画模式前进 = 页号减小（PageView 反向）。
       final advancing = _mode == ReadMode.manga ? -1 : 1;
       if (d.sign == advancing) _maybePromptEnd();
       return;

@@ -4045,3 +4045,24 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 
 **验证**：`flutter analyze`（全量）No issues found ✓；`flutter test` **204 通过 / 1 跳过 / 0 失败** ✓
 （其中包含"文档里的设置路径必须与 UI 一致"的校验 ✓）。
+
+
+---
+
+## 2026-09-22｜第113轮：② 进云端书源复用会话（消除重复登录）
+
+**继续优化用户反馈的"点进云端书源要加载一会儿"** ✓。静态分析定位到主因：
+
+- `SourceBrowserPage._connectSession` 每次进源都会调用 `webdavSessionFor(...)` 等**重新登录一次** ✗，
+  而一次登录 = PROPFIND(Depth:0) + Range 探测 + RTT 取样 —— 实测该 LAN 上 WebDAV **冷请求约 1.8s** ✗；
+- 而**启动预热**（`RemoteScanCoordinator.warmUpSessions`）其实已经建立过会话 ✓，却没有被复用 ✗✗。
+
+**改动**（`lib/store/remote_listing.dart` + `lib/ui/source_browser.dart`）：
+- 新增会话缓存：`cachedRemoteSession(id)` / `cacheRemoteSession(id, session)` / `evictRemoteSession(id)` ✓；
+  `remoteSessionFor` 命中缓存即返回（预热因此自动填充缓存 ✓）。
+- 浏览器 `_connectSession`：**先试缓存** ✓（命中则直接使用，不再登录 ✓）；
+  自己新建的会话**写回缓存** ✓；连接失败时**清缓存** ✓（自愈，下一次会重新登录 ✓）。
+
+**预期效果**：进入已预热/浏览过的云端书源 = **无登录开销** ✓（此前每次约 1.8s 起 ✗）。
+
+**验证**：`flutter analyze`（全量）No issues found ✓；`flutter test` **204 通过 / 1 跳过 / 0 失败** ✓。

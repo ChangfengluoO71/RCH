@@ -976,13 +976,29 @@ impl ScanCommitSink for SqliteScanSink {
         // **子树**判定：只要该目录的任意后代还有"大小未知"的文件，就允许继续下钻。
         // 为什么不能用 parent_id 只看直接子项：深层资产（如 /dav/comic/日漫/*.cbz）
         // 的父目录本身不含文件 ⇒ 只看一层就永远走不到它们 ✗，自愈会在第一层停住。
-        conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM library_index              WHERE source_id=?1 AND deleted=0 AND entry_type='file' AND size IS NULL                AND (path=?2 OR path LIKE ?2 || '/%'))",
-            params![source_id, path],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|value| value != 0)
-        .map_err(|_| RemoteScanError::Io("database_read_failed".into()))
+        let matched: i64 = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_index                  WHERE source_id=?1 AND deleted=0 AND entry_type='file' AND size IS NULL                    AND (path=?2 OR path LIKE ?2 || '/%'))",
+                params![source_id, path],
+                |row| row.get(0),
+            )
+            .map_err(|_| RemoteScanError::Io("database_read_failed".into()))?;
+        // 2026-09-22 临时探针：自愈在深层目录没有下钻，需要看清**输入是否与库中一致**
+        // （source_id 形态、path 前缀）。计数不带 source_id 过滤，用来区分
+        // 「没匹配上」与「本来就没有大小未知的文件」。定位完成后应删除本段。
+        let null_any: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM library_index WHERE deleted=0 AND entry_type='file'                  AND size IS NULL AND (path=?1 OR path LIKE ?1 || '/%')",
+                params![path],
+                |row| row.get(0),
+            )
+            .unwrap_or(-1);
+        if null_any > 0 || matched == 0 {
+            crate::remote_scan::diag::note(&format!(
+                "heal_probe source_id={source_id} path={path} matched={matched} null_any_source={null_any}"
+            ));
+        }
+        Ok(matched != 0)
     }
 
     #[flutter_rust_bridge::frb(ignore)]

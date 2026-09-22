@@ -3909,3 +3909,35 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 **下一步（待用户）**：在书源页点一次「刷新」⇒ 从 `scan_diag.log` 的 `cover_read_fail` 行即可判读：
 `http=404` 路径不一致 ✗／`http=401|5xx` 认证或服务端 ✗／`http=range-bad` Range 异常 ✗／
 `step=read-short` 服务器无视 Range ✗／`http=none` 则问题在解码/解析层 ✓。
+
+
+---
+
+## 2026-09-21｜第108轮：**修 WebDAV 登录失败（集合层 Range 探测被 405 拒绝）** —— "刷新没反应"的真因
+
+**现象**：用户在书源页点「刷新」后，46 个封面任务被正确重排为 `pending` ✓，但**再也没有动静** ✗
+（无 `cover_fail`、无 `cover_read_fail`、队列永远 pending）⇒ 用户体感"点了没反应"。
+
+**定位过程（本轮，全部有证据）**：
+1. 启动预热逐源埋点（`a6ef6cc`）⇒ 点名 **WebDAV 会话建立失败** ✗（夸克正常 ✓）。
+2. 补 `kind=`/`msg_len=`（`eb1401b`）⇒ `AnyhowException`（**Rust 侧**）+ `msg_len=65`。
+3. 服务器侧逐项排除：`PROPFIND` **7 种变体全 207** ✓、`Range bytes=0-0` **206** ✓、
+   `OPTIONS` 200 ✓、**260/260** 个失败路径可读 ✓、文件为合法 ZIP ✓。
+4. 写一次性本机诊断（`#[ignore]` 用例，读本地库、凭据只在内存 ✗不落盘）⇒ **一击命中**：
+   ```
+   new() 成功, root = /dav
+   check_and_probe 失败: HttpStatus { stage: "range_probe", status: 405 }
+   ```
+   ⇒ Range 探测用的是 **GET + `Range: bytes=0-0`** ✓，但它打在 **root（集合 `/dav`）** 上 ✗；
+   **Alist/OpenList 对集合的带 Range GET 返回 405** ✗ —— 我此前所有探测都打在**文件**上（206 ✓），
+   所以一直复现不出来 ✗。
+
+**修复**（`src/source/webdav.rs::check_and_probe`）：集合层探测返回 **405/501** 时视为
+"该状态码与文件是否支持 Range 无关" ⇒ **乐观假设支持 Range 并继续**（写一条安全诊断
+`webdav_range_probe_tolerated status=405 root_is_collection=true assumption=supported`）✓。
+理由：读路径对真正不支持 Range 的服务器本来就有**整包回退**（`download_full_file_to_raw`），
+所以乐观默认不会造成功能缺失，只影响性能取舍 ✓。新增纯函数
+`range_probe_status_is_tolerable(405|501)` + 单测 ✓。
+
+**验证**：`RUSTFLAGS="-D warnings" cargo check --all-targets` 干净 ✓；新单测通过 ✓；
+**对用户真实服务器的诊断复跑 ⇒ `check_and_probe 成功`** ✓✓（修复前后同一个用例：失败 → 成功 ✓）。

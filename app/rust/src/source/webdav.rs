@@ -253,15 +253,34 @@ impl WebDavClient {
     }
 
     /// 测试连接 + 自动探测服务器能力。
+    /// 集合层 Range 探测的"可以容忍"状态码（生产实现）。
+    ///
+    /// 为什么需要：探测对象是 root（集合）。返回 405/501 表示**该方法在集合上不被允许**，
+    /// 与"文件是否支持 Range"无关 ⇒ 不能因此判定登录失败（否则整个源没有会话）。
     pub fn check_and_probe(&mut self, root: &str) -> Result<()> {
         // 1. 基础连通性测试
         self.propfind(root, "0")?;
 
-        // 2. Range 支持探测
-        self.capability.range_supported = self
-            .range_probe_checked(root)
-            .map(|probe| probe.supported)
-            .map_err(|error| anyhow!(error.to_string()))?;
+        // 2. Range 支持探测。
+        //
+        // 2026-09-22（真机定位）：探测跑在**集合**（root，如 `/dav`）上，而 Alist/OpenList 这类服务
+        // 对**集合**的带 Range GET 返回 **405 Method Not Allowed** ✗ —— 这不代表文件不支持 Range，
+        // 却让整次登录失败 ⇒ 该源没有会话 ⇒ 封面队列永远停在 pending（用户视角："点刷新没反应"）。
+        // 处置：405/501 视为"集合层不支持探测"，**乐观假设支持 Range 并继续**；
+        // 读路径对真正不支持 Range 的服务器本来就有整包回退（`download_full_file_to_raw`），
+        // 所以乐观默认不会造成功能缺失，只影响性能取舍。
+        match self.range_probe_checked(root) {
+            Ok(probe) => self.capability.range_supported = probe.supported,
+            Err(RemoteScanError::HttpStatus { ref stage, status })
+                if stage == "range_probe" && range_probe_status_is_tolerable(status) =>
+            {
+                crate::remote_scan::diag::note(&format!(
+                    "webdav_range_probe_tolerated status={status} root_is_collection=true assumption=supported"
+                ));
+                self.capability.range_supported = true;
+            }
+            Err(error) => return Err(anyhow!(error.to_string())),
+        }
 
         // 3. RTT 探测(发 3 次 HEAD,取平均值)
         self.capability.avg_rtt_ms = self.probe_rtt(root)?;
@@ -1003,6 +1022,76 @@ mod tests {
             };
             assert_eq!(c.url("/RCH/sync"), "https://example.com/RCH/sync");
             assert_eq!(c.url("/dav/RCH/sync"), "https://example.com/dav/RCH/sync");
+        }
+    }
+}
+
+
+/// 一次性诊断（`#[ignore]`，不进 CI）：复现应用启动时的 WebDAV 会话建立，
+/// 打印**真实错误原文**。
+///
+/// 为什么要它：应用侧只落安全字段（type / class / kind / msg_len），
+/// 看不到 65 字符的具体文案 ✗。而在本机直接调用同一个 `WebDavClient::new` +
+/// `check_and_probe`，就能拿到原文 —— 数据不出本机，凭据只在内存里、绝不打印。
+///
+/// 用法：
+/// ```text
+/// cd app/rust
+/// cargo test --locked --lib webdav_session_probe -- --ignored --nocapture --test-threads=1
+/// ```
+/// 可用 `RCH_DB=<path>` 指定数据库（默认桌面端的 `D:/Documents/RCH/database.db`）。
+/// 集合层 Range 探测的容忍状态码：405/501 与"文件是否支持 Range"无关。
+fn range_probe_status_is_tolerable(status: u16) -> bool {
+    matches!(status, 405 | 501)
+}
+
+#[cfg(test)]
+mod webdav_session_probe {
+    #[test]
+    fn range_probe_tolerates_method_not_allowed_on_collections() {
+        assert!(super::range_probe_status_is_tolerable(405));
+        assert!(super::range_probe_status_is_tolerable(501));
+        assert!(!super::range_probe_status_is_tolerable(401));
+        assert!(!super::range_probe_status_is_tolerable(500));
+    }
+
+    #[test]
+    #[ignore = "本机诊断用：需要真实书源数据库与局域网可达的 WebDAV 服务"]
+    fn probe_real_webdav_session() {
+        let db = std::env::var("RCH_DB")
+            .unwrap_or_else(|_| "D:/Documents/RCH/database.db".to_string());
+        println!("db = {db}");
+        let conn = rusqlite::Connection::open_with_flags(
+            &db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .expect("打开数据库失败");
+        let (url, user, pass): (String, String, String) = conn
+            .query_row(
+                "SELECT COALESCE(url,''), COALESCE(username,''), COALESCE(password,'')                  FROM book_sources WHERE type='webdav' LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("没有 webdav 书源");
+        // 只打印 URL 与凭据长度：URL 是局域网地址，不是秘密；密码绝不打印。
+        println!("url = {url}");
+        println!("user = {user} / password = <{} chars>", pass.len());
+
+        let (mut client, root) = match super::WebDavClient::new(&url, &user, &pass) {
+            Ok(v) => v,
+            Err(e) => {
+                println!("new() 失败: {e:?}");
+                println!("new() 失败(显示): {e}");
+                return;
+            }
+        };
+        println!("new() 成功, root = {root}");
+        match client.check_and_probe(&root) {
+            Ok(()) => println!("check_and_probe 成功 —— 会话可正常建立(说明应用侧另有差异)"),
+            Err(e) => {
+                println!("check_and_probe 失败(debug): {e:?}");
+                println!("check_and_probe 失败(显示): {e}");
+            }
         }
     }
 }

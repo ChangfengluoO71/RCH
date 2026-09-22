@@ -4481,3 +4481,38 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 2. 写侧：用户确认后按计划写入（复用 `TagRepository.link` + `persistBookLinks`）。
 3. 标签 UI：详情页**按来源分色方框**、`源:e站` **单独置顶一列**、**点击隐藏**该书 E 站导入标签
    （复用 `TagRepository.removeBookTagsByPrefix`，按书作用域可回滚）。
+
+## 2026-09-22｜第124轮：E 站元数据导入 P4b（上半）— 标签来源分色方框 + 「源:e站」置顶行 + 点击隐藏
+
+**目标**：用户要的标签可视化部分——**按来源分色方框**、`源:e站` **单独置顶一列**、**点击隐藏**该书导入标签。
+
+**新增** `app/lib/store/tag_provenance.dart`
+- `TagSource`（`user` / `ehImport` / `scraper`）与 `tagSourceOf()`：按**既有前缀约定**判定
+  （E 站导入用中文前缀 `女性:`/`作者:`/`原作:`… + `源:e站`；刮削用 `resource:`/`sequence:` 等英文前缀，
+  与 `TagRepository.isVisibleInTagManager` 的清单保持一致；其余算自建）。
+- `tagDisplayName()` / `tagNamespaceLabel()`：显示时把前缀弱化显示、值加粗。
+- `tagSourceColor()`：**每个来源一个专属色**（自建=中性、E 站导入=暗红 `0xFF8E3B46`、刮削=tertiary），
+  一眼可分。
+- `TagBox`：分色方框组件（边框 + 淡底 + 可选删除按钮），替代原来的裸 `Chip`。
+
+**修改** `app/lib/ui/book_detail_page.dart`
+- 信息区与"标签"区两处渲染都换成 `TagBox`（分色方框）。
+- 新增 `_ehSourceRow()`：当该书含 E 站导入标签时，在标签区**最上方**渲染「`源:e站 N` + 眼睛图标」的
+  置顶行，附提示"点击隐藏该漫画的 E 站导入标签"。
+- 新增 `_hideEhImportedTags()`：二次确认后逐条 `unlink` 该书的前缀标签并持久化，提示已隐藏数量。
+  **不使用 `removeBookTagsByPrefix`**——它按 `bookKey` 前缀匹配（语义不同）；改用本页 `_removeTag`
+  同一条持久化路径（`tagsForBook` + `unlink` + `saveToDisk`），按书作用域、可回滚。
+
+**影响范围**
+- 纯 UI/读取层；不改表结构、不改同步协议、不写任何 E 站数据。
+- 未启用导入（P4b 下半未做）时，界面上只会看到自建/刮削标签的分色变化；
+  `源:e站` 行与隐藏动作需存在该类标签才会出现。
+
+**验证**
+- `flutter analyze`（含新文件与详情页）→ **No issues found**；`flutter build windows --release` → exit 0。
+- **未做**：真机逐个来源的分色外观核对（需书库里存在 E 站导入标签；可通过手动添加
+  `源:e站` / `女性:巨乳` 标签立即验证置顶行与隐藏动作）。
+
+**下一步（P4b 下半）**
+1. 读侧接线：组 `BookSnapshot` + 从 manifest 读 `semantic` → `plan_import` → 界面**预览**（不写库）。
+2. 写侧：确认后按计划写入标签与空白字段。

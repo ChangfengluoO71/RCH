@@ -1,4 +1,5 @@
 import 'package:app/repository/tag_repository.dart';
+import 'package:app/store/tag_provenance.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
@@ -256,6 +257,82 @@ class _BookDetailPageState extends State<BookDetailPage> {
           ),
         ],
       ),
+    );
+  }
+
+  /// 置顶的「源:e站」行：点击可隐藏**该漫画**的 E 站导入标签。
+  ///
+  /// 不用 `removeBookTagsByPrefix`（那个按 bookKey 前缀匹配，语义不同），
+  /// 改为逐条 `unlink` 该书的前缀标签——与本页 `_removeTag` 走同一条持久化路径。
+  Widget _ehSourceRow(List<String> tags) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = tagSourceColor(TagSource.ehImport, scheme);
+    final count = tags.where((t) => tagSourceOf(t) == TagSource.ehImport).length;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: _hideEhImportedTags,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: color),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.public, size: 13, color: color),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$kEhSourceTag  $count',
+                    style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.visibility_off_outlined, size: 13, color: color),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text('点击隐藏该漫画的 E 站导入标签', style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _hideEhImportedTags() async {
+    final targets = TagRepository.instance
+        .tagsForBook(_meta.key)
+        .where((t) => tagSourceOf(t) == TagSource.ehImport)
+        .toList();
+    if (targets.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('隐藏 E 站导入标签'),
+        content: Text(
+          '将移除本漫画的 ${targets.length} 个 E 站导入标签（含来源标记）。'
+          '自建标签与刮削标签不受影响。移除后可重新导入恢复。',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('隐藏')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    for (final t in targets) {
+      TagRepository.instance.unlink(_meta.key, t);
+    }
+    LibraryStore.instance.saveToDisk();
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已隐藏 ${targets.length} 个 E 站导入标签')),
     );
   }
 
@@ -599,17 +676,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
               _originalFilenameLine(originalFilename),
             if (identifiedTags.isNotEmpty) ...[
               const SizedBox(height: 4),
+              if (hasEhImportedTags(identifiedTags)) _ehSourceRow(identifiedTags.toList()),
               Wrap(
                 spacing: 6,
                 runSpacing: 4,
-                children: identifiedTags
-                    .map(
-                      (tag) => Chip(
-                        label: Text(tag),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    )
-                    .toList(),
+                children: identifiedTags.map((tag) => TagBox(name: tag)).toList(),
               ),
             ],
             const SizedBox(height: 12),
@@ -687,12 +758,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         spacing: 8,
                         runSpacing: 4,
                         children: bookTags
-                            .map(
-                              (t) => Chip(
-                                label: Text(t),
-                                onDeleted: () => _removeTag(t),
-                              ),
-                            )
+                            .map((t) => TagBox(name: t, onDeleted: () => _removeTag(t)))
                             .toList(),
                       ),
                   ],

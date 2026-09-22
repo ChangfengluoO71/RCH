@@ -77,6 +77,21 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Doing(进行中)
 
+### E 站元数据导入（刮削）— 用户 2026-09-22 确认，方案 B（零表结构变更）
+
+调研：`docs/research/eh-metadata-import-feasibility.md`（实测匹配 6/7、标签翻译 85~90%、锚点与阈值结论）
+
+- [x] 可行性调研 + 决策落档（§6.5：D1 命名空间前缀/源分色、D2 阈值 0.5、D3 补 author/series/summary 空白、D4 只从落盘 manifest 导入）
+- [ ] **P1** manifest 增补为"摄入格式"：字段对齐刮削 `proposal.semantic` 词汇
+      （`work_title` / `creators[]` / `source_series[]` / `resource_language` / `censorship` / `color_state` / `tags[]` / `tags_zh[]`），旧字段保留向后兼容
+- [ ] **P2** 内置离线翻译表（EhTagTranslation 862 条 → 资源文件；注意译名可能带 emoji/HTML，需清洗；映射键用 `命名空间:原始标签`）
+- [ ] **P3** 匹配引擎：作品名为主锚点（实测覆盖 100%）、创作者为辅锚点（覆盖 41%）；
+      字符二元组 Dice ≥ 0.5；多候选接近或同系列不同卷 → 判 Unmatched 不自动写入
+- [ ] **P4** 导入落地：写 `源:e站` + `女性:巨乳` 形式前缀标签；补齐 author/series/summary 的空白字段（不覆盖已有值）；
+      详情页按来源分色方框、`源:e站` 单独置顶一列、点击隐藏该书 E 站导入标签
+      （复用 `TagRepository.removeBookTagsByPrefix`，按书作用域可回滚）
+
+
 ### 使用反馈修复（2026-08-17 长风落反馈，任务 08-17-usage-feedback）
 - [x] 条漫模式滚动时页码实时跟随（AppBar 页码）
 - [x] 条漫模式底部页码/进度栏（‹ 页码/总数 ›）+ 翻页/跳转

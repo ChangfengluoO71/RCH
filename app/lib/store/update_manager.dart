@@ -79,6 +79,9 @@ class UpdateManager {
 
   UpdateInfo? info;
   String? _downloadedPath;
+
+  /// 最近一次下载的安装包路径（供界面显示"安装包保存位置"，避免用户自己去翻临时目录）。
+  String? get downloadPath => _downloadedPath;
   bool _initDone = false;
 
   /// 用户选择的镜像前缀（来自设置；可为自定义地址）。
@@ -377,7 +380,9 @@ class UpdateManager {
     try {
       if (Platform.isWindows) {
         final script =
-            "Start-Process -FilePath '$path' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-'";
+            // 2026-09-22（用户反馈）：改为**可见安装** —— 点更新后应进入安装界面，
+            // 而不是静默安装、也不是让用户自己去临时目录找安装包。
+            "Start-Process -FilePath '$path' -ArgumentList '/NORESTART'";
         await Process.start('powershell.exe', ['-NoProfile', '-Command', script]);
         // 用户取消 UAC 时应用不会退出：10 秒后回到可重试状态。
         unawaited(Future.delayed(const Duration(seconds: 10), () {

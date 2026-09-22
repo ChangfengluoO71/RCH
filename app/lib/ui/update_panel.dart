@@ -174,6 +174,33 @@ class _UpdatePanelState extends State<UpdatePanel> {
     ]);
   }
 
+
+  /// 点「下载并安装」：先打开**可见的**下载与安装界面（模态进度），
+  /// 下载完成后**自动**启动安装程序（Windows 打开安装向导；Android 打开系统安装界面）。
+  ///
+  /// 2026-09-22（用户反馈）：此前这里只调用 `download()` 静默后台下载 ⇒
+  /// 用户既看不到进度，下载完还得自己去临时目录找安装包 ✗。
+  Future<void> _downloadAndInstall(BuildContext context) async {
+    final m = UpdateManager.instance;
+    final dialog = showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _UpdateProgressDialog(),
+    );
+    try {
+      await m.download();
+      if (m.status.value == UpdateStatus.downloaded) {
+        // 自动进入安装：Windows 弹出安装向导（可见），Android 弹系统安装界面。
+        await m.install();
+      }
+    } finally {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).maybePop();
+      }
+      await dialog;
+    }
+  }
+
   Widget _buildStatusArea(BuildContext context, UpdateManager m, UpdateStatus status) {
     switch (status) {
       case UpdateStatus.checking:
@@ -206,9 +233,9 @@ class _UpdatePanelState extends State<UpdatePanel> {
               const SizedBox(height: 8),
               Row(children: [
                 FilledButton.icon(
-                  onPressed: () => m.download(),
+                  onPressed: () => _downloadAndInstall(context),
                   icon: const Icon(Icons.download, size: 18),
-                  label: const Text('下载更新'),
+                  label: const Text('下载并安装'),
                 ),
                 const SizedBox(width: 8),
                 TextButton(
@@ -304,9 +331,88 @@ Future<void> showUpdateDialog(BuildContext context) async {
             m.download();
           },
           icon: const Icon(Icons.download, size: 18),
-          label: const Text('下载更新'),
+          label: const Text('下载并安装'),
         ),
       ],
     ),
   );
+}
+
+
+/// 「下载并安装」的可见进度界面（2026-09-22 用户反馈新增）。
+///
+/// 设计要点：
+/// - **不再后台静默下载**：打开即显示版本、文件名、进度与安装包保存位置；
+/// - 下载完成 ⇒ 由 `_downloadAndInstall` 自动调用 `install()` 进入安装界面；
+/// - 失败 ⇒ 显示原因（可关闭后重试），而不是静默失败。
+class _UpdateProgressDialog extends StatelessWidget {
+  const _UpdateProgressDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final m = UpdateManager.instance;
+    return AlertDialog(
+      title: const Text('下载并安装更新'),
+      content: ValueListenableBuilder<UpdateStatus>(
+        valueListenable: m.status,
+        builder: (context, status, _) {
+          final info = m.info;
+          final failed = status == UpdateStatus.error;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (info != null) ...[
+                Text('版本 v${info.version}'),
+                const SizedBox(height: 4),
+                Text(info.asset.name, style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 12),
+              ],
+              if (status == UpdateStatus.downloading)
+                ValueListenableBuilder<double>(
+                  valueListenable: m.progress,
+                  builder: (context, p, _) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LinearProgressIndicator(value: p <= 0 ? null : p),
+                      const SizedBox(height: 6),
+                      Text('已下载 ${(p * 100).toStringAsFixed(0)}%'),
+                    ],
+                  ),
+                )
+              else if (status == UpdateStatus.installing)
+                const Text('下载完成，正在打开安装程序…（Windows 会关闭本应用）')
+              else if (failed)
+                Text(
+                  '下载失败：${m.error.value ?? '未知错误'}',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                )
+              else
+                const Text('准备中…'),
+              const SizedBox(height: 12),
+              Text(
+                '安装包保存位置：${m.downloadPath ?? '（尚未确定）'}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          );
+        },
+      ),
+      actions: [
+        ValueListenableBuilder<UpdateStatus>(
+          valueListenable: m.status,
+          builder: (context, status, _) {
+            final busy = status == UpdateStatus.downloading ||
+                status == UpdateStatus.installing;
+            return TextButton(
+              onPressed: busy
+                  ? null
+                  : () => Navigator.of(context, rootNavigator: true).maybePop(),
+              child: Text(status == UpdateStatus.error ? '关闭并重试' : '关闭'),
+            );
+          },
+        ),
+      ],
+    );
+  }
 }

@@ -3975,3 +3975,25 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 **遗留（未随本版解决，已建任务卡）**：WebDAV 的 `library_index.size` 仍未被扫描发布阶段写入 ✗
 （表现为状态行统计失败 231 ✗，而墙靠本地回退仍能显示封面 ✓）——
 见 `.trellis/tasks/09-22-webdav-cover-index-size/prd.md` 与 `docs/project/TODO.md` ✓。
+
+
+---
+
+## 2026-09-22｜第110轮：更新流程改为"可见的下载并安装"（用户反馈）
+
+**用户反馈**：点更新后应**转到安装包下载与安装界面**，而不是后台静默下载、让用户自己去临时目录找安装包 ✗。
+
+**改动**：
+- `lib/ui/update_panel.dart`
+  - 「下载更新」按钮改为「**下载并安装**」⇒ 调用新的 `_downloadAndInstall(context)`：
+    先打开**模态进度界面**（`_UpdateProgressDialog`：版本 / 文件名 / 下载进度条与百分比 / **安装包保存位置** ✓），
+    下载完成后**自动**调用 `install()` 进入安装；失败则显示原因并可关闭重试 ✓。
+  - 文件中另一处同按钮（另一入口）一并改为同一流程 ✓（避免"某个入口仍旧静默下载" ✗）。
+- `lib/store/update_manager.dart`
+  - Windows 安装由 `/VERYSILENT,/SUPPRESSMSGBOXES,/SP-` 改为 **可见安装**（仅 `/NORESTART`）⇒ 用户能看到安装向导 ✓；
+  - 新增公开 getter `downloadPath`（供界面显示安装包位置 ✓，此前只有私有 `_downloadedPath` ✗）。
+
+**验证**：`flutter analyze`（全量）No issues found ✓；`flutter test` **204 通过 / 1 跳过 / 0 失败** ✓。
+
+**说明**：v0.6.1 已于今日发布 ✓（本改动在该 tag 之后 ✓）⇒ 随**下一个版本**发布 ✓；
+本改动为纯 UI/流程 ✓，未触及 Rust 与门禁 ✓。

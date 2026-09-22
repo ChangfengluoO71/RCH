@@ -1698,12 +1698,19 @@ class _HomePageState extends State<HomePage> {
           _settingsCategory(
             title: '同步与备份',
             icon: Icons.sync_outlined,
-            children: [const SyncPanel(), const BackupPanel(), const UpdatePanel()],
+            children: [const SyncPanel(), const BackupPanel()],
           ),
           _settingsCategory(
             title: '外观与布局',
             icon: Icons.palette_outlined,
             children: [_theme(s), _tabletLayout(s)],
+          ),
+          // 2026-09-22（用户要求）：「关于与更新」独立成一栏 —— 它属于"版本与更新"，
+          // 与"同步与备份"不是一类；放在最后符合"关于"类入口的习惯。
+          _settingsCategory(
+            title: '关于与更新',
+            icon: Icons.system_update_alt_outlined,
+            children: [const UpdatePanel()],
           ),
           const SizedBox(height: 24),
         ],

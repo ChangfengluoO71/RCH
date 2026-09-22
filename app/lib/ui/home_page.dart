@@ -729,9 +729,18 @@ class _HomePageState extends State<HomePage> {
   /// 为什么从「已读记录」里挑而不是全库枚举：读过的书必然有可用书源与路径
   /// （远程源的浏览路径是内部 id，只有记录里才带得全），不需要重新枚举远端目录。
   Future<void> _randomPickFrom(List<ReadRecord> records) async {
-    final pool = records.where((r) => r.path.isNotEmpty).toList();
-    if (pool.isEmpty) return;
-    final pick = pool[Random().nextInt(pool.length)];
+    final all = records.where((r) => r.path.isNotEmpty).toList();
+    // 已读记录里可能残留已被删除/移动的文件；本地的先做存在性过滤，
+    // 否则会随机打开一个"文件不存在"的书（实测 os error 2）。
+    final pool = all.where((r) {
+      final s = _sourceForRecord(r);
+      if (s == null) return false;
+      if (s.needsSession) return true; // 远程源无法在本地判存，打开时再报错
+      return File(r.path).existsSync();
+    }).toList();
+    final candidates = pool.isNotEmpty ? pool : all;
+    if (candidates.isEmpty) return;
+    final pick = candidates[Random().nextInt(candidates.length)];
     final source = _sourceForRecord(pick);
     if (source == null) {
       if (!mounted) return;

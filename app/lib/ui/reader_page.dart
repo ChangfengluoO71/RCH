@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:app/src/rust/api/book.dart';
@@ -29,8 +30,9 @@ class ReaderPage extends StatefulWidget {
 }
 
 class _ReaderPageState extends State<ReaderPage> {
-  /// 尾页提示只在**首次**到达最后一屏时弹一次（双向翻页会重复触发 onPageChanged，
-  /// 靠这个标记避免反复弹窗）。
+  /// 到达最后一屏后**延迟 3 秒**再提示（不打断最后一页的显示）；
+  /// 离开末屏会取消计时并允许下次再提示。
+  Timer? _endTimer;
   bool _endPrompted = false;
   BookInfo? _book; int _page=0; String? _error;
   /// WebDAV 下载进度: 0.0~1.0, null=非 WebDAV 或已完成。
@@ -363,17 +365,13 @@ class _ReaderPageState extends State<ReaderPage> {
     if (_mode == ReadMode.webtoon) {
       // 条漫: 直接滚动到下一页/上一页(方向由 _forward/_back 已按 manga 翻转传入)。
       final n=(_page+d).clamp(0,b.pageCount-1);
-      if(n==_page){
-        // 条漫同样：请求滚动但已到边界，只有"继续前进"才提示。
-        final advancing = _mode == ReadMode.manga ? -1 : 1;
-        if (d.sign == advancing) _maybePromptEnd();
-        return;
-      }
+      if(n==_page)return;
       setState(()=>_page=n);
       _completion.observeStablePage(n);
       if (_webtoonCtrl.hasClients) _webtoonCtrl.animateTo(_webtoonOffsetTo(n),duration:const Duration(milliseconds:220),curve:Curves.easeOut);
       for(var i=n-3;i<=n+3;i++){_ensure(i);}
       final src=widget.source;if(src!=null){await LibraryStore.instance.recordRead(source:src,path:widget.path,title:widget.title,page:n);}
+      _scheduleEndPrompt();
       return;
     }
     // 用**视口序号**推进，而不是页号加减：
@@ -382,22 +380,14 @@ class _ReaderPageState extends State<ReaderPage> {
     //   · 视口推进先做越界判断，越界即"翻过最后一页"，直接提示，不再请求坏页。
     final curView = _viewOfPage(_page);
     final targetView = curView + (d >= 0 ? 1 : -1);
-    if (targetView < 0 || targetView >= _viewCount()) {
-      // 已到视口边界：只有"继续前进"方向才提示（后退到头不是读完了）。
-      final advancing = _mode == ReadMode.manga ? -1 : 1;
-      if (d.sign == advancing) _maybePromptEnd();
-      return;
-    }
+    if (targetView < 0 || targetView >= _viewCount()) return; // 视口边界：原地不动
     final n = _pageOfView(targetView);
-    if(n==_page){
-      final advancing = _mode == ReadMode.manga ? -1 : 1;
-      if (d.sign == advancing) _maybePromptEnd();
-      return;
-    }
+    if(n==_page)return;
     setState(()=>_page=n);
     _completion.observeStablePage(n);
     _photoCtrlOf(n).reset();_scaleStateCtrlOf(n).reset();_dualZoomCtrl.value=Matrix4.identity();
     _pageCtrl?.animateToPage(_viewOfPage(n),duration:const Duration(milliseconds:220),curve:Curves.easeOutCubic);
+    _scheduleEndPrompt();
     _disposeDistantPhotoCtrls(n);
     for(var i=n-2;i<=n+2;i++){_ensure(i);}
     final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:n);}}
@@ -430,6 +420,7 @@ class _ReaderPageState extends State<ReaderPage> {
     } else {
       _photoCtrlOf(n).reset();_scaleStateCtrlOf(n).reset();_dualZoomCtrl.value=Matrix4.identity();_pageCtrl?.jumpToPage(_viewOfPage(n));_disposeDistantPhotoCtrls(n);_ensure(n-2);_ensure(n-1);_ensure(n);_ensure(n+1);_ensure(n+2);
     }
+    _scheduleEndPrompt(); // 跳页到达末屏也要计时提示
   }Navigator.of(ctx).pop();}
 
   // ---- 键盘(可自定义的 5 个动作) ----
@@ -455,50 +446,86 @@ class _ReaderPageState extends State<ReaderPage> {
   /// 翻到最后一屏时提示"要不要再随机挑一本"。
   ///
   /// 只在首次到达时弹；选择"再随机一本"会关闭当前阅读器并打开另一本。
-  void _maybePromptEnd() {
-    if (_endPrompted) return;
-    if ((_book?.pageCount ?? 0) <= 0) return;
-    _endPrompted = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+  /// 到达最后一屏后**延迟 3 秒**再提示。
+  ///
+  /// 为什么不判断"翻过末页"：实测各模式（双页/条漫）下落点与方向判断难以覆盖，
+  /// 且末页配对容易越界导致不触发；改为"到达末屏即计时"最稳且不打断阅读。
+  void _scheduleEndPrompt() {
+    final total = _viewCount();
+    final b = _book;
+    if (b == null || total <= 0) return;
+    final atEnd = _viewOfPage(_page) >= total - 1;
+    if (!atEnd) {
+      // 离开末屏：取消计时并重置，下次再到末屏仍会提示
+      _endTimer?.cancel();
+      _endTimer = null;
+      _endPrompted = false;
+      return;
+    }
+    if (_endPrompted || _endTimer != null) return;
+    _endTimer = Timer(const Duration(seconds: 3), () {
+      _endTimer = null;
       if (!mounted) return;
-      final again = await showDialog<bool>(
-        context: context,
-        builder: (c) => AlertDialog(
-          title: const Text('已经读到最后一页'),
-          content: const Text('要不要再随机挑一本接着看？'),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('留在这里')),
-            FilledButton(
-              onPressed: () => Navigator.of(c).pop(true),
-              child: const Text('再随机一本'),
-            ),
-          ],
-        ),
-      );
-      if (again != true || !mounted) return;
-      final next = _pickAnother();
-      if (next == null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('漫画库里暂时没有别的可随机阅读的记录')),
-        );
-        return;
-      }
-      final nav = Navigator.of(context);
-      nav.pop(); // 先关掉当前阅读器
-      await openBook(nav.context, next.$1, next.$2.path, next.$2.title);
+      _endPrompted = true;
+      _showEndPrompt();
     });
+  }
+
+  Future<void> _showEndPrompt() async {
+    final again = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('已经读到最后一页'),
+        content: const Text('要不要再随机挑一本接着看？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('退出到漫画详情页'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('再随机一本'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (again != true) {
+      // 退出到漫画详情页：关闭阅读器
+      Navigator.of(context).pop();
+      return;
+    }
+    final next = _pickAnother();
+    if (next == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('漫画库里暂时没有别的可随机阅读的记录')),
+      );
+      return;
+    }
+    final nav = Navigator.of(context);
+    nav.pop();
+    await openBook(nav.context, next.$1, next.$2.path, next.$2.title);
   }
 
   /// 从已读记录里随机挑一本「与当前不同」的书（限定同源，保证路径可用）。
   (BookSource, ReadRecord)? _pickAnother() {
     final cur = widget.path;
-    final pool = LibraryStore.instance.recent
+    final all = LibraryStore.instance.recent
         .where((r) => r.path.isNotEmpty && r.path != cur)
         .toList();
-    if (pool.isEmpty) return null;
+    // 同上：跳过文件已被删除/移动的记录，避免换书后打开失败
+    final pool = all.where((r) {
+      for (final s in LibraryStore.instance.sources) {
+        if (s.id == r.sourceId || s.type == r.sourceType) {
+          return s.needsSession || File(r.path).existsSync();
+        }
+      }
+      return false;
+    }).toList();
+    final candidates = pool.isNotEmpty ? pool : all;
+    if (candidates.isEmpty) return null;
     for (var i = 0; i < 12; i++) {
-      final r = pool[Random().nextInt(pool.length)];
+      final r = candidates[Random().nextInt(candidates.length)];
       for (final s in LibraryStore.instance.sources) {
         if (s.id == r.sourceId || s.type == r.sourceType) return (s, r);
       }
@@ -506,7 +533,7 @@ class _ReaderPageState extends State<ReaderPage> {
     return null;
   }
 
-  @override void dispose(){
+  @override void dispose(){ _endTimer?.cancel();
     AiUpscaleManager.instance.removeListener(_onAiManager);
     AiUpscaleManager.instance.setReadingBook(null);
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -619,7 +646,7 @@ class _ReaderPageState extends State<ReaderPage> {
         for (var i = p - 2; i <= p + 2; i++) { _ensure(i); }
         final s = widget.source;
         if (s != null) { LibraryStore.instance.recordRead(source: s, path: widget.path, title: widget.title, page: p); }
-        _endPrompted = false; // 离开尾页后重新允许提示
+        _scheduleEndPrompt();
       },
       itemBuilder: (context, v) => _buildMangaOrComicPage(_pageOfView(v)),
     );
@@ -686,6 +713,7 @@ class _ReaderPageState extends State<ReaderPage> {
     if (p != _page && mounted) {
       setState(() => _page = p);
       _completion.observeStablePage(p);
+      _scheduleEndPrompt(); // 条漫：滚到最后一屏同样计时提示
     }
   }
 

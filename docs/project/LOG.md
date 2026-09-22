@@ -4360,3 +4360,34 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 ③ 主页「随机一本」可用；④ 到达末页延迟 3 秒提示可用（含"再随机一本 / 退出到漫画详情页"）。
 → 本批需求**关闭**。下一步按用户指示进入 **E 站元数据导入（刮削）** 施工，方案见
 `docs/research/eh-metadata-import-feasibility.md` §6.5（方案 B：命名空间前缀 + 源分色，零表结构变更）。
+
+## 2026-09-22｜第120轮：E 站元数据导入 P2 — 标签中文翻译层（内置基线 + 缺失按需更新）
+
+**目标**：为 E 站元数据导入（刮削）打底第一步：标签中文翻译。用户口径：**内置基线 + 遇到没有的尝试就更新**。
+
+**数据修正（重要）**
+- 调研阶段抓取的基线用**裸标签名**做键，跨命名空间撞键被吞：`male` 从 575 条掉到 86 条、`mixed` 23 → 5。
+- 本次按调研结论改为 **`命名空间:原始标签`** 为键重建，条目数 862 → **1369**
+  （female 613 / male 575 / language 87 / other 60 / mixed 23 / reclass 11），落盘
+  `app/rust/data/eh_tag_zh.json`（45944 B，UTF-8）。来源 EhTagTranslation（GNU FDL，允许二次分发）。
+
+**新增**
+- `app/rust/src/eh_tag_translation.rs`：
+  - `translate(ns, raw)`：查内置基线（`include_str!` 编译进二进制，**离线可用**）+ 运行时增量；
+    大小写与首尾空格不敏感。
+  - `clean()`：清洗上游译名的 HTML 与 emoji（实测 `kissing → 接吻💏`），全 emoji 时退回原文避免空标签。
+  - `parse_upstream_markdown()`：解析上游 `| 原始标签 | 中文名 | 描述 | 链接 |` 表格，
+    跳过表头/分隔行/`== 分类 ==` 行/无英文名的行。
+  - `update_namespace(ns, cache_dir)`：**按需只拉指定命名空间**，解析后并入增量并写
+    `eh_tag_zh_cache.json`；网络失败只返回错误、不影响已有基线。
+  - `translate_with_update(ns, raw, allow_network, cache_dir)`：先查基线/增量，缺失且允许联网时拉一次再查。
+- `data/eh_tag_zh.json`（内置基线）。
+
+**验证**
+- `cargo test --lib eh_tag_translation` → **6 passed**（基线条目数与命名空间键、大小写不敏感、
+  命名空间不互相覆盖、markdown 解析与清洗、未知命名空间拒绝）。
+- 联网链路实跑：`cargo test --lib eh_tag_translation -- --ignored --nocapture` → 通过；
+  拉取 female 成功、写出缓存、`female:lolicon → 萝莉`（本次新增 0 条属正常：基线已是上游全量快照）。
+- 该网络测试默认 `#[ignore]`，CI 不依赖网络。
+
+**下一步**：P1（manifest 增补为摄入格式，字段对齐刮削 `proposal.semantic`）→ P3（匹配引擎）→ P4（导入落地 + 标签前缀/分色/隐藏 UI）。

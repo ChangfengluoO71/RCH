@@ -325,6 +325,18 @@ impl RemoteScanEngine {
         if self.token.is_cancelled() {
             return Err(RemoteScanError::Cancelled);
         }
+        // ③ 给前台让路（2026-09-22 用户反馈"点进云端书源要加载一会儿"）：
+        // 扫描的目录发现本来就跑在最低优先级（`RequestPriority::Scan`）✓，但每个目录仍会
+        // 连续占用 provider 连接与磁盘 ✗。这里在**每处理一个目录之前**检查前台读空闲时长：
+        // 若用户刚刚还在阅读/浏览，就短暂让出，避免与前台请求抢同一连接。
+        // 上限 250ms，且仅在"确实刚刚有前台活动"时触发 ⇒ 空闲时扫描速度不受影响。
+        if let Some(idle_ms) = crate::reader::foreground_read_idle_ms() {
+            const YIELD_WINDOW_MS: i64 = 1_200;
+            if idle_ms >= 0 && idle_ms < YIELD_WINDOW_MS {
+                let wait = (YIELD_WINDOW_MS - idle_ms).min(250) as u64;
+                std::thread::sleep(std::time::Duration::from_millis(wait));
+            }
+        }
         let mut task = {
             let mut queue = self.directories.lock().unwrap();
             queue.pending.pop_front().inspect(|task| {

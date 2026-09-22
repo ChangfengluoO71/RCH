@@ -258,8 +258,10 @@ impl WebDavClient {
     /// 为什么需要：探测对象是 root（集合）。返回 405/501 表示**该方法在集合上不被允许**，
     /// 与"文件是否支持 Range"无关 ⇒ 不能因此判定登录失败（否则整个源没有会话）。
     pub fn check_and_probe(&mut self, root: &str) -> Result<()> {
-        // 1. 基础连通性测试
+        // 1. 基础连通性测试（顺便取样一次**真实成功往返**，供下面的 RTT 复用）
+        let probe_started = std::time::Instant::now();
         self.propfind(root, "0")?;
+        let propfind_ms = probe_started.elapsed().as_secs_f64() * 1000.0;
 
         // 2. Range 支持探测。
         //
@@ -282,8 +284,11 @@ impl WebDavClient {
             Err(error) => return Err(anyhow!(error.to_string())),
         }
 
-        // 3. RTT 探测(发 3 次 HEAD,取平均值)
-        self.capability.avg_rtt_ms = self.probe_rtt(root)?;
+        // 3. RTT：优先复用刚才那次成功往返（2026-09-22 优化）。
+        // 旧实现固定发 **3 次 HEAD** 取平均，并在失败时按 +500ms 计 ✗：
+        // 实测 Alist/OpenList 对 HEAD 返回 405（仍算一次完整往返 ✗），
+        // 于是每次建会话白白多花 2 次往返，且把 avg_rtt_ms 抬高、并发档位被压到最低 ✗。
+        self.capability.avg_rtt_ms = self.probe_rtt(root, propfind_ms);
 
         // 4. 并发建议:根据 RTT 分级
         self.capability.max_concurrency = if self.capability.avg_rtt_ms < 20.0 {
@@ -297,29 +302,30 @@ impl WebDavClient {
         Ok(())
     }
 
-    fn probe_rtt(&self, root: &str) -> Result<f64> {
-        let mut total_ms = 0.0;
-        let probes = 3;
-        for _ in 0..probes {
-            let start = std::time::Instant::now();
-            let result = self
-                .client
-                .head(self.url(root))
-                .basic_auth(&self.user, Some(&self.pass))
-                .send();
-            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            match result {
-                Ok(resp) => {
-                    let _ = resp.text();
-                    total_ms += elapsed;
-                }
-                Err(_) => {
-                    // HEAD 失败不算致命,计入 RTT 上限
-                    total_ms += 500.0;
+    /// 往返时间取样：**只试一次** HEAD；不支持（或出错）就直接复用调用方提供的
+    /// 成功往返时间（`fallback_ms`）。
+    ///
+    /// 2026-09-22：旧实现固定 3 次 HEAD + 失败按 500ms 计，在 Alist/OpenList 上
+    /// 每次建会话都多花 2 次往返，并把并发档位压到最低 ✗。
+    fn probe_rtt(&self, root: &str, fallback_ms: f64) -> f64 {
+        let started = std::time::Instant::now();
+        match self
+            .client
+            .head(self.url(root))
+            .basic_auth(&self.user, Some(&self.pass))
+            .send()
+        {
+            Ok(resp) => {
+                let _ = resp.text();
+                let ms = started.elapsed().as_secs_f64() * 1000.0;
+                if ms > 0.0 {
+                    ms
+                } else {
+                    fallback_ms
                 }
             }
+            Err(_) => fallback_ms,
         }
-        Ok(total_ms / probes as f64)
     }
 
     /// 测试连接(仅连通性,不做能力探测)。

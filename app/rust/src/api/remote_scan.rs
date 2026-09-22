@@ -983,21 +983,6 @@ impl ScanCommitSink for SqliteScanSink {
                 |row| row.get(0),
             )
             .map_err(|_| RemoteScanError::Io("database_read_failed".into()))?;
-        // 2026-09-22 临时探针：自愈在深层目录没有下钻，需要看清**输入是否与库中一致**
-        // （source_id 形态、path 前缀）。计数不带 source_id 过滤，用来区分
-        // 「没匹配上」与「本来就没有大小未知的文件」。定位完成后应删除本段。
-        let null_any: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM library_index WHERE deleted=0 AND entry_type='file'                  AND size IS NULL AND (path=?1 OR path LIKE ?1 || '/%')",
-                params![path],
-                |row| row.get(0),
-            )
-            .unwrap_or(-1);
-        if null_any > 0 || matched == 0 {
-            crate::remote_scan::diag::note(&format!(
-                "heal_probe source_id={source_id} path={path} matched={matched} null_any_source={null_any}"
-            ));
-        }
         Ok(matched != 0)
     }
 

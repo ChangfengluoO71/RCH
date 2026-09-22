@@ -8,6 +8,24 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## 0.6.1
+
+修复 WebDAV 书源封面链路（2026-09-22）：
+
+- **WebDAV 会话建立失败**：`check_and_probe` 的 Range 探测打在 root（集合）上，Alist/OpenList 对集合的
+  带 Range GET 返回 **405** ⇒ 登录被判失败 ⇒ 该源没有会话 ⇒ 封面任务永远停在 `pending`
+  （用户视角"点刷新没反应"）。现对集合层 **405/501** 容忍并乐观假设支持 Range
+  （读路径对不支持 Range 的服务本有整包回退）；新增 `range_probe_status_is_tolerable` + 单测。
+- **索引缺少文件大小**：`FolderSnapshotEntry` 未携带 size、列表映射丢弃 `DirEntry.size`、
+  `indexDirSnapshot` 写死 `size: null` ⇒ `library_index.size` 为空 ⇒ 封面判定 `cover_size_missing`
+  （真机 212 个失败）。三处均已修复，并补上快照 JSON 的 size 往返。
+- **后台自愈**：子目录（含后代）存在 `size IS NULL` 的文件时，扫描在既有 TTL 门控下自动重新列目录
+  （`has_unknown_sizes`，默认实现返回 false，既有 sink 行为不变）。
+- **诊断**：新增 `cover_read_fail`（步骤 + 安全 HTTP 类别 + reads/bytes/ms）、
+  `session_warmup_ok/fail`（类型 + 短 id + 安全类别 + 异常类型名与消息长度）；
+  新增 `#[ignore]` 本机诊断用例 `webdav_session_probe`（不进 CI）。
+- **CI**：Dart 侧首次接入门禁（`flutter-test` job）；文档「设置 → …」路径校验测试接入 analyze job。
+
 ## [0.6.0] — 2026-09-21
 
 > **版本规则破例说明**：本仓库自 0.3.0 起约定"每次发布仅递增补丁号"。本次是**有意破例**升

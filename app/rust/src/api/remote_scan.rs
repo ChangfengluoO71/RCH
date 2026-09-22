@@ -964,6 +964,25 @@ impl ScanCommitSink for SqliteScanSink {
     }
 
     #[flutter_rust_bridge::frb(ignore)]
+    fn has_unknown_sizes(
+        &self,
+        source_id: &str,
+        logical_path: &str,
+    ) -> Result<bool, RemoteScanError> {
+        let conn = db::get()
+            .lock()
+            .map_err(|_| RemoteScanError::Io("database_read_failed".into()))?;
+        let parent_id = db::library_index_id(source_id, &normalize_path(logical_path));
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_index              WHERE parent_id=?1 AND deleted=0 AND entry_type='file' AND size IS NULL)",
+            params![parent_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(|_| RemoteScanError::Io("database_read_failed".into()))
+    }
+
+    #[flutter_rust_bridge::frb(ignore)]
     fn stage_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError> {
         let conn = db::get().lock().unwrap();
         if !persistence::current_generation_is_active_with_epoch(

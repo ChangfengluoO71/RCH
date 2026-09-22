@@ -101,6 +101,21 @@ pub trait ScanCommitSink: Send + Sync {
     ) -> Result<bool, RemoteScanError> {
         Ok(true)
     }
+
+    /// 该目录下是否存在"大小未知"的文件条目（`library_index.size IS NULL`）。
+    ///
+    /// 2026-09-22（真机自愈）：旧版本索引把 size 写成 NULL（Dart 侧列表未带上 size），
+    /// 而增量扫描只比对指纹 —— **新旧两侧都没有 size ⇒ 指纹相同 ⇒ 永不重新列目录**
+    /// ⇒ 封面拿不到大小（`cover_size_missing`，实测 212 个）。这里给出一个自愈信号，
+    /// 调用方在**既有 TTL 门控**下把这类目录重新列一次，让远端真实 size 落库。
+    /// 默认 `false`：既有测试与假 sink 行为完全不变。
+    fn has_unknown_sizes(
+        &self,
+        _source_id: &str,
+        _logical_path: &str,
+    ) -> Result<bool, RemoteScanError> {
+        Ok(false)
+    }
     fn stage_directory(&self, directory: CommittedDirectory) -> Result<(), RemoteScanError>;
     fn enqueue_cover(&self, task: CoverTask) -> Result<(), RemoteScanError>;
     fn spill_directory(&self, _task: ScanDirectoryTask) -> Result<(), RemoteScanError> {
@@ -367,6 +382,11 @@ impl RemoteScanEngine {
                 } else {
                     self.sink
                         .should_recheck_directory(&task.source_id, &entry.logical_path)?
+                        // 自愈（2026-09-22）：子目录里存在"大小未知"的文件时也重新列一次。
+                        // 复用同一个 TTL 门控 ⇒ 即使远端本就不提供 size，也只按 TTL 重试，不会无限重列。
+                        || self
+                            .sink
+                            .has_unknown_sizes(&task.source_id, &entry.logical_path)?
                 }
             } else {
                 false

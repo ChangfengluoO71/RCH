@@ -3879,3 +3879,33 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 
 **仍未做（下一步）**：WebDAV 封面失败的**应用侧诊断埋点**（外部因素已全部排除，见第 105 轮后的探测：
 服务器契约 ✓、260/260 路径可达 ✓、文件为合法 ZIP ✓、URL 编码四种变体 ✓）。
+
+
+---
+
+## 2026-09-21｜第107轮：封面读取失败的应用侧诊断埋点（WebDAV 226 个 malformed 无法判读）
+
+**动因**：WebDAV 封面 277 个失败（`malformed` 227 / `notFound` 51）✗，但外部因素已被逐项排除 ——
+服务器的 `bytes=0-0` 探测**完全符合契约**（`206` + `bytes 0-0/<total>` ✓）、
+**260/260** 个去重失败路径重新探测全部 `206` ✓、文件是**合法 ZIP**（EOCD 距尾 22 字节 ✓）、
+四种 URL 编码变体全部可达 ✓、客户端会话级复用 ✓ ⇒ 失败在**应用侧** ✗，
+而 `safe_malformed_code` 会把白名单外的真因**折叠成 `malformed`** ✗ ⇒ 没有可判读信息 ✗。
+
+**改动**（`app/rust/src/api/remote_scan.rs`，只加诊断，不改任何失败判定与码 ✗）：
+1. 新增 `fn safe_http_class(message) -> &'static str`：把 provider 错误文案归类成
+   `404 / 401 / 403 / 429 / 5xx / range-bad / timeout / queue-full / none`，
+   **绝不回显 provider 原文、URL 或路径** ✗（脱敏规则见 `backend/logging-guidelines.md`）。
+2. `AdapterByteSource::read_at` 三处埋点（沿用已有 reads/bytes/ms 计数 ✓）：
+   - `step=permit`（Cover 许可队列满 ✗）；
+   - `step=read`（provider 读失败 ✗）—— **WebDAV 的 404/5xx/Range 异常会在这里现形** ✓；
+   - `step=read-short`（返回长度短于请求 ✗，例如服务器无视 Range ✓）。
+   形如：`cover_read_fail step=read http=404 offset=… len=… reads=… bytes=… ms=… asset=<safe_label>`。
+3. 单测 `safe_http_class_only_returns_safe_classes`：固定类别、不回显原文 ✓。
+
+**验证**：`RUSTFLAGS="-D warnings" cargo check --locked --all-targets` 干净 ✓；
+`safe_http_class_only_returns_safe_classes` 与 `adapter_byte_source_stops_at_the_read_budget` 均通过 ✓；
+全量 Rust 套件在提交后另跑确认 ✓。
+
+**下一步（待用户）**：在书源页点一次「刷新」⇒ 从 `scan_diag.log` 的 `cover_read_fail` 行即可判读：
+`http=404` 路径不一致 ✗／`http=401|5xx` 认证或服务端 ✗／`http=range-bad` Range 异常 ✗／
+`step=read-short` 服务器无视 Range ✗／`http=none` 则问题在解码/解析层 ✓。

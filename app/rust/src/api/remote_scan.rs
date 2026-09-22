@@ -1360,6 +1360,43 @@ const COVER_READ_BUDGET_MS: u128 = 30_000;
 /// parsing can therefore read the tail directory and the first page without
 /// downloading the whole book or retaining file-sized buffers.
 #[flutter_rust_bridge::frb(ignore)]
+/// 把 provider 的错误文案归类成**安全的 HTTP 类别**，只用于诊断日志。
+///
+/// 背景（2026-09-21）：WebDAV 封面出现 226 个 `malformed`，而该码是 `safe_malformed_code`
+/// 白名单外**安全折叠**后的结果 ⇒ 数据库与日志里都看不到真因，排查只能靠外部探测。
+/// 这里只提取**状态类别**，绝不落盘 provider 原文、URL 或路径细节（脱敏规则见
+/// `.trellis/spec/backend/logging-guidelines.md`）。
+fn safe_http_class(message: &str) -> &'static str {
+    let text = message.to_ascii_lowercase();
+    if text.contains("404") || text.contains("not found") || text.contains("不存在") {
+        return "404";
+    }
+    if text.contains("401") || text.contains("unauthor") {
+        return "401";
+    }
+    if text.contains("403") || text.contains("forbidden") || text.contains("denied") {
+        return "403";
+    }
+    if text.contains("429") {
+        return "429";
+    }
+    for code in ["500", "502", "503", "504"] {
+        if text.contains(code) {
+            return "5xx";
+        }
+    }
+    if text.contains("range") {
+        return "range-bad";
+    }
+    if text.contains("timeout") || text.contains("timed out") || text.contains("超时") {
+        return "timeout";
+    }
+    if text.contains("queue_full") {
+        return "queue-full";
+    }
+    "none"
+}
+
 struct AdapterByteSource {
     adapter: Arc<dyn crate::remote_scan::adapter::RemoteProviderAdapter>,
     path: String,
@@ -1468,11 +1505,36 @@ impl ByteSource for AdapterByteSource {
         let governor = blocking_request_governor();
         let _permit = governor
             .acquire(RequestPriority::Cover)
-            .map_err(|_| io::Error::other("cover_read_queue_full"))?;
+            .map_err(|_| {
+                // 队列满也是一类"封面抓不到"的原因，必须留下可判读的痕迹。
+                crate::remote_scan::diag::note(&format!(
+                    "cover_read_fail step=permit http=queue-full reads={calls} bytes={used} ms={elapsed_ms} asset={}",
+                    crate::remote_scan::diag::safe_asset_label(&self.path)
+                ));
+                io::Error::other("cover_read_queue_full")
+            })?;
         let bytes = self
             .adapter
             .read_range(&self.path, offset, requested as u64)
-            .map_err(|error| io::Error::other(error.to_string()))?;
+            .map_err(|error| {
+                // 2026-09-21：封面抓取失败此前只留一个折叠后的码（`malformed`），
+                // 无法区分"路径 404 / 认证 401 / 服务端 5xx / Range 不符合约定 / 超时"。
+                // 这里落一条**安全**诊断：状态类别 + 偏移长度 + 读计数与耗时，无 provider 原文。
+                let class = safe_http_class(&error.to_string());
+                crate::remote_scan::diag::note(&format!(
+                    "cover_read_fail step=read http={class} offset={offset} len={requested} reads={calls} bytes={used} ms={elapsed_ms} asset={}",
+                    crate::remote_scan::diag::safe_asset_label(&self.path)
+                ));
+                io::Error::other(error.to_string())
+            })?;
+        // 读成功但长度异常（服务器无视 Range 返回整包）也要留痕。
+        if bytes.len() != requested {
+            crate::remote_scan::diag::note(&format!(
+                "cover_read_fail step=read-short http=none offset={offset} want={requested} got={} reads={calls} bytes={used} ms={elapsed_ms} asset={}",
+                bytes.len(),
+                crate::remote_scan::diag::safe_asset_label(&self.path)
+            ));
+        }
         if bytes.len() > requested {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -3764,6 +3826,22 @@ mod tests {
 
     /// 第 60 轮实测回归：病态归档（尾部 233MB 的 EOCD 扫描）必须被**读取预算**挡住，
     /// 而不是拖着单线程 worker 把整条封面队列堵死。
+    #[test]
+    fn safe_http_class_only_returns_safe_classes() {
+        // 只返回固定类别，绝不回显 provider 原文。
+        assert_eq!(safe_http_class("服务器未按 Range 返回(HTTP 404)"), "404");
+        assert_eq!(safe_http_class("range 请求失败: connection refused"), "range-bad");
+        assert_eq!(safe_http_class("HTTP 503 Service Unavailable"), "5xx");
+        assert_eq!(safe_http_class("401 Unauthorized"), "401");
+        assert_eq!(safe_http_class("403 Forbidden"), "403");
+        assert_eq!(safe_http_class("请求超时 timeout"), "timeout");
+        assert_eq!(safe_http_class("cover_read_queue_full"), "queue-full");
+        assert_eq!(safe_http_class("某种未知错误"), "none");
+        for m in ["404", "5xx", "range-bad", "none", "timeout", "queue-full", "401", "403", "429"] {
+            assert!(safe_http_class(m).len() <= 10);
+        }
+    }
+
     #[test]
     fn adapter_byte_source_stops_at_the_read_budget() {
         use std::sync::atomic::{AtomicU64, Ordering};

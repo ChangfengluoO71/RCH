@@ -4448,3 +4448,36 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 - 真实样本回归内置在测试里：清楚ビッチな巫女先輩、ヒミツの睡眠学習、人生リサイクル 判 Matched；
   孕ませ屋2 vs 孕ませ屋4 判 Ambiguous；不相关候选判 Unmatched。
 - **未做**：真实联网的 `match_gallery` 端到端（需搜索+gdata 往返），本轮只做了离线回归。
+
+## 2026-09-22｜第123轮：E 站元数据导入 P4a — 导入规划器（影子模式，只算不写）
+
+**目标**：导入是唯一会**写入本地标签/元数据**的一步，因此先做**只读影子模式**：
+算出"将要写入什么"给人看，确认形状无误再打开实际写入。
+
+**新增** `app/rust/src/eh_import.rs`（纯函数，无 IO、无写入）
+- `plan_import(&BookSnapshot, &EhSemantic, &MatchDecision) -> ImportPlan`：
+  产出 `tags`（将新增标签）、`fields`（将填补的空白字段）、`skipped`（跳过项**及原因**）。
+- `namespace_prefix()`：命名空间 → 中文前缀映射
+  （female→女性、male→男性、mixed→混合、other→属性、reclass→重分类、language→语言、
+  artist→作者、group→社团、parody→原作、character→角色）。
+- `SOURCE_TAG = "源:e站"`：来源标记（界面上置顶那行、点击隐藏该书导入标签的锚点）。
+
+**落实的规则（用户确认的方案 B）**
+- **命名空间前缀 + 中文译名优先**：`女性:巨乳`；缺译名退回原始值（`属性:multi-work series`），
+  不产出空标签。
+- **只增不覆盖**：`author` / `series` 只填**空白**；已有值时记入 `skipped` 并写明原因
+  （"已有作者「…」，不覆盖"），满足可解释性要求。
+- **不许猜**：`Ambiguous` / `Unmatched` 一律**零写入项**，只给状态与原因。
+- **去重**：已有标签不重复添加；同一计划内同名标签只出现一次。
+- 纯函数 + 调用方传入现状快照，因此**可离线回归**，也便于将来在 UI 里先预览。
+
+**验证**
+- `cargo test --lib eh_import` → **7 passed**（前缀与中文优先、不覆盖已有元数据并给出原因、
+  只填空白、去重、Ambiguous/Unmatched 零写入、Editions 取最高分、前缀映射全覆盖）。
+
+**下一步（P4b，尚未开始）**
+1. 读侧接线：从 `TagRepository`/`LibraryStore` 组装 `BookSnapshot`，从 manifest 读 `semantic`，
+   调 `plan_import` → 在界面**预览**（仍不写库）。
+2. 写侧：用户确认后按计划写入（复用 `TagRepository.link` + `persistBookLinks`）。
+3. 标签 UI：详情页**按来源分色方框**、`源:e站` **单独置顶一列**、**点击隐藏**该书 E 站导入标签
+   （复用 `TagRepository.removeBookTagsByPrefix`，按书作用域可回滚）。

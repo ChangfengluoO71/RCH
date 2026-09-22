@@ -351,19 +351,7 @@ class _ReaderPageState extends State<ReaderPage> {
   // ---- 翻页 ----
   /// 前进一屏。**在已经到达阅读顺序末端时继续前进**才提示"要不要再随机一本"
   /// （而不是一翻到尾页就弹窗——那会在正常阅读到最后一页时打扰）。
-  void _forward() {
-    final s = _dual != DualPageMode.off ? 2 : 1;
-    final d = _mode == ReadMode.manga ? -s : s;
-    final b = _book;
-    if (b != null) {
-      final raw = _page + d;
-      if (raw < 0 || raw > b.pageCount - 1) {
-        _maybePromptEnd();
-        return;
-      }
-    }
-    _go(d);
-  }
+  void _forward() { final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?-s:s); }
   void _back(){ final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?s:-s); }
   /// 条漫模式按页滚动到目标页(用页高累计定位),返回该页在列表顶部的滚动偏移。
   double _webtoonOffsetTo(int page) {
@@ -375,7 +363,12 @@ class _ReaderPageState extends State<ReaderPage> {
     if (_mode == ReadMode.webtoon) {
       // 条漫: 直接滚动到下一页/上一页(方向由 _forward/_back 已按 manga 翻转传入)。
       final n=(_page+d).clamp(0,b.pageCount-1);
-      if(n==_page)return;
+      if(n==_page){
+        // 条漫同样：请求滚动但已到边界，只有"继续前进"才提示。
+        final advancing = _mode == ReadMode.manga ? -1 : 1;
+        if (d.sign == advancing) _maybePromptEnd();
+        return;
+      }
       setState(()=>_page=n);
       _completion.observeStablePage(n);
       if (_webtoonCtrl.hasClients) _webtoonCtrl.animateTo(_webtoonOffsetTo(n),duration:const Duration(milliseconds:220),curve:Curves.easeOut);
@@ -384,7 +377,14 @@ class _ReaderPageState extends State<ReaderPage> {
       return;
     }
     final n=(_page+d).clamp(0,b.pageCount-1);
-    if(n==_page)return;
+    if(n==_page){
+      // 请求移动但被夹住 = 已经在该方向的边界。
+      // 只有"继续前进"方向才提示；"后退到头"不提示（那不是读完了）。
+      // 方向随模式镜像：漫画模式前进 = 页号减小（PageView 反向）。
+      final advancing = _mode == ReadMode.manga ? -1 : 1;
+      if (d.sign == advancing) _maybePromptEnd();
+      return;
+    }
     setState(()=>_page=n);
     _completion.observeStablePage(n);
     _photoCtrlOf(n).reset();_scaleStateCtrlOf(n).reset();_dualZoomCtrl.value=Matrix4.identity();

@@ -1013,6 +1013,14 @@ impl ScanCommitSink for SqliteScanSink {
         )
         .map_err(|_| RemoteScanError::Io("source_proof_lookup_failed".into()))?
         {
+            // 2026-09-22 临时探针：WebDAV 的目录走到了列表却没有任何 preview 行 ✗，
+            // 疑点就是这道"代际/会话纪元仍活跃"的闸门把提交静默取消。只记 source/gen 与纪元长度。
+            crate::remote_scan::diag::note(&format!(
+                "stage_cancelled source={} gen={} epoch_len={}",
+                directory.source_id,
+                directory.generation,
+                directory.session_epoch.len()
+            ));
             return Err(RemoteScanError::Cancelled);
         }
         persistence::stage_complete_listing(
@@ -1026,7 +1034,13 @@ impl ScanCommitSink for SqliteScanSink {
             directory.incremental,
             &directory.session_epoch,
         )
-        .map_err(|_| RemoteScanError::Io("manifest_commit_failed".into()))?;
+        .map_err(|_| {
+            crate::remote_scan::diag::note(&format!(
+                "stage_failed step=stage_complete_listing source={} gen={}",
+                directory.source_id, directory.generation
+            ));
+            RemoteScanError::Io("manifest_commit_failed".into())
+        })?;
         // Publish a non-authoritative overlay immediately. The root browser
         // can therefore resolve asset identities and enqueue covers before
         // the recursive generation finishes, while deletion proof remains
@@ -1041,7 +1055,13 @@ impl ScanCommitSink for SqliteScanSink {
             &directory.fingerprint,
             directory.asset_kind,
         )
-        .map_err(|_| RemoteScanError::Io("preview_commit_failed".into()))?;
+        .map_err(|_| {
+            crate::remote_scan::diag::note(&format!(
+                "stage_failed step=preview_commit source={} gen={}",
+                directory.source_id, directory.generation
+            ));
+            RemoteScanError::Io("preview_commit_failed".into())
+        })?;
         let state = RemoteScanState {
             source_id: directory.source_id,
             status: RemoteScanStatus::Running,

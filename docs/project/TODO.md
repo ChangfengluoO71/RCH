@@ -394,3 +394,13 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
   待定项：`home_page` 1 处 + `book_detail_page` 2 处（疑似背景填充）、`source_browser` 7 处深色文字、
   `comic_cover.dart` 一处 const 子树内的 TODO
 - 夸克扫码链路（一次性 ticket 修复后）待用户实扫验证；手机端「保存到相册」已修成真 PNG 待复验
+
+## Backlog（2026-09-22 新增）
+
+- [ ] **WebDAV 封面：索引 `size` 无法落库（扫描发布阶段）** ✗
+  现状：海报墙**能显示封面** ✓（走本地/详情页回退），但状态行统计 **失败 231** ✗（`cover_size_missing` 212）。
+  已证实：服务器 Depth:1 带全量大小 ✓ → 应用解析 ✓ → provider 列表 257/257 带 size ✓ → 暂存 JSON 含 size ✓ →
+  自愈判定成立并会重列 ✓ → `stage_directory` 两道门无报错 ✓；但 `library_index.size` 仍为 NULL ✗、
+  `remote_scan_preview` 无 webdav 行 ✗。
+  任务卡：`.trellis/tasks/09-22-webdav-cover-index-size/prd.md`（含下一步与验证命令 ✓）
+  注意：定位完成后需删除临时探针 `heal_probe` / `list_dir_probe` / `stage_cancelled` / `stage_failed` ✓

@@ -267,6 +267,26 @@ class EhSubscriptionStore extends ChangeNotifier {
     return Map<String, dynamic>.from(jsonDecode(raw) as Map);
   }
 
+
+  /// **实时搜索**规划一本书的导入（影子模式，不写库）。
+  ///
+  /// 与 [planImport]（读 manifest、离线）不同：候选来自实时搜索 E 站，
+  /// 不受"manifest 只含订阅命中项"的限制——这是识别率的关键。
+  Future<Map<String, dynamic>?> planImportLive({
+    required String workTitle,
+    required List<String> creators,
+    required Map<String, dynamic> snapshot,
+  }) async {
+    if (!rulesLoaded) await init();
+    final raw = await eh_api.ehPlanBookLive(
+      rulesJson: _rulesJson,
+      workTitle: workTitle,
+      creatorsJson: jsonEncode(creators),
+      snapshotJson: jsonEncode(snapshot),
+    );
+    return Map<String, dynamic>.from(jsonDecode(raw) as Map);
+  }
+
   Future<void> refreshManifest() async {
     if (!hasOutDir) {
       manifest = const [];

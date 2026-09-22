@@ -731,13 +731,25 @@ pub fn match_gallery(
     work_title: &str,
     creators: &[String],
 ) -> Result<crate::eh_match::MatchDecision, String> {
+    match_gallery_full(rules, work_title, creators).map(|(d, _)| d)
+}
+
+/// 与 [`match_gallery`] 相同，但**同时返回命中画廊的语义层**（标签/作者/系列/语言…）。
+///
+/// 导入流程需要标签，而 `MatchHit` 只带标题与分数，所以这里把 gdata 原始条目一并带出，
+/// 用 [`derive_semantic`] 现场推导（含中文译名，缺失时按需联网更新）。
+pub fn match_gallery_full(
+    rules: &EhRules,
+    work_title: &str,
+    creators: &[String],
+) -> Result<(crate::eh_match::MatchDecision, EhSemantic), String> {
     use crate::eh_match::{self, MatchDecision};
 
     let host = if rules.host.trim().is_empty() { DEFAULT_HOST } else { rules.host.trim() };
     let client = Client::new(host, rules.interval())?;
     let anchors = match_gallery_anchors(work_title, creators);
     if anchors.is_empty() {
-        return Ok(MatchDecision::Unmatched);
+        return Ok((MatchDecision::Unmatched, EhSemantic::default()));
     }
 
     let mut pending_ambiguous: Option<MatchDecision> = None;
@@ -773,9 +785,22 @@ pub fn match_gallery(
                 )
             })
             .collect();
+        let semantic_of = |gid: &str| -> EhSemantic {
+            items
+                .iter()
+                .find(|it| it.get("gid").map(|g| g.to_string()).unwrap_or_default() == gid)
+                .map(|it| derive_semantic(it, true, &rules.out_dir))
+                .unwrap_or_default()
+        };
         match eh_match::decide(work_title, &candidates) {
-            MatchDecision::Matched(h) => return Ok(MatchDecision::Matched(h)),
-            MatchDecision::Editions(v) => return Ok(MatchDecision::Editions(v)),
+            MatchDecision::Matched(h) => {
+                let sem = semantic_of(&h.gid);
+                return Ok((MatchDecision::Matched(h), sem));
+            }
+            MatchDecision::Editions(v) => {
+                let sem = v.first().map(|h| semantic_of(&h.gid)).unwrap_or_default();
+                return Ok((MatchDecision::Editions(v), sem));
+            }
             MatchDecision::Ambiguous(v) => {
                 if pending_ambiguous.is_none() {
                     pending_ambiguous = Some(MatchDecision::Ambiguous(v));
@@ -784,7 +809,7 @@ pub fn match_gallery(
             MatchDecision::Unmatched => {}
         }
     }
-    Ok(pending_ambiguous.unwrap_or(MatchDecision::Unmatched))
+    Ok((pending_ambiguous.unwrap_or(MatchDecision::Unmatched), EhSemantic::default()))
 }
 
 /// 纯逻辑抽出，便于离线测试锚点顺序与去重。

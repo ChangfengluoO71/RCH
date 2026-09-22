@@ -39,6 +39,24 @@ Future<String> ehProbe({required String rulesJson}) =>
 Future<String> ehCollect({required String rulesJson}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhCollect(rulesJson: rulesJson);
 
+/// **实时搜索**规划一本书的导入（影子模式，不写库）。
+///
+/// 与 `eh_plan_import`（读 manifest、离线）不同：候选来自**实时搜索 E 站**
+/// （锚点依次尝试 → gdata → Dice 判定），因此不受"manifest 只含订阅命中项"的限制，
+/// 这是修复"大多数书识别不出来"的关键。
+/// 命中后会带回画廊语义层（标签/作者/系列/语言…），缺失译名时按需联网更新。
+Future<String> ehPlanBookLive({
+  required String rulesJson,
+  required String workTitle,
+  required String creatorsJson,
+  required String snapshotJson,
+}) => RustLib.instance.api.crateApiEhSubscriptionEhPlanBookLive(
+  rulesJson: rulesJson,
+  workTitle: workTitle,
+  creatorsJson: creatorsJson,
+  snapshotJson: snapshotJson,
+);
+
 /// 影子模式：从已落盘的 manifest 规划"将要导入什么"（**不写库**）。
 ///
 /// 候选直接取自 manifest 的语义层，因此**离线可复现**（不联网搜索）。

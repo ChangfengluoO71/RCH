@@ -1,3 +1,4 @@
+import 'package:app/src/rust/api/scraper.dart';
 import 'package:app/repository/tag_repository.dart';
 import 'package:app/store/eh_subscription_store.dart';
 import 'package:app/store/tag_provenance.dart';
@@ -17,6 +18,8 @@ import 'package:app/ui/common.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/cover_editor_page.dart';
 import 'package:app/ui/opener.dart';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -341,6 +344,41 @@ class _BookDetailPageState extends State<BookDetailPage> {
   ///
   /// 计划来自已落盘的 manifest（离线可复现）：展示将新增的标签、将填补的空白字段、
   /// 以及被跳过的项及原因；用户确认后才执行写入。
+  /// 匹配用的"作品身份"：优先 M8 刮削解析结果，回退到去扩展名的文件名。
+  ///
+  /// 为什么不能直接用 `_meta.title`：它的语义是"默认原文件名"（见 models.dart 注释），
+  /// 往往是 `10.mobi` / `4.pdf` 这类，拿去和 E 站标题算相似度恒为≈0。
+  Future<({String title, List<String> creators, String source})> _ehWorkIdentity() async {
+    try {
+      final proposals = await dbLoadScrapeProposals(limit: 100000, state: 'ready');
+      final mine = proposals.where((p) => p.bookKey == _meta.key).toList();
+      if (mine.isNotEmpty) {
+        final p = mine.first;
+        final sem = (jsonDecode(p.semanticJson) as Map?) ?? const {};
+        final workTitle = (sem['work_title'] as String?)?.trim() ?? '';
+        final creators = <String>[];
+        for (final c in (sem['creators'] as List?) ?? const []) {
+          final name = ((c as Map)['name'] as String?)?.trim() ?? '';
+          if (name.isNotEmpty && !creators.contains(name)) creators.add(name);
+        }
+        if (workTitle.isNotEmpty) {
+          return (title: workTitle, creators: creators, source: 'M8 解析');
+        }
+      }
+    } catch (_) {
+      // 解析结果不可用时静默回退
+    }
+    final raw = _meta.title.trim().isNotEmpty ? _meta.title.trim() : widget.title;
+    final dot = raw.lastIndexOf('.');
+    final base = dot > 0 ? raw.substring(0, dot) : raw;
+    final creators = _meta.author
+        .split(RegExp(r'[、,，/]'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    return (title: base, creators: creators, source: '文件名（未找到解析结果）');
+  }
+
   Future<void> _ehImportPreview() async {
     final store = EhSubscriptionStore.instance;
     if (!store.rulesLoaded) await store.init();
@@ -355,29 +393,48 @@ class _BookDetailPageState extends State<BookDetailPage> {
       'summary': _meta.summary,
       'tags': localTags,
     };
-    final creators = _meta.author
-        .split(RegExp(r'[、,，/]'))
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    final title = _meta.title.isNotEmpty ? _meta.title : widget.title;
+    // 匹配输入：优先用 M8 刮削**解析出的作品名**（`semantic.work_title`），
+    // 而不是 `_meta.title`（那是"默认原文件名"，如 `10.mobi`，相似度恒≈0 → 必然识别不出）。
+    final identity = await _ehWorkIdentity();
+    final snapshotWithIdentity = <String, dynamic>{
+      ...snapshot,
+      'work_title_source': identity.source,
+    };
 
     Map<String, dynamic>? plan;
+    // 先走**实时搜索**（候选为全站，不受 manifest 只含订阅命中项的限制）
     try {
-      plan = await store.planImport(workTitle: title, creators: creators, snapshot: snapshot);
+      plan = await store.planImportLive(
+        workTitle: identity.title,
+        creators: identity.creators,
+        snapshot: snapshotWithIdentity,
+      );
     } catch (e) {
-      _ehSnack('规划失败：$e', error: true);
-      return;
+      // 离线/失败时回退到落盘 manifest（可复现但覆盖窄）
+      try {
+        plan = await store.planImport(
+          workTitle: identity.title,
+          creators: identity.creators,
+          snapshot: snapshotWithIdentity,
+        );
+        _ehSnack('实时搜索不可用，已回退到本地 manifest（覆盖较窄）');
+      } catch (e2) {
+        _ehSnack('规划失败：$e / $e2', error: true);
+        return;
+      }
     }
     if (!mounted) return;
     if (plan == null) {
-      _ehSnack('无法规划：请先运行一次 EH 订阅扫描以生成 manifest');
+      _ehSnack('无法规划：请检查「设置 → EH 订阅」中的保存目录');
       return;
     }
-    await _showImportPlanDialog(plan);
+    await _showImportPlanDialog(plan, identity: identity);
   }
 
-  Future<void> _showImportPlanDialog(Map<String, dynamic> plan) async {
+  Future<void> _showImportPlanDialog(
+    Map<String, dynamic> plan, {
+    ({String title, List<String> creators, String source})? identity,
+  }) async {
     final status = plan['status'] as String? ?? 'unmatched';
     final tags = (plan['tags'] as List?) ?? const [];
     final fields = (plan['fields'] as List?) ?? const [];
@@ -401,6 +458,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(statusText, style: const TextStyle(fontWeight: FontWeight.w600)),
+                if (identity != null)
+                  Text('匹配输入（${identity.source}）：${identity.title}',
+                      style: Theme.of(context).textTheme.bodySmall),
                 if (plan['gid'] != null)
                   Text('gid: ${plan['gid']}   相似度: '
                       '${(plan['score'] as num?)?.toStringAsFixed(2) ?? '—'}'),

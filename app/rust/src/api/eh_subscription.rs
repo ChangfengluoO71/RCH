@@ -81,6 +81,33 @@ pub async fn eh_collect(rules_json: String) -> Result<String, String> {
 }
 
 
+
+/// **实时搜索**规划一本书的导入（影子模式，不写库）。
+///
+/// 与 `eh_plan_import`（读 manifest、离线）不同：候选来自**实时搜索 E 站**
+/// （锚点依次尝试 → gdata → Dice 判定），因此不受"manifest 只含订阅命中项"的限制，
+/// 这是修复"大多数书识别不出来"的关键。
+/// 命中后会带回画廊语义层（标签/作者/系列/语言…），缺失译名时按需联网更新。
+pub async fn eh_plan_book_live(
+    rules_json: String,
+    work_title: String,
+    creators_json: String,
+    snapshot_json: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let rules = rules_from_arg(rules_json)?;
+        let creators: Vec<String> =
+            serde_json::from_str(&creators_json).map_err(|e| format!("creators 解析失败：{e}"))?;
+        let snapshot: crate::eh_import::BookSnapshot = serde_json::from_str(&snapshot_json)
+            .map_err(|e| format!("snapshot 解析失败：{e}"))?;
+        let (decision, semantic) = eh::match_gallery_full(&rules, &work_title, &creators)?;
+        let plan = crate::eh_import::plan_import(&snapshot, &semantic, &decision);
+        serde_json::to_string(&plan).map_err(|e| format!("计划序列化失败：{e}"))
+    })
+    .await
+    .map_err(|e| format!("任务失败：{e}"))?
+}
+
 /// 影子模式：从已落盘的 manifest 规划"将要导入什么"（**不写库**）。
 ///
 /// 候选直接取自 manifest 的语义层，因此**离线可复现**（不联网搜索）。

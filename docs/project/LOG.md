@@ -4088,3 +4088,186 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 
 **流程**：bump `0.6.2+100602` ✓ → 提交 `release: v0.6.2 …` ✓ → 等 CI 全绿 ✓ → tag `v0.6.2` 并推送
 （触发 `release.yml` 出 Windows 安装包 + 3 个 ABI 的 APK ✓）→ 核对 Release 资产 ✓。
+
+## 2026-09-22｜第115轮：EH 订阅插件（可选）— 设置页面板 + 落盘到指定文件夹
+
+**日期**：2026-09-22
+**类型**：功能开发（插件边界，非主阅读链）
+
+**本轮目标**：把已实测的「EH 高分/中文/无修种子筛选」从一次性探针升级为 RCH 设置页内的
+可选面板，运行结果直接落盘到用户指定的固定文件夹（115 推送按用户决定搁置）。
+
+**修改内容**
+- 新增 `app/rust/src/eh_subscription.rs`：规则模型（`EhRules`/`AgeTier`）；搜索分页跟随脚本变量
+  `nexturl`；gdata 批量（POST JSON，`gidlist` ≤25/次）；种子页下载数解析；`title_jpn` 映射判定；
+  文件名安全化（含 HTML 实体解码）；manifest 读写。含 10 个单测。
+- 新增 `app/rust/src/api/eh_subscription.rs`：7 个 FRB 接口，阻塞 HTTP 一律 `spawn_blocking`。
+- 新增 `app/lib/store/eh_subscription_store.dart` 与 `app/lib/ui/eh_subscription_panel.dart`。
+- 生成绑定 `app/lib/src/rust/api/eh_subscription.dart`；`frb_generated.*` 按 codegen 更新。
+- `app/lib/ui/home_page.dart:1539` 把面板挂在设置页「智能刮削」之后。
+
+**修改原因**
+- 用户要求「能在 RCH 内部打开，且 UI 做好看」；先前交付仅有 CLI 探针。
+- 规则必须可编辑（用户明确要求自定义标签与下载次数），因此规则以 JSON 为单一事实来源，
+  面板只做可视化编辑，避免阈值硬编码。
+
+**影响范围**
+- 只新增文件 + 设置页挂载点；未改动书源、目录库、阅读器与同步链路。
+- 面板只写用户指定目录（`.torrent` + `manifest.json`），默认不自动运行。
+
+**验证**
+- `cargo test --lib eh_subscription` → 10 passed；`cargo build --release` → exit 0。
+- `flutter analyze` 新文件 → No issues found；全量 55 issues 全在既有文件，0 条涉及本次改动。
+- 面板渲染测试 `test/eh_subscription_panel_preview_test.dart` → 通过，并输出
+  `app/build/eh_panel_preview.png`（1280×1464，两次渲染字节一致 121308）；测试内用
+  `FontLoader` 加载中文字体，否则测试环境默认占位字体会把文字全渲染成方块。
+- **未做**：真机运行 RCH 的面板端到端点击验证（需在 Windows 上 `flutter run -d windows`）。
+
+**遗留**
+- SPEC §12 现为非目标「不做在线漫画站爬虫/聚合」；本插件按边界实现，**SPEC 增补待用户确认**。
+- 115 推送仍搁置（探针 `cloud115_offline_probe.rs` 就绪待凭据）。
+- 分档阈值（五年前 800）尚未充分校准，建议按实际运行分布回调。
+
+
+**❗归一说明（2026-09-22 分支归一时追加）**：本轮的设置页面板接线**已被暂时摘除**。
+原因：`flutter_rust_bridge_codegen 2.12.0` 与本项目已提交的绑定基线不一致——重新生成会导出
+`api/remote_scan.rs` 中的**私有**类型 `AdapterByteSource`（29 处），导致 Rust 编译失败；
+因此 `eh_collect/eh_probe` 等 8 个桥接函数无法安全生成，Dart 侧绑定缺失会运行时崩溃。
+现状：Rust 核心模块 `src/eh_subscription.rs`（含 10 个单测）与两个探针**在仓库内且编译通过**；
+桥接层 `api/eh_subscription.rs`、Dart store/panel/预览测试**已移至备份目录**
+（`D:/Temp/rch-eh-backup-20260922-160921/deferred-dart/`），待绑定问题解决后恢复接线。
+
+**实测：基线本身存在 flaky 测试（非本轮引入）**：在未被我触碰的 `D:/Projects/RCH-p1` worktree（=master 9cb87f0）
+跑 `cargo test --lib` 得 **17 个失败**；本工作区同样 **17 个失败**，但**失败用例集合不同**
+（基线独有 `cache::tests::delete_by_book_helpers_only_remove_matching` 等，本区独有
+`cache::tests::cache_root_defaults_to_appdata` 等）→ 判定为时机/全局状态相关的 flaky，
+与 EH 订阅改动无关。`eh_subscription` 模块测试 **10/10 通过，0 失败**。
+
+**验证口径**：`cargo build --release` exit 0；`flutter analyze` → **No issues found**（全量）。
+
+## 2026-09-22｜第116轮：SPEC 修订 — 新增第 10 节「可选插件：外部订阅源」（经用户确认）
+
+**日期**：2026-09-22
+**类型**：架构级文档修订（SPEC）
+
+**本轮目标**：EH 订阅插件已在第 45 轮落地为设置页内的可选面板，但 SPEC §12（现 §13）原非目标写明
+「不做在线漫画站爬虫/聚合」，需要把「主程序不做」与「可选插件按边界允许」在最高设计文档里说清楚。
+
+**修改内容**
+- SPEC 版本 v2.0 → **v2.1**（修订摘要同步）。
+- 新增 **第 10 节「可选插件：外部订阅源」**：定位（资源获取旁路，非阅读链路）+ **B1~B8 强制边界**
+  + 与既有原则（§2 第一原则、§9.1 刮削不读远程书源）的关系 + 4 条验收要求。
+- 原第 10~13 节顺延为第 11~14 节（格式矩阵/里程碑/非目标/变更约束），标题中「详见第 13 节」改为「第 14 节」。
+- 第 13 节非目标首条收窄为「**主程序**不做在线漫画站爬虫/聚合」，并指向第 10 节的插件边界。
+
+**修改原因**
+- 用户明确要求「在 RCH 内部能打开」该功能，与 SPEC 原非目标字面冲突；
+  按 CLAUDE.md「架构级修改必须先征求用户确认」，先取得确认再改 SPEC，并把它限制为**插件边界**而非放开主程序。
+- 插件边界同时被写进实现：只读元数据 + 只写用户所选目录 + 默认不运行（见第 45 轮与 `app/rust/src/eh_subscription.rs` 头部注释）。
+
+**影响范围**
+- 仅文档：`docs/project/SPEC.md`、本 LOG、LOG-INDEX。代码与行为未改。
+- 第 9 节 M8 智能刮削原则未变；§9.1「刮削不读远程书源」仍然成立（插件与刮削是两条独立通道）。
+
+**验证**
+- 章节编号连续（1~14）且交叉引用同步：`grep -nE "^## " SPEC.md` 已核对。
+- 非目标段与第 10 节互指，无自相矛盾表述。
+- UTF-8 校验通过。
+
+**遗留**
+- 115 推送仍搁置（探针待凭据）。
+- 插件面板的真机端到端点击验证仍待用户在 Windows 上执行。
+
+
+## 2026-09-22｜第117轮：调研 — manifest 与刮削/标签体系对接、E 站元数据导入可行性
+
+**日期**：2026-09-22
+**类型**：调研（未写代码，产出调研报告 + 决策点）
+
+**本轮目标**：回答三个问题：① manifest.json 能否与 RCH 刮削/标签体系字段对齐；② 未来能否依据本地刮削的
+书名与作者匹配 E 站同名画廊并导入其数据（尤其标签）；③ 非中文标签能否翻译成中文。
+
+**修改内容**
+- 新增 `docs/research/eh-metadata-import-feasibility.md`（282 行）：现有模型实读、E 站元数据形状、
+  匹配与翻译实测、manifest 推荐字段、决策点 D1~D4、分阶段 P0~P5、自检。
+- 未改动任何代码与 SPEC。
+
+**修改原因**
+- 用户提出"manifest 能否对接刮削与标签系统""未来能否按书名/作者导入 E 站数据（尤其标签）""标签翻译成中文"。
+
+**关键实测结论**
+- **产出结构纠偏**：v3 语义字段不在提案顶层，而在 `proposal.semantic` 子对象（51 个键）；
+  顶层是兼容投影（title/authors/chapter/provider）。
+- **真实语料覆盖度**（389 条 dry-run proposal）：`semantic.work_title` 非空 **389/389（100%）**，
+  `semantic.creators` 非空 **158/389（41%）** → 外部匹配应**以作品名为主锚点**，作者名作辅助。
+- **匹配实测**（7 个真实本地样本）：作品名/作者裸词锚点 + 字符二元组 Dice 打分，
+  单轮锚点 5/7，加"换锚点重搜"后 **6/7**；失败 1 条为极冷门作品。
+- **反例**：`artist:` 命名空间搜索实测不可用（朝凪/Fatalpulse/GSUS 全部 0 条），裸词可用——
+  与既有发现一致（`rating>=4`/`torrents=1`/`high resolution$` 同样不可用）。
+- **翻译实测**：EhTagTranslation 六命名空间共 **862 条**映射；单画廊可译 27/30（90%），
+  6 画廊 80/94（85%）；未命中**全部**落在 `artist/group/parody/character`（专有名词，本不需翻译）。
+- **结构风险**：`tags` 表是扁平表（`id/name`，无 namespace/source），直接导入每条 27~33 个标签会
+  淹没用户自建标签，且无法区分来源。
+
+**影响范围**
+- 仅新增调研文档；无代码、无 SPEC、无 DB 变更。
+
+**遗留（待用户决策）**
+- D1 标签导入形状：A 原样 / B 命名空间前缀（推荐）/ C 扩表（需 SPEC+ADR 与迁移）。
+- D2 匹配阈值（建议 0.5 起步，同系列不同卷必须人工确认）。
+- D3 导入范围（只标签或连 author/series/summary 补空白）。
+- D4 是否只从落盘 manifest 导入（离线可复现）。
+- 未测：`Partial/Ambiguous/Unmatched` 在完整语料中的真实占比（既有 dry-run 全部为 `ready`）。
+
+
+## 2026-09-22｜第118轮：EH 订阅可配置性增强（页数上限/主站/连通性预检）+ 标签导入方案定稿
+
+**日期**：2026-09-22
+**类型**：功能开发 + 方案定稿
+
+**本轮目标**：① EH 订阅页数能否进一步放大甚至自定义；② 国内能否直连、有无镜像；③ 标签导入形状确认后落地。
+
+**修改内容**
+- `app/rust/src/eh_subscription.rs`：
+  - `EhRules` 新增 `host`（主站域名可配，默认 `e-hentai.org`）；新增 `MAX_PAGES = 500` 安全上限，
+    `pages` 不再有人为的小上限。
+  - 新增 `probe_connectivity()` 与 `EhProbe`：**主站与 `ehtracker.org` 分别探测**，
+    把"哪一段不通"讲清楚（国内主站常需代理），不抛错、由调用方决定是否继续。
+- `app/rust/src/api/eh_subscription.rs`：新增 `eh_probe` 桥接（spawn_blocking）。
+- `app/lib/store/eh_subscription_store.dart`：新增 `EhProbe` 模型、`host` getter、`runProbe()`。
+- `app/lib/ui/eh_subscription_panel.dart`：
+  - 页数控件改为「1/2/5/25/100 快捷档 + 自定义输入框（1~500）」；
+  - 新增「主站域名」输入 + 「检查」按钮 + 连通性结果块（含不可达时的代理/镜像提示）。
+- `app/test/eh_subscription_panel_preview_test.dart`：预置规则补 `host`；预览图重新生成并人工复核。
+- `docs/research/eh-metadata-import-feasibility.md`：新增 §6.5，记录用户确认的四项决策与接入点。
+- FRB codegen 重新生成绑定（新增 `eh_probe`）。
+
+**修改原因**
+- 用户要求页数"进一步放大甚至自定义"；并要求回答国内直连问题。
+- **国内直连问题无法在本机实测**：本机 DNS 返回 `198.18.x.x`（保留段），证明走本地透明代理/分流，
+  所有测量都经过用户自己的代理，因此**没有**给出"能否直连"的结论，改为提供可配主站 + 连通性预检 +
+  代理/镜像提示，把判断权交给用户真实网络环境。
+- 标签导入形状用户已确认（命名空间前缀 + 源分色 + `源:e站` 置顶可隐藏 + 补齐 author/series/summary 空白 + 阈值 0.5）。
+
+**关键设计结论（零表结构变更）**
+- 项目**已在用前缀命名约定**（`TagRepository.isVisibleInTagManager` 识别 `resource:`/`sequence:`/
+  `publication:`/`release:`/`release-group:` 等），因此：
+  - `源:e站` + `女性:巨乳` 这类前缀即可表达来源与命名空间；
+  - "隐藏该漫画的 E 站导入标签"可直接复用现成的
+    `TagRepository.removeBookTagsByPrefix(bookKey, prefix)`（按书作用域、可回滚）。
+  - → 原报告 §6.2 的 C 方案（给 `tags` 扩 `namespace/source` 列 + 同步协议变更）**暂不需要**。
+
+**影响范围**
+- EH 订阅插件：规则新增 `host` 字段（旧规则文件缺该键时取默认值，向后兼容）。
+- 未改动标签系统代码；标签导入引擎尚未实现。
+
+**验证**
+- `cargo build --release` → exit 0；`cargo test --lib eh_subscription` → 10 passed。
+- `flutter analyze` 两个新文件 → No issues found。
+- 面板预览测试通过，产出 `app/build/eh_panel_preview.png`（132,248 字节）并人工复核：
+  页数快捷档 + 自定义框、主站域名 + 检查按钮均按预期渲染。
+
+**遗留**
+- 标签前缀/分色/隐藏、以及元数据导入引擎（匹配 + 翻译 + 补空白）**尚未实现**（设计见报告 §6.5）。
+- 115 推送仍搁置。
+- 匹配准确率仅在 7 个样本上验证过，阈值 0.5 未在完整语料校准。

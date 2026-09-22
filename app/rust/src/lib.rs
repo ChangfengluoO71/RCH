@@ -5,6 +5,7 @@ pub mod catalog_context;
 pub mod db;
 pub mod decode;
 pub mod document;
+pub mod eh_subscription;
 pub mod downloader;
 mod frb_generated;
 pub mod perf;

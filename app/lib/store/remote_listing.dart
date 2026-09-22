@@ -47,7 +47,13 @@ Future<List<FolderSnapshotEntry>> listRemoteDirFor(
   if (list == null) return const [];
   return list
       .map(
-        (e) => FolderSnapshotEntry(name: e.name, path: e.path, isDir: e.isDir),
+        (e) => FolderSnapshotEntry(
+          name: e.name,
+          path: e.path,
+          isDir: e.isDir,
+          // 2026-09-22：此前丢掉 size ✗ ⇒ 索引写 null ⇒ cover_size_missing。现按远端列表原样带上。
+          size: e.size.toInt(),
+        ),
       )
       .toList();
 }

@@ -1,3 +1,5 @@
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    show PlatformInt64Util;
 // Library Index 生成服务（ADR-020/021）。
 //
 // 职责：把书源的物理资产（本地目录树 / 云端目录树）扫描成 library_index
@@ -113,7 +115,9 @@ class LibraryIndexService {
                 path: e.path,
                 entryType: e.isDir ? 'dir' : 'file',
                 name: e.name,
-                size: null,
+                // 2026-09-22：此前写死 null ✗ ⇒ 封面管线拿不到大小（cover_size_missing）。
+                // 远端列表（WebDAV getcontentlength 等）本来就给了 size，这里必须落库。
+                size: e.size == null ? null : PlatformInt64Util.from(e.size!),
                 modifiedAt: null,
                 // ADR-029：显式父目录 = 浏览时的当前目录（扁平路径源关键）
                 parentPath: path,

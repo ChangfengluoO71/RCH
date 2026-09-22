@@ -11,16 +11,24 @@ class FolderSnapshotEntry {
   final String path;
   final bool isDir;
 
+  /// 目录项的字节大小（远程列表已提供）。
+  ///
+  /// 2026-09-22：此前这里没有 size ⇒ 下游 `indexDirSnapshot` 只能写 `size: null`
+  /// ⇒ `library_index.size` 为空 ⇒ 封面管线判定 `cover_size_missing`（真机 212 个失败 ✗）。
+  final int? size;
+
   const FolderSnapshotEntry({
     required this.name,
     required this.path,
     required this.isDir,
+    this.size,
   });
 
   Map<String, dynamic> toJson() => {
         'name': name,
         'path': path,
         'isDir': isDir,
+        if (size != null) 'size': size,
       };
 
   factory FolderSnapshotEntry.fromJson(Map<String, dynamic> j) =>
@@ -28,6 +36,7 @@ class FolderSnapshotEntry {
         name: j['name'] as String? ?? '',
         path: j['path'] as String? ?? '',
         isDir: j['isDir'] as bool? ?? false,
+        size: (j['size'] as num?)?.toInt(),
       );
 }
 

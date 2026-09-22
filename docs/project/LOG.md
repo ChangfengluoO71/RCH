@@ -3852,3 +3852,30 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 5. **写进规范**：`.trellis/spec/frontend/component-guidelines.md` 新增「文档中的 UI 路径必须可校验」一节
    （含"分组归属不确定时只写可见标签，不编造层级路径"的原则与本次教训）；
    `.trellis/spec/guides/handover-and-knowledge-base.md` 的门禁命令补上这一条。
+
+
+---
+
+## 2026-09-21｜第106轮：修 2 个失败 Dart 测试 + 把 flutter test 接进 CI（Dart 侧首次有门禁）
+
+**背景**：全量 `flutter test` 此前**从未在 CI 跑过**（CI 只有 `flutter analyze` + Rust 测试 + 构建 ✗）。
+首跑结果 **203 通过 / 2 失败**（约 12 秒）。
+
+**修复**：
+1. `test/add_source_dialog_test.dart`：断言过期 ✗ —— 仍期待 `Cookie(pan.quark.cn 登录后 F12 复制)`，
+   而 v0.6.0 的对话框已是「**扫码获取 Cookie（无需 F12）**」（`home_page.dart:1149` ✓）⇒ 断言对齐 ✓。
+2. `test/folder_snapshot_store_test.dart`：`setUpAll(() async => RustLib.init())` 需要**已编译的 rust_lib_app**，
+   未构建时以 error 126（动态库不可执行）让整个套件变红 ✗ ⇒ 改为**能力探测**：
+   可用则照常真跑；不可用则 `markTestSkipped('rust_lib_app 未构建…')` 并**显式 return** ✓
+   （第一版只 `markTestSkipped` 没有 `return`，用例体继续跑到失败 ✗；第二版正则又把守卫插进了
+   `addTearDown` 回调里 ✗ —— 两处都是当场校验输出时发现并修正 ✓）。
+
+**结果**：全量 `flutter test` ⇒ **204 通过 / 1 跳过 / 0 失败**（`All tests passed!` ✓）。
+
+**CI**：新增 `flutter-test` job（`checkout` → `setup-rust-toolchain`（含 `cache-workspaces`）→
+`subosito/flutter-action` → Rust 依赖 → `pub get` ×2 → **`flutter test`**，`timeout-minutes: 20` ✓）。
+第一版插入时**丢了三个 `uses:` 步骤** ✗（按 `- name:` 切分导致），当场用 `yaml.safe_load` 打印每个 job 的
+步骤序列时发现并改为**整段复制 analyze job**后再替换末尾两步 ✓。
+
+**仍未做（下一步）**：WebDAV 封面失败的**应用侧诊断埋点**（外部因素已全部排除，见第 105 轮后的探测：
+服务器契约 ✓、260/260 路径可达 ✓、文件为合法 ZIP ✓、URL 编码四种变体 ✓）。

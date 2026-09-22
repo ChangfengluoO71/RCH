@@ -76,6 +76,45 @@ jobs:
         # 与 `docs/reports/p0|p1/*` 记录的既有门禁一致。
         run: cargo test --locked -- --test-threads=1
 
+  flutter-test:
+    name: Flutter Analyze
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          # 2026-09-21：Rust 工程在 app/rust（仓库根没有 Cargo.toml）。浮动的 @v1 action
+          # 新版本会让 rust-cache 在**仓库根**探测 workspace 并调用 cargo ⇒
+          # "could not find Cargo.toml（仓库根）D:\RCH\RCH" 直接让 Flutter Analyze job 失败。
+          # 显式声明 workspace 路径后不再依赖它在根目录探测。
+          cache-workspaces: app/rust
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.44'
+
+      - name: Install Rust dependencies
+        run: cargo build
+        working-directory: app/rust
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Flutter pub get (cargokit)
+        run: dart pub get
+        working-directory: app/rust_builder/cargokit/build_tool
+
+      # 2026-09-21：Dart 侧此前从未在 CI 跑过（只有 analyze + 构建）。全量约 15 秒。
+      # 需要已编译 rust_lib_app 的用例会自行跳过（见 folder_snapshot_store_test）。
+      - name: Flutter test
+        run: flutter test
+
   build-windows:
     name: Windows Build
     runs-on: windows-latest

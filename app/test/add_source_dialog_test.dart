@@ -55,7 +55,7 @@ void main() {
     // 切到夸克网盘：根文件夹 ID + Cookie 字段
     await selectType('夸克网盘');
     expect(find.text('根文件夹 ID(默认 0)'), findsOneWidget);
-    expect(find.text('Cookie(pan.quark.cn 登录后 F12 复制)'), findsOneWidget);
+    expect(find.text('扫码获取 Cookie（无需 F12）'), findsOneWidget);
   });
 
   testWidgets('添加书源对话框：提交校验失败时错误信息自动滚动可见', (tester) async {

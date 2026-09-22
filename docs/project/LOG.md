@@ -3941,3 +3941,37 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 
 **验证**：`RUSTFLAGS="-D warnings" cargo check --all-targets` 干净 ✓；新单测通过 ✓；
 **对用户真实服务器的诊断复跑 ⇒ `check_and_probe 成功`** ✓✓（修复前后同一个用例：失败 → 成功 ✓）。
+
+
+---
+
+## 2026-09-22｜第109轮：发布 v0.6.1（WebDAV 封面链路修复）
+
+**用户要求**：把本轮改动提交并作为 **v0.6.1** 发布到 GitHub；按既有流程文档执行，且**不要重复昨天的错**。
+
+**发布前门禁（与 CI 完全对齐）**：
+- `RUSTFLAGS="-D warnings" cargo check --locked --all-targets` ✓ 干净；
+- `cargo test --locked -j 2 -- --test-threads=1` ⇒ **546 通过 / 0 失败** ✓；
+- `flutter analyze`（**全量**）⇒ No issues found ✓；`flutter test` ⇒ **204 通过 / 1 跳过 / 0 失败** ✓。
+
+**踩到的坑（已解决，值得记档）**：
+1. `cargo test` 报 `crate slab/reqwest … required to be available in rlib format` ✗ —— 原因是本地反复切换
+   `RUSTFLAGS` 与默认 flags、又做了半途 `cargo clean`（`http_body_util` 名字写错 ✗）⇒ target 目录自相矛盾。
+2. 全量 `cargo clean` 后并行重建报 `E0786 … failed to mmap … 页面文件太小 (os error 1455)` ✗ ——
+   **Windows 页面文件被并行链接耗尽**，不是代码问题 ✓；加 **`-j 2`** 后一次通过 ✓（本项目一直用 `-j 2` 就是这个原因）。
+   ⇒ 已写入本轮记录，后续构建默认带 `-j 2` ✓。
+3. 构建前必须**关闭正在运行的 RCH**（会占用 dll ✗）。
+
+**本版内容**（用户向说明见 `docs/releases/release_notes_v0.6.1.md` ✓）：
+- 修 WebDAV 会话建立失败（集合层 Range 探测被 405 拒绝 ✗）⇒ 封面队列恢复流动 ✓；
+- 修索引缺少文件大小（三处通路 ✓）⇒ `cover_size_missing` 的根因 ✓；
+- 新增后台自愈（TTL 门控 ✓）；
+- 新增可判读诊断（读取层 / 会话层 ✓）；
+- Dart 测试首次接入 CI ✓。
+
+**发布流程**：bump `app/pubspec.yaml` → `0.6.1+100601` ✓ → 提交 `release: v0.6.1 …` ✓ →
+**等 CI 四项全绿** ✓ → 打 tag `v0.6.1` 并推送（触发 `release.yml` 出 Windows 安装包 + 3 个 ABI 的 APK ✓）→ 核对 Release 资产 ✓。
+
+**遗留（未随本版解决，已建任务卡）**：WebDAV 的 `library_index.size` 仍未被扫描发布阶段写入 ✗
+（表现为状态行统计失败 231 ✗，而墙靠本地回退仍能显示封面 ✓）——
+见 `.trellis/tasks/09-22-webdav-cover-index-size/prd.md` 与 `docs/project/TODO.md` ✓。

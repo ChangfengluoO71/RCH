@@ -4641,3 +4641,12 @@ E 站自动刮削目录；只对"作品名命中且唯一"自动写；命名空�
 - 顺手修掉一个自己引入的缺陷：上限输入框每次 build 新建 `TextEditingController`（泄漏）→ 改为持久 controller。
 - **未验证**：真机批量跑（需联网 + 先有刮削结果与 EH 保存目录）。判定标准：
   点「开始识别」后进度递增、命中项自动写入并在详情页可见、待确认项只列出不写入。
+
+**第128轮补充（回答用户"人工确认在哪里确认"时发现的 bug）**
+- **bug**：`plan_import()` 无条件把 `matched_by` 写成 `"title"`，而实时搜索 `match_gallery_full()`
+  是"作品名锚点 Unmatched 后自动换创作者锚点"——两者叠加会让**创作者兜底命中被误标为"作品名命中"**，
+  进而被批量面板按"作品名命中且唯一"**自动写库**，违反用户刚定的策略。
+- **修复**：`match_gallery_full()` 返回三元组 `(decision, semantic, anchor_kind)`，
+  `anchor_kind` 为 `title`（首个锚点=作品名）或 `creator`（兜底锚点）；
+  API 层据此如实覆盖 `plan.matched_by`。绑定已重新生成（`AdapterByteSource` 仍为 0）。
+- 验证：`cargo test --lib eh_` → 37 passed；`flutter analyze` → No issues found；构建 exit 0。

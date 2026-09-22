@@ -731,7 +731,7 @@ pub fn match_gallery(
     work_title: &str,
     creators: &[String],
 ) -> Result<crate::eh_match::MatchDecision, String> {
-    match_gallery_full(rules, work_title, creators).map(|(d, _)| d)
+    match_gallery_full(rules, work_title, creators).map(|(d, _, _)| d)
 }
 
 /// 与 [`match_gallery`] 相同，但**同时返回命中画廊的语义层**（标签/作者/系列/语言…）。
@@ -742,18 +742,21 @@ pub fn match_gallery_full(
     rules: &EhRules,
     work_title: &str,
     creators: &[String],
-) -> Result<(crate::eh_match::MatchDecision, EhSemantic), String> {
+) -> Result<(crate::eh_match::MatchDecision, EhSemantic, String), String> {
     use crate::eh_match::{self, MatchDecision};
 
     let host = if rules.host.trim().is_empty() { DEFAULT_HOST } else { rules.host.trim() };
     let client = Client::new(host, rules.interval())?;
     let anchors = match_gallery_anchors(work_title, creators);
     if anchors.is_empty() {
-        return Ok((MatchDecision::Unmatched, EhSemantic::default()));
+        return Ok((MatchDecision::Unmatched, EhSemantic::default(), String::new()));
     }
 
     let mut pending_ambiguous: Option<MatchDecision> = None;
-    for anchor in anchors {
+    // 第一个锚点是作品名，其余是创作者兜底——命中依据必须如实带出，
+    // 否则"创作者兜底"会被上层当成"作品名命中"而误自动写库。
+    for (idx, anchor) in anchors.into_iter().enumerate() {
+        let anchor_kind = if idx == 0 { "title" } else { "creator" };
         // 实测：命名空间过滤不可用，必须用裸词
         let url = format!("https://{}/?f_search={}", client.host, urlencode(&anchor));
         let html = match client.get(&url) {
@@ -795,11 +798,11 @@ pub fn match_gallery_full(
         match eh_match::decide(work_title, &candidates) {
             MatchDecision::Matched(h) => {
                 let sem = semantic_of(&h.gid);
-                return Ok((MatchDecision::Matched(h), sem));
+                return Ok((MatchDecision::Matched(h), sem, anchor_kind.to_string()));
             }
             MatchDecision::Editions(v) => {
                 let sem = v.first().map(|h| semantic_of(&h.gid)).unwrap_or_default();
-                return Ok((MatchDecision::Editions(v), sem));
+                return Ok((MatchDecision::Editions(v), sem, anchor_kind.to_string()));
             }
             MatchDecision::Ambiguous(v) => {
                 if pending_ambiguous.is_none() {
@@ -809,7 +812,11 @@ pub fn match_gallery_full(
             MatchDecision::Unmatched => {}
         }
     }
-    Ok((pending_ambiguous.unwrap_or(MatchDecision::Unmatched), EhSemantic::default()))
+    Ok((
+        pending_ambiguous.unwrap_or(MatchDecision::Unmatched),
+        EhSemantic::default(),
+        String::new(),
+    ))
 }
 
 /// 纯逻辑抽出，便于离线测试锚点顺序与去重。

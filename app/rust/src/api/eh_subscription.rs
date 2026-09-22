@@ -100,8 +100,13 @@ pub async fn eh_plan_book_live(
             serde_json::from_str(&creators_json).map_err(|e| format!("creators 解析失败：{e}"))?;
         let snapshot: crate::eh_import::BookSnapshot = serde_json::from_str(&snapshot_json)
             .map_err(|e| format!("snapshot 解析失败：{e}"))?;
-        let (decision, semantic) = eh::match_gallery_full(&rules, &work_title, &creators)?;
-        let plan = crate::eh_import::plan_import(&snapshot, &semantic, &decision);
+        let (decision, semantic, anchor_kind) =
+            eh::match_gallery_full(&rules, &work_title, &creators)?;
+        let mut plan = crate::eh_import::plan_import(&snapshot, &semantic, &decision);
+        // 命中依据必须如实：创作者兜底 ≠ 作品名命中（后者才允许自动写入）
+        if anchor_kind == "creator" {
+            plan.matched_by = "creator".into();
+        }
         serde_json::to_string(&plan).map_err(|e| format!("计划序列化失败：{e}"))
     })
     .await

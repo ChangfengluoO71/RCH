@@ -486,6 +486,9 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
         let mapped = entries
             .into_iter()
             .map(|entry| {
+                // 2026-09-22 临时探针：验证 provider 列表到底有没有把 size 带上来
+                // （服务器 Depth:1 实测 240/240 都带大小 ✓，但引擎落库仍是 NULL ✗）。
+                // 只统计条数与带大小的条数，不含路径 / 名称。定位完成后删除。
                 let logical_path = if self.opaque_paths {
                     canonical_child_path(path, &entry.name)
                 } else {
@@ -507,7 +510,13 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
                     mtime: (entry.mtime != 0).then_some(entry.mtime),
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let with_size = mapped.iter().filter(|e| e.size.is_some()).count();
+        let files = mapped.iter().filter(|e| !e.is_dir).count();
+        crate::remote_scan::diag::note(&format!(
+            "list_dir_probe entries={} files={files} with_size={with_size}",
+            mapped.len()
+        ));
         Ok((mapped, None))
     }
 

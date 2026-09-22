@@ -7,6 +7,7 @@ import 'api/ai.dart';
 import 'api/book.dart';
 import 'api/cache.dart';
 import 'api/db.dart';
+import 'api/eh_subscription.dart';
 import 'api/export.dart';
 import 'api/library.dart';
 import 'api/package.dart';

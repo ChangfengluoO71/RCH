@@ -93,14 +93,16 @@ impl Default for EhRules {
             // 用户口径：时间越久要求越高（五年前 800）；最年轻一档不设门槛，
             // 由"重复扫描 + manifest 去重"自然实现"累积到达标线再保存"。
             age_tiers: vec![
-                AgeTier { min_age_years: 5.0, min_downloads: 800 },
-                AgeTier { min_age_years: 2.0, min_downloads: 500 },
-                AgeTier { min_age_years: 0.5, min_downloads: 300 },
-                AgeTier { min_age_years: 0.083, min_downloads: 100 },
-                AgeTier { min_age_years: 0.0, min_downloads: 0 },
+                // 用户口径（2026-09-22）：分时间段，时间越久要求越高；
+                // 在首版（800/500/300/100/0）基础上各档 +200。
+                AgeTier { min_age_years: 5.0, min_downloads: 1000 },
+                AgeTier { min_age_years: 2.0, min_downloads: 700 },
+                AgeTier { min_age_years: 0.5, min_downloads: 500 },
+                AgeTier { min_age_years: 0.083, min_downloads: 300 },
+                AgeTier { min_age_years: 0.0, min_downloads: 200 },
             ],
             out_dir: String::new(),
-            pages: 2,
+            pages: 10,
             host: DEFAULT_HOST.into(),
             request_interval_secs: 2.5,
             now_offset_days: 0,
@@ -894,11 +896,11 @@ mod tests {
     #[test]
     fn required_dl_matches_declared_tiers() {
         let r = EhRules::default();
-        assert_eq!(r.required_dl(10.0), 800, "五年前应要求 800");
-        assert_eq!(r.required_dl(3.0), 500, "3 年应要求 500");
-        assert_eq!(r.required_dl(1.0), 300, "1 年应要求 300");
-        assert_eq!(r.required_dl(0.2), 100, "2 个月应要求 100");
-        assert_eq!(r.required_dl(0.01), 0, "新发不设门槛");
+        assert_eq!(r.required_dl(10.0), 1000, "五年前应要求 1000");
+        assert_eq!(r.required_dl(3.0), 700, "3 年应要求 700");
+        assert_eq!(r.required_dl(1.0), 500, "1 年应要求 500");
+        assert_eq!(r.required_dl(0.2), 300, "2 个月应要求 300");
+        assert_eq!(r.required_dl(0.01), 200, "刚发布应要求 200");
     }
 
     #[test]

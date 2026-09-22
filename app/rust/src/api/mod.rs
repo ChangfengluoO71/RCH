@@ -2,6 +2,7 @@ pub mod ai;
 pub mod book;
 pub mod cache;
 pub mod db;
+pub mod eh_subscription;
 pub mod export;
 pub mod library;
 pub mod package;

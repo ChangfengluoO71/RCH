@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
@@ -24,7 +25,9 @@ import 'package:app/ui/cloud115_qr_scan.dart';
 import 'package:app/ui/quark_qr_scan.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
+import 'package:app/ui/eh_subscription_panel.dart';
 import 'package:app/ui/global_search.dart';
+import 'package:app/ui/opener.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:app/ui/source_tree.dart';
 import 'package:app/ui/sync_panel.dart';
@@ -721,6 +724,36 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ---- 本地视图结果（最近/最多） ----
+  /// 从给定记录里随机挑一本并打开。
+  ///
+  /// 为什么从「已读记录」里挑而不是全库枚举：读过的书必然有可用书源与路径
+  /// （远程源的浏览路径是内部 id，只有记录里才带得全），不需要重新枚举远端目录。
+  Future<void> _randomPickFrom(List<ReadRecord> records) async {
+    final pool = records.where((r) => r.path.isNotEmpty).toList();
+    if (pool.isEmpty) return;
+    final pick = pool[Random().nextInt(pool.length)];
+    final source = _sourceForRecord(pick);
+    if (source == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('随机挑到的书找不到对应书源：${pick.title}')),
+      );
+      return;
+    }
+    LibraryStore.instance.recordRead(
+      source: source, path: pick.path, title: pick.title, page: pick.lastPage,
+    );
+    if (!mounted) return;
+    await openBook(context, source, pick.path, pick.title);
+  }
+
+  BookSource? _sourceForRecord(ReadRecord r) {
+    for (final s in LibraryStore.instance.sources) {
+      if (s.id == r.sourceId || s.type == r.sourceType) return s;
+    }
+    return null;
+  }
+
   Widget _buildLocalResults(List<ReadRecord> records, String title) {
     var list = records;
     final store = LibraryStore.instance;
@@ -745,9 +778,20 @@ class _HomePageState extends State<HomePage> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          child: Row(
+            children: [
+              Text(
+                title,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              if (records.isNotEmpty)
+                TextButton.icon(
+                  onPressed: () => _randomPickFrom(records),
+                  icon: const Icon(Icons.casino_outlined, size: 18),
+                  label: const Text('随机一本'),
+                ),
+            ],
           ),
         ),
         Expanded(
@@ -1689,6 +1733,11 @@ class _HomePageState extends State<HomePage> {
             title: '书源与网络',
             icon: Icons.cloud_outlined,
             children: [_remoteSources(s), _localComics(s), const ScrapePanel()],
+          ),
+          _settingsCategory(
+            title: 'EH 订阅（可选插件）',
+            icon: Icons.rss_feed_outlined,
+            children: [const EhSubscriptionPanel()],
           ),
           _settingsCategory(
             title: '缓存与存储',

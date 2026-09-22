@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/ai.dart';
@@ -7,6 +8,7 @@ import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/src/rust/api/cache.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/ui/opener.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_cache_cleanup.dart';
 import 'package:app/ui/common.dart';
@@ -27,6 +29,9 @@ class ReaderPage extends StatefulWidget {
 }
 
 class _ReaderPageState extends State<ReaderPage> {
+  /// 尾页提示只在**首次**到达最后一屏时弹一次（双向翻页会重复触发 onPageChanged，
+  /// 靠这个标记避免反复弹窗）。
+  bool _endPrompted = false;
   BookInfo? _book; int _page=0; String? _error;
   /// WebDAV 下载进度: 0.0~1.0, null=非 WebDAV 或已完成。
   double? _downloadProgress;
@@ -344,7 +349,21 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _isDual() => pairOf(_page).$2 != null;
 
   // ---- 翻页 ----
-  void _forward() { final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?-s:s); }
+  /// 前进一屏。**在已经到达阅读顺序末端时继续前进**才提示"要不要再随机一本"
+  /// （而不是一翻到尾页就弹窗——那会在正常阅读到最后一页时打扰）。
+  void _forward() {
+    final s = _dual != DualPageMode.off ? 2 : 1;
+    final d = _mode == ReadMode.manga ? -s : s;
+    final b = _book;
+    if (b != null) {
+      final raw = _page + d;
+      if (raw < 0 || raw > b.pageCount - 1) {
+        _maybePromptEnd();
+        return;
+      }
+    }
+    _go(d);
+  }
   void _back(){ final s=_dual!=DualPageMode.off?2:1; _go(_mode==ReadMode.manga?s:-s); }
   /// 条漫模式按页滚动到目标页(用页高累计定位),返回该页在列表顶部的滚动偏移。
   double _webtoonOffsetTo(int page) {
@@ -422,6 +441,60 @@ class _ReaderPageState extends State<ReaderPage> {
     if (k == _keys.forwardKey || k == LogicalKeyboardKey.space || k == LogicalKeyboardKey.pageDown) { isManga ? _back() : _forward(); return KeyEventResult.handled; }
     if (k == _keys.backKey || k == LogicalKeyboardKey.pageUp) { isManga ? _forward() : _back(); return KeyEventResult.handled; }
     return KeyEventResult.ignored;
+  }
+
+  /// 翻到最后一屏时提示"要不要再随机挑一本"。
+  ///
+  /// 只在首次到达时弹；选择"再随机一本"会关闭当前阅读器并打开另一本。
+  void _maybePromptEnd() {
+    if (_endPrompted) return;
+    if ((_book?.pageCount ?? 0) <= 0) return;
+    _endPrompted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final again = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('已经读到最后一页'),
+          content: const Text('要不要再随机挑一本接着看？'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('留在这里')),
+            FilledButton(
+              onPressed: () => Navigator.of(c).pop(true),
+              child: const Text('再随机一本'),
+            ),
+          ],
+        ),
+      );
+      if (again != true || !mounted) return;
+      final next = _pickAnother();
+      if (next == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('漫画库里暂时没有别的可随机阅读的记录')),
+        );
+        return;
+      }
+      final nav = Navigator.of(context);
+      nav.pop(); // 先关掉当前阅读器
+      await openBook(nav.context, next.$1, next.$2.path, next.$2.title);
+    });
+  }
+
+  /// 从已读记录里随机挑一本「与当前不同」的书（限定同源，保证路径可用）。
+  (BookSource, ReadRecord)? _pickAnother() {
+    final cur = widget.path;
+    final pool = LibraryStore.instance.recent
+        .where((r) => r.path.isNotEmpty && r.path != cur)
+        .toList();
+    if (pool.isEmpty) return null;
+    for (var i = 0; i < 12; i++) {
+      final r = pool[Random().nextInt(pool.length)];
+      for (final s in LibraryStore.instance.sources) {
+        if (s.id == r.sourceId || s.type == r.sourceType) return (s, r);
+      }
+    }
+    return null;
   }
 
   @override void dispose(){
@@ -537,6 +610,7 @@ class _ReaderPageState extends State<ReaderPage> {
         for (var i = p - 2; i <= p + 2; i++) { _ensure(i); }
         final s = widget.source;
         if (s != null) { LibraryStore.instance.recordRead(source: s, path: widget.path, title: widget.title, page: p); }
+        _endPrompted = false; // 离开尾页后重新允许提示
       },
       itemBuilder: (context, v) => _buildMangaOrComicPage(_pageOfView(v)),
     );

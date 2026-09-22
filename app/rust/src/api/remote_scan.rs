@@ -1482,10 +1482,14 @@ impl AdapterByteSource {
 }
 
 impl ByteSource for AdapterByteSource {
+    // 内部实现细节：**不是**桥接 API。不 ignore 会被 codegen 导出为 wire 函数，
+    // 而该类型本身是私有的，导致生成文件引用私有类型、整个 crate 编译失败。
+    #[flutter_rust_bridge::frb(ignore)]
     fn len(&self) -> u64 {
         self.length
     }
 
+    #[flutter_rust_bridge::frb(ignore)]
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() || offset >= self.length {
             return Ok(0);

@@ -134,6 +134,11 @@ String _safeSessionErrorClass(Object error) {
       text.contains('连接')) {
     return 'network';
   }
+  // 2026-09-22：Rust 侧的失败文案形如「PROPFIND 失败:HTTP 405 …」「…HTTP 404 …」✗，
+  // 但具体状态码此前没被提取 ⇒ 只落到 `other`，无法判断是路径错(404/405)、认证(401/403)
+  // 还是服务端错误(5xx)。这里统一抽 `HTTP <code>`，映射成 `http-<code>`（只保留数字，安全）。
+  final httpCode = RegExp(r'HTTP\s*(\d{3})').firstMatch(error.toString());
+  if (httpCode != null) return 'http-${httpCode.group(1)}';
   if (text.contains('xml') || text.contains('propfind') || text.contains('协议')) {
     return 'proto';
   }

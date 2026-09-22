@@ -22,7 +22,7 @@ pub const SOURCE_TAG: &str = "源:e站";
 
 /// 本地现状快照（由调用方从 LibraryStore/TagRepository 取出后传入，
 /// 保持本模块纯净、可离线测试）。
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BookSnapshot {
     pub author: String,
     pub series: String,
@@ -61,6 +61,9 @@ pub struct SkippedItem {
 pub struct ImportPlan {
     /// `matched` | `editions` | `ambiguous` | `unmatched`
     pub status: String,
+    /// 命中依据：`title`（作品名）| `creator`（创作者兜底，置信度较低）| 空串（未命中）
+    #[serde(default)]
+    pub matched_by: String,
     pub gid: Option<String>,
     pub title_jpn: Option<String>,
     pub score: Option<f64>,
@@ -73,6 +76,7 @@ impl ImportPlan {
     fn empty(status: &str, reason: &str) -> Self {
         Self {
             status: status.into(),
+            matched_by: String::new(),
             gid: None,
             title_jpn: None,
             score: None,
@@ -124,6 +128,7 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
     let existing: Vec<String> = snapshot.tags.iter().map(|t| t.trim().to_string()).collect();
     let mut plan = ImportPlan {
         status: status.into(),
+        matched_by: "title".into(),
         gid: Some(hit.gid.clone()),
         title_jpn: Some(hit.title_jpn.clone()),
         score: Some(hit.score),
@@ -226,6 +231,109 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
         }
     }
 
+    plan
+}
+
+
+/// 从**已落盘的 manifest** 规划导入（离线、可复现；符合"只从 manifest 导入"的决策）。
+///
+/// 候选来自 manifest 各条目的语义层（`work_title` + `title_aliases`），
+/// 因此不需要联网搜索；匹配用 [`crate::eh_match::decide`]，语义层直接取选中条目的。
+pub fn plan_from_manifest(
+    items: &[crate::eh_subscription::EhSavedItem],
+    snapshot: &BookSnapshot,
+    work_title: &str,
+    creators: &[String],
+) -> ImportPlan {
+    use crate::eh_match::{self, MatchDecision};
+
+    if items.is_empty() {
+        return ImportPlan::empty("unmatched", "manifest 为空：请先运行一次 EH 订阅扫描");
+    }
+    let candidates: Vec<(String, String, String)> = items
+        .iter()
+        .map(|it| {
+            let sem = &it.semantic;
+            let romaji = sem.title_aliases.first().cloned().unwrap_or_default();
+            let jpn = if sem.work_title.trim().is_empty() {
+                it.title_jpn.clone()
+            } else {
+                sem.work_title.clone()
+            };
+            (it.gid.clone(), romaji, jpn)
+        })
+        .collect();
+
+    // 锚点顺序：作品名优先（真实语料覆盖 100%），创作者兜底
+    let mut decision = eh_match::decide(work_title, &candidates);
+    let mut matched_by = "title";
+    if matches!(decision, MatchDecision::Unmatched) {
+        // 兜底：创作者名应与候选条目**自身记录的 creators** 比对（不是与标题比对）。
+        // 唯一命中才采纳；多条命中 → 交人工确认，不猜。
+        'outer: for c in creators {
+            let norm = eh_match::normalize_title(c);
+            if norm.is_empty() {
+                continue;
+            }
+            let hits: Vec<&crate::eh_subscription::EhSavedItem> = items
+                .iter()
+                .filter(|it| {
+                    it.semantic
+                        .creators
+                        .iter()
+                        .any(|cr| eh_match::normalize_title(&cr.name) == norm)
+                })
+                .collect();
+            match hits.len() {
+                0 => continue,
+                1 => {
+                    let it = hits[0];
+                    let jpn = if it.semantic.work_title.trim().is_empty() {
+                        it.title_jpn.clone()
+                    } else {
+                        it.semantic.work_title.clone()
+                    };
+                    decision = MatchDecision::Matched(crate::eh_match::MatchHit {
+                        gid: it.gid.clone(),
+                        title: it.title.clone(),
+                        title_jpn: jpn,
+                        score: 1.0,
+                    });
+                    matched_by = "creator";
+                    break 'outer;
+                }
+                _ => {
+                    decision = MatchDecision::Ambiguous(
+                        hits.iter()
+                            .map(|it| crate::eh_match::MatchHit {
+                                gid: it.gid.clone(),
+                                title: it.title.clone(),
+                                title_jpn: it.semantic.work_title.clone(),
+                                score: 1.0,
+                            })
+                            .collect(),
+                    );
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    let chosen_gid = match &decision {
+        MatchDecision::Matched(h) => Some(h.gid.clone()),
+        MatchDecision::Editions(v) => v.first().map(|h| h.gid.clone()),
+        _ => None,
+    };
+    let semantic = chosen_gid
+        .as_ref()
+        .and_then(|g| items.iter().find(|it| &it.gid == g))
+        .map(|it| it.semantic.clone())
+        .unwrap_or_default();
+
+    let mut plan = plan_import(snapshot, &semantic, &decision);
+    if plan.matched_by == "title" && matched_by == "creator" {
+        plan.matched_by = "creator".into();
+    }
     plan
 }
 
@@ -344,4 +452,75 @@ mod tests {
         assert_eq!(namespace_prefix("character"), "角色");
         assert_eq!(namespace_prefix("unknown-ns"), "其他");
     }
+
+    fn manifest_item(gid: &str, work_title: &str, creators: Vec<(String, String)>) -> crate::eh_subscription::EhSavedItem {
+        crate::eh_subscription::EhSavedItem {
+            infohash: format!("hash{gid}"),
+            gid: gid.into(),
+            title: "Romaji Title".into(),
+            title_jpn: work_title.into(),
+            rating: 4.8,
+            downloads: 900,
+            required_dl: 0,
+            posted: None,
+            posted_utc: "未知".into(),
+            age_years: None,
+            tags: vec![],
+            category: "Doujinshi".into(),
+            filecount: None,
+            filesize: None,
+            uploader: String::new(),
+            torrent_name: String::new(),
+            file: String::new(),
+            bytes: 0,
+            source_url: String::new(),
+            saved_at_utc: String::new(),
+            semantic: EhSemantic {
+                work_title: work_title.into(),
+                title_aliases: vec!["Romaji Title".into()],
+                creators: creators
+                    .into_iter()
+                    .map(|(role, name)| crate::eh_subscription::EhCreator { role, name })
+                    .collect(),
+                source_series: vec!["original".into()],
+                resource_tags: vec!["female:big breasts".into()],
+                resource_tags_zh: vec!["巨乳".into()],
+                censorship: Some("uncensored".into()),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn plans_from_saved_manifest_offline() {
+        let items = vec![
+            manifest_item("11", "人生リサイクル", vec![("artist".into(), "朝凪".into())]),
+            manifest_item("22", "全然違う作品", vec![]),
+        ];
+        let plan = plan_from_manifest(&items, &BookSnapshot::default(), "人生リサイクル", &[]);
+        assert_eq!(plan.status, "matched");
+        assert_eq!(plan.gid.as_deref(), Some("11"));
+        let names: Vec<&str> = plan.tags.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&SOURCE_TAG));
+        assert!(names.contains(&"作者:朝凪"));
+        assert!(names.contains(&"女性:巨乳"));
+    }
+
+    #[test]
+    fn manifest_planner_falls_back_to_creator_anchor() {
+        // 作品名对不上时，用创作者名兜底（真实语料 creators 仅 41% 覆盖，故只作兜底）
+        let items = vec![manifest_item("33", "ヒミツの睡眠学習", vec![("artist".into(), "Bicolor".into())])];
+        let plan = plan_from_manifest(&items, &BookSnapshot::default(), "完全不相关的本地名", &["Bicolor".into()]);
+        assert_eq!(plan.gid.as_deref(), Some("33"), "应通过创作者锚点命中");
+        assert_eq!(plan.matched_by, "creator", "应标明是按创作者兜底命中的");
+    }
+
+    #[test]
+    fn empty_manifest_is_unmatched_with_reason() {
+        let plan = plan_from_manifest(&[], &BookSnapshot::default(), "任意", &[]);
+        assert_eq!(plan.status, "unmatched");
+        assert!(!plan.has_changes());
+        assert!(plan.skipped[0].reason.contains("manifest 为空"));
+    }
+
 }

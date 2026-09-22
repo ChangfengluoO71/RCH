@@ -39,6 +39,23 @@ Future<String> ehProbe({required String rulesJson}) =>
 Future<String> ehCollect({required String rulesJson}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhCollect(rulesJson: rulesJson);
 
+/// 影子模式：从已落盘的 manifest 规划"将要导入什么"（**不写库**）。
+///
+/// 候选直接取自 manifest 的语义层，因此**离线可复现**（不联网搜索）。
+/// `creators_json` 为本地作品名之外的兜底锚点（JSON 字符串数组）；
+/// `snapshot_json` 为本地现状（`eh_import::BookSnapshot`）。
+Future<String> ehPlanImport({
+  required String manifestDir,
+  required String workTitle,
+  required String creatorsJson,
+  required String snapshotJson,
+}) => RustLib.instance.api.crateApiEhSubscriptionEhPlanImport(
+  manifestDir: manifestDir,
+  workTitle: workTitle,
+  creatorsJson: creatorsJson,
+  snapshotJson: snapshotJson,
+);
+
 /// 读取已保存清单（文件不存在返回空列表）。
 Future<String> ehManifest({required String outDir}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhManifest(outDir: outDir);

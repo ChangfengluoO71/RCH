@@ -246,6 +246,27 @@ class EhSubscriptionStore extends ChangeNotifier {
 
   // ---- 运行 ----
 
+
+  /// 影子模式：规划一次"从 manifest 导入"（**不写库**），返回计划 JSON 解码后的 Map。
+  ///
+  /// 候选来自已落盘的 manifest，因此离线可复现；`snapshot` 为本地现状
+  /// （`{author, series, summary, tags}`），用于"只填空、不覆盖"的判断。
+  Future<Map<String, dynamic>?> planImport({
+    required String workTitle,
+    required List<String> creators,
+    required Map<String, dynamic> snapshot,
+  }) async {
+    if (!rulesLoaded) await init();
+    if (!hasOutDir) return null;
+    final raw = await eh_api.ehPlanImport(
+      manifestDir: outDir,
+      workTitle: workTitle,
+      creatorsJson: jsonEncode(creators),
+      snapshotJson: jsonEncode(snapshot),
+    );
+    return Map<String, dynamic>.from(jsonDecode(raw) as Map);
+  }
+
   Future<void> refreshManifest() async {
     if (!hasOutDir) {
       manifest = const [];

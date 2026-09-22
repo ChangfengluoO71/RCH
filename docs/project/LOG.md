@@ -4516,3 +4516,36 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 **下一步（P4b 下半）**
 1. 读侧接线：组 `BookSnapshot` + 从 manifest 读 `semantic` → `plan_import` → 界面**预览**（不写库）。
 2. 写侧：确认后按计划写入标签与空白字段。
+
+## 2026-09-22｜第125轮：E 站元数据导入 P4b（下半）— 读侧接线 + 预览 UI + 写入标签
+
+**目标**：把 Rust 侧规划器接到界面：**先预览、确认后再写入**。
+
+**Rust**
+- `eh_import::plan_from_manifest()`：候选**直接取自已落盘 manifest** 的语义层
+  （`work_title` + `title_aliases`），因此**离线可复现**、不需要联网搜索（落地 D4 决策）。
+- 创作者兜底**修正**：初版把创作者名当"标题"去比对（错误，永远不命中）；
+  正确语义是拿创作者名比对候选条目**自身记录的 `creators`**，且**唯一命中才采纳**，
+  多条命中 → `Ambiguous` 交人工确认。
+- `ImportPlan` 新增 `matched_by`（`title` / `creator` / 空），标明命中依据，便于解释低置信命中。
+- 新增 FRB 接口 `eh_plan_import(manifest_dir, work_title, creators_json, snapshot_json)`
+  （`spawn_blocking`，返回计划 JSON）；重新生成绑定：`AdapterByteSource` 0 处、`eh_plan_import` 到位。
+
+**Dart**
+- `EhSubscriptionStore.planImport()`：按需 init 规则、取 `out_dir`、组参数调 `ehPlanImport`、解码计划。
+- `book_detail_page.dart`：元数据区新增「**从 E 站导入**」入口 →
+  `_ehImportPreview()` 组本地现状快照（author/series/summary/tags）+ creators →
+  `_showImportPlanDialog()` 预览：匹配状态与依据、gid/相似度、**将新增标签（分色方框展示）**、
+  将填补的空白字段、**跳过项及原因**；确认后按计划 `link` + `persistBookLinks` 写入标签。
+
+**影响范围**
+- 新增读写路径，但**写入仅限标签**（`source:e站` 前缀族）；**author/series/summary 的填补尚未接线**
+  （预览里已列出，界面明确标注"下一步支持"）。
+- 不联网（除翻译层缺失时的按需更新）；不改表结构、不改同步协议。
+
+**验证**
+- `cargo test --lib eh_` → **37 passed, 1 ignored**（新增 manifest 规划 3 项：离线规划命中、
+  创作者兜底命中也标明依据、空 manifest 给出原因且零写入）。
+- `flutter analyze`（全量）→ **No issues found**；`flutter build windows --release` → exit 0。
+- 真机：应用已启动（含该入口）。**未验证**：点击「从 E 站导入」的实际预览弹窗与写入
+  （需先跑一次 EH 订阅扫描生成 manifest；当前 manifest 为空时应显示"manifest 为空"原因）。

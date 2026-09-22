@@ -80,6 +80,31 @@ pub async fn eh_collect(rules_json: String) -> Result<String, String> {
     .map_err(|e| format!("任务失败：{e}"))?
 }
 
+
+/// 影子模式：从已落盘的 manifest 规划"将要导入什么"（**不写库**）。
+///
+/// 候选直接取自 manifest 的语义层，因此**离线可复现**（不联网搜索）。
+/// `creators_json` 为本地作品名之外的兜底锚点（JSON 字符串数组）；
+/// `snapshot_json` 为本地现状（`eh_import::BookSnapshot`）。
+pub async fn eh_plan_import(
+    manifest_dir: String,
+    work_title: String,
+    creators_json: String,
+    snapshot_json: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let creators: Vec<String> =
+            serde_json::from_str(&creators_json).map_err(|e| format!("creators 解析失败：{e}"))?;
+        let snapshot: crate::eh_import::BookSnapshot = serde_json::from_str(&snapshot_json)
+            .map_err(|e| format!("snapshot 解析失败：{e}"))?;
+        let items = eh::read_manifest(&manifest_dir);
+        let plan = crate::eh_import::plan_from_manifest(&items, &snapshot, &work_title, &creators);
+        serde_json::to_string(&plan).map_err(|e| format!("计划序列化失败：{e}"))
+    })
+    .await
+    .map_err(|e| format!("任务失败：{e}"))?
+}
+
 /// 读取已保存清单（文件不存在返回空列表）。
 pub async fn eh_manifest(out_dir: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {

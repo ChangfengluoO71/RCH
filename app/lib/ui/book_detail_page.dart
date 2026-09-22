@@ -1,4 +1,5 @@
 import 'package:app/repository/tag_repository.dart';
+import 'package:app/store/eh_subscription_store.dart';
 import 'package:app/store/tag_provenance.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/baidu_session.dart';
@@ -333,6 +334,156 @@ class _BookDetailPageState extends State<BookDetailPage> {
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已隐藏 ${targets.length} 个 E 站导入标签')),
+    );
+  }
+
+  /// 影子模式入口：规划一次 E 站元数据导入并**预览**（不写库）。
+  ///
+  /// 计划来自已落盘的 manifest（离线可复现）：展示将新增的标签、将填补的空白字段、
+  /// 以及被跳过的项及原因；用户确认后才执行写入。
+  Future<void> _ehImportPreview() async {
+    final store = EhSubscriptionStore.instance;
+    if (!store.rulesLoaded) await store.init();
+    if (!store.hasOutDir) {
+      _ehSnack('请先在「设置 → EH 订阅（可选插件）」里选择保存目录并运行一次扫描');
+      return;
+    }
+    final localTags = TagRepository.instance.tagsForBook(_meta.key).toList();
+    final snapshot = <String, dynamic>{
+      'author': _meta.author,
+      'series': _meta.series,
+      'summary': _meta.summary,
+      'tags': localTags,
+    };
+    final creators = _meta.author
+        .split(RegExp(r'[、,，/]'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final title = _meta.title.isNotEmpty ? _meta.title : widget.title;
+
+    Map<String, dynamic>? plan;
+    try {
+      plan = await store.planImport(workTitle: title, creators: creators, snapshot: snapshot);
+    } catch (e) {
+      _ehSnack('规划失败：$e', error: true);
+      return;
+    }
+    if (!mounted) return;
+    if (plan == null) {
+      _ehSnack('无法规划：请先运行一次 EH 订阅扫描以生成 manifest');
+      return;
+    }
+    await _showImportPlanDialog(plan);
+  }
+
+  Future<void> _showImportPlanDialog(Map<String, dynamic> plan) async {
+    final status = plan['status'] as String? ?? 'unmatched';
+    final tags = (plan['tags'] as List?) ?? const [];
+    final fields = (plan['fields'] as List?) ?? const [];
+    final skipped = (plan['skipped'] as List?) ?? const [];
+
+    final statusText = switch (status) {
+      'matched' => '已匹配到画廊（按${plan['matched_by'] == 'creator' ? '创作者兜底' : '作品名'}）',
+      'editions' => '匹配到同一作品的多个版本',
+      'ambiguous' => '候选接近或有同系列不同卷，需人工确认（本次不导入）',
+      _ => '未匹配到画廊（不猜，本次不导入）',
+    };
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('E 站导入预览（未写入）'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(statusText, style: const TextStyle(fontWeight: FontWeight.w600)),
+                if (plan['gid'] != null)
+                  Text('gid: ${plan['gid']}   相似度: '
+                      '${(plan['score'] as num?)?.toStringAsFixed(2) ?? '—'}'),
+                if ((plan['title_jpn'] as String?)?.isNotEmpty ?? false)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(plan['title_jpn'] as String,
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                const SizedBox(height: 12),
+                Text('将新增标签（${tags.length}）', style: const TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                if (tags.isEmpty)
+                  const Text('（无）', style: TextStyle(fontSize: 12))
+                else
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: tags
+                        .map((t) => TagBox(name: (t as Map)['name'] as String))
+                        .toList(),
+                  ),
+                const SizedBox(height: 12),
+                Text('将填补空白字段（${fields.length}）',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                if (fields.isEmpty)
+                  const Text('（无）', style: TextStyle(fontSize: 12))
+                else
+                  ...fields.map((f) => Text(
+                        '${(f as Map)['field']} = ${f['value']}',
+                        style: const TextStyle(fontSize: 12),
+                      )),
+                if (skipped.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text('已跳过（${skipped.length}）', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  ...skipped.map((x) => Text(
+                        '· ${(x as Map)['what']}：${x['reason']}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      )),
+                ],
+                const SizedBox(height: 10),
+                Text(
+                  '说明：本轮只写入标签；author/series/summary 的填补将在下一步支持。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          FilledButton(
+            onPressed: tags.isEmpty ? null : () => Navigator.of(c).pop(true),
+            child: Text('写入 ${tags.length} 个标签'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    var written = 0;
+    for (final t in tags) {
+      final name = (t as Map)['name'] as String?;
+      if (name == null || name.isEmpty) continue;
+      TagRepository.instance.link(_meta.key, name);
+      written++;
+    }
+    await TagRepository.instance.persistBookLinks(_meta.key);
+    LibraryStore.instance.saveToDisk();
+    if (!mounted) return;
+    setState(() {});
+    _ehSnack('已写入 $written 个标签');
+  }
+
+  void _ehSnack(String msg, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
     );
   }
 
@@ -690,9 +841,19 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             const SizedBox(height: 20),
-            const Text(
-              '元数据标签',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            Row(
+              children: [
+                const Text(
+                  '元数据标签',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _ehImportPreview,
+                  icon: const Icon(Icons.cloud_download_outlined, size: 18),
+                  label: const Text('从 E 站导入'),
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(

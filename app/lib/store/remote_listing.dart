@@ -18,7 +18,24 @@ import 'package:app/store/webdav_session.dart';
 
 /// 按书源类型建立会话；未知类型返回 null（调用方视为不可用，跳过该源）。
 /// 会话建立失败以异常上抛，由调用方捕获降级。
+/// 会话缓存：按书源 id 保存**已建立**的会话 ✓。
+///
+/// 2026-09-22（用户反馈"点进云端书源要加载一会儿"）：
+/// 启动预热（`RemoteScanCoordinator.warmUpSessions`）本已建立过会话 ✓，但浏览器打开时
+/// 仍然会重新走一次完整登录 ✗ —— 而一次登录 = PROPFIND(Depth:0) + Range 探测 + RTT 取样，
+/// 实测在局域网 WebDAV 上首包就要 ~1.8s ✗。这里把会话缓存起来供复用：
+/// 预热填充它 ✓、浏览器直接命中它 ✓、连接失败时由调用方清除 ✓（自愈）。
+final Map<String, BigInt> _sessionCache = {};
+
+/// 清除某个书源的会话缓存（凭据变更、连接失败、断开时调用，避免复用失效会话）。
+void evictRemoteSession(String sourceId) => _sessionCache.remove(sourceId);
+
+/// 复用预热阶段已经建立的会话（若存在），避免重复登录。
+Future<BigInt?> cachedRemoteSession(String sourceId) async => _sessionCache[sourceId];
+
 Future<BigInt?> remoteSessionFor(BookSource source) async {
+  final cached = _sessionCache[source.id];
+  if (cached != null) return cached; // 预热/上次浏览已建会话 ⇒ 直接复用（不再登录）
   final session = switch (source.type) {
     'webdav' => await webdavSessionFor(source),
     'sftp' => await sftpSessionFor(source),
@@ -27,6 +44,7 @@ Future<BigInt?> remoteSessionFor(BookSource source) async {
     'quark' => await quarkSessionFor(source),
     _ => null,
   };
+  if (session != null) _sessionCache[source.id] = session;
   return session;
 }
 

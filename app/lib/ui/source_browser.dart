@@ -255,6 +255,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   Future<void> _connectSession() async {
     if (_session != null || !widget.source.needsSession) return;
+    // 2026-09-22：先复用**预热阶段已建立**的会话，避免每次进源都完整登录一次 ✗。
+    final cached = await cachedRemoteSession(widget.source.id);
+    if (cached != null) {
+      _session = cached;
+      return;
+    }
     try {
       _session = widget.source.isWebDav
           ? await webdavSessionFor(widget.source)
@@ -265,7 +271,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
           : widget.source.isQuark
           ? await quarkSessionFor(widget.source)
           : await cloud115SessionFor(widget.source);
+      // 浏览器自己建立的会话也写回缓存 ⇒ 之后再进这个源直接就命中，不再重复登录 ✓。
+      final created = _session;
+      if (created != null) cacheRemoteSession(widget.source.id, created);
     } catch (e) {
+      // 复用/新建失败都清缓存 ⇒ 下一次进源会重新登录（自愈），不会一直卡在失效会话上。
+      evictRemoteSession(widget.source.id);
       if (mounted) {
         _safeSetState(() => _error = '连接远程书源失败：\${remoteErrorMessage(e)}');
       }

@@ -206,6 +206,9 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             summary TEXT NOT NULL DEFAULT '',
             comment TEXT NOT NULL DEFAULT '',
             rotations TEXT NOT NULL DEFAULT '{}',
+            -- 卷/话（M8 解析器已产出，此前只在解析期存在、物化时被丢弃）
+            volume TEXT NOT NULL DEFAULT '',
+            chapter TEXT NOT NULL DEFAULT '',
             stable_id TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0,
             deleted INTEGER NOT NULL DEFAULT 0
@@ -480,6 +483,21 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
     if !meta_cols.iter().any(|c| c == "rotations") {
         conn.execute(
             "ALTER TABLE book_metas ADD COLUMN rotations TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )?;
+    }
+    // 旧库升级：book_metas 补 volume/chapter 列。
+    // 这两列来自 M8 解析器（semantic.volume / chapter），此前只存在于解析期、
+    // 物化时被丢弃，导致导入时无法用卷号做"同系列不同卷"保护。
+    if !meta_cols.iter().any(|c| c == "volume") {
+        conn.execute(
+            "ALTER TABLE book_metas ADD COLUMN volume TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !meta_cols.iter().any(|c| c == "chapter") {
+        conn.execute(
+            "ALTER TABLE book_metas ADD COLUMN chapter TEXT NOT NULL DEFAULT ''",
             [],
         )?;
     }
@@ -1742,12 +1760,17 @@ pub struct BookMetaRow {
     pub summary: String,
     pub comment: String,
     pub rotations: String,
+    /// 卷（M8 `semantic.volume`，物化落库）。
+    pub volume: String,
+    /// 话/章（M8 `semantic.chapter`，物化落库）。
+    pub chapter: String,
 }
 
 pub(crate) fn load_meta_on(conn: &Connection, key: &str) -> Option<BookMetaRow> {
     conn.query_row(
         "SELECT key, cover_page, crop_x, crop_y, crop_w, crop_h,
-                author, genre, series, title, chinese_title, summary, comment, rotations
+                author, genre, series, title, chinese_title, summary, comment, rotations,
+                volume, chapter
          FROM book_metas WHERE key = ?1 AND deleted = 0",
         params![key],
         |row| {
@@ -1766,6 +1789,8 @@ pub(crate) fn load_meta_on(conn: &Connection, key: &str) -> Option<BookMetaRow> 
                 summary: row.get(11)?,
                 comment: row.get(12)?,
                 rotations: row.get(13)?,
+                volume: row.get(14)?,
+                chapter: row.get(15)?,
             })
         },
     )
@@ -1778,7 +1803,7 @@ pub fn load_all_metas() -> Vec<BookMetaRow> {
         .prepare(
             "SELECT key, cover_page, crop_x, crop_y, crop_w, crop_h,
                     author, genre, series, title, chinese_title, summary, comment,
-                    rotations
+                    rotations, volume, chapter
              FROM book_metas",
         )
         .unwrap();
@@ -1798,6 +1823,8 @@ pub fn load_all_metas() -> Vec<BookMetaRow> {
             summary: row.get(11)?,
             comment: row.get(12)?,
             rotations: row.get(13)?,
+            volume: row.get(14)?,
+            chapter: row.get(15)?,
         })
     })
     .unwrap()
@@ -1809,14 +1836,19 @@ pub(crate) fn upsert_meta_on(conn: &Connection, m: &BookMetaRow) -> Result<()> {
     conn.execute(
         "INSERT INTO book_metas
          (key, cover_page, crop_x, crop_y, crop_w, crop_h,
-          author, genre, series, title, chinese_title, summary, comment, rotations, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+          author, genre, series, title, chinese_title, summary, comment, rotations, updated_at,
+          volume, chapter)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(key) DO UPDATE SET
             cover_page=excluded.cover_page, crop_x=excluded.crop_x, crop_y=excluded.crop_y,
             crop_w=excluded.crop_w, crop_h=excluded.crop_h, author=excluded.author,
             genre=excluded.genre, series=excluded.series, title=excluded.title,
             chinese_title=excluded.chinese_title, summary=excluded.summary,
-            comment=excluded.comment, rotations=excluded.rotations, deleted=0,
+            comment=excluded.comment, rotations=excluded.rotations,
+            -- 空值不覆盖：Dart 侧模型若尚未携带 volume/chapter，保存元数据时不能把已落库的卷/话清空
+            volume=CASE WHEN excluded.volume = '' THEN book_metas.volume ELSE excluded.volume END,
+            chapter=CASE WHEN excluded.chapter = '' THEN book_metas.chapter ELSE excluded.chapter END,
+            deleted=0,
             updated_at=excluded.updated_at",
         params![
             m.key,
@@ -1834,6 +1866,8 @@ pub(crate) fn upsert_meta_on(conn: &Connection, m: &BookMetaRow) -> Result<()> {
             m.comment,
             m.rotations,
             now_ms(),
+            m.volume,
+            m.chapter,
         ],
     )?;
     Ok(())
@@ -5846,6 +5880,8 @@ mod tests {
                 summary: String::new(),
                 comment: String::new(),
                 rotations: "{}".into(),
+                volume: String::new(),
+                chapter: String::new(),
             },
         )
         .unwrap();
@@ -6007,6 +6043,8 @@ mod tests {
                 summary: String::new(),
                 comment: String::new(),
                 rotations: "{}".into(),
+                volume: String::new(),
+                chapter: String::new(),
             },
         )
         .unwrap();
@@ -6178,6 +6216,8 @@ mod tests {
             summary: String::new(),
             comment: String::new(),
             rotations: "{}".into(),
+            volume: String::new(),
+            chapter: String::new(),
         };
         upsert_meta_on(&conn, &meta).unwrap();
         conn.execute(

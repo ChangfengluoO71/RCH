@@ -7701,8 +7701,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BookMetaDto dco_decode_book_meta_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 16)
+      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
     return BookMetaDto(
       key: dco_decode_String(arr[0]),
       coverPage: dco_decode_i_32(arr[1]),
@@ -7718,6 +7718,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       summary: dco_decode_String(arr[11]),
       comment: dco_decode_String(arr[12]),
       rotations: dco_decode_String(arr[13]),
+      volume: dco_decode_String(arr[14]),
+      chapter: dco_decode_String(arr[15]),
     );
   }
 
@@ -9188,6 +9190,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_summary = sse_decode_String(deserializer);
     var var_comment = sse_decode_String(deserializer);
     var var_rotations = sse_decode_String(deserializer);
+    var var_volume = sse_decode_String(deserializer);
+    var var_chapter = sse_decode_String(deserializer);
     return BookMetaDto(
       key: var_key,
       coverPage: var_coverPage,
@@ -9203,6 +9207,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       summary: var_summary,
       comment: var_comment,
       rotations: var_rotations,
+      volume: var_volume,
+      chapter: var_chapter,
     );
   }
 
@@ -11137,6 +11143,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.summary, serializer);
     sse_encode_String(self.comment, serializer);
     sse_encode_String(self.rotations, serializer);
+    sse_encode_String(self.volume, serializer);
+    sse_encode_String(self.chapter, serializer);
   }
 
   @protected

@@ -4650,3 +4650,37 @@ E 站自动刮削目录；只对"作品名命中且唯一"自动写；命名空�
   `anchor_kind` 为 `title`（首个锚点=作品名）或 `creator`（兜底锚点）；
   API 层据此如实覆盖 `plan.matched_by`。绑定已重新生成（`AdapterByteSource` 仍为 0）。
 - 验证：`cargo test --lib eh_` → 37 passed；`flutter analyze` → No issues found；构建 exit 0。
+
+## 2026-09-22｜第129轮：卷/话物化落库（方案 B，用户确认改表）— Rust 侧
+
+**背景**：用户提议"标题后面加个 1（不加默认第 1 部）"来提升话/部识别。读 M8 规则文档后判定：
+**解析器本来就正确解析了卷/话**（`design.md` §6 结构序号语法、§7.2「文件名只贡献序号时取祖先目录作 work_title」、
+§7.4「兄弟序号支持章节关系但不从纯数字建标题」），**丢失发生在物化**——
+`book_metas` 没有 volume/chapter 列，解析值用完即弃。因此用户选定**方案 B：物化落库**（改表结构，已确认）。
+
+**修改（`app/rust`）**
+- `db/mod.rs`：
+  - `book_metas` DDL 新增 `volume` / `chapter`（TEXT NOT NULL DEFAULT ''）。
+  - 迁移：沿用既有幂等写法 `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`（旧库自动补列）。
+  - `BookMetaRow` 增加两字段；`load_all_metas` / `load_meta_on` / `upsert_meta_on` 同步读写
+    （新列**追加在末尾**，不改既有下标与占位符编号）。
+  - **防数据回退**：`upsert` 的 `ON CONFLICT DO UPDATE` 里对这两列用
+    `CASE WHEN excluded.x = '' THEN book_metas.x ELSE excluded.x END` ——
+    Dart 侧模型尚未携带这两字段，保存元数据时不得把已落库的卷/话清空。
+- `api/db.rs`：`BookMetaDto` 增加 `volume` / `chapter` 并接入映射与 upsert。
+- `scrape_projection.rs`：
+  - 物化时从 proposal 的 `semantic` **提取并落库** `volume` / `chapter`（只填空，不覆盖规范值）；
+  - `merge_non_empty_meta` 同样对卷/话只填空。
+- 测试构造补齐新字段。
+
+**验证**
+- `cargo check --lib` → exit 0；`cargo test --lib --no-run` → exit 0（测试代码同步编译）。
+- `cargo test --lib` → **435 passed / 15 failed**，失败用例与**基线既有 flaky 集合完全一致**
+  （`remote_scan::session_ready_tests`/`wake_tests`、`source::d2_cache_authority_tests`、`cache::*`、
+  `document::mobi::*`），无一条涉及 `book_metas`/volume/chapter → 判定与本次改动无关。
+- FRB codegen 重生成干净（`AdapterByteSource` 0 处）。
+
+**遗留（下一步）**
+1. **Dart 侧 `BookMeta` 增加 volume/chapter 并往返**（当前靠 SQL 空值不覆盖兜住，不会丢数据，但 Dart 读不到）。
+2. **导入侧真正用它**：把解析出的卷号用于 `volume_conflict` 保护（相似度仍只用 work_title，
+   不把数字拼进匹配串），从而拦住"同系列不同卷"的错配。

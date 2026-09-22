@@ -126,6 +126,20 @@ pub(crate) fn materialize_ready_proposal_on(
 
     let semantic: Value = serde_json::from_str(&proposal.semantic_json)
         .map_err(|error| anyhow!("invalid proposal semantic_json: {error}"))?;
+    // 卷/话此前只在解析期存在、物化时被丢弃，导致导入无法做"同系列不同卷"保护。
+    // 这里随物化一并落库（空值不覆盖既有值，见 merge_non_empty_meta）。
+    let sem_volume = semantic
+        .get("volume")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let sem_chapter = semantic
+        .get("chapter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if meta.is_none() {
         meta = Some(db::BookMetaRow {
             key: target_book_key.clone(),
@@ -142,7 +156,18 @@ pub(crate) fn materialize_ready_proposal_on(
             summary: String::new(),
             comment: String::new(),
             rotations: "{}".into(),
+            volume: String::new(),
+            chapter: String::new(),
         });
+    }
+    // 把解析出的卷/话落库（只填空，不覆盖已有的规范值）
+    if let Some(m) = meta.as_mut() {
+        if m.volume.trim().is_empty() && !sem_volume.is_empty() {
+            m.volume = sem_volume.clone();
+        }
+        if m.chapter.trim().is_empty() && !sem_chapter.is_empty() {
+            m.chapter = sem_chapter.clone();
+        }
     }
     let mut meta = meta.expect("metadata initialized above");
     let mut meta_changed = false;
@@ -277,7 +302,8 @@ fn load_and_migrate_meta_aliases(
     let prefix = format!("{source_type}|{source_id}|");
     let mut stmt = conn.prepare(
         "SELECT key, cover_page, crop_x, crop_y, crop_w, crop_h,
-                author, genre, series, title, chinese_title, summary, comment, rotations
+                author, genre, series, title, chinese_title, summary, comment, rotations,
+                volume, chapter
          FROM book_metas
          WHERE deleted = 0 AND key LIKE ?1
          ORDER BY updated_at ASC, key ASC",
@@ -299,6 +325,8 @@ fn load_and_migrate_meta_aliases(
                 summary: row.get(11)?,
                 comment: row.get(12)?,
                 rotations: row.get(13)?,
+                volume: row.get(14)?,
+                chapter: row.get(15)?,
             })
         })?
         .filter_map(|row| row.ok())
@@ -346,6 +374,12 @@ fn merge_non_empty_meta(target: &mut db::BookMetaRow, source: &db::BookMetaRow) 
     }
     if target.title.trim().is_empty() {
         target.title = source.title.clone();
+    }
+    if target.volume.trim().is_empty() {
+        target.volume = source.volume.clone();
+    }
+    if target.chapter.trim().is_empty() {
+        target.chapter = source.chapter.clone();
     }
     if target.chinese_title.trim().is_empty() {
         target.chinese_title = source.chinese_title.clone();

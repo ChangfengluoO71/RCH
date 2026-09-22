@@ -721,6 +721,77 @@ pub fn read_manifest(out_dir: &str) -> Vec<EhSavedItem> {
 // 主流程
 // ---------------------------------------------------------------------------
 
+
+/// 按锚点顺序检索并判定：作品名优先，其次创作者名（见 `eh_match::search_anchors`）。
+///
+/// 只要某轮锚点得到 `Matched` / `Editions` 就返回；都没命中但有 `Ambiguous` 则返回
+/// 需人工确认的结果；全无 → `Unmatched`（**不猜**）。
+pub fn match_gallery(
+    rules: &EhRules,
+    work_title: &str,
+    creators: &[String],
+) -> Result<crate::eh_match::MatchDecision, String> {
+    use crate::eh_match::{self, MatchDecision};
+
+    let host = if rules.host.trim().is_empty() { DEFAULT_HOST } else { rules.host.trim() };
+    let client = Client::new(host, rules.interval())?;
+    let anchors = match_gallery_anchors(work_title, creators);
+    if anchors.is_empty() {
+        return Ok(MatchDecision::Unmatched);
+    }
+
+    let mut pending_ambiguous: Option<MatchDecision> = None;
+    for anchor in anchors {
+        // 实测：命名空间过滤不可用，必须用裸词
+        let url = format!("https://{}/?f_search={}", client.host, urlencode(&anchor));
+        let html = match client.get(&url) {
+            Ok(h) => h,
+            Err(_) => continue, // 单个锚点失败不致命，继续下一个
+        };
+        let pairs = parse_gallery_pairs(&html, &client.host);
+        if pairs.is_empty() {
+            continue;
+        }
+        let reqs: Vec<(String, String)> =
+            pairs.iter().filter_map(|(u, _)| parse_gid_token(u)).take(25).collect();
+        if reqs.is_empty() {
+            continue;
+        }
+        std::thread::sleep(client.interval);
+        let items = match client.gdata(&reqs) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let candidates: Vec<(String, String, String)> = items
+            .iter()
+            .map(|it| {
+                let gid = it.get("gid").map(|g| g.to_string()).unwrap_or_default();
+                (
+                    gid,
+                    text_field(it, "title").to_string(),
+                    text_field(it, "title_jpn").to_string(),
+                )
+            })
+            .collect();
+        match eh_match::decide(work_title, &candidates) {
+            MatchDecision::Matched(h) => return Ok(MatchDecision::Matched(h)),
+            MatchDecision::Editions(v) => return Ok(MatchDecision::Editions(v)),
+            MatchDecision::Ambiguous(v) => {
+                if pending_ambiguous.is_none() {
+                    pending_ambiguous = Some(MatchDecision::Ambiguous(v));
+                }
+            }
+            MatchDecision::Unmatched => {}
+        }
+    }
+    Ok(pending_ambiguous.unwrap_or(MatchDecision::Unmatched))
+}
+
+/// 纯逻辑抽出，便于离线测试锚点顺序与去重。
+pub fn match_gallery_anchors(work_title: &str, creators: &[String]) -> Vec<String> {
+    crate::eh_match::search_anchors(work_title, creators)
+}
+
 /// 连通性预检结果（供 UI 显示；不抛错，让调用方决定是否继续）。
 #[derive(Debug, Clone, Serialize)]
 pub struct EhProbe {
@@ -1168,6 +1239,19 @@ mod tests {
         let items: Vec<EhSavedItem> = serde_json::from_str(old).expect("旧清单应可反序列化");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].semantic, EhSemantic::default(), "缺失的语义层应为默认值");
+    }
+
+
+    #[test]
+    fn match_anchors_are_offline_ordered() {
+        // 纯逻辑：作品名优先、创作者去重（不联网）
+        let a = match_gallery_anchors(
+            "[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4 [中国翻訳]",
+            &["赤月みゅうと".into(), "赤月屋".into(), "赤月みゅうと".into()],
+        );
+        assert_eq!(a[0], "僕にしか触れないサキュバス三姉妹に搾られる話4");
+        assert_eq!(a.len(), 3, "重复创作者名应去重");
+        assert!(match_gallery_anchors("", &[]).is_empty());
     }
 
 }

@@ -5,6 +5,7 @@ pub mod catalog_context;
 pub mod db;
 pub mod decode;
 pub mod document;
+pub mod eh_match;
 pub mod eh_subscription;
 pub mod eh_tag_translation;
 pub mod downloader;

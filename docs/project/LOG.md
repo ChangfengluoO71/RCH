@@ -4419,3 +4419,32 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 - `cargo check --lib` → exit 0；`cargo test --lib eh_subscription` → **12 passed**
   （新增 2 项：真实 30 标签样本的语义推导；旧清单缺 `semantic` 仍可反序列化）。
 - **未做**：真实扫描产出的 manifest 复核（需要跑一轮联网扫描，本轮未执行）。
+
+## 2026-09-22｜第122轮：E 站元数据导入 P3 — 匹配引擎（纯函数 + 离线回归）
+
+**目标**：把"本地作品 → E 站画廊"的判定做成可离线回归的纯逻辑，并落实两条"不许猜"的保护。
+
+**新增** `app/rust/src/eh_match.rs`（纯函数模块）
+- `normalize_title()`：剥离 `[..]`/`(..)` 标记块（作者/语言/版本），只留字母数字与日文假名汉字、小写。
+  与种子映射用的 `normalize_for_match` **分开**：那个比的是种子文件名（保留更多字符更安全）。
+- `dice()`：字符二元组 Dice 系数；`score_candidate()` 取 `title_jpn` 与罗马字 `title` 的较高分
+  （实测**只能**比 `title_jpn`，罗马字与本地名比对全部失败）。
+- `decide()` → `Matched` / `Editions` / `Ambiguous` / `Unmatched`（阈值 `MATCH_THRESHOLD = 0.5`）。
+  **保护 1**：同系列不同卷（除数字外一致但数字不同）→ `Ambiguous`，不自动采纳
+  —— 实测 `孕ませ屋2` vs `孕ませ屋4` 得 0.75 高于阈值，不拦就会张冠李戴。
+  **保护 2**：最高分与次高分差距 < `TIE_MARGIN(0.05)` 且归一化标题不同（=两个不同作品）→ `Ambiguous`。
+  归一化标题一致的多个候选 → `Editions`（同一作品的多语言/多版本，不是冲突）。
+- `search_anchors()`：锚点顺序 **作品名优先、创作者次之**（真实语料 work_title 覆盖 389/389=100%，
+  creators 仅 158/389=41%），并去重、剥离标记。
+
+**接线**（`eh_subscription.rs`）
+- `match_gallery()`：按锚点依次检索（**裸词**，因命名空间过滤实测不可用）→ gdata ≤25 → `decide()`；
+  得到 Matched/Editions 即返回；全为 Unmatched 但有 Ambiguous 则返回待确认；单锚点失败不致命。
+- `match_gallery_anchors()`：抽出纯逻辑便于离线测试。
+
+**验证**
+- `cargo test --lib eh_` → **27 passed, 1 ignored**（新增 9 项：归一化/Dice/真实样本回归/
+  同作品多版本归并/并列接近/明显更优可采纳/锚点顺序/空输入不 panic）。
+- 真实样本回归内置在测试里：清楚ビッチな巫女先輩、ヒミツの睡眠学習、人生リサイクル 判 Matched；
+  孕ませ屋2 vs 孕ませ屋4 判 Ambiguous；不相关候选判 Unmatched。
+- **未做**：真实联网的 `match_gallery` 端到端（需搜索+gdata 往返），本轮只做了离线回归。

@@ -8,6 +8,21 @@ All notable changes to RCH will be documented in this file.
 
 ---
 
+## [0.6.2] — 2026-09-22
+
+进云端书源与更新交互（2026-09-22）：
+
+- **进云端书源更快**：浏览器此前每次进入都重新登录一次 ✗（列目录 + Range 探测 + 往返测速），
+  实测局域网 WebDAV 首次请求约 1.8s；现新增会话缓存（`cachedRemoteSession` / `cacheRemoteSession` /
+  `evictRemoteSession`），预热建立的会话被复用，失败即清（自愈）✓。
+- **建会话少两次往返**：`probe_rtt` 不再固定 3 次 HEAD（Alist/OpenList 对 HEAD 返回 405 ✗），
+  改为复用一次成功 PROPFIND 的耗时；并发档位随之回到真实水平 ✓。
+- **扫描为前台让路**：`run_next_internal` 每目录前查 `foreground_read_idle_ms()`，
+  用户刚阅读/浏览时最多让出 250ms（空闲不触发）✓。
+- **更新流程**：点更新改为**可见的下载并安装**（模态进度 + 安装包位置 + 完成后自动安装）；
+  Windows 由 `/VERYSILENT` 静默安装改为**显示安装向导** ✓。
+- **设置**：「关于与更新」独立成第 6 个折叠栏（从"同步与备份"移出）✓；文档与路径校验词表同步 ✓。
+
 ## 0.6.1
 
 修复 WebDAV 书源封面链路（2026-09-22）：

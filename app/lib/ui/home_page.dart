@@ -25,6 +25,7 @@ import 'package:app/ui/cloud115_qr_scan.dart';
 import 'package:app/ui/quark_qr_scan.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
+import 'package:app/ui/eh_auto_scrape_panel.dart';
 import 'package:app/ui/eh_subscription_panel.dart';
 import 'package:app/ui/global_search.dart';
 import 'package:app/ui/opener.dart';
@@ -1741,7 +1742,13 @@ class _HomePageState extends State<HomePage> {
           _settingsCategory(
             title: '书源与网络',
             icon: Icons.cloud_outlined,
-            children: [_remoteSources(s), _localComics(s), const ScrapePanel()],
+            children: [
+              _remoteSources(s),
+              _localComics(s),
+              const ScrapePanel(),
+              const SizedBox(height: 28),
+              const EhAutoScrapePanel(),
+            ],
           ),
           _settingsCategory(
             title: 'EH 订阅（可选插件）',

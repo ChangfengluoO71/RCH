@@ -103,6 +103,43 @@ class RemoteSessionSuccessHub {
 
 final remoteSessionSuccessHub = RemoteSessionSuccessHub();
 
+/// 书源短 id：只保留 `类型_` 之后的前 10 位，便于在日志中区分同类型的多个源，
+/// 又避免把完整 id（含时间戳）整串写进日志。
+String _shortSourceId(String id) {
+  final underscore = id.indexOf('_');
+  final tail = underscore >= 0 ? id.substring(underscore + 1) : id;
+  return tail.length <= 10 ? tail : tail.substring(0, 10);
+}
+
+/// 把会话建立失败归类成**安全类别**，用于诊断日志。
+///
+/// 为什么：失败原文可能包含 URL、账号或 provider 文案，一律不落盘；
+/// 但"是认证问题还是网络问题"必须能判读（见 logging-guidelines 的脱敏红线）。
+String _safeSessionErrorClass(Object error) {
+  final text = error.toString().toLowerCase();
+  if (text.contains('401') || text.contains('unauthor') || text.contains('登录')) {
+    return '401';
+  }
+  if (text.contains('403') || text.contains('forbidden') || text.contains('denied')) {
+    return '403';
+  }
+  if (text.contains('404') || text.contains('not found')) return '404';
+  if (text.contains('429')) return '429';
+  if (text.contains('timeout') || text.contains('timed out') || text.contains('超时')) {
+    return 'timeout';
+  }
+  if (text.contains('socket') ||
+      text.contains('connection') ||
+      text.contains('network') ||
+      text.contains('连接')) {
+    return 'network';
+  }
+  if (text.contains('xml') || text.contains('propfind') || text.contains('协议')) {
+    return 'proto';
+  }
+  return 'other';
+}
+
 class RemoteScanCoordinator {
   RemoteScanCoordinator({
     RemoteScanStart? start,
@@ -348,13 +385,28 @@ class RemoteScanCoordinator {
           connected += 1;
         }
       } catch (error) {
-        failures.add('${source.type}:${source.id}');
+        // 2026-09-22：过去这里只把 "type:id" 收进 failures，**却从没写进日志** ✗，
+        // 于是 `startup_session_warmup connected=1 failed=2` 只说"有两个源连不上"，
+        // 不说**是哪两个、为什么** —— WebDAV 封面全部停在 pending 时无从判读。
+        // 现在逐源落一条**安全**诊断：只记类型、短 id 与错误类别，不含凭据 / URL / provider 原文。
+        final errorClass = _safeSessionErrorClass(error);
+        failures.add('${source.type}:$errorClass');
+        await appendScanDiag(
+          'session_warmup_fail type=${source.type} '
+          'src=${_shortSourceId(source.id)} class=$errorClass',
+        );
         debugPrint('[RemoteScanCoordinator] session warm-up failed: $error');
+        continue;
       }
+      await appendScanDiag(
+        'session_warmup_ok type=${source.type} '
+        'src=${_shortSourceId(source.id)}',
+      );
     }
     await appendScanDiag(
       'startup_session_warmup candidates=${candidates.length} '
-      'connected=$connected failed=${failures.length}',
+      'connected=$connected failed=${failures.length}'
+      '${failures.isEmpty ? '' : ' fails=${failures.join(',')}'}',
     );
   }
 

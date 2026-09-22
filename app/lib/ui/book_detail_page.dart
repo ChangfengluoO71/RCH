@@ -445,7 +445,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
                 ],
                 const SizedBox(height: 10),
                 Text(
-                  '说明：本轮只写入标签；author/series/summary 的填补将在下一步支持。',
+                  '说明：字段只填补**空白**项，已有值不会被覆盖（见上方"已跳过"原因）。',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -455,8 +455,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
         actions: [
           TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
           FilledButton(
-            onPressed: tags.isEmpty ? null : () => Navigator.of(c).pop(true),
-            child: Text('写入 ${tags.length} 个标签'),
+            onPressed: (tags.isEmpty && fields.isEmpty) ? null : () => Navigator.of(c).pop(true),
+            child: Text('写入 ${tags.length} 个标签 / ${fields.length} 个字段'),
           ),
         ],
       ),
@@ -471,10 +471,39 @@ class _BookDetailPageState extends State<BookDetailPage> {
       written++;
     }
     await TagRepository.instance.persistBookLinks(_meta.key);
+
+    // 字段填补：**只填空**（计划的 fields 里本来就只有空白项），并同步刷新输入框，
+    // 保证界面与落库值一致（与 `_saveMeta` 走同一条持久化路径）。
+    var filled = 0;
+    for (final f in fields) {
+      final field = (f as Map)['field'] as String?;
+      final value = (f['value'] as String?)?.trim() ?? '';
+      if (field == null || value.isEmpty) continue;
+      switch (field) {
+        case 'author':
+          if (_meta.author.trim().isNotEmpty) continue;
+          _meta.author = value;
+          _authorCtrl.text = value;
+        case 'series':
+          if (_meta.series.trim().isNotEmpty) continue;
+          _meta.series = value;
+          _seriesCtrl.text = value;
+        case 'summary':
+          if (_meta.summary.trim().isNotEmpty) continue;
+          _meta.summary = value;
+          _summaryCtrl.text = value;
+        default:
+          continue;
+      }
+      filled++;
+    }
+    if (filled > 0) {
+      LibraryStore.instance.updateMeta(_meta);
+    }
     LibraryStore.instance.saveToDisk();
     if (!mounted) return;
     setState(() {});
-    _ehSnack('已写入 $written 个标签');
+    _ehSnack('已写入 $written 个标签、填补 $filled 个字段');
   }
 
   void _ehSnack(String msg, {bool error = false}) {

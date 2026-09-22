@@ -4549,3 +4549,28 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 - `flutter analyze`（全量）→ **No issues found**；`flutter build windows --release` → exit 0。
 - 真机：应用已启动（含该入口）。**未验证**：点击「从 E 站导入」的实际预览弹窗与写入
   （需先跑一次 EH 订阅扫描生成 manifest；当前 manifest 为空时应显示"manifest 为空"原因）。
+
+## 2026-09-22｜第126轮：E 站元数据导入 P4b（收尾）— 字段写入（author/series 只填空）
+
+**目标**：把预览里"将填补的空白字段"真正接上写入（用户确认继续）。
+
+**修改** `app/lib/ui/book_detail_page.dart`
+- 预览弹窗的应用阶段：写入标签后，按计划**填补字段**（`author` / `series`）：
+  写入前**再次校验本地值为空**（双保险，防止预览后用户又手填导致覆盖），
+  同步刷新对应输入框（`_authorCtrl` / `_seriesCtrl`），再走 `LibraryStore.instance.updateMeta(_meta)`
+  —— 与详情页既有 `_saveMeta()` 同一条持久化路径，不引入新的写库入口。
+- 确认按钮文案改为「写入 N 个标签 / M 个字段」，并在标签与字段都为空时禁用。
+- 弹窗说明改为：字段只填补空白项，已有值不会被覆盖（原因见"已跳过"清单）。
+
+**影响范围**
+- 只写 `book_metas` 的**既有列**（author/series），**无表结构变更、无同步协议变更**；
+  且只填空、不覆盖，满足"只增不改"的边界。
+- `summary` 分支保留为防御性代码：EH gdata 不含简介，`plan_import` 目前不产出该字段。
+
+**验证**
+- `flutter analyze` → **No issues found**；`flutter build windows --release` → exit 0。
+- **未验证**：真实点击后的字段落库（需要先有 manifest 并在预览里出现 fields）。
+  判定标准：写入后详情页"作者/系列"输入框出现值，且重新进入详情页仍是该值（已落库）。
+
+**P4 状态**：影子模式规划、预览 UI、标签写入、字段写入**均已落地**。
+剩余：真机端到端复验（跑一轮 EH 订阅扫描 → 逐本预览导入 → 观察标签分色与置顶行/隐藏）。

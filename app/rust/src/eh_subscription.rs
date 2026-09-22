@@ -25,6 +25,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::eh_tag_translation;
+
 pub const DEFAULT_HOST: &str = "e-hentai.org";
 /// 页数安全上限。单查询总量约 440 页；这里给足够大的上限，避免误操作把一轮跑成几小时。
 pub const MAX_PAGES: usize = 500;
@@ -556,6 +558,123 @@ pub fn sanitize_filename(s: &str) -> String {
 // 落盘清单
 // ---------------------------------------------------------------------------
 
+/// 创作者条目（与刮削的 `CreatorCandidate` 同构：角色 + 名字）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EhCreator {
+    /// `artist` | `group`
+    pub role: String,
+    pub name: String,
+}
+
+/// 与刮削产出对齐的语义层。
+///
+/// 为什么单列一层而不是平铺到 `EhSavedItem`：
+/// 刮削的同类字段在 `proposal.semantic` 子对象里（`work_title` / `creators` /
+/// `source_series` / `resource_language` / `censorship` / `color_state` …），
+/// 这里保持**同构嵌套**，未来做元数据导入时两边字段可直接对齐，不需要再写一层翻译。
+/// 全部字段 `#[serde(default)]`，旧 manifest 缺这一层也能正常反序列化。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct EhSemantic {
+    /// 作品名（取 gdata 的 `title_jpn`；罗马字 `title` 进 `title_aliases`）。
+    pub work_title: String,
+    /// 别名（罗马字标题等），供匹配时兜底。
+    pub title_aliases: Vec<String>,
+    /// 创作者：由 `artist:*` / `group:*` 命名空间拆出。
+    pub creators: Vec<EhCreator>,
+    /// 系列/原作：`parody:*`。
+    pub source_series: Vec<String>,
+    /// 角色：`character:*`。
+    pub characters: Vec<String>,
+    /// 资源语言：`language:*` 中第一个非 `translated` 的值（如 `chinese`）。
+    pub resource_language: Option<String>,
+    /// 翻译状态：命中 `language:translated` 时为 `translated`。
+    pub translation_state: Option<String>,
+    /// 修正状态：`other:uncensored` → `uncensored`。
+    pub censorship: Option<String>,
+    /// 彩色状态：`other:full color` → `full color`。
+    pub color_state: Option<String>,
+    /// 其余内容/资源标签（`male:*` / `female:*` / `mixed:*` / `other:*` / `reclass:*`）。
+    pub resource_tags: Vec<String>,
+    /// 对应 `resource_tags` 的中文译名（数量与顺序一致；无译名时该位为空串）。
+    pub resource_tags_zh: Vec<String>,
+}
+
+/// 拆分 gdata 标签：解析 `命名空间:值`。
+fn split_tag(tag: &str) -> (&str, &str) {
+    match tag.split_once(':') {
+        Some((ns, v)) => (ns.trim(), v.trim()),
+        None => ("", tag.trim()),
+    }
+}
+
+/// 从 gdata 条目推导语义层。
+///
+/// `cache_dir` 用于翻译层的按需更新缓存；`allow_network_update` 为真时，
+/// 遇到基线里没有的标签会尝试拉一次上游（见 `eh_tag_translation`）。
+pub fn derive_semantic(
+    item: &serde_json::Value,
+    allow_network_update: bool,
+    cache_dir: &str,
+) -> EhSemantic {
+    let title_jpn = text_field(item, "title_jpn").to_string();
+    let title = text_field(item, "title").to_string();
+    let mut sem = EhSemantic {
+        work_title: if title_jpn.is_empty() { title.clone() } else { title_jpn.clone() },
+        ..Default::default()
+    };
+    if !title.is_empty() && title != sem.work_title {
+        sem.title_aliases.push(title);
+    }
+
+    let tags: Vec<String> = item
+        .get("tags")
+        .and_then(|t| t.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    for tag in &tags {
+        let (ns, value) = split_tag(tag);
+        match ns {
+            "artist" | "group" => sem.creators.push(EhCreator {
+                role: ns.to_string(),
+                name: value.to_string(),
+            }),
+            "parody" => sem.source_series.push(value.to_string()),
+            "character" => sem.characters.push(value.to_string()),
+            "language" => {
+                let lower = value.to_lowercase();
+                if lower == "translated" {
+                    sem.translation_state = Some("translated".into());
+                } else if sem.resource_language.is_none() {
+                    sem.resource_language = Some(lower);
+                }
+            }
+            "other" => match value.to_lowercase().as_str() {
+                "uncensored" => sem.censorship = Some("uncensored".into()),
+                "full color" => sem.color_state = Some("full color".into()),
+                _ => sem.resource_tags.push(tag.clone()),
+            },
+            "male" | "female" | "mixed" | "reclass" => sem.resource_tags.push(tag.clone()),
+            _ => {
+                if !value.is_empty() {
+                    sem.resource_tags.push(tag.clone());
+                }
+            }
+        }
+    }
+
+    // 中文译名：与 resource_tags 一一对应，缺译名留空串（保持下标对齐）。
+    for tag in &sem.resource_tags {
+        let (ns, value) = split_tag(tag);
+        let zh = eh_tag_translation::translate_with_update(ns, value, allow_network_update, cache_dir)
+            .unwrap_or_default();
+        sem.resource_tags_zh.push(zh);
+    }
+
+    sem
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EhSavedItem {
     pub infohash: String,
@@ -578,6 +697,9 @@ pub struct EhSavedItem {
     pub bytes: i64,
     pub source_url: String,
     pub saved_at_utc: String,
+    /// 与刮削产出对齐的语义层（v2 新增；旧 manifest 无此字段时取默认值）。
+    #[serde(default)]
+    pub semantic: EhSemantic,
 }
 
 pub fn manifest_path(out_dir: &str) -> PathBuf {
@@ -855,6 +977,7 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
                 bytes: bytes.len() as i64,
                 source_url: format!("https://{}/g/{}/{}", client.host, gid, token),
                 saved_at_utc: fmt_utc(now),
+                semantic: derive_semantic(item, true, &rules.out_dir),
             });
             saved += 1;
             progress.saved = saved;
@@ -983,4 +1106,68 @@ mod tests {
         assert_eq!(int_field(&v, "c"), None);
         assert_eq!(int_field(&v, "missing"), None);
     }
+
+    fn sample_gallery() -> serde_json::Value {
+        // 取自 2026-09-22 实测的真实样本（gid=4202535，30 个标签）
+        serde_json::json!({
+            "gid": 4202535,
+            "token": "2b4fcbcc38",
+            "title": "Akatsuki Myuuto Boku ni shika Furenai Succubus Sanshimai",
+            "title_jpn": "[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4 [中国翻訳] [無修正] [DL版]",
+            "tags": [
+                "language:chinese", "language:translated", "parody:original",
+                "group:akatukiya", "artist:akatsuki myuuto",
+                "male:blindfold", "male:bondage", "female:big breasts", "female:nakadashi",
+                "other:uncensored", "other:multi-work series"
+            ]
+        })
+    }
+
+    #[test]
+    fn semantic_layer_aligns_with_scraper_vocabulary() {
+        let sem = derive_semantic(&sample_gallery(), false, "");
+        assert!(sem.work_title.contains("赤月屋"), "work_title 应取 title_jpn");
+        assert!(!sem.title_aliases.is_empty(), "罗马字标题应进别名");
+
+        // creators：artist / group 分开且带角色
+        let roles: Vec<&str> = sem.creators.iter().map(|c| c.role.as_str()).collect();
+        assert!(roles.contains(&"artist") && roles.contains(&"group"));
+        assert!(sem.creators.iter().any(|c| c.name == "akatsuki myuuto"));
+
+        // 系列 / 语言 / 状态位
+        assert_eq!(sem.source_series, vec!["original".to_string()]);
+        assert_eq!(sem.resource_language.as_deref(), Some("chinese"));
+        assert_eq!(sem.translation_state.as_deref(), Some("translated"));
+        assert_eq!(sem.censorship.as_deref(), Some("uncensored"));
+        assert_eq!(sem.color_state, None);
+
+        // other:uncensored 归入 censorship，不应再重复出现在 resource_tags
+        assert!(!sem.resource_tags.iter().any(|t| t == "other:uncensored"));
+        assert!(sem.resource_tags.iter().any(|t| t == "female:big breasts"));
+        assert!(sem.resource_tags.iter().any(|t| t == "other:multi-work series"));
+
+        // 中文译名与 resource_tags 一一对应
+        assert_eq!(sem.resource_tags.len(), sem.resource_tags_zh.len());
+        let zh_of = |raw: &str| {
+            let i = sem.resource_tags.iter().position(|t| t == raw).expect("tag 存在");
+            sem.resource_tags_zh[i].clone()
+        };
+        assert_eq!(zh_of("female:big breasts"), "巨乳");
+        assert_eq!(zh_of("female:nakadashi"), "中出");
+        assert_eq!(zh_of("male:bondage"), "束缚");
+    }
+
+    #[test]
+    fn old_manifest_without_semantic_still_deserializes() {
+        // 旧清单没有 semantic 字段（v1）；必须能读回，且语义层为空默认值
+        let old = r#"[{"infohash":"abc","gid":"1","title":"t","title_jpn":"tj","rating":4.5,
+            "downloads":900,"required_dl":800,"posted":null,"posted_utc":"未知","age_years":null,
+            "tags":["female:big breasts"],"category":"Doujinshi","filecount":10,"filesize":100,
+            "uploader":"u","torrent_name":"n","file":"f.torrent","bytes":9,
+            "source_url":"s","saved_at_utc":"now"}]"#;
+        let items: Vec<EhSavedItem> = serde_json::from_str(old).expect("旧清单应可反序列化");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].semantic, EhSemantic::default(), "缺失的语义层应为默认值");
+    }
+
 }

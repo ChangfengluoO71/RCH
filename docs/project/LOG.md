@@ -4391,3 +4391,31 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 - 该网络测试默认 `#[ignore]`，CI 不依赖网络。
 
 **下一步**：P1（manifest 增补为摄入格式，字段对齐刮削 `proposal.semantic`）→ P3（匹配引擎）→ P4（导入落地 + 标签前缀/分色/隐藏 UI）。
+
+## 2026-09-22｜第121轮：E 站元数据导入 P1 — manifest 增补为"摄入格式"（对齐刮削语义）
+
+**目标**：让同一份 manifest 既能喂下载器、也能直接喂未来的元数据导入，避免再写一层字段翻译。
+
+**修改内容**（`app/rust/src/eh_subscription.rs`）
+- 新增 `EhSemantic`（`#[serde(default)]`）与 `EhCreator`：**嵌套在 `semantic` 子对象里**，
+  与刮削产出的 `proposal.semantic` **同构**（那里也是嵌在 `semantic` 下），字段命名对齐：
+  `work_title` / `title_aliases[]` / `creators[{role,name}]` / `source_series[]` / `characters[]` /
+  `resource_language` / `translation_state` / `censorship` / `color_state` /
+  `resource_tags[]` / `resource_tags_zh[]`。
+- 新增 `derive_semantic(item, allow_network_update, cache_dir)`：按命名空间拆分 gdata 标签
+  （`artist|group` → creators；`parody` → source_series；`character` → characters；
+  `language` → 语言/翻译状态；`other:uncensored|full color` → 修正/彩色状态；其余 → resource_tags），
+  并用第 120 轮的翻译层生成**与 resource_tags 一一对应**的中文译名（缺译名留空串保持下标对齐）。
+- `EhSavedItem` 增加 `semantic` 字段；**旧 manifest 无此字段也能反序列化**（默认空语义层）。
+
+**设计决策（为什么这样）**
+- 不把语义字段平铺到 `EhSavedItem` 顶层，而是**照搬刮削的嵌套形状**：将来做导入时两边可逐字段对齐，
+  且插件边界（SPEC §10）不变——manifest 只是数据，写出口仍只有用户选的目录。
+- `resource_tags_zh` 与 `resource_tags` **下标对齐**（而非过滤掉无译名项），
+  这样导入时能一眼看出"哪些标签没译名"，符合"可解释"要求。
+- 翻译按需更新沿用第 120 轮口径：命中基线不联网，缺失才拉一次该命名空间。
+
+**验证**
+- `cargo check --lib` → exit 0；`cargo test --lib eh_subscription` → **12 passed**
+  （新增 2 项：真实 30 标签样本的语义推导；旧清单缺 `semantic` 仍可反序列化）。
+- **未做**：真实扫描产出的 manifest 复核（需要跑一轮联网扫描，本轮未执行）。

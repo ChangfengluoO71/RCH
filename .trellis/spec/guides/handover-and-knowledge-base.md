@@ -57,6 +57,7 @@ graphify god-nodes --top 15                            # 架构枢纽
 cd app && flutter analyze                 # 全量！CI 会分析 test/ 与 tool/，定点分析查不出来
 cd app/rust && RUSTFLAGS="-D warnings" cargo check --locked --all-targets   # CI 带 -D warnings
 cd app/rust && cargo test --locked -- --test-threads=1                      # 必须串行（缓存根是进程级全局）
+cd app && flutter test test/doc_settings_paths_test.dart      # 文档里的设置路径必须与 UI 一致
 ```
 
 **为什么必须全量**：2026-09-21 曾因 `RUSTFLAGS=-D warnings`（CI 默认）与全量 `flutter analyze`

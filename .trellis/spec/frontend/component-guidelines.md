@@ -50,6 +50,17 @@ class XxxPanel extends StatelessWidget {
 - 文案面向用户、中文、可被测试断言（`find.text('获取失败')` / `find.byTooltip('重试远程扫描')`）；
 - 空态/失败态要有明确文案（`等待扫描` / `获取失败` / `暂不支持`），不要留空白容器。
 
+## 文档中的 UI 路径必须可校验（2026-09-21）
+
+- 文档（README、用户手册）里出现的 `设置 → …` 必须与 UI 中的**真实分组 / 小节 / 入口名**一致。
+  路径分段取自 `app/lib/ui/home_page.dart` 的分组标题与 fontSize 16 / w600 的小节标题，
+  以及各面板标题（`cache_manager.dart`、`update_panel.dart`、`backup_panel.dart` …）。
+- 由测试固化：`app/test/doc_settings_paths_test.dart` = 词表白名单 + **漂移守卫**
+  （词表里的标签若在代码中消失即失败）。CI 的 analyze job 会运行它。
+- 分组归属不确定时，**只写用户可见的标签**，不要编造层级路径（例：`自动转 CBZ` 只写开关名）。
+- 教训：曾出现 `设置 → 刮削`（实际在「书源与网络」分组下）与 `设置 → 同步`（实际分组为
+  「同步与备份」）共 **8 处失效路径**，用户按文档找不到入口。
+
 ## 反模式
 
 - 组件内部起定时器/轮询推进数据（订阅 notifier 或 revision 唤醒）；

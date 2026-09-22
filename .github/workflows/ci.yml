@@ -47,6 +47,11 @@ jobs:
       - name: Flutter analyze
         run: flutter analyze
 
+      # 2026-09-21：文档里的「设置 → …」路径必须与 UI 真实入口一致（曾出现 8 处失效路径）。
+      # 词表白名单 + 漂移守卫见 app/test/doc_settings_paths_test.dart。
+      - name: Doc settings paths match UI labels
+        run: flutter test test/doc_settings_paths_test.dart
+
   rust-test:
     name: Rust Test
     runs-on: windows-latest

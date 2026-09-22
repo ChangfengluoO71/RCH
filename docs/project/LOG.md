@@ -3829,3 +3829,26 @@ CLAUDE.md"不重写整个文件/无关重构"，且会破坏 100 多轮积累的
 
 **工具坑（本轮）**：用 `subprocess(text=True)` 抓 `grep` 输出时按 **GBK** 解码非 ASCII 内容 ⇒
 `UnicodeDecodeError` ⇒ 脚本零改动（幸好校验证实了"什么都没改"，没有半成品）。改为**直接用 Python 以 UTF-8 读文件**检索。
+
+
+---
+
+## 2026-09-21｜第105轮：把"文档里的设置路径"做成可校验约定（测试 + CI + 规范）
+
+**动因**：批 1–3 的逐节检查里，共发现 **8 处失效的设置路径**（`设置 → 刮削` ×4、`设置 → 同步` ×3 等），
+用户按文档操作会找不到入口；靠人工比对不可持续。
+
+**做法**：
+1. **词表由代码抽取**（不靠印象）：分组标题与 fontSize 16 / w600 的小节标题取自
+   `app/lib/ui/home_page.dart`；面板标题取自 `cache_manager.dart` / `update_panel.dart` / `backup_panel.dart`；
+   另含行级文案（`阅读渲染宽度`、`自动转 CBZ`、`下载通道`…）与按钮名（`重新刮削`、`立即同步`）。
+2. **生成测试** `app/test/doc_settings_paths_test.dart`：
+   - 用例一：抓取 `README.md` 与 `docs/user-guide.md` 中所有 `` `设置 → …` `` 路径，逐段比对词表；
+   - 用例二：**漂移守卫** —— 词表里任一标签在 UI 代码中找不到即失败（UI 改名时先提醒更新词表）。
+3. **负向验证（关键）**：向 README 注入 `` `设置 → 刮削` `` ⇒ 测试**确实失败**并给出
+   `README.md: \`设置 → 刮削\` 中的「刮削」在 UI 词表中不存在`；恢复后重新通过（残留 0）。
+   （"测试通过"本身不构成证据，必须证明它会挂。）
+4. **接进 CI**：`.github/workflows/ci.yml` 的 analyze job 增加一步 `flutter test test/doc_settings_paths_test.dart`。
+5. **写进规范**：`.trellis/spec/frontend/component-guidelines.md` 新增「文档中的 UI 路径必须可校验」一节
+   （含"分组归属不确定时只写可见标签，不编造层级路径"的原则与本次教训）；
+   `.trellis/spec/guides/handover-and-knowledge-base.md` 的门禁命令补上这一条。

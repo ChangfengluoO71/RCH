@@ -26,3 +26,14 @@
 ## Batch checkpoint (2026-09-11)
 
 The cover/update batch and the independent webtoon stability task now have implementation and automated regression coverage in the working tree. The repository remains a development checkout: full Rust/Flutter verification and real-device/provider smoke are the remaining release gates. Online smart scraping, E-site metadata scraping, and 115 automation stay explicitly deferred to a future plugin and are not part of this parent task.
+
+## Progress (2026-09-23)
+
+- `08-30-webtoon-page-stability` — **done and archived** (`archive/2026-09/`). The reported symptom (fast
+  downward scrolling in webtoon mode jumping back several pages) was fixed by scroll-anchor compensation for
+  placeholder→real height convergence (`WebtoonAnchorKeeper` + `position.correctBy`), with a real-`ListView`
+  control-experiment regression (anchor delta <1px compensated vs 5600px pushed away uncompensated) and
+  on-device validation (OPPO PGFM10, 0.6.2+102602; user confirmed the jump is gone).
+  Not closed by that task and carried as its own TODO: wiring `WebtoonNavigationModel` into the reader
+  (page-number / reading-progress correctness), which the original design assumed but never shipped.
+- `08-30-update-download-install-handoff` and `08-02-cover-loading-perf` — still open.

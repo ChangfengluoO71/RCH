@@ -5060,3 +5060,14 @@ ust-target`，本机从零构建
 Windows 安装包 + 分 ABI APK → GitHub Release）。发布说明 `docs/releases/release_notes_v0.6.2.md` 与
 `CHANGELOG.md` 的 0.6.2 段已并入那 25 个提交的内容（E 站刮削 / 卷话 / 条漫回跳 / 阅读器修复）。
 用户选择：**versionCode 口径保持现状**（官方包 `100602` 低于手机已装的 `102602`，升级需先卸载，发布说明已写明）。
+
+**发布结果（2026-09-23 完成）**
+- 修复推送后 CI **绿**：run `35830107984`（18m14s，success）。
+- 打 **annotated tag `v0.6.2`** 并推送：tag 对象 `fe18952` → 提交 `e52fa00`；触发 Release 工作流
+  run `35831702148`（约 13 分钟，success）。
+- **GitHub Release 已发布并标记 Latest**：<https://github.com/ChangfengluoO71/RCH/releases/tag/v0.6.2>，
+  产物 4 件：`RCH-0.6.2-windows-x64.exe`（Windows 安装包）+ `app-arm64-v8a/armeabi-v7a/x86_64-release.apk`。
+- 发布正文即 `docs/releases/release_notes_v0.6.2.md`（已并入那 25 个提交的内容）。
+- 手机侧说明：官方包 `versionCode=100602`，低于本机测试包 `102602` ⇒ 官方 APK **无法覆盖升级**（需卸载后安装，
+  会清数据）。**手机现在跑的就是本次发布同一份代码**（我 14:46 装的 release 同签测试包，仅版本号不同），
+  故无需重装；后续若要用官方包，先卸载。

@@ -13,6 +13,7 @@ import 'package:app/ui/opener.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_cache_cleanup.dart';
 import 'package:app/ui/common.dart';
+import 'package:app/ui/webtoon_navigation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -53,6 +54,14 @@ class _ReaderPageState extends State<ReaderPage> {
   final FocusNode _focus = FocusNode(); final ScrollController _webtoonCtrl = ScrollController();
   /// 条漫模式各页实际渲染高度缓存(图片高度不一,滚动时据此定位视口页码)。
   final List<double> _webtoonHeights = [];
+  /// 未加载页的占位高度(条漫):同时用于测高锚点补偿的"增长前值"。
+  static const double _kWebtoonPlaceholderHeight = 200;
+  /// 条漫滚动锚点守护:视口上方的页由占位高度收敛成真实高度时,等量补偿滚动偏移,
+  /// 否则 SliverList 只保持像素偏移 ⇒ 可见内容被整体推走("划着划着突然跳回好几页前")。
+  final WebtoonAnchorKeeper _webtoonAnchor = WebtoonAnchorKeeper();
+  final GlobalKey _webtoonListKey = GlobalKey();
+  /// 条漫程序化滚动(底部按钮/键盘)进行中:期间不做锚点补偿,避免与滚动动画互相拉扯。
+  bool _webtoonProgrammaticScroll = false;
   late ReadMode _mode; late bool _invert; late DualPageMode _dual; late int _gap; late bool _skipCover;
   late KeyBinds _keys;
   /// 进入阅读器时是否为紧凑（手机）布局：退出时据此恢复竖屏锁定或保持可旋转。
@@ -172,6 +181,7 @@ class _ReaderPageState extends State<ReaderPage> {
     setState(() {
       _useAiVersion = !_useAiVersion;
       _webtoonHeights.clear(); // 超分图 2x 分辨率,显示高度变化,页高缓存作废
+      _webtoonAnchor.reset();
       for (var i = _page - 1; i <= _page + 2; i++) {
         if (i >= 0) {
           _bytes.remove(i);
@@ -324,6 +334,7 @@ class _ReaderPageState extends State<ReaderPage> {
     ).then((d) async {
       if (!mounted) return;
       if (i == _page) _completion.observeStablePage(i);
+      _webtoonAnchor.announceGrowth(i, _kWebtoonPlaceholderHeight);
       if (widget.skipAiCache || !_useAiVersion) {
         if (mounted) setState(() { _bytes[i] = d; _loading.remove(i); });
         return;
@@ -368,7 +379,11 @@ class _ReaderPageState extends State<ReaderPage> {
       if(n==_page)return;
       setState(()=>_page=n);
       _completion.observeStablePage(n);
-      if (_webtoonCtrl.hasClients) _webtoonCtrl.animateTo(_webtoonOffsetTo(n),duration:const Duration(milliseconds:220),curve:Curves.easeOut);
+      if (_webtoonCtrl.hasClients) {
+        _webtoonProgrammaticScroll = true;
+        _webtoonCtrl.animateTo(_webtoonOffsetTo(n),duration:const Duration(milliseconds:220),curve:Curves.easeOut)
+            .whenComplete(() => _webtoonProgrammaticScroll = false);
+      }
       for(var i=n-3;i<=n+3;i++){_ensure(i);}
       final src=widget.source;if(src!=null){await LibraryStore.instance.recordRead(source:src,path:widget.path,title:widget.title,page:n);}
       _scheduleEndPrompt();
@@ -727,22 +742,36 @@ class _ReaderPageState extends State<ReaderPage> {
           transformationController: _webtoonZoomCtrl,
           minScale: 1.0, maxScale: 4.0,
           scaleEnabled: true, panEnabled: false,
-          child: ListView.builder(controller:_webtoonCtrl,itemCount:b.pageCount,itemBuilder:(context,i){final bytes=_bytes[i];
+          child: ListView.builder(key:_webtoonListKey,controller:_webtoonCtrl,itemCount:b.pageCount,itemBuilder:(context,i){final bytes=_bytes[i];
             Widget item;
-            if(bytes==null){_ensure(i);item=const SizedBox(height:200,child:Center(child:CircularProgressIndicator()));}
+            if(bytes==null){_ensure(i);item=const SizedBox(height:_kWebtoonPlaceholderHeight,child:Center(child:CircularProgressIndicator()));}
             else{item=GestureDetector(onTap:()async{if(_page!=i){setState(()=>_page=i);_completion.observeStablePage(i);final s=widget.source;if(s!=null){await LibraryStore.instance.recordRead(source:s,path:widget.path,title:widget.title,page:i);}}},child:Image(image:ResizeImage(MemoryImage(bytes),width:decodeW),fit:BoxFit.fitWidth),);}
             // 每帧 build 后测量该项实际高度并缓存(加载中占位→真实图片高度自动收敛),供滚动定位页码。
             return Builder(builder:(itemCtx){
               WidgetsBinding.instance.addPostFrameCallback((_){
                 if(!mounted)return;
+                // 条目可能在测量回调前已离开树（sliver 回收视口外子项），
+                // 此时 findRenderObject() 会打到 DEFUNCT element（debug 断言 / release 取到失效对象）。
+                if(!itemCtx.mounted)return;
                 final ro=itemCtx.findRenderObject();
-                if(ro is RenderBox){
-                  final h=ro.size.height;
-                  if(h>0){
-                    if(i>=_webtoonHeights.length){_webtoonHeights.addAll(List<double>.filled(i+1-_webtoonHeights.length,0));}
-                    if(_webtoonHeights[i]!=h)_webtoonHeights[i]=h;
-                  }
-                }
+                if(ro is! RenderBox)return;
+                final h=ro.size.height;
+                if(h<=0)return;
+                if(i>=_webtoonHeights.length){_webtoonHeights.addAll(List<double>.filled(i+1-_webtoonHeights.length,0));}
+                if(_webtoonHeights[i]!=h)_webtoonHeights[i]=h;
+                if(_webtoonProgrammaticScroll)return; // 程序化滚动期间不插手
+                final listCtx=_webtoonListKey.currentContext;
+                if(listCtx==null||!listCtx.mounted)return;
+                final listBox=listCtx.findRenderObject();
+                if(listBox is! RenderBox)return;
+                // 条目顶边相对视口顶边的位置(视口内为正、已滚过为负)
+                final top=listBox.globalToLocal(ro.localToGlobal(Offset.zero)).dy;
+                final correction=_webtoonAnchor.record(index:i,newHeight:h,itemTopInViewport:top);
+                if(correction==0||!_webtoonCtrl.hasClients)return;
+                // 静默纠偏:不打断快速下拉的惯性;下一帧(滚动中每帧)重排即生效。
+                final pos=_webtoonCtrl.position;
+                final target=(pos.pixels+correction).clamp(pos.minScrollExtent,pos.maxScrollExtent);
+                pos.correctBy(target-pos.pixels);
               });
               return item;
             });

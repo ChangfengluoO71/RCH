@@ -246,24 +246,34 @@ class BookRepository {
     metas.clear();
     final metaDtos = await dbLoadAllMetas();
     for (final dto in metaDtos) {
-      metas[dto.key] = BookMeta(
-        key: dto.key,
-        coverPage: dto.coverPage,
-        cropX: dto.cropX,
-        cropY: dto.cropY,
-        cropW: dto.cropW,
-        cropH: dto.cropH,
-        author: dto.author,
-        genre: dto.genre,
-        series: dto.series,
-        title: dto.title,
-        chineseTitle: dto.chineseTitle,
-        summary: dto.summary,
-        comment: dto.comment,
-        rotations: parseBookRotations(dto.rotations),
-      );
+      metas[dto.key] = bookMetaFromDto(dto);
     }
   }
+
+  /// SQLite DTO → 内存模型（纯映射，抽出来便于单测钉住字段）。
+  ///
+  /// 这里**必须**带上 volume/chapter：第 130 轮补 `BookMeta` 字段时只改了写方向
+  /// （`saveToSqlite` 与本文件里的 `BookMetaDto` 构造），读方向漏在这一处 ⇒
+  /// SQLite 里即便有值，Dart 内存里也永远是空串，号码到不了匹配层与显示层。
+  /// 回归见 `test/book_meta_sequence_test.dart`。
+  static BookMeta bookMetaFromDto(BookMetaDto dto) => BookMeta(
+    key: dto.key,
+    coverPage: dto.coverPage,
+    cropX: dto.cropX,
+    cropY: dto.cropY,
+    cropW: dto.cropW,
+    cropH: dto.cropH,
+    author: dto.author,
+    genre: dto.genre,
+    series: dto.series,
+    volume: dto.volume,
+    chapter: dto.chapter,
+    title: dto.title,
+    chineseTitle: dto.chineseTitle,
+    summary: dto.summary,
+    comment: dto.comment,
+    rotations: parseBookRotations(dto.rotations),
+  );
 
   Future<void> saveToSqlite() async {
     // Each DB call yields to the event loop. Work from immutable snapshots so

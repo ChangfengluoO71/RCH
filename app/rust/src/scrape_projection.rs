@@ -67,19 +67,30 @@ pub(crate) fn materialize_ready_proposal_on(
         // canonical resource tag is missing; otherwise preserve idempotence.
         let semantic = serde_json::from_str::<Value>(&proposal.semantic_json).ok();
         let target_book_key = canonical_book_key(&proposal.book_key);
+        // 与写路径**同一口径**地解析卷/话（语义层优先、缺失回退兼容投影列）。
+        // 只用语义层判断会让"兼容列有值、语义层为空"的行永远进不来：详情页拿不到物化值，
+        // 而结果行/预览取列仍有号码 ⇒ 口径不一致（复审 Important，真实库 60 行）。
+        let (want_volume, want_chapter) = resolved_sequence(
+            semantic.as_ref(),
+            proposal.volume.as_deref(),
+            proposal.chapter.as_deref(),
+        );
         let needs_reprojection = semantic
             .as_ref()
             .map(|value| {
                 let expected_tags = canonical_tag_names(value);
                 !canonical_tags_present(conn, &target_book_key, &expected_tags)
             })
-            .unwrap_or(false);
+            .unwrap_or(false)
+            // 卷/话两列是第 129 轮才加的：老库的提案早已 `applied`，只按"生成标签齐全"
+            // 判定就永远不会重新进入事务，两列永远补不上。这里把"解析出的卷/话非空、
+            // 而落库值为空"也算作需要重新投影（回填后即恢复 skipped，保持幂等）。
+            || sequence_backfill_needed(conn, &target_book_key, &want_volume, &want_chapter);
         if !needs_reprojection {
             result.status = "skipped".into();
             return Ok(result);
         }
     }
-
     if proposal.state != "ready" {
         result.status = "review-required".into();
         result.skipped_fields.push("state".into());
@@ -128,18 +139,15 @@ pub(crate) fn materialize_ready_proposal_on(
         .map_err(|error| anyhow!("invalid proposal semantic_json: {error}"))?;
     // 卷/话此前只在解析期存在、物化时被丢弃，导致导入无法做"同系列不同卷"保护。
     // 这里随物化一并落库（空值不覆盖既有值，见 merge_non_empty_meta）。
-    let sem_volume = semantic
-        .get("volume")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let sem_chapter = semantic
-        .get("chapter")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    // 解析出的卷/话：语义层优先，缺失时回退到提案的**兼容投影列**（`volume` / `chapter`）。
+    // 真实库里存在 60 行"列有值、语义层为空"（旧规则版本的产物）：不回退的话，
+    // 「E 站自动刮削」结果行（取列）会显示号码、而详情页标题（取物化值）没有，
+    // 两个显示出口口径就不一致了。重入判据与这里共用 `resolved_sequence`。
+    let (sem_volume, sem_chapter) = resolved_sequence(
+        Some(&semantic),
+        proposal.volume.as_deref(),
+        proposal.chapter.as_deref(),
+    );
     if meta.is_none() {
         meta = Some(db::BookMetaRow {
             key: target_book_key.clone(),
@@ -160,13 +168,26 @@ pub(crate) fn materialize_ready_proposal_on(
             chapter: String::new(),
         });
     }
-    // 把解析出的卷/话落库（只填空，不覆盖已有的规范值）
+    // 把解析出的卷/话落库（只填空，不覆盖已有的规范值）。
+    //
+    // 关键：这里必须自己记"有变更"。这两列往往是在 title/author/series **已经填好之后**
+    // 才需要补的（老库、重新刮削），那时 `apply_empty_field` 全部走 skipped 分支，
+    // `meta_changed` 恒为 false ⇒ 下面的落盘条件不成立，解析出的卷/话永远不写库。
+    let mut sequence_filled = false;
     if let Some(m) = meta.as_mut() {
         if m.volume.trim().is_empty() && !sem_volume.is_empty() {
             m.volume = sem_volume.clone();
+            result.changed_fields.push("volume".into());
+            sequence_filled = true;
+        } else if !sem_volume.is_empty() && m.volume.trim() != sem_volume {
+            result.skipped_fields.push("volume".into());
         }
         if m.chapter.trim().is_empty() && !sem_chapter.is_empty() {
             m.chapter = sem_chapter.clone();
+            result.changed_fields.push("chapter".into());
+            sequence_filled = true;
+        } else if !sem_chapter.is_empty() && m.chapter.trim() != sem_chapter {
+            result.skipped_fields.push("chapter".into());
         }
     }
     let mut meta = meta.expect("metadata initialized above");
@@ -238,7 +259,7 @@ pub(crate) fn materialize_ready_proposal_on(
         }
     }
 
-    if meta_changed || legacy_keys_migrated {
+    if meta_changed || sequence_filled || legacy_keys_migrated {
         db::upsert_meta_on(conn, &meta)?;
         result.sync_dirty = true;
     }
@@ -283,6 +304,35 @@ fn canonical_tags_present(conn: &Connection, book_key: &str, expected: &[String]
         .unwrap_or(0)
             != 0
     })
+}
+
+/// `resolved_sequence` 解析出的卷/话非空、而 `book_metas` 对应列仍为空时需要重新进入物化事务回填。
+///
+/// 为什么需要：这两列是第 129 轮才加进 `book_metas` 的，此前已经 `applied` 的提案会被
+/// 幂等短路直接判 `skipped`，只按"生成标签齐全"这一个判据就永远不会重新进入事务 ⇒
+/// 老库永远补不上卷/话。传入的必须是**写路径同一口径**的解析值（`resolved_sequence`），
+/// 否则"兼容列有值、语义层为空"的行会永远进不来。该判定本身幂等：回填成功后两列非空，
+/// 下一次调用又回到 `skipped`。
+fn sequence_backfill_needed(
+    conn: &Connection,
+    book_key: &str,
+    want_volume: &str,
+    want_chapter: &str,
+) -> bool {
+    if want_volume.is_empty() && want_chapter.is_empty() {
+        return false;
+    }
+    match db::load_meta_on(conn, book_key) {
+        Some(meta) => {
+            (meta.volume.trim().is_empty() && !want_volume.is_empty())
+                || (meta.chapter.trim().is_empty() && !want_chapter.is_empty())
+        }
+        // 没有元数据行时"投影一定不完整"（物化本身会创建该行）。
+        // 独立评审 Minor 2 指出：被 `delete_meta` 删掉的行会在下一轮被重建并再次标
+        // sync-dirty。这与既有"生成标签缺失"判据的行为一致（purge 会同时删标签），
+        // 且回填后两列非空 ⇒ 下一次即恢复 skipped，不构成反复重入，故保留。
+        None => true,
+    }
 }
 
 fn load_and_migrate_meta_aliases(
@@ -455,6 +505,42 @@ fn semantic_string(value: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+/// 语义层里的字符串字段：缺失 / 非字符串 / 空白一律归一成空串。
+fn semantic_value(value: &Value, key: &str) -> String {
+    semantic_string(value, key).unwrap_or_default()
+}
+
+/// 解析出的卷/话号：**语义层优先，缺失回退提案的兼容投影列**。
+///
+/// 写路径与重入判据必须共用它，否则会出现"判据说没有号码、写路径却写得出来"
+/// 的分裂（复审 Important：兼容列里那 60 行会因此永远补不上）。
+fn resolved_sequence(
+    semantic: Option<&Value>,
+    compat_volume: Option<&str>,
+    compat_chapter: Option<&str>,
+) -> (String, String) {
+    let (sem_volume, sem_chapter) = match semantic {
+        Some(value) => (
+            semantic_value(value, "volume"),
+            semantic_value(value, "chapter"),
+        ),
+        None => (String::new(), String::new()),
+    };
+    (
+        non_empty_or(sem_volume, compat_volume.unwrap_or("")),
+        non_empty_or(sem_chapter, compat_chapter.unwrap_or("")),
+    )
+}
+
+/// 主值非空取主值，否则取回退值（回退值仅去首尾空白，不判空）。
+fn non_empty_or(primary: String, fallback: &str) -> String {
+    if primary.is_empty() {
+        fallback.trim().to_string()
+    } else {
+        primary
+    }
 }
 
 fn string_array(value: &Value, key: &str) -> Vec<String> {
@@ -936,6 +1022,130 @@ mod tests {
         .unwrap();
         let stale = materialize_ready_proposal_on(&conn, "asset|local|s1|a", "r1").unwrap();
         assert_eq!(stale.status, "stale");
+    }
+
+    /// 带卷/话的提案：语义层里 `volume` / `chapter` 是**顶级字符串字段**（与解析产物同构）。
+    fn proposal_with_sequence(
+        state: &str,
+        conflicts: &str,
+        revision: &str,
+    ) -> db::ScrapeProposalRow {
+        let mut row = proposal(state, conflicts, revision);
+        row.volume = Some("1".into());
+        row.chapter = Some("2".into());
+        row.semantic_json = r#"{
+            "work_title":"Work",
+            "creators":[{"name":"Artist","role":"artist"}],
+            "volume":"1",
+            "chapter":"2",
+            "resource_tags":["complete"]
+        }"#
+        .into();
+        row
+    }
+
+    fn meta_sequence(conn: &Connection, key: &str) -> (String, String) {
+        conn.query_row(
+            "SELECT volume, chapter FROM book_metas WHERE key = ?1",
+            params![key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn volume_and_chapter_are_persisted_even_when_no_other_field_changes() {
+        let conn = fixture_conn();
+        // 规范值（标题/作者）已经存在 ⇒ 本次唯一的变更只能是卷/话。
+        // 这正是老库 / 重新刮削的真实形状：`apply_empty_field` 全部跳过，
+        // `meta_changed` 恒为 false，卷/话必须靠自己把"有变更"记下来才会落盘。
+        conn.execute(
+            "INSERT INTO book_metas (key, title, author) VALUES (?1, 'Work', 'Artist')",
+            ["local|s1|/books/a"],
+        )
+        .unwrap();
+        let row = proposal_with_sequence("ready", "[]", "r1");
+        insert_proposal(&conn, &row);
+
+        let result = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(result.status, "applied");
+        assert!(result.changed_fields.contains(&"volume".to_string()));
+        assert!(result.changed_fields.contains(&"chapter".to_string()));
+        assert!(
+            result.sync_dirty,
+            "卷/话落库属于规范数据变更，必须标 sync-dirty"
+        );
+        assert_eq!(
+            meta_sequence(&conn, "local|s1|/books/a"),
+            ("1".to_string(), "2".to_string())
+        );
+    }
+
+    #[test]
+    fn compat_sequence_column_is_used_when_semantic_layer_lacks_it() {
+        let conn = fixture_conn();
+        // 旧规则版本的产物：语义层没有 `chapter`，只有兼容投影列有值
+        // （真实库实测 60 行）。不回退的话「结果行有号码、详情页标题没有」。
+        let mut row = proposal("ready", "[]", "r1");
+        row.chapter = Some("7".into());
+        insert_proposal(&conn, &row);
+
+        let result = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(result.status, "applied");
+        assert!(result.changed_fields.contains(&"chapter".to_string()));
+        assert_eq!(
+            meta_sequence(&conn, "local|s1|/books/a"),
+            (String::new(), "7".to_string())
+        );
+    }
+
+    #[test]
+    fn applied_proposal_with_only_compat_sequence_column_is_backfilled() {
+        let conn = fixture_conn();
+        // 语义层没有 `chapter`，号码只在兼容投影列里（旧规则版本的产物）。
+        let mut row = proposal("ready", "[]", "r1");
+        row.chapter = Some("7".into());
+        insert_proposal(&conn, &row);
+        let first = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(first.status, "applied");
+
+        // 老行形态：提案已 applied、标签齐全、两列为空。
+        conn.execute("UPDATE book_metas SET volume = '', chapter = ''", [])
+            .unwrap();
+        let backfill = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(
+            backfill.status, "applied",
+            "兼容列里的号码也必须能触发回填（重入判据要与写路径同口径）"
+        );
+        assert_eq!(
+            meta_sequence(&conn, "local|s1|/books/a"),
+            (String::new(), "7".to_string())
+        );
+    }
+
+    #[test]
+    fn applied_proposal_backfills_missing_volume_and_chapter_once() {
+        let conn = fixture_conn();
+        let row = proposal_with_sequence("ready", "[]", "r1");
+        insert_proposal(&conn, &row);
+        let first = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(first.status, "applied");
+
+        // 模拟第 129 轮之前落库的老行：提案已 applied、生成标签齐全，但两列还不存在（默认空）。
+        conn.execute("UPDATE book_metas SET volume = '', chapter = ''", [])
+            .unwrap();
+        let backfill = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(backfill.status, "applied");
+        assert!(backfill.sync_dirty);
+        assert_eq!(
+            meta_sequence(&conn, "local|s1|/books/a"),
+            ("1".to_string(), "2".to_string())
+        );
+
+        // 幂等：回填之后再次调用仍是 skipped，且不再产生 sync-dirty。
+        let third = materialize_ready_proposal_on(&conn, &row.asset_key, "r1").unwrap();
+        assert_eq!(third.status, "skipped");
+        assert!(!third.sync_dirty);
     }
 
     #[test]

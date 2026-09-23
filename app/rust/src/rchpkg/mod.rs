@@ -604,9 +604,9 @@ pub fn merge_package<R: Read + Seek>(
         }
     }
 
-    // 4) 墓碑
+    // 4) 墓碑（**随行复活而失效**：只有比本机活行更新的墓碑才允许删除）
     for t in &tombstones {
-        apply_tombstone_on(conn, &t.entity, &t.key)?;
+        apply_tombstone_on(conn, &t.entity, &t.key, t.updated_at)?;
     }
 
     Ok(MergeStats {
@@ -688,7 +688,21 @@ pub fn import_package_with_credentials_from_file(
     import_package_with_credentials(&conn, file, passphrase)
 }
 
-fn apply_tombstone_on(conn: &Connection, entity: &str, key: &str) -> Result<()> {
+/// 应用一条墓碑。
+///
+/// **墓碑随行复活而失效**（用户 2026-09-23 决策，第133轮实现）：只有比本机活行**更新**的
+/// 墓碑才允许删除；比活行旧（或同刻）的墓碑视为过期——保留活行，并顺手把它从本机墓碑表里清掉，
+/// 免得它下次又被导出、再伤害对端或下一次恢复。
+fn apply_tombstone_on(
+    conn: &Connection,
+    entity: &str,
+    key: &str,
+    tombstone_updated_at: i64,
+) -> Result<()> {
+    if db::tombstone_is_stale(conn, entity, key, tombstone_updated_at) {
+        db::delete_tombstone_on(conn, entity, key)?;
+        return Ok(());
+    }
     match entity {
         "sources" => {
             conn.execute(
@@ -891,8 +905,9 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO book_metas (key, stable_id, title, summary, comment, rotations, updated_at, deleted)
-             VALUES ('webdav|s1|/books/a.cbz', 'sid-a', 'A', '简介', '感想', '{}', 1000, 0)",
+            "INSERT INTO book_metas (key, stable_id, title, summary, comment, rotations,
+                                     volume, chapter, updated_at, deleted)
+             VALUES ('webdav|s1|/books/a.cbz', 'sid-a', 'A', '简介', '感想', '{}', '1', '7', 1000, 0)",
             [],
         )
         .unwrap();
@@ -916,6 +931,58 @@ mod tests {
         zip.finish().unwrap().into_inner()
     }
 
+    /// 墓碑随行复活而失效（第133轮，用户决策）：
+    /// 过期墓碑（比活行旧）不得删掉复活的行，并应顺手把它从墓碑表清掉；
+    /// 更新的墓碑仍须删除旧行（真删除不能被"失效"规则吃掉）。
+    #[test]
+    fn stale_tombstone_spares_a_resurrected_row() {
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO book_metas (key, title, updated_at) VALUES ('k1', 'A', 200)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sync_tombstones (entity, key, updated_at) VALUES ('metas', 'k1', 100)",
+            [],
+        )
+        .unwrap();
+
+        apply_tombstone_on(&conn, "metas", "k1", 100).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM book_metas WHERE key='k1'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1,
+            "过期墓碑不得删掉复活的行"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sync_tombstones WHERE entity='metas' AND key='k1'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+            "过期墓碑应被清掉，免得下次又被导出"
+        );
+
+        apply_tombstone_on(&conn, "metas", "k1", 500).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM book_metas WHERE key='k1'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+            "更新的墓碑仍须删除旧行"
+        );
+    }
+
     #[test]
     fn round_trip_import_matches_export() {
         let a = schema_conn();
@@ -931,14 +998,25 @@ mod tests {
         assert_eq!(stats.sources, 1);
         assert_eq!(stats.settings, 1);
 
-        let meta: (String, String, String) = b
+        let meta: (String, String, String, String, String) = b
             .query_row(
-                "SELECT stable_id, summary, comment FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
+                "SELECT stable_id, summary, comment, volume, chapter
+                 FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
-        assert_eq!(meta, ("sid-a".into(), "简介".into(), "感想".into()));
+        assert_eq!(
+            meta,
+            (
+                "sid-a".into(),
+                "简介".into(),
+                "感想".into(),
+                // 卷/话必须随整包备份恢复（否则恢复后号码永久缺失）。
+                "1".into(),
+                "7".into()
+            )
+        );
     }
 
     #[test]
@@ -1007,6 +1085,8 @@ mod tests {
             summary: String::new(),
             comment: String::new(),
             rotations: "{}".into(),
+            volume: String::new(),
+            chapter: String::new(),
             updated_at: 1000,
             deleted: false,
         }];

@@ -4711,3 +4711,320 @@ E 站自动刮削目录；只对"作品名命中且唯一"自动写；命名空�
 - `flutter analyze` 全量 → **No issues found**；`flutter build windows --release` → exit 0；codegen 干净。
 - 过程中自查并修掉自己引入的两处接线错误：`number` 误加到 manifest 方法、`BookMetaDto` 构造漏字段。
 - **未验证**：真机"金牌得主/1.pdf ↔ E 站第 1 卷"的实际命中与卷号加分效果（需联网跑）。
+
+## 2026-09-23｜第131轮：修「章节/部号还是不显示」— 卷/话链路 3 处断裂 + 2 处显示出口
+
+**目标**：用户反馈「刚测试章节/部号还是不显示」。接手项目，审查第 129/130 轮的卷/话（章节/部号）链路。
+
+**根因（静态分析定位，全部在用户真实库上取证）**
+1. **Rust：填充不置脏**。`scrape_projection.rs` 把 `semantic.volume/chapter` 填进 `meta` 却不置
+   `meta_changed`，而落盘条件是 `if meta_changed || legacy_keys_migrated`。对标题/作者早已填好的书
+   （=老库、重新刮削的真实形状）`apply_empty_field` 全部走 skipped ⇒ 卷/话永不落盘。
+2. **Rust：幂等短路挡住回填**。`materialization_status == "applied"` 且 `input_revision` 相同时直接
+   返回 `skipped`，判据只有「生成标签齐全」；而两列是第 129 轮才加进 `book_metas` 的 ⇒ 老库永远
+   不会重新进入事务（协调器每次都提交，Rust 每次都 skip）。
+3. **Dart：读取方向漏字段**。第 130 轮只补了写方向（`saveToSqlite` / `_metaDto`），
+   `book_repository.loadFromSqlite` 的 DTO→BookMeta 没带 `volume/chapter`（另有 `BookMeta.fromJson`、
+   `_copyMetaWithKey`、`_mergeMeta` 三处）⇒ SQLite 里有值、Dart 内存里恒为空串：号码既到不了
+   「作品名+数字」搜索锚点，也到不了界面，「往返」的说法不成立。
+4. **UI：没有显示出口**。`app/lib/ui` 下没有任何一处渲染卷/话（只有两处"当输入用"）。
+
+**真实库取证（只读；活动数据根＝`D:\Documents\RCH`，不是 `%APPDATA%\RCH`）**
+- 修复前：`book_metas` 1154 行，`volume` 非空 **0**、`chapter` 非空 **0**；同期 `scrape_proposals`
+  语义层 `chapter` 非空 **173** 条（兼容投影列 233 条）、`volume` **2** 条 ⇒ 解析产物一直在，落库恒零。
+- 修复后（真实库**副本**上跑生产物化路径 `catalog_materialize_dry_run`，绝不动真实库）：
+  `volume` 非空 **2**、`chapter` 非空 **177**（合计 **179**），与 `sync_dirty_count=179` 逐一吻合；
+  `applied=647 / skipped=498`、`accounting_status=pass`。
+  抽样：`W-舞冰的祈愿-金牌得主` → chp=32/21/23/22/57.2/6.5/45/31/53/5/58（小数话号亦正确）。
+
+**修改内容**
+- `app/rust/src/scrape_projection.rs`：
+  - 卷/话填充改为自带 `sequence_filled` 脏标记并纳入落盘条件，同时把 `volume`/`chapter` 记入
+    `changed_fields`（已存在不同值时记入 `skipped_fields`，保持可解释）。
+  - 新增 `sequence_backfill_needed()`：语义层有卷/话而 `book_metas` 该列为空 ⇒ 允许已 `applied`
+    的提案重新进入事务回填；回填后该列非空即恢复 `skipped`，保持幂等。
+  - 抽出 `semantic_value()` / `non_empty_or()`（与既有 `semantic_string` 同口径），消掉重复取值。
+  - **语义层缺卷/话时回退到提案的兼容投影列**（`volume`/`chapter`）：真实库实测 **60 行**
+    「列有值、语义层为空」（旧规则版本产物）。不回退就会出现「结果行有号码、详情页标题没有」的
+    口径不一致（此项由复核阶段的真实库口径查询发现，见下「复核修正」）。
+- Dart 读取侧补齐 `volume/chapter`：`book_repository.bookMetaFromDto()`（新抽出的纯映射，便于单测）、
+  `models.dart BookMeta.fromJson`、`library_store._copyMetaWithKey` 与 `_mergeMeta`。
+- 显示（按用户口径「拼进标题显示」+「结果行/匹配输入要看到号码」；缺号不显示、也不默认 1）：
+  `eh_auto_scrape_panel.dart` 的 `_BatchRow.number`/`displayTitle`，号码**优先取提案自身的
+  `volume/chapter`**（解析源头，不依赖物化是否跑过、也不依赖 Dart 往返），行标题显示「作品名 号码」；
+  `book_detail_page.dart` 的 `_ehWorkIdentity()` 增 `number`、信息区标题拼号码（**只显示，不写回
+  `_meta.title`**）、导入预览「匹配输入」带号码。
+- 显示口径单点化：`models.dart` 新增纯函数 `sequenceNumberOf()`（话优先于卷）与
+  `titleWithSequence()`（有号码才拼），「结果行 / 详情页标题 / 导入预览」三处共用，
+  消除三份重复的优先级实现。
+- 新增单测 `app/test/book_meta_sequence_test.dart`（DTO→BookMeta、JSON 往返、缺省不编造号码、
+  话优先于卷、空号不追加后缀）。
+
+**影响范围**
+- 只动既有列与既有入口：无表结构变更、无同步协议变更、无新依赖。
+- 回填会使这批书 `sync_dirty=true`（规范数据确实变了），幂等、只发生一次。
+  **注意（独立评审 Important 1，已在源码核实）**：`volume`/`chapter` 目前**不进入同步载荷**——
+  `sync/snapshot.rs:84-108` 的 `load_metas` 与 `db::load_metas_for_sync_on`/`MetaSyncRow` 都不含
+  这两列，`rchpkg` 的 metas 实体又复用 `MetaSyncRow` ⇒ 号码是**本机规范数据**：不会同步到另一台
+  设备，也不随整包备份恢复（另一台/恢复后会在自己的目录刮削轮次里重新推导出来）。
+  扩展同步与包格式属跨模块/协议变更，按 CLAUDE.md 需用户确认，本轮**不动**，列为遗留决策。
+- 显示层拼号码不写回 `_meta.title`，避免污染检索/同步与用户手填标题。
+
+**验证**
+- `cargo test --lib scrape_projection` → **12 passed / 0 failed**（含新增 4 项：「仅卷/话变化也落盘」
+  「applied 提案回填且第二次仍 skipped」「语义层缺失时用兼容投影列」「兼容列 + 已 applied 也能触发回填」）。
+- `cargo test --lib` 全量 → **441 passed / 14 failed / 4 ignored**；失败集与第 129 轮记录的既有 flaky
+  家族完全一致（`remote_scan::session_ready_tests` / `wake_tests`、`cache::*`），无一条涉及
+  `scrape_projection` ⇒ 既有基线，非本轮引入。
+- `flutter analyze` 全量 → **No issues found**；`flutter test` → **All tests passed（210 项）**。
+- 真实库副本端到端见上（0 → 179 本有号码）；**评审修复后用最终代码在新副本上复跑，结果一致**
+  （`volume=2 / chapter=177`、`applied=647 / skipped=498`、`sync_dirty_count=179`、`accounting=pass`）。
+
+**复核修正（复核阶段在真实库上量到的口径问题）**
+- 口径查询：`scrape_proposals` 中「兼容列非空而语义层为空」的 `chapter` **60 行**（`volume` 0 行）、
+  反向 0 行 ⇒ 只读语义层会让这 60 本的**结果行有号码而详情页标题没有**。
+  已改为「语义层优先、缺失回退兼容列」，并补第 3 条 Rust 用例钉住。
+
+**独立评审（engineering-review-gate，fresh context 只读评审者）**
+- 评审包：`.git/dsh-engineering-review/2026-09-23T04-36-39-310Z-16260/review-package.md`
+  （base = `4b5b483`）；结论 **Status: FAIL**、Spec Compliance PASS、Chain Integrity UNVERIFIED、
+  Test Evidence INCOMPLETE；Findings = 0 Critical / 1 Important / 5 Minor。
+- 逐条处置（Important/Minor 均已核实后再动）：
+  - **Important 1**（卷/话不进同步与整包载荷）：在源码核实**成立**（见上「影响范围」）。
+    因属同步协议/包格式变更，按 CLAUDE.md 需用户确认 ⇒ **未擅自实施**，已把准确表述写进
+    `.trellis/spec/backend/automation-pipeline.md` 并列为遗留决策（选项：把两列补进
+    `MetaSyncRow`+快照+rchpkg 并保持空值不覆盖，或明确定性为"设备本地派生数据"）。
+  - **Minor 2**（`sequence_backfill_needed` 的 `None => true` 会重建被删元数据行）：**保留**，
+    理由已写进代码注释——"没有行即投影不完整"，且与既有"标签缺失"判据行为一致、回填后即幂等。
+  - **Minor 3**（卷/话进 `skipped_fields` ⇒ 审计 `error` 变成 `"chapter"`）：**保留**，
+    与既有 `title`/`author` 同一条约定（`error = skipped_fields.join(", ")` 本就如此），
+    单改卷/话反而让审计口径不一致。
+  - **Minor 4**（三处重复的号码优先级）：**已修**（`sequenceNumberOf` / `titleWithSequence` 单点化）。
+  - **Minor 5**（spec 未记录新的重入条件）：**已修**（`automation-pipeline.md` 补契约，含传播边界）。
+  - 评审的"UI 出口零测试"：**已补**——按评审建议复用 `overflow_repro_test.dart` 的脚手架，新增
+    详情页**真实渲染**测试（断言出现「金牌得主 32」、`_meta.title` 未被改写、缺号不默认成 1）；
+    结果行的数据源是私有 `_rows`（无法注入），仍只有共用纯函数的单测覆盖（列为遗留）。
+- **第二轮（限定范围复审）结论：FAIL** —— 含 1 条**新 Important（我引入的）**与 3 条 Minor：
+  - **新 Important**：重入判据 `sequence_backfill_needed` 只读**语义层**，而写路径已回退到兼容列 ⇒
+    「兼容列有值、语义层为空」且已 `applied` + 标签齐全的行**仍然进不来**，「结果行有号码、详情页
+    标题没有」的口径不一致恰好在这 60 行上保留。**已修**：抽出 `resolved_sequence()`（语义层优先、
+    缺失回退兼容列），**写路径与重入判据共用同一口径**；新增判别性用例
+    `applied_proposal_with_only_compat_sequence_column_is_backfilled`（修复前该用例必失败：得到
+    `skipped` 而非 `applied`）。
+  - Minor（第 4 处重复）：`eh_auto_scrape_panel._run` 内联的号码回退 → 改用 `sequenceNumberOf`；
+    同时把两个 UI 出口的号码来源统一为「语义层优先、缺失回退兼容列」，与 Rust 写路径同向。
+  - Minor（spec 措辞与代码不符）：随上条修复自动消解——`automation-pipeline.md` 现在描述的判据
+    与代码一致。
+  - Minor（回退写规范值的来源可证性）：静态看当前唯一写入路径（`api/scraper.rs` 的兼容列与
+    `semantic_json` 同源于同一个 `NameRoleProposal`）**不可能**产生"列有值、语义层为空"，
+    故这 60 行的**产生版本没能追溯到具体提交**；回退只填空、不覆盖，风险限于"信任一个来源不可证
+    的旧值"。**未做**：历史库/提交考古。
+  - Minor（179 个 dirty 属同值空推）：与 Important 1 同源，随传播策略决策一并处理。
+
+**遗留**
+- **未做**：真机 UI 复核（我无法可靠驱动桌面窗口的点击与截图，按项目惯例交用户手测）。
+  判定标准：重启应用（或「设置 → 书源与网络 → 重新刮削」跑一轮物化）后，
+  详情页标题显示「作品名 话号」、「E 站自动刮削」结果行同样带号码。
+- **待用户决策**：卷/话的跨设备与备份传播策略（评审 Important 1）。
+- **未做**：「E 站自动刮削」**结果行**的 widget 渲染测试——行的数据源是私有 `_rows`，测试无法注入；
+  显示规则本身与详情页出口已有覆盖。
+- **未做**：真实库那 60 行「兼容列有值、语义层为空」的写入版本考古（当前代码路径静态不可产生）。
+- **既有缺陷（非本轮引入，未改）**：`app/rust/src/eh_import.rs:155` 有 `unused_mut` 警告，
+  与第 97 轮「CI 带 `RUSTFLAGS=-D warnings`」的口径冲突，会让 CI 红线；建议单独一轮清掉。
+- 卷号本身罕见（真实库 1495 条 ready 提案里 `volume` 仅 2 条、`chapter` 173 条），
+  用户实际看到的多半是话号。
+
+## 2026-09-23｜第132轮：卷/话进同步载荷与 .rchpkg 备份（用户选方案①）+ 重启应用实机验证
+
+**目标**：用户拍板"① 把卷/话补进同步载荷与 `.rchpkg` 备份"，并授权"重启应用"做真机验证；
+其余遗留项要求对照 LOG/TODO 清点登记，且明确"不要乱删"（本轮未删除任何用户数据/缓存/日志，
+只清理了自己创建的临时副本）。
+
+**修改内容（Rust 侧，同步与整包都是 Rust 拥有）**
+- `db/mod.rs`：
+  - `MetaSyncRow` 新增 `volume` / `chapter`，**两字段都加 `#[serde(default)]`**：
+    旧节点载荷与改动前导出的 `.rchpkg` 没有这两个键，缺键必须仍能反序列化。
+  - `load_metas_for_sync_on`（同步增量 + `.rchpkg` metas 分块的**共同数据源**）带出这两列。
+  - `apply_meta_sync_on`（整包导入落库）写入这两列，并用
+    `CASE WHEN excluded.<col>='' THEN book_metas.<col> ELSE excluded.<col> END`
+    保持全仓既有不变量「空值不覆盖」。
+- `sync/snapshot.rs`：`load_metas` 的 SELECT 与 JSON 载荷加上 `volume`/`chapter`
+  ⇒ 自动参与 `sync/merge.rs::merge_metas` 的**逐字段三方合并**（合并层零改动）。
+- `sync/apply.rs`：`apply_metas` 写入这两列（同样空值不覆盖），旧载荷不会抹掉本机号码。
+- `.trellis/spec/backend/automation-pipeline.md`：把上一轮写的"不携带 / 不传播"契约**改写成事实**：
+  两处载荷都携带、合并层自动参与，并写明向后兼容要求与空值不覆盖语义。
+- 新增探针 `app/rust/examples/sync_sequence_probe.rs`（离线、只对 DB 副本）：
+  ① 增量/整包数据源；② 同步快照载荷；③ 整包导出（真实备份入口 `export_snapshot_to_file`）；
+  ③b 包内自校验（直读 `metadata/metas.json` 统计含两键/非空号码）；④ 导入全新空库后的号码恢复统计。
+- `sync/merge.rs`（**独立评审 Important 1/2 的修复，均为既有缺陷**）：
+  - metas 条目在**没有 base**（首次配对、或两端都已存在同一本书）时，旧实现 `let b = base?` 整条返回
+    `None` ⇒ 条目既不进 `merged`、`advance_base` 也永远建不起 base ⇒ **该 key 永久不收敛**
+    （不止卷/话，title/author/series 全都过不去）。**我上一轮 TODO 里"下一轮（base 建立后）收敛"
+    的说法是错的**，已更正。改为退化为整条 LWW（updated_at 大者胜、平局取 local），
+    下一轮即恢复字段级三方合并。
+  - 新增 `align_persisted_sequence()`：合并结果必须对齐**实际落库状态** —— 落库侧"空值不覆盖"守卫
+    会把空串挡掉，若 base 记录的是合并结果里的空串，就与本机库内值不一致 ⇒ 每轮判"本地已改"
+    并重推（跨版本对端 revision 无谓增长）。三条决策分支（Local/Remote/Merged）统一在 `three_way`
+    出口对齐，覆盖"整条采用远端"这条不走字段合并的路径。
+
+**验证**
+- 目标模块（复审修复后复跑）：`cargo test --lib sync::` **51 passed / 0 failed**、
+  `merge::` **14 passed / 0 failed**、`rchpkg::` **19 passed / 0 failed**（含既有多轮往返用例：
+  导出→导入后 volume/chapter 仍在）、`db::` **36 passed / 0 failed**、
+  `scrape_projection` **12 passed / 0 failed**；`cargo build --examples` 通过。
+  新增 8 条用例：旧载荷反序列化+空值不清空、导出源带号码、快照载荷带号码、
+  应用层落库+旧载荷不清空、无 base 时 LWW 收敛（而非丢弃）、空串不算清空（两个方向）、
+  **两轮收敛端到端（第二轮不得重推 metas）**、既有整包往返断言扩到两列。
+- 全量：`cargo test --lib` 并行 → **448 passed / 17 failed / 4 ignored**；失败全在既有 flaky 家族
+  （`api::cache`、`remote_scan::session_ready|wake`、`source::d2_cache_authority`、`document::mobi`、
+  `cache::rg_a_atomic`），**无一条**涉及 scrape_projection / sync / rchpkg / db。
+  **按交接单 D 的项目口径改串行复跑**：`cargo test --lib -- --test-threads=1` →
+  **465 passed / 0 failed / 4 ignored**（并行那 13–17 条是文档记录过的假失败，串行才是真门禁）。
+- `flutter analyze` → No issues found；`flutter test` → All tests passed（210 项）。
+- **实机（用户授权重启）**：`flutter build windows --release` 成功（90 s）→ 启动新产物（PID 15004，
+  自动同步开着）。真实库 `book_metas` 卷/话非空数 **0/0 → 177/2（179 本）**，t+90 s 起出现、
+  t+120 s 稳定 —— 与第 131 轮离线副本预测的 179 **完全一致**。
+- **载荷取证（真实库副本，探针；副本改用 SQLite 在线备份 `.backup` 取一致快照，应用运行中亦可）**：
+  - `[1]` 增量/整包数据源：rows=1154 **volume=2 chapter=177**；
+  - `[2]` **同步快照载荷：entries=1154 volume=2 chapter=177**（= 真正推送的内容已带号码）；
+  - `[3]` 整包导出（真实备份入口 `export_snapshot_to_file`）：metas=1154；
+  - `[3b]` **包内自校验**（探针直读包内 `metadata/metas.json`）：rows=1154、**含两键=1154**、
+    非空 chapter=**177** / volume=**2**（与库内一致 ⇒ 备份确实带走号码）；
+  - `[4]` 导入全新空库：1055 行 / chapter 111 —— **差距已定性为本轮之外的既有语义**（见下）。
+
+**本轮新发现（既有行为，非本轮引入，已登记 TODO）**
+- **整包恢复到全新库会少于源库行数**：源库 `sync_tombstones` 有 **metas 墓碑 2511 条**
+  （其中 `115` 前缀 1088 条、`quark` 82 条），而导入侧 `apply_tombstone_on` 是**无条件 DELETE**
+  （复审核实：`rchpkg/mod.rs` 的墓碑分支不看 `updated_at`）⇒ 刚写入的活行会被旧墓碑删掉：
+  115 源 18 本全丢、quark 少 78 本（1154 → 1055，章节 177 → 111）。
+  **导出侧完好**（包内 1154 行齐全、每行含两键）⇒ 恢复保真度是独立课题，本轮不改（需用户确认）。
+
+**第二轮（限定范围复审，评审对象=本轮同步/整包改动）**
+- 结论 **FAIL**：Spec PASS、Chain FAIL、Test INCOMPLETE；2 Important + 3 Minor。
+- 处置：
+  - **Important 1（`merge.rs` 无 base 即丢弃）**：核实成立并**已修**（退化为 LWW），补判别性用例
+    `metas_without_base_converge_by_lww_instead_of_being_dropped`（修复前 `.expect()` 必 panic）。
+  - **Important 2（守卫导致 base 与库内值不一致 → 每轮重推）**：核实成立，且是**我的守卫引入的**
+    新振荡路径；**已修**，且分两步才修对：
+    ① 只在 `three_way` 出口对齐落库状态（`align_persisted_sequence`）不够——"只有远端改"走的是
+    `(false,true) → Remote` 整条采用远端，根本不进字段合并；
+    ② 追加**判定前**对齐（`align_incoming_sequence`），让"对端空值"在语义上不构成变更。
+    补两轮端到端用例 `sequence_converges_in_two_rounds_without_repush`（第一轮同步其它字段且不清号码、
+    第二轮 `merged[metas]` 必须为空）；去掉②该用例必失败 ⇒ 判别性成立。
+  - Minor（spec 把 `load_metas_for_sync_on` 说成 transport 增量载荷）：**已修**（改为 `.rchpkg`
+    metas 载荷，transport 载荷对应 `snapshot.rs::load_metas`），并补上两条合并规则。
+  - Minor（探针走 `export_package_to_file` 有副作用、且"打印≠验证"）：**已修**——改走真实备份入口
+    `export_snapshot_to_file`，并新增 `[3b]` 直读包内 `metadata/metas.json` 自校验（含两键/非空计数）。
+  - Minor（`merge.rs` 新增的"字段级采用远端"用例非判别）：**保留但标注**——该用例覆盖的是既有
+    通用合并行为，本轮新增的判别性用例才是钉住修复的。
+  - 复审 Follow-up 收尾：补两轮端到端用例（见 Important 2）；更正 `sync/mod.rs` 里与新行为矛盾的
+    注释；更正探针 `[1]` 的口径（`load_metas_for_sync_on` 只被 `.rchpkg` 调用，transport 走
+    `snapshot.rs::load_metas`，已同步修 spec）；全量门禁改按项目口径串行复跑。
+
+**遗留 / 未做**
+- **同步传输今天没有跑完**：`sync_history` 最大 id 仍是 502（2026-09-22 15:35），
+  `sync_base` 最新时间也是 9/22 15:35，`errors.log` 无今日条目 ⇒ 推送在 `webdavConnect`
+  阶段失败或退避重试（属网络/坚果云 WebDAV 环境，非载荷契约；载荷已由 `[2]` 证明）。
+  判定口径（用户可自查）：设置 → 同步与备份 → 立即同步，提示应为「同步完成 vN（metas=…）」；
+  成功后 `sync_history` 会出现新行，且 `sync_base` 中 `entity_type='metas'` 的 `state_json`
+  会包含 `"volume"`/`"chapter"`。
+- **待用户复验**：桌面上详情页标题 / 「E 站自动刮削」结果行 / 导入预览的号码显示
+  （数据侧已就位：真实库 179 本、Dart 读取链路已修）。
+- 上一轮登记的三条仍有效：结果行 widget 测试、60 行来源考古、`eh_import.rs:155` 的 CI 警告。
+
+## 2026-09-23｜第133轮：墓碑随行复活而失效（ADR-030）+ 定位那条未闭环的条漫跳页 bug
+
+**目标**：用户交办两件事：①实现「墓碑随行复活而失效」；②找出文档里记录过、至今未解决的那条
+「手机端条漫下拉阅读时突然跳回好几页前」的 bug。
+
+**一、墓碑随行复活而失效（ADR-030，用户决策）**
+
+**根因**：墓碑在旧实现里**永久有效**——`rchpkg::apply_tombstone_on` 连 `updated_at` 都没接、
+**无条件 DELETE**；`load_tombstones_for_sync_on` 也不看活行。于是"删过又回来"的书在下一次整包恢复
+或对端应用时会被旧墓碑再删一次（真实库实测：导出侧 1154 行俱全，恢复到全新库只剩 1055 行、
+章节 177 → 111；源库有 2511 条 metas 墓碑）。
+
+**修改内容**
+- `app/rust/src/db/mod.rs`：新增 `entity_live_timestamp()`（实体 → 活行时间戳）、`tombstone_is_stale()`
+  （不变量判定）、`delete_tombstone_on()`、`clear_tombstone_if_not_newer_on()`；
+  `merge_row_on` 写活行后清墓碑；`upsert_meta_on`（本地物化/保存）同样清墓碑；
+  `load_tombstones_for_sync_on` 增加**读时过滤** ⇒ 历史遗留的过期墓碑不再外发。
+- `app/rust/src/rchpkg/mod.rs`：`apply_tombstone_on` 增 `tombstone_updated_at` 参数，
+  **只在墓碑比活行新时删除**；过期则保留活行并顺手清掉该墓碑；调用点同步。
+- `docs/project/DECISION.md`：新增 **ADR-030**（背景/决策/理由/备选/影响）。
+- 新增 2 条判别性用例：`rchpkg::stale_tombstone_spares_a_resurrected_row`、
+  `db::tombstone_expires_when_the_row_comes_back`（覆盖两个方向：过期墓碑不删行且清墓碑；更新墓碑仍须删行）。
+
+**验证**
+- **同一探针 + 同一真实库（在线备份副本）**：`[4] 导入新库 → 恢复后 metas=1055 / chapter=111`
+  **→ `metas=1154 / volume=2 / chapter=177`**（与源库逐项一致）⇒ 恢复保真度修好。
+  原始输出：`D:\Temp\rch-gate\evidence\probe-tombstone-final.log`。
+- `cargo test --lib db::` **37 passed / 0 failed**、`rchpkg::` **20 passed / 0 failed**；
+  **串行全量 `cargo test --lib -- --test-threads=1` → 467 passed / 0 failed / 4 ignored**。
+
+**二、条漫跳页 bug 的文档定位（结论：文档有、任务未闭环；本轮只做分析，未改阅读器）**
+- **文档位置**：`.trellis/tasks/08-30-webtoon-page-stability/`（PRD 标题即《条漫快速翻页稳定性与页码
+  回跳修复》，含 prd/design/implement）；父任务 `.trellis/tasks/08-30-post-release-feedback-remediation/`；
+  `docs/reports/rch-v057-release-candidate-gate-2026-09-13.md:106` 至今仍把它列为未完成规划
+  （"条漫稳定性 … in_progress"）。
+- **任务现状**：`implement.md:31-37` 记录 2026-09-11 已实现 `WebtoonNavigationModel` + 阅读器接线 +
+  修 `animateTo`/`ScrollEndNotification` 竞态，自动化 30 条测试通过；**第 37 行明确写着"真机 50+ 页
+  不等高条漫冒烟仍未做，任务保持 in_progress"** —— 与用户现在的现象吻合。
+- **静态分析（本轮新增，比文档更进一步）**：
+  1. **那个模型根本没接进阅读器**：`app/lib/ui/webtoon_navigation.dart` 全仓**只被它自己的单测引用**，
+     `reader_page.dart` 从未 import 它（`git log -S WebtoonNavigationModel -- app/lib/ui/reader_page.dart`
+     无任何提交）⇒ 文档所称的"阅读器接线"不成立，该模型目前是**死代码**；阅读器里的 `_completion`
+     是另一件事（末页提示状态机）。
+  2. **与用户现象吻合的回跳机制**：条漫用 `ListView.builder` 且无 `itemExtent`
+     （`reader_page.dart:730`），未加载页先用 **200px 占位**（:732），`_ensure(i)` 拉取完成后 `setState`
+     把它换成真实高度（条漫页常 1000–4000px）。SliverList 只保持**像素偏移**，于是**视口上方**的条目
+     变高时可见内容整体向后跳同样的距离；快速下拉时前几页的占位同时收敛 ⇒ "划着划着突然跳回好几页前"。
+     现有代码**没有任何滚动锚点补偿**（测高回调只写 `_webtoonHeights`，:734-748）。
+  3. 次要项（文档原本针对的路径）：`_webtoonOffsetTo` 对未测高页按 **0** 累加（:359-363）；
+     `_onWebtoonScroll` 直接用这份高度表回写 `_page`（:700-718，无 generation/pending 保护）。
+- **本轮未动阅读器代码**：按项目规则（bug 先对齐现象与根因方向再改），修复方向待用户确认。
+
+**四、步骤①（滚动锚点补偿）已实现并接线（真触发路径复现后一次改对）**
+- 用户选定"两只都做、分两步提交"（①锚点补偿 → ②接通 `WebtoonNavigationModel`），验证方式=自动化回归 + 手机实测；
+  并确认**未开 AI 超分**（排除 `_toggleAiVersion` 清空页高缓存那条路径）。
+- **定向复现真触发路径**（用户选项：先把真形状钉住再改）：不再用"静态改高度后 pump 一次"的假形状，而是
+  用**同一拖拽轨迹的对照实验**——(a) 无增长对照组、(b) 中途让视口上方的页占位收敛、
+  (c) 之后**手指继续拖 40px**（真实快速下拉就是每帧都有布局帧）。结果：**不补偿时锚点被推走 5600px；
+  有补偿时与对照组差 <1px**。两个用例都在 `app/test/webtoon_navigation_test.dart`（真实 `ListView`）。
+- **教训**：`ScrollPosition.correctBy` 是**静默**纠偏（Flutter 自己在 viewport 的 layout 里用它）。
+  我第一版脚手架在"高度变化后再无后续布局帧"的形状下验证，看到"位置对象已纠偏、画面没动"，
+  差点误判成"方案不可行、需要换 `itemExtentBuilder`"。真实拖拽中手指持续移动、每帧都重排，
+  纠偏**下一帧即生效**——静默纠偏恰恰是"不打断惯性"的正确应用点。复盘写进 TODO 以免再踩。
+- **实现（`app/lib/ui/reader_page.dart`）**：
+  1. 新增 `WebtoonAnchorKeeper _webtoonAnchor` + `GlobalKey _webtoonListKey` + `_kWebtoonPlaceholderHeight`
+     （替换散落的魔法数 200）+ `_webtoonProgrammaticScroll` 标志；
+  2. `_ensure` 成功拿到字节时 `announceGrowth(i, 占位高)`（覆盖"从未构建过、一进布局就是真实高度"的页）；
+  3. 测高回调：`itemCtx.mounted` 守卫（修掉 DEFUNCT 元素测量这一真实缺陷）→ 顶部位置换算
+     （`listBox.globalToLocal`）→ `record()` → `position.correctBy()` 静默纠偏（钳制在 min/max 内）；
+     程序化滚动（`animateTo`）期间暂停补偿；`_toggleAiVersion` 时 `reset()`。
+- **验证**：`flutter test test/webtoon_navigation_test.dart test/reader_swipe_webtoon_test.dart` → 20 通过；
+  **全量 `flutter test` → 217 通过 / 1 跳过 / 0 失败**（较此前 +7：5 条 keeper 单测 + 2 条对照实验）；
+  `flutter analyze`（reader_page / webtoon_navigation / 测试）→ No issues found。
+- **未完成/待用户**：手机实机复验（50+ 页不等高条漫快速下拉）；步骤②（接通导航模型，覆盖页码回跳/进度写错）。
+
+**三、第133轮独立评审（限定范围）与处置**
+- 结论 **FAIL**（1 Important + 3 Minor）；逐条核实后全部成立并已处置：
+  - **Important（`force=true` 的删除行越过时间判断）**：`merge_row_on` 的 `deleted` 分支在 `force` 下
+    **不看 `updated_at`** ⇒ 整包恢复里一条旧的 `deleted:true` 行会删掉比它**新**的活行（与墓碑同类问题，
+    只是走"行"而不是墓碑表）。**已修**：删除行分支先做 `tombstone_is_stale` 判定（**`force` 也不越过**），
+    过期则不动活行并清掉墓碑；补判别性用例 `db::forced_deletion_row_cannot_remove_a_newer_live_row`。
+  - **Minor 1（软删行被当活行）**：`entity_live_timestamp` 未加 `deleted = 0` ⇒ library_index 这类以软删
+    为主的实体会把墓碑误判为过期。**已修**（全部查询加 `deleted = 0`，"活行"口径与全仓一致）。
+  - **Minor 2/3（ADR 归因与同刻口径）**：ADR-030 已更正——`sync_tombstones` 只由整包携带
+    （transport 的删除走 `SyncEntry.deleted`）、`merge_row_on` 只服务整包恢复路径；并写明同刻语义
+    （**行级删除不得吃掉同刻活行**，与 `merge.rs::lww` 的"整条条目平局墓碑胜"分属不同对象）。
+    补同刻用例 `db::tombstone_at_the_same_timestamp_keeps_the_live_row`。
+- **量化补证（评审 Unverified ①）**：源库 metas 墓碑 2511 条（`115` 前缀 1088 条、local 1275 条、
+  quark 82 条、baidu 60 条、webdav 6 条），其中**过期墓碑恰好 99 条**（活行比墓碑新的 key）——
+  正是修复前恢复丢掉的 99 行（1154 − 1055 = 99）。原始输出：
+  `D:\Temp\rch-gate\evidence\tombstone-forensics.txt`；恢复对照 `probe-final.log[4]` vs
+  `probe-tombstone-final.log[4]`。
+- 门禁：`db::` **39/0**、`rchpkg::` **20/0**、`sync::` **51/0**、`merge::` **14/0**；
+  串行全量 **469 passed / 0 failed / 4 ignored**（另有一次 468/1，属既有偶发）。
+- 遗留（评审 Follow-up，已登记 TODO）：探针 `sync_sequence_probe.rs` 仍是未跟踪文件（需随本轮一起提交才可复现）；
+  恢复保真度目前只对 metas 有量化对照，library_index / records 未扩测。

@@ -338,6 +338,8 @@ class LibraryStore extends ChangeNotifier {
     author: m.author,
     genre: m.genre,
     series: m.series,
+    volume: m.volume,
+    chapter: m.chapter,
     summary: m.summary,
     comment: m.comment,
     title: m.title,
@@ -354,6 +356,8 @@ class LibraryStore extends ChangeNotifier {
     if (target.author.isEmpty) target.author = other.author;
     if (target.genre.isEmpty) target.genre = other.genre;
     if (target.series.isEmpty) target.series = other.series;
+    if (target.volume.isEmpty) target.volume = other.volume;
+    if (target.chapter.isEmpty) target.chapter = other.chapter;
     if (target.summary.isEmpty) target.summary = other.summary;
     if (target.comment.isEmpty) target.comment = other.comment;
     if (target.title.isEmpty) target.title = other.title;

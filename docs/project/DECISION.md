@@ -439,3 +439,36 @@
      可共用，transport wake 表达 cover 语义）。
 - **影响**：契约测试 `REV-*` / `STREAM-1F` / `NW-1~1c` 固定该模型；后续新增 batch owner 必须遵守
   同样的 ownership 规则，不得在 inner helper 内 emit。
+
+## ADR-030 墓碑随行复活而失效（同步/备份的删除语义）
+
+- **日期**：2026-09-23
+- **状态**：已定（用户决策 → 第133轮实现）
+- **背景**：`sync_tombstones` 记录"某 key 曾在本机被删"，同步与 `.rchpkg` 备份都携带它。旧实现里墓碑
+  **永久有效**：`rchpkg::apply_tombstone_on` 连 `updated_at` 都没接、**无条件 DELETE**，
+  `load_tombstones_for_sync_on` 也不看活行。于是"删过又回来"的书在恢复/对端应用时会被旧墓碑再删一次。
+  真实库实测（2026-09-23，在线备份副本 + `sync_sequence_probe`）：导出侧完好（包内 `metadata/metas.json`
+  1154 行俱全、含两键 1154），但**恢复到全新库只剩 1055 行、章节 177 → 111**（115 源 18 本全丢、
+  quark 少 78 本）；源库 `sync_tombstones` 有 **2511 条 metas 墓碑**（`115` 前缀 1088 条）。
+- **决策**：删除只对**比它旧**的行有效。不变量 = 活行（`deleted = 0`）存在且
+  `live_updated_at >= tombstone.updated_at` ⇒ 该 key 的删除作废。落实在三处：
+  1. **导出读时过滤**：`load_tombstones_for_sync_on` 丢弃过期墓碑（历史遗留墓碑因此不再外发）；
+  2. **应用时看时间**：`rchpkg::apply_tombstone_on` 只在墓碑比活行**新**时删除；过期则保留活行并顺手清掉该墓碑；
+     同理 `merge_row_on` 的**删除行**分支不得越过时间判断（**`force = true` 也不行**，否则整包恢复会把
+     恢复后又被创建的书记删掉）；
+  3. **写入即失效**：`merge_row_on`（整包恢复的合并路径）与 `upsert_meta_on`（本地物化/保存）写活行后
+     清掉不更新的墓碑。
+- **适用面**：`sync_tombstones` 表由整包导出携带（`load_tombstones_for_sync_on` 目前仅被 `rchpkg` 调用）；
+  同步 transport 的删除以 `SyncEntry.deleted` 形式传播、本地落成"删行 + 写墓碑"，它依赖第 1/2 条的
+  导出过滤与落库守卫来保证"复活不被旧删除吃掉"，写入路径本身不再单独清墓碑。
+- **同刻边界**：活行与墓碑时间戳相同 ⇒ 保留活行（本 ADR 的不变量）。注意
+  `sync/merge.rs::lww` 在**整条条目**平局时是"墓碑胜"（防复活），两者针对的对象不同，
+  按本 ADR 的语义，**行级删除**不允许吃掉同刻的活行。
+- **理由**：删除必须能传播（墓碑比旧行新时仍然删除），但"删除"不能凌驾于"之后又被重新创建"这一更新事实；
+  否则备份恢复与跨设备同步会反复吃掉刚恢复的数据。
+- **备选**：①永久墓碑 + 恢复后人工重扫（要用户手工且丢标签/进度）；②给墓碑加 TTL/代数（更复杂，且仍会与
+  "复活"竞争）；③只让整包不带墓碑（同步路径仍会踩同一个坑）。
+- **影响**：`.rchpkg` 恢复到全新库的保真度回到 **1154 行 / 章节 177 / 卷 2**（同一探针实测）；表结构不变
+  （无迁移）。回归：`rchpkg::stale_tombstone_spares_a_resurrected_row`、
+  `db::tombstone_expires_when_the_row_comes_back`、`db::forced_deletion_row_cannot_remove_a_newer_live_row`、
+  `db::tombstone_at_the_same_timestamp_keeps_the_live_row`。

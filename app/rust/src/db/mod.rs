@@ -1870,6 +1870,8 @@ pub(crate) fn upsert_meta_on(conn: &Connection, m: &BookMetaRow) -> Result<()> {
             m.chapter,
         ],
     )?;
+    // 本地复活（物化重建元数据行、Dart 保存元数据）同样让旧墓碑失效。
+    clear_tombstone_if_not_newer_on(conn, "metas", &m.key, now_ms())?;
     Ok(())
 }
 
@@ -2489,6 +2491,72 @@ pub(crate) fn upsert_tombstone_on(conn: &Connection, entity: &str, key: &str) ->
     Ok(())
 }
 
+/// 某实体里该 key 的**活行**时间戳（不存在或已软删则 `None`）。
+///
+/// 「活行」按全仓口径 = `deleted = 0` 的行（软删行不构成复活，不能拿它的时间去作废墓碑，
+/// 否则 library_index 这类以软删为主的实体会把墓碑误判为过期）。
+/// 表名/列名均为硬编码常量，无注入面（与 `merge_row_on` 同一约定）。
+fn entity_live_timestamp(conn: &Connection, entity: &str, key: &str) -> Option<i64> {
+    let lookup = |table: &str, key_col: &str| -> Option<i64> {
+        conn.query_row(
+            &format!("SELECT updated_at FROM {table} WHERE {key_col} = ?1 AND deleted = 0"),
+            params![key],
+            |r| r.get::<_, i64>(0),
+        )
+        .ok()
+    };
+    match entity {
+        "sources" => lookup("book_sources", "id"),
+        "records" => lookup("read_records", "key"),
+        "metas" => lookup("book_metas", "key"),
+        "tags" => lookup("tags", "id"),
+        "settings" => lookup("app_settings", "key"),
+        "library_index" => lookup("library_index", "id"),
+        "book_tags" => key.rsplit_once('|').and_then(|(book_key, tag_id)| {
+            conn.query_row(
+                "SELECT updated_at FROM book_tags
+                 WHERE book_key = ?1 AND tag_id = ?2 AND deleted = 0",
+                params![book_key, tag_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+        }),
+        _ => None,
+    }
+}
+
+/// 墓碑失效判定：活行存在且不比墓碑旧 ⇒ 墓碑作废。
+///
+/// **墓碑随行复活而失效**（用户 2026-09-23 决策）。原来的实现让墓碑永久有效，
+/// 于是"删过又回来"的书在下一次同步/整包恢复时会被旧墓碑再删一次
+/// （实测：真实库恢复到全新库 1154 行 → 1055 行、章节 177 → 111）。
+pub(crate) fn tombstone_is_stale(conn: &Connection, entity: &str, key: &str, tombstone_at: i64) -> bool {
+    entity_live_timestamp(conn, entity, key).is_some_and(|live| live >= tombstone_at)
+}
+
+/// 删除某 key 的墓碑（复活后清理，避免它被继续导出/应用）。
+pub(crate) fn delete_tombstone_on(conn: &Connection, entity: &str, key: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM sync_tombstones WHERE entity = ?1 AND key = ?2",
+        params![entity, key],
+    )?;
+    Ok(())
+}
+
+/// 活行（重新）写入后调用：比它旧的墓碑立即失效。
+pub(crate) fn clear_tombstone_if_not_newer_on(
+    conn: &Connection,
+    entity: &str,
+    key: &str,
+    live_updated_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM sync_tombstones WHERE entity = ?1 AND key = ?2 AND updated_at <= ?3",
+        params![entity, key, live_updated_at],
+    )?;
+    Ok(())
+}
+
 pub fn upsert_tombstone(entity: &str, key: &str) -> Result<()> {
     let conn = get().lock().unwrap();
     upsert_tombstone_on(&conn, entity, key)
@@ -2510,6 +2578,10 @@ pub(crate) fn load_tombstones_for_sync_on(conn: &Connection, since: i64) -> Vec<
     })
     .unwrap()
     .filter_map(|r| r.ok())
+    // 墓碑随行复活而失效：不但旧墓碑不得再删新行，也不该再被导出/应用。
+    // 这里做**读时过滤**，因此历史库里遗留的过期墓碑（本轮改动之前写入、不会经过
+    // `clear_tombstone_if_not_newer_on`）同样不会再危害对端与整包恢复。
+    .filter(|row| !tombstone_is_stale(conn, &row.entity, &row.key, row.updated_at))
     .collect()
 }
 
@@ -2614,6 +2686,14 @@ pub struct MetaSyncRow {
     pub summary: String,
     pub comment: String,
     pub rotations: String,
+    /// 卷/话（M8 `semantic.volume` / `chapter`，物化落库）。
+    ///
+    /// `serde(default)` 是**向后兼容契约**：旧节点发来的同步载荷、以及本改动之前导出的
+    /// `.rchpkg` 都不含这两个键，缺键必须仍能反序列化成空串（否则旧包直接导入失败）。
+    #[serde(default)]
+    pub volume: String,
+    #[serde(default)]
+    pub chapter: String,
     pub updated_at: i64,
     pub deleted: bool,
 }
@@ -3974,7 +4054,7 @@ pub(crate) fn load_metas_for_sync_on(conn: &Connection, since: i64) -> Vec<MetaS
         .prepare(
             "SELECT key, stable_id, cover_page, crop_x, crop_y, crop_w, crop_h,
                     author, genre, series, title, chinese_title, summary, comment,
-                    rotations, updated_at, deleted
+                    rotations, volume, chapter, updated_at, deleted
              FROM book_metas WHERE updated_at > ?1 ORDER BY updated_at",
         )
         .unwrap();
@@ -3995,8 +4075,10 @@ pub(crate) fn load_metas_for_sync_on(conn: &Connection, since: i64) -> Vec<MetaS
             summary: row.get(12)?,
             comment: row.get(13)?,
             rotations: row.get(14)?,
-            updated_at: row.get(15)?,
-            deleted: row.get::<_, i64>(16)? != 0,
+            volume: row.get(15)?,
+            chapter: row.get(16)?,
+            updated_at: row.get(17)?,
+            deleted: row.get::<_, i64>(18)? != 0,
         })
     })
     .unwrap()
@@ -4205,8 +4287,9 @@ pub(crate) fn apply_meta_sync_on(conn: &Connection, r: &MetaSyncRow) -> Result<(
         "INSERT INTO book_metas
          (key, stable_id, cover_page, crop_x, crop_y, crop_w, crop_h,
           author, genre, series, title, chinese_title, summary, comment,
-          rotations, updated_at, deleted)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+          rotations, volume, chapter, updated_at, deleted)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                 ?15, ?16, ?17, ?18, ?19)
          ON CONFLICT(key) DO UPDATE SET
             stable_id=excluded.stable_id, cover_page=excluded.cover_page,
             crop_x=excluded.crop_x, crop_y=excluded.crop_y,
@@ -4214,6 +4297,10 @@ pub(crate) fn apply_meta_sync_on(conn: &Connection, r: &MetaSyncRow) -> Result<(
             author=excluded.author, genre=excluded.genre, series=excluded.series,
             title=excluded.title, chinese_title=excluded.chinese_title,
             summary=excluded.summary, comment=excluded.comment, rotations=excluded.rotations,
+            -- 卷/话同样遵守全仓既有不变量「空值不覆盖」：旧节点/旧包的载荷没有这两列
+            -- （反序列化成空串），绝不能因此把本机已物化的号码抹掉。
+            volume=CASE WHEN excluded.volume = '' THEN book_metas.volume ELSE excluded.volume END,
+            chapter=CASE WHEN excluded.chapter = '' THEN book_metas.chapter ELSE excluded.chapter END,
             updated_at=excluded.updated_at, deleted=excluded.deleted",
         params![
             r.key,
@@ -4231,6 +4318,8 @@ pub(crate) fn apply_meta_sync_on(conn: &Connection, r: &MetaSyncRow) -> Result<(
             r.summary,
             r.comment,
             r.rotations,
+            r.volume,
+            r.chapter,
             r.updated_at,
             r.deleted,
         ],
@@ -4314,6 +4403,13 @@ fn merge_row_on(
     apply: impl FnOnce(&Connection) -> Result<()>,
 ) -> Result<bool> {
     if deleted {
+        // 删除同样"随行复活而失效"：**连 `force` 也不越过这条**——包/同步里的删除行
+        // 不能吃掉比它新的活行（否则整包恢复会把恢复后又被创建的书记删掉）。
+        // 活行不旧于该删除 ⇒ 视为过期删除：不动活行，也不让它留下"可传播的删除"。
+        if tombstone_is_stale(conn, entity, key, incoming_updated_at) {
+            clear_tombstone_if_not_newer_on(conn, entity, key, incoming_updated_at)?;
+            return Ok(false);
+        }
         let should = force
             || existing_updated_at(conn, table, key_col, key)
                 .map_or(false, |t| incoming_updated_at > t);
@@ -4331,6 +4427,9 @@ fn merge_row_on(
         || existing_updated_at(conn, table, key_col, key).map_or(true, |t| incoming_updated_at > t);
     if should {
         apply(conn)?;
+        // 行被（重新）写入 = 复活 ⇒ 比它旧的墓碑立即失效，
+        // 否则下一次同步/整包恢复会拿旧墓碑把它再删一遍。
+        clear_tombstone_if_not_newer_on(conn, entity, key, incoming_updated_at)?;
         Ok(true)
     } else {
         Ok(false)
@@ -5061,6 +5160,187 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_tables(&conn).unwrap();
         conn
+    }
+
+    fn meta_sequence(conn: &Connection, key: &str) -> (String, String) {
+        conn.query_row(
+            "SELECT volume, chapter FROM book_metas WHERE key = ?1",
+            params![key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    /// 卷/话的同步/整包契约：
+    /// ① 旧节点载荷或旧 `.rchpkg`（没有这两个键）必须仍能反序列化；
+    /// ② 这类载荷写库时**不得清空**本机已物化的号码（空值不覆盖）；
+    /// ③ 带号码的载荷照常写入。
+    #[test]
+    fn meta_sync_row_tolerates_legacy_payload_and_never_clears_sequence() {
+        let legacy_json = r#"{"key":"local|s1|/books/a.cbz","stableId":null,"coverPage":0,
+            "cropX":null,"cropY":null,"cropW":null,"cropH":null,"author":"","genre":"","series":"",
+            "title":"A","chineseTitle":"","summary":"","comment":"","rotations":"{}",
+            "updatedAt":200,"deleted":false}"#;
+        let legacy: MetaSyncRow = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(legacy.volume, "");
+        assert_eq!(legacy.chapter, "");
+
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO book_metas (key, title, volume, chapter, updated_at)
+             VALUES ('local|s1|/books/a.cbz', 'A', '1', '7', 100)",
+            [],
+        )
+        .unwrap();
+        // ② 旧载荷（updated_at 更新）不得覆盖本机号码
+        apply_meta_sync_on(&conn, &legacy).unwrap();
+        assert_eq!(
+            meta_sequence(&conn, "local|s1|/books/a.cbz"),
+            ("1".to_string(), "7".to_string())
+        );
+        // ③ 带号码的载荷照常写入
+        let mut with_sequence = legacy.clone();
+        with_sequence.volume = "2".into();
+        with_sequence.chapter = "8".into();
+        with_sequence.updated_at = 300;
+        apply_meta_sync_on(&conn, &with_sequence).unwrap();
+        assert_eq!(
+            meta_sequence(&conn, "local|s1|/books/a.cbz"),
+            ("2".to_string(), "8".to_string())
+        );
+    }
+
+    fn meta_sync_row(key: &str, updated_at: i64, deleted: bool) -> MetaSyncRow {
+        serde_json::from_str(&format!(
+            r#"{{"key":"{key}","stableId":null,"coverPage":0,"cropX":null,"cropY":null,
+            "cropW":null,"cropH":null,"author":"","genre":"","series":"","title":"A",
+            "chineseTitle":"","summary":"","comment":"","rotations":"{{}}",
+            "updatedAt":{updated_at},"deleted":{deleted}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// 复审 Important 1：整包恢复走 `force=true`，但**删除行也不得越过时间判断**——
+    /// 不能吃掉比它新的活行；而更新的删除仍然生效（删除必须能传播）。
+    #[test]
+    fn forced_deletion_row_cannot_remove_a_newer_live_row() {
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO book_metas (key, title, updated_at) VALUES ('k1', 'A', 300)",
+            [],
+        )
+        .unwrap();
+        let meta_count = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r.get(0))
+                .unwrap()
+        };
+
+        // 包里的删除行比活行旧（200 < 300）⇒ 不得删除，即使 force=true
+        let stale = meta_sync_row("k1", 200, true);
+        assert!(!merge_meta_sync_on(&conn, &stale, true).unwrap());
+        assert_eq!(meta_count(&conn), 1, "过期删除不得吃掉更新的活行");
+
+        // 更新的删除行（400 > 300）⇒ 仍然删除
+        let fresh = meta_sync_row("k1", 400, true);
+        assert!(merge_meta_sync_on(&conn, &fresh, true).unwrap());
+        assert_eq!(meta_count(&conn), 0, "更新的删除仍须生效");
+    }
+
+    /// 同刻边界（复审 Minor 3）：活行时间戳 == 墓碑时间戳 ⇒ 判为过期（保留活行）。
+    #[test]
+    fn tombstone_at_the_same_timestamp_keeps_the_live_row() {
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO book_metas (key, title, updated_at) VALUES ('k1', 'A', 500)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sync_tombstones (entity, key, updated_at) VALUES ('metas', 'k1', 500)",
+            [],
+        )
+        .unwrap();
+
+        assert!(tombstone_is_stale(&conn, "metas", "k1", 500));
+        assert!(!merge_meta_sync_on(&conn, &meta_sync_row("k1", 500, true), true).unwrap());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "同刻保留活行（不变量：墓碑只对更旧的行有效）"
+        );
+    }
+
+    /// 墓碑随行复活而失效（第133轮，用户决策）：
+    /// 活行比墓碑新 ⇒ 墓碑作废（清掉且不再导出）；墓碑更新 ⇒ 仍然删除旧行（删除语义不能失效）。
+    #[test]
+    fn tombstone_expires_when_the_row_comes_back() {
+        let conn = schema_conn();
+        let row_json = |updated_at: i64| {
+            format!(
+                r#"{{"key":"local|s1|/books/a.cbz","stableId":null,"coverPage":0,
+                "cropX":null,"cropY":null,"cropW":null,"cropH":null,"author":"","genre":"","series":"",
+                "title":"A","chineseTitle":"","summary":"","comment":"","rotations":"{{}}",
+                "updatedAt":{updated_at},"deleted":false}}"#
+            )
+        };
+
+        // ① 过期墓碑（100）遇上复活的行（200）⇒ 墓碑清掉、不再导出、行保留
+        conn.execute(
+            "INSERT INTO sync_tombstones (entity, key, updated_at)
+             VALUES ('metas','local|s1|/books/a.cbz',100)",
+            [],
+        )
+        .unwrap();
+        let live: MetaSyncRow = serde_json::from_str(&row_json(200)).unwrap();
+        assert!(merge_meta_sync_on(&conn, &live, false).unwrap());
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sync_tombstones WHERE entity='metas'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+            "复活后旧墓碑必须被清掉"
+        );
+        assert!(load_tombstones_for_sync_on(&conn, 0).is_empty());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+
+        // ② 更新的墓碑（now）遇上旧行（500，标记删除）⇒ 仍须删除并保留墓碑
+        let mut dead: MetaSyncRow = serde_json::from_str(&row_json(500)).unwrap();
+        dead.deleted = true;
+        assert!(merge_meta_sync_on(&conn, &dead, false).unwrap());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "墓碑更新时仍须删除旧行"
+        );
+        assert_eq!(load_tombstones_for_sync_on(&conn, 0).len(), 1);
+    }
+
+    /// 导出侧契约：`load_metas_for_sync_on`（同步增量 + `.rchpkg` metas 分块的共同数据源）
+    /// 必须把卷/话带出来，否则另一台设备/恢复后的库永远看不到号码。
+    #[test]
+    fn metas_for_sync_export_carries_sequence() {
+        let conn = schema_conn();
+        conn.execute(
+            "INSERT INTO book_metas (key, title, volume, chapter, updated_at)
+             VALUES ('local|s1|/books/a.cbz', 'A', '1', '7', 100)",
+            [],
+        )
+        .unwrap();
+        let rows = load_metas_for_sync_on(&conn, 0);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].volume, "1");
+        assert_eq!(rows[0].chapter, "7");
     }
 
     fn table_cols(conn: &Connection, table: &str) -> Vec<String> {

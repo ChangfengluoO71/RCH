@@ -4,6 +4,7 @@ import 'package:app/repository/tag_repository.dart';
 import 'package:app/src/rust/api/scraper.dart' as scraperapi;
 import 'package:app/store/eh_subscription_store.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/store/models.dart' show sequenceNumberOf, titleWithSequence;
 import 'package:app/store/tag_provenance.dart';
 import 'package:flutter/material.dart';
 
@@ -25,14 +26,21 @@ class EhAutoScrapePanel extends StatefulWidget {
 
 /// 一条批量结果。
 class _BatchRow {
-  _BatchRow(this.bookKey, this.title);
+  _BatchRow(this.bookKey, this.title, this.number);
 
   final String bookKey;
   final String title;
+
+  /// 卷/话号（解析产物；空串=没解析到 —— 不显示、也不默认成 1）。
+  final String number;
   Map<String, dynamic>? plan;
   String? error;
   bool get matchedUnique =>
       plan?['status'] == 'matched' && plan?['matched_by'] == 'title';
+
+  /// 显示与检索共用的标题：号码直接拼在作品名后面（用户口径），无号码时保持原样。
+  String get displayTitle => titleWithSequence(title, number);
+
   String get statusLabel {
     if (error != null) return '失败';
     final s = plan?['status'] as String? ?? '—';
@@ -64,6 +72,21 @@ class _EhAutoScrapePanelState extends State<EhAutoScrapePanel> {
     super.dispose();
   }
 
+  /// 卷/话号：**语义层优先、缺失回退提案的兼容投影列**（与 Rust 写路径、详情页同一口径），
+  /// 再按「话优先于卷」取值。proposal 是解析源头，既不依赖物化事务是否跑过，
+  /// 也不依赖 Dart 侧的读取往返。
+  static String _sequenceNumberOf(
+    Map<dynamic, dynamic> sem,
+    scraperapi.ScrapeProposalDto p,
+  ) {
+    final semChapter = (sem['chapter'] as String?)?.trim() ?? '';
+    final semVolume = (sem['volume'] as String?)?.trim() ?? '';
+    return sequenceNumberOf(
+      chapter: semChapter.isNotEmpty ? semChapter : (p.chapter ?? ''),
+      volume: semVolume.isNotEmpty ? semVolume : (p.volume ?? ''),
+    );
+  }
+
   Future<List<_BatchRow>> _collectWorkItems() async {
     final props = await scraperapi.dbLoadScrapeProposals(limit: 100000, state: 'ready');
     final prefix = _folderCtrl.text.trim();
@@ -74,7 +97,11 @@ class _EhAutoScrapePanelState extends State<EhAutoScrapePanel> {
       final sem = (jsonDecode(p.semanticJson) as Map?) ?? const {};
       final title = (sem['work_title'] as String?)?.trim() ?? '';
       final fallback = p.title?.trim() ?? p.filename;
-      rows.add(_BatchRow(p.bookKey, title.isNotEmpty ? title : fallback));
+      rows.add(_BatchRow(
+        p.bookKey,
+        title.isNotEmpty ? title : fallback,
+        _sequenceNumberOf(sem, p),
+      ));
     }
     return rows;
   }
@@ -133,13 +160,19 @@ class _EhAutoScrapePanelState extends State<EhAutoScrapePanel> {
           'summary': meta?.summary ?? '',
           'tags': TagRepository.instance.tagsForBook(row.bookKey),
         };
+        // 卷/话号：优先用刮削提案自带的解析产物（`row.number`），提案缺失时才回退到
+        // 物化值——两处都走 `sequenceNumberOf`，口径与详情页一致。
+        final number = row.number.isNotEmpty
+            ? row.number
+            : sequenceNumberOf(
+                chapter: meta?.chapter ?? '',
+                volume: meta?.volume ?? '',
+              );
         final plan = await store.planImportLive(
           workTitle: row.title,
           creators: creators,
           snapshot: snapshot,
-          number: (meta?.chapter.trim().isNotEmpty ?? false)
-              ? meta!.chapter.trim()
-              : (meta?.volume.trim() ?? ''),
+          number: number,
         );
         row.plan = plan;
         // 只对"作品名命中且唯一"自动写
@@ -328,7 +361,7 @@ class _EhAutoScrapePanelState extends State<EhAutoScrapePanel> {
           Row(
             children: [
               Expanded(
-                child: Text(r.title,
+                child: Text(r.displayTitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),

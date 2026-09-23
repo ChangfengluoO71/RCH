@@ -158,8 +158,10 @@ fn apply_metas(
         conn.execute(
             "INSERT INTO book_metas
              (key, stable_id, cover_page, crop_x, crop_y, crop_w, crop_h,
-              author, genre, series, title, chinese_title, summary, comment, rotations, updated_at, deleted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0)
+              author, genre, series, title, chinese_title, summary, comment, rotations,
+              volume, chapter, updated_at, deleted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                     ?15, ?16, ?17, ?18, 0)
              ON CONFLICT(key) DO UPDATE SET
                 stable_id=excluded.stable_id, cover_page=excluded.cover_page,
                 crop_x=excluded.crop_x, crop_y=excluded.crop_y,
@@ -167,7 +169,12 @@ fn apply_metas(
                 author=excluded.author, genre=excluded.genre, series=excluded.series,
                 title=excluded.title, chinese_title=excluded.chinese_title,
                 summary=excluded.summary, comment=excluded.comment,
-                rotations=excluded.rotations, updated_at=excluded.updated_at",
+                rotations=excluded.rotations,
+                -- 卷/话遵守全仓不变量「空值不覆盖」：旧节点载荷没有这两个键（读成空串），
+                -- 或对端尚未物化时为空，都不得抹掉本机已有的号码。
+                volume=CASE WHEN excluded.volume = '' THEN book_metas.volume ELSE excluded.volume END,
+                chapter=CASE WHEN excluded.chapter = '' THEN book_metas.chapter ELSE excluded.chapter END,
+                updated_at=excluded.updated_at",
             params![
                 local_key,
                 d["stableId"].as_str(),
@@ -184,6 +191,8 @@ fn apply_metas(
                 d["summary"].as_str().unwrap_or(""),
                 d["comment"].as_str().unwrap_or(""),
                 d["rotations"].as_str().unwrap_or("{}"),
+                d["volume"].as_str().unwrap_or(""),
+                d["chapter"].as_str().unwrap_or(""),
                 e.updated_at,
             ],
         )?;

@@ -419,3 +419,115 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
   `remote_scan_preview` 无 webdav 行 ✗。
   任务卡：`.trellis/tasks/09-22-webdav-cover-index-size/prd.md`（含下一步与验证命令 ✓）
   注意：定位完成后需删除临时探针 `heal_probe` / `list_dir_probe` / `stage_cancelled` / `stage_failed` ✓
+
+
+## 第 131–132 轮补充（卷/话显示 + 跨设备同步，2026-09-23）
+
+> 详细证据与评审逐条处置见 `LOG.md` 第 131 轮（显示链路）与第 132 轮（同步/整包传播）。
+> 本节只登记"还欠什么"，不改动上面任何既有条目。
+
+### 待用户复验（Waiting）
+- [ ] **桌面上看到号码**：重启应用（或「设置 → 书源与网络 → 重新刮削」跑一轮物化）后，
+      详情页信息区标题显示「作品名 话号」；「E 站自动刮削」结果行同样带号码；
+      导入预览的「匹配输入」带号码。
+      判定依据：真实库 `book_metas` 应出现 179 本号码（chapter 177 / volume 2，见 LOG 第131轮取证）。
+- [ ] **跨设备 / 整包复验**：另一台设备同步后应看到同样的号码；导出 `.rchpkg` → 恢复后号码仍在。
+      第132轮已修掉此前的两个拦截点（**既有缺陷**，第132轮复审核实）：
+      ① `sync/merge.rs` 在**没有 base**（首次配对 / 两端都已存在同一本书）时会把 metas 条目整条丢弃，
+      而被丢弃的条目永远进不了 `merged`、也就永远建不起 base ⇒ 该 key **永久不收敛**
+      （不止卷/话，title/author/series 全都过不去）—— 已改为退化为整条 LWW；
+      ② 合并结果里这两列为空、而本机非空时，旧实现会让 base 记成空串、与落库值不一致 ⇒ 每轮重推
+      —— 已改为在 `three_way` 出口对齐"实际落库状态"（`align_persisted_sequence`）。
+      仍待实测：两台真实设备完成一轮同步后对端 `book_metas.volume/chapter` 是否落地。
+
+### Backlog（本轮登记，未做）
+- [ ] **「E 站自动刮削」结果行的 widget 渲染测试**：行数据源是私有 `_rows`，测试无法注入；
+      要覆盖需先把行渲染抽成可注入的组件（涉及 UI 结构调整，需单独评估）。
+- [ ] **真实库 60 行「兼容列有值、语义层为空」的写入版本考古**：当前代码路径静态不可产生
+      （兼容列与 `semantic_json` 同源于同一个 `NameRoleProposal`），推测来自旧规则版本；
+      回退只填空不覆盖，风险限于"信任来源不可证的旧值"。
+- [ ] **`app/rust/src/eh_import.rs:155` 的 `unused_mut` 警告**：与第 97 轮"CI 带
+      `RUSTFLAGS=-D warnings`"的口径冲突，会让 CI 红线；一行可清。
+      （非本轮引入，故意不混进本轮 diff，免得改动范围失真。）
+- [x] **整包/同步恢复的墓碑语义**（第133轮已实现，用户 2026-09-23 拍板"墓碑随行复活而失效"）：
+      源库 `sync_tombstones` 有 **2511 条 metas 墓碑**（`115` 前缀 1088 条、`quark` 82 条），
+      旧 `apply_tombstone_on` **无条件 DELETE**（不看 `updated_at`）⇒ 刚写入的活行被旧墓碑删掉：
+      实测 1154 行 → 1055 行、章节 177 → 111。现已按 **ADR-030** 在三处落实：
+      导出读时过滤（历史墓碑不再外发）+ 应用时看时间（只在墓碑更新时删除）+ 写活行即清墓碑。
+      **验证**：同一探针恢复到全新库 → **1154 行 / 卷 2 / 章节 177**（与源库一致）。
+- [ ] **同步传输失败不可见（第132轮新发现）**：`SyncEngine.syncNow` 在 `webdavConnect` 阶段失败时
+      只写内存 `lastStatus`，不落 `sync_history`、也无诊断输出 ⇒ 库外无法判读"同步到底跑没跑"
+      （本轮实测：物化成功但 `sync_history` 最新仍是前一天）。建议补一条持久化诊断（错误码 + 时间）。
+
+
+
+### 手机实机安装须知（第133轮踩坑，2026-09-23）
+- 这台手机（OPPO `PGFM10` / 包名 `com.rch.reader`）装的是 **0.6.1 + versionCode 102601**，
+  而仓库 pubspec 是 `0.6.2+100602`（仓库历史规律：`0.5.7+100507 … 0.6.2+100602`）
+  ⇒ **两套 versionCode 口径不一致**（Release 包用的是 `10xxxx` 那套）。
+  后果：本地包会被 Android 14+ 判为**降级**（`adb install -d` 也无效），
+  且 profile/debug 包与已装 release 包**签名不匹配**（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。
+- **正确装法**（本轮实测通过：原地更新、手机数据不丢）：
+  ```powershell
+  flutter build apk --release --target-platform android-arm64 --build-number=102602
+  adb install -r build/app/outputs/flutter-apk/app-release.apk
+  ```
+  （release 签名读 `app/android/key.properties`；不要设 `RELEASE_*` 环境变量去覆盖它。）
+- 待办：**统一仓库与 Release 的 versionCode 口径**，否则每次本地装机都要手动 `--build-number` 抬号。
+
+## 第 133 轮（墓碑语义 + 条漫跳页，2026-09-23）
+
+### Doing
+- [x] **墓碑随行复活而失效**（用户决策 → ADR-030 + 第133轮实现；恢复到全新库 1055 行/111 章节
+      → **1154 行 / 卷 2 / 章节 177**，与源库一致）。
+      - 量化补证：源库 metas 墓碑 2511 条，其中**过期墓碑恰好 99 条**（= 修复前丢的 99 行）。
+      - 第133轮独立评审（FAIL：1 Important + 3 Minor）已全部处置：`force` 删除行也不得越过时间判断、
+        `entity_live_timestamp` 加 `deleted = 0`、ADR-030 口径更正 + 同刻用例。
+- [ ] **评审 Follow-up（第133轮登记）**：
+      - 探针 `app/rust/examples/sync_sequence_probe.rs` 目前仍是**未跟踪文件**，需随本轮改动一起提交，
+        否则证据链不可复现。
+      - 恢复保真度**只对 metas 做了量化对照**（1154/177）；library_index / records 未扩测，
+        建议给探针加这两项的恢复计数断言。
+
+### 进行中（Doing）— 条漫「快速下拉时突然跳回好几页前」
+- **文档出处（找齐了）**：
+  - 任务：`.trellis/tasks/08-30-webtoon-page-stability/`（PRD 标题即《条漫快速翻页稳定性与页码回跳修复》，
+    含 prd/design/implement）；父任务 `.trellis/tasks/08-30-post-release-feedback-remediation/`。
+  - `docs/reports/rch-v057-release-candidate-gate-2026-09-13.md:106` 仍列为未完成规划（"条漫稳定性 … in_progress"）。
+  - `implement.md:31-37`：2026-09-11 已实现 `WebtoonNavigationModel` + 自动化 30 条测试通过；
+    **第 37 行明确"真机 50+ 页不等高条漫冒烟仍未做，任务保持 in_progress"**。
+- **第133轮静态分析（新增结论）**：
+  1. `app/lib/ui/webtoon_navigation.dart` 的 `WebtoonNavigationModel` **全仓只被自己的单测引用**，
+     `reader_page.dart` 从未 import（`git log -S WebtoonNavigationModel -- app/lib/ui/reader_page.dart`
+     无任何提交）⇒ 文档所称"阅读器接线"不成立，模型是**死代码**（阅读器里的 `_completion` 只是末页提示）。
+  2. 与现象吻合的回跳机制：`ListView.builder` 无 `itemExtent`（`reader_page.dart:730`），未加载页先按
+     **200px 占位**（:732），`_ensure` 拉取完成后 `setState` 换成真实高度（条漫页常 1000–4000px）；
+     SliverList 只保持**像素偏移** ⇒ **视口上方**条目变高时可见内容整体后跳同样距离，快速下拉时
+     前几页占位同时收敛 ⇒ "突然跳回好几页前"。现有代码**无任何滚动锚点补偿**（测高回调只写
+     `_webtoonHeights`，:734-748）。
+  3. 次要项（文档原本针对的路径）：`_webtoonOffsetTo` 对未测高页按 0 累加（:359-363）；
+     `_onWebtoonScroll` 直接用它回写 `_page`（:700-718，无 generation/pending 保护）。
+- [ ] **待用户确认修复方向**（三选一，见当轮交办）：①只修滚动回跳（测高变化时做锚点补偿，最小改动）；
+      ②把设计文档里的 `WebtoonNavigationModel` 真正接进阅读器（覆盖页码回跳/进度写错，改动较大）；
+      ③两者都做（建议：先①止症状，再②补齐文档承诺）。
+      **用户已选③（分两步提交）**，验证方式=我写自动化回归 + 用户手机实测。
+- [x] **步骤①（滚动锚点补偿）已实现并接线（第133轮）**：
+      - `WebtoonAnchorKeeper`（`app/lib/ui/webtoon_navigation.dart`）：按"条目**旧底边**是否仍在视口顶边之上"
+        决定补偿量；`announceGrowth()` 在**页面字节到达**时告知占位高度，覆盖"视口上方的页从未被构建过、
+        一进布局就是真实高度"这一关键形状。6 条单测。
+      - `reader_page.dart` 接线：`itemCtx.mounted` 守卫（防 DEFUNCT 元素测量）＋ ListView 加 `GlobalKey`
+        （把条目顶边换算成"相对视口顶部"）＋ 字节到达时 `announceGrowth` ＋ 测高变化时
+        `position.correctBy()` 静默纠偏（**不打断快速下拉惯性**；下一帧重排即生效）＋
+        程序化滚动（`animateTo`）期间暂停补偿；AI 版本切换时 `reset()`。
+      - 回归（真实 `ListView` 对照实验，`app/test/webtoon_navigation_test.dart`）：
+        **同一拖拽轨迹**下"有增长 vs 无增长"最终锚点位置必须一致 → **通过**；
+        不补偿的对照组 → 锚点被推走 5600px → 也钉住了根因。
+      - **教训（写下来免得再踩）**：`correctBy` 是**静默**纠偏（Flutter 自己在 viewport 的 layout 里用），
+        我一开始在"没有后续布局帧"的脚手架里验证，误判为"不重排、方案不可行"；真实拖拽（手指持续移动）
+        每帧都会重排，纠偏下一帧即生效 —— 静默纠偏才是不伤惯性的正确应用点。
+      - **待用户手机实测**：50+ 页不等高条漫快速下拉，确认"跳回好几页"消失、且没有新的抖动。
+- [ ] **步骤②（接通导航模型）**：把 `WebtoonNavigationModel`（generation/pendingTarget/估算高度/
+      observe→settle）真正接进 `reader_page.dart`，替换现有的 `_page` 直写与 `_webtoonOffsetTo` 零高度累加，
+      覆盖"页码回跳 / 阅读进度写错"。这是文档 `08-30-webtoon-page-stability` 承诺的另一半。
+- [ ] 修复后按 `implement.md` 收尾：真机 50+ 页不等高条漫冒烟，确认标题/底部页码/重开后进度一致，
+      然后把该任务从 `in_progress` 收口。

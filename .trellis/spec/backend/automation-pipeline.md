@@ -73,9 +73,37 @@ fn run_due_jobs() -> Result<AutomationSummary, AutomationError>;
   coordinator must still submit the proposal to Rust so a re-scrape or rule
   vocabulary change can repair missing canonical tags. Rust owns the
   idempotent `skipped` decision inside the SQLite transaction.
-  Rust re-enters materialization only when a current canonical resource tag is
-  absent, so old namespaced/partially migrated audit rows can be repaired
-  without duplicating metadata or manual tags.
+  Rust re-enters materialization when a current canonical resource tag is
+  absent, **or** when the proposal's sequence (`semantic.volume` /
+  `semantic.chapter`, falling back to the proposal's compatibility
+  `volume` / `chapter` columns) is non-empty while the matching `book_metas`
+  column is still empty; so old namespaced/partially migrated audit rows and
+  rows materialized before the sequence columns existed can be repaired without
+  duplicating metadata or manual tags. Sequence backfill only fills empty
+  columns, commits in the same transaction as every other canonical write, and
+  is idempotent (a second call returns `skipped`).
+- `volume` / `chapter` are canonical metadata and propagate like every other
+  metadata field: the transport snapshot payload (`sync/snapshot.rs` `load_metas`),
+  the `.rchpkg` metas payload (`db::load_metas_for_sync_on` → `MetaSyncRow`) and the
+  apply paths (`sync/apply.rs` `apply_metas`, `db::apply_meta_sync_on`) all carry
+  them, and they take part in the generic field-level three-way merge
+  (`sync/merge.rs` `merge_metas`) — adding a metadata column needs no per-field
+  wiring there.
+- Two merge rules make that propagation actually converge:
+  a metas entry whose `base` is missing is resolved by whole-entry LWW instead of
+  being dropped (a dropped entry never reaches `merged` and therefore never gets a
+  `base`, so it would never converge), and an empty/absent `volume` / `chapter` on
+  one side is treated as "no information" rather than "clear" (matching the
+  empty-preserving write guard below) so the recorded `base` matches the persisted
+  row and no entry is re-pushed every cycle.
+- Backward compatibility is part of that contract: both fields are
+  `#[serde(default)]` in `MetaSyncRow` (payloads and `.rchpkg` files written
+  before this change have no such keys, and must still deserialize), and both
+  `sync/apply.rs::apply_metas` and `db::apply_meta_sync_on` write them with
+  `CASE WHEN excluded.<col> = '' THEN book_metas.<col> ELSE excluded.<col> END`,
+  so an absent/empty value from an older peer can never clear an already
+  materialized sequence. No UI clears these columns, so "empty wins" has no
+  legitimate use case.
 
 ## 4. Error Matrix
 

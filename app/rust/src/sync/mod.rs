@@ -601,6 +601,148 @@ mod tests {
         assert_eq!(title, "远端标题");
     }
 
+    /// 同步（transport）**应用路径**的卷/话契约：带号码的远端条目要落库；
+    /// 旧节点载荷没有这两个键时**不得清空**本机号码（空值不覆盖）。
+    ///
+    /// 直接调 `apply_merged` 是因为这里要钉住的是"载荷 → 落库"这一段；
+    /// 合并层行为由 `merge.rs` 的用例覆盖（无 base 时退化为 LWW、空串不算清空），
+    /// 两轮收敛的端到端用例见 `sequence_converges_in_two_rounds_without_repush`。
+    #[test]
+    fn applied_remote_sequence_lands_and_legacy_payload_cannot_clear_it() {
+        let conn = schema_conn();
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
+        let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
+        conn.execute(
+            "INSERT INTO book_metas (key, title, rotations, volume, chapter, updated_at, deleted)
+             VALUES ('webdav|s1|/books/a.cbz', 'A', '{}', '1', '7', 100, 0)",
+            [],
+        )
+        .unwrap();
+
+        let seq = |conn: &rusqlite::Connection| -> (String, String) {
+            conn.query_row(
+                "SELECT volume, chapter FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+
+        // ① 远端载荷带号码 → 落库
+        let mut with_sequence = HashMap::new();
+        with_sequence.insert(
+            key.clone(),
+            SyncEntry::live(
+                &key,
+                200,
+                json!({
+                    "path": "/books/a.cbz", "title": "A2", "rotations": "{}",
+                    "volume": "2", "chapter": "8"
+                }),
+            ),
+        );
+        apply::apply_merged(&conn, base::ENTITY_METAS, &with_sequence, None).unwrap();
+        assert_eq!(seq(&conn), ("2".to_string(), "8".to_string()));
+
+        // ② 旧节点载荷（无 volume/chapter 键）且 updated_at 更新 → 其它字段更新，号码保留
+        let mut legacy = HashMap::new();
+        legacy.insert(
+            key.clone(),
+            SyncEntry::live(
+                &key,
+                300,
+                json!({"path": "/books/a.cbz", "title": "A3", "rotations": "{}"}),
+            ),
+        );
+        apply::apply_merged(&conn, base::ENTITY_METAS, &legacy, None).unwrap();
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "A3", "其它字段照常更新");
+        assert_eq!(
+            seq(&conn),
+            ("2".to_string(), "8".to_string()),
+            "旧载荷的空值不得清掉本机卷/话"
+        );
+    }
+
+    /// 第132轮评审要求的两轮端到端用例：对端（未物化 / 旧版本）载荷里卷/话为空时，
+    /// 第一轮把其它字段同步过来、并**不得清掉本机号码**；第二轮必须判定"无变更"，
+    /// 否则每个同步周期都会重推 metas、revision 无谓增长。
+    #[test]
+    fn sequence_converges_in_two_rounds_without_repush() {
+        let a = schema_conn();
+        let fp = insert_source(
+            &a,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
+        let key = crate::sync::identity::book_id(&fp, "/books/a.cbz");
+        a.execute(
+            "INSERT INTO book_metas (key, title, rotations, volume, chapter, updated_at, deleted)
+             VALUES ('webdav|s1|/books/a.cbz', 'A 标题', '{}', '1', '7', 100, 0)",
+            [],
+        )
+        .unwrap();
+
+        // 对端 B：同一本书（同源同路径 ⇒ 同同步键），标题不同、卷/话为空。
+        let b = schema_conn();
+        insert_source(
+            &b,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
+        b.execute(
+            "INSERT INTO book_metas (key, title, rotations, volume, chapter, updated_at, deleted)
+             VALUES ('webdav|s1|/books/a.cbz', 'B 标题', '{}', '', '', 200, 0)",
+            [],
+        )
+        .unwrap();
+        let b_snap = crate::sync::snapshot::load_local_snapshots(&b).unwrap();
+        assert_eq!(b_snap[base::ENTITY_METAS][&key].data["chapter"], json!(""));
+        // transport 侧拿到的是"状态文件字节"，用与生产同一构造器生成
+        let remote = build_remote_files(&b_snap);
+
+        // 第一轮：合并 → 落库 → 推进 base（= 生产同步成功后的三步）
+        let (merged, _, _) = plan_merge(&a, Some(&remote), true).unwrap();
+        apply::apply_merged(&a, base::ENTITY_METAS, &merged[base::ENTITY_METAS], None).unwrap();
+        let (title, volume, chapter): (String, String, String) = a
+            .query_row(
+                "SELECT title, volume, chapter FROM book_metas WHERE key='webdav|s1|/books/a.cbz'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "B 标题", "其它字段应随对端更新");
+        assert_eq!(
+            (volume.as_str(), chapter.as_str()),
+            ("1", "7"),
+            "对端空值不得清掉本机号码"
+        );
+        crate::sync::snapshot::advance_base(&a, 1, &merged).unwrap();
+
+        // 第二轮：本机 == base ⇒ metas 必须没有任何变更条目
+        let (merged2, _, _) = plan_merge(&a, Some(&remote), true).unwrap();
+        assert!(
+            merged2[base::ENTITY_METAS].is_empty(),
+            "第二轮不得重推 metas（否则每周期 revision 增长）"
+        );
+    }
+
     #[test]
     fn remote_deletion_applies_locally() {
         let conn = schema_conn();

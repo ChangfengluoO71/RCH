@@ -348,7 +348,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
   ///
   /// 为什么不能直接用 `_meta.title`：它的语义是"默认原文件名"（见 models.dart 注释），
   /// 往往是 `10.mobi` / `4.pdf` 这类，拿去和 E 站标题算相似度恒为≈0。
-  Future<({String title, List<String> creators, String source})> _ehWorkIdentity() async {
+  Future<({String title, List<String> creators, String source, String number})>
+  _ehWorkIdentity() async {
     try {
       final proposals = await dbLoadScrapeProposals(limit: 100000, state: 'ready');
       final mine = proposals.where((p) => p.bookKey == _meta.key).toList();
@@ -362,7 +363,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
           if (name.isNotEmpty && !creators.contains(name)) creators.add(name);
         }
         if (workTitle.isNotEmpty) {
-          return (title: workTitle, creators: creators, source: 'M8 解析');
+          return (
+            title: workTitle,
+            creators: creators,
+            source: 'M8 解析',
+            // 卷/话号：语义层优先、缺失回退兼容投影列（与面板/写路径同一口径）；
+            // 比 `_meta` 的物化值更及时，也不依赖物化事务跑没跑过。
+            number: _sequenceNumberOf(sem, p),
+          );
         }
       }
     } catch (_) {
@@ -376,7 +384,29 @@ class _BookDetailPageState extends State<BookDetailPage> {
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
-    return (title: base, creators: creators, source: '文件名（未找到解析结果）');
+    return (
+      title: base,
+      creators: creators,
+      source: '文件名（未找到解析结果）',
+      number: _metaSequenceNumber,
+    );
+  }
+
+  /// 物化落库的卷/话号（话优先于卷）；空串=没有解析到，不显示也不默认。
+  String get _metaSequenceNumber =>
+      sequenceNumberOf(chapter: _meta.chapter, volume: _meta.volume);
+
+  /// 刮削提案自带的卷/话号（语义层优先、缺失回退兼容投影列；解析源头，优先于物化值）。
+  static String _sequenceNumberOf(
+    Map<dynamic, dynamic> sem,
+    ScrapeProposalDto p,
+  ) {
+    final semChapter = (sem['chapter'] as String?)?.trim() ?? '';
+    final semVolume = (sem['volume'] as String?)?.trim() ?? '';
+    return sequenceNumberOf(
+      chapter: semChapter.isNotEmpty ? semChapter : (p.chapter ?? ''),
+      volume: semVolume.isNotEmpty ? semVolume : (p.volume ?? ''),
+    );
   }
 
   Future<void> _ehImportPreview() async {
@@ -408,8 +438,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
         workTitle: identity.title,
         creators: identity.creators,
         snapshot: snapshotWithIdentity,
-        // 卷/话号（物化落库；放宽策略：只帮搜索与排序，不做硬判）
-        number: _meta.chapter.trim().isNotEmpty ? _meta.chapter.trim() : _meta.volume.trim(),
+        // 卷/话号：优先用刮削解析产物（`identity.number`），回退物化值；
+        // 放宽策略：只帮搜索与排序，不做硬判。
+        number: identity.number.isNotEmpty ? identity.number : _metaSequenceNumber,
       );
     } catch (e) {
       // 离线/失败时回退到落盘 manifest（可复现但覆盖窄）
@@ -435,7 +466,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Future<void> _showImportPlanDialog(
     Map<String, dynamic> plan, {
-    ({String title, List<String> creators, String source})? identity,
+    ({String title, List<String> creators, String source, String number})? identity,
   }) async {
     final status = plan['status'] as String? ?? 'unmatched';
     final tags = (plan['tags'] as List?) ?? const [];
@@ -461,8 +492,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
               children: [
                 Text(statusText, style: const TextStyle(fontWeight: FontWeight.w600)),
                 if (identity != null)
-                  Text('匹配输入（${identity.source}）：${identity.title}',
-                      style: Theme.of(context).textTheme.bodySmall),
+                  Text(
+                    '匹配输入（${identity.source}）：'
+                    '${titleWithSequence(identity.title, identity.number)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 if (plan['gid'] != null)
                   Text('gid: ${plan['gid']}   相似度: '
                       '${(plan['score'] as num?)?.toStringAsFixed(2) ?? '—'}'),
@@ -723,6 +757,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
         .bookKeysForTag('AI超分')
         .contains(bookKey);
     final identifiedTitle = _meta.title.isNotEmpty ? _meta.title : widget.title;
+    // 卷/话号拼进**显示**标题（用户口径：标题后面跟号码）。只影响显示，
+    // 不写回 `_meta.title` —— 那是可编辑的规范字段，不能被号码污染。
+    final sequenceNumber = _metaSequenceNumber;
+    final identifiedTitleWithNumber =
+        titleWithSequence(identifiedTitle, sequenceNumber);
     final originalFilename = _originalFilename();
     // Metadata fields are canonical projections as well as tag-manager
     // entries. Merge both sources so details remain readable even when an old
@@ -903,7 +942,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
           ];
           final infoWidgets = <Widget>[
             Text(
-              identifiedTitle,
+              identifiedTitleWithNumber,
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),

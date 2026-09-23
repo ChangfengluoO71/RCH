@@ -83,7 +83,8 @@ fn load_metas(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
     let fp_by_id = source_fp_map(conn);
     let mut stmt = conn.prepare(
         "SELECT key, stable_id, cover_page, crop_x, crop_y, crop_w, crop_h,
-                author, genre, series, title, chinese_title, summary, comment, rotations, updated_at
+                author, genre, series, title, chinese_title, summary, comment, rotations,
+                volume, chapter, updated_at
          FROM book_metas WHERE deleted = 0",
     )?;
     let rows = stmt
@@ -106,8 +107,12 @@ fn load_metas(conn: &Connection) -> Result<HashMap<String, SyncEntry>> {
                     "summary": r.get::<_, String>(12)?,
                     "comment": r.get::<_, String>(13)?,
                     "rotations": r.get::<_, String>(14)?,
+                    // 卷/话（M8 物化产物）：随载荷一起走 metas 的**逐字段**三方合并
+                    // （`merge.rs::merge_metas`），因此无需在合并层单独接线。
+                    "volume": r.get::<_, String>(15)?,
+                    "chapter": r.get::<_, String>(16)?,
                 }),
-                r.get::<_, i64>(15)?,
+                r.get::<_, i64>(17)?,
             ))
         })?
         .filter_map(|r| r.ok())
@@ -482,6 +487,31 @@ mod tests {
         assert_eq!(metas[&expect_key].data["title"], json!("A"));
         assert!(snap[base::ENTITY_SOURCES].contains_key(&fp));
         assert!(snap[base::ENTITY_RECORDS].contains_key(&expect_key));
+    }
+
+    /// 卷/话必须进同步载荷：否则另一台设备拿不到号码（metas 的逐字段三方合并
+    /// 只会合并载荷里真实存在的字段）。
+    #[test]
+    fn snapshot_meta_payload_carries_sequence() {
+        let conn = schema_conn();
+        let fp = insert_source(
+            &conn,
+            "s1",
+            "webdav",
+            "/books",
+            Some("https://dav.example.com/dav"),
+        );
+        conn.execute(
+            "INSERT INTO book_metas (key, title, rotations, volume, chapter, updated_at, deleted)
+             VALUES ('webdav|s1|/books/a.cbz', 'A', '{}', '1', '7', 100, 0)",
+            [],
+        )
+        .unwrap();
+        let snap = load_local_snapshots(&conn).unwrap();
+        let expect_key = identity::book_id(&fp, "/books/a.cbz");
+        let data = &snap[base::ENTITY_METAS][&expect_key].data;
+        assert_eq!(data["volume"], json!("1"));
+        assert_eq!(data["chapter"], json!("7"));
     }
 
     #[test]

@@ -504,6 +504,23 @@ Map<String, dynamic>? _asStringMap(dynamic raw) {
   return null;
 }
 
+/// 卷/话号口径：**话优先于卷**；两者都空则返回空串（不显示、也不默认成 1）。
+///
+/// 抽成共用纯函数，避免三个显示出口（「E 站自动刮削」结果行、详情页标题、
+/// 导入预览的「匹配输入」）各写一份优先级而互相漂移。
+String sequenceNumberOf({String chapter = '', String volume = ''}) {
+  final chp = chapter.trim();
+  if (chp.isNotEmpty) return chp;
+  return volume.trim();
+}
+
+/// 显示用标题：有号码就拼在作品名后面（用户口径），没有就保持原样。
+///
+/// 与 [sequenceNumberOf] 同源共用，保证「结果行 / 详情页标题 / 导入预览」三处口径一致；
+/// 注意这是**显示**规则，不写回 `BookMeta.title`。
+String titleWithSequence(String title, String number) =>
+    number.isEmpty ? title : '$title $number';
+
 /// 一本书的元数据(自定义封面 / 标签 / 简介 / 感想)。
 class BookMeta {
   final String key; // type|sourceId|path
@@ -587,6 +604,9 @@ class BookMeta {
     author: (j['author'] as String?) ?? '',
     genre: (j['genre'] as String?) ?? '',
     series: (j['series'] as String?) ?? '',
+    // 与 toJson 对称：漏读会让 library.json 回退路径把已落库的卷/话丢掉。
+    volume: (j['volume'] as String?) ?? '',
+    chapter: (j['chapter'] as String?) ?? '',
     title: (j['title'] as String?) ?? '',
     chineseTitle: (j['chineseTitle'] as String?) ?? '',
     summary: (j['summary'] as String?) ?? '',

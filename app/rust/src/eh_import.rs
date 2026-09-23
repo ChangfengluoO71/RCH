@@ -152,7 +152,7 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
     }
 
     // 2) 语义层标签：中文优先，缺译名退回原始值
-    let mut push_tag = |ns: &str, raw: &str, zh: &str, plan: &mut ImportPlan| {
+    let push_tag = |ns: &str, raw: &str, zh: &str, plan: &mut ImportPlan| {
         let display = if zh.trim().is_empty() { raw.trim() } else { zh.trim() };
         if display.is_empty() {
             return;

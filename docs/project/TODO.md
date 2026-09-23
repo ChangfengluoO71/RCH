@@ -446,9 +446,11 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 - [ ] **真实库 60 行「兼容列有值、语义层为空」的写入版本考古**：当前代码路径静态不可产生
       （兼容列与 `semantic_json` 同源于同一个 `NameRoleProposal`），推测来自旧规则版本；
       回退只填空不覆盖，风险限于"信任来源不可证的旧值"。
-- [ ] **`app/rust/src/eh_import.rs:155` 的 `unused_mut` 警告**：与第 97 轮"CI 带
-      `RUSTFLAGS=-D warnings`"的口径冲突，会让 CI 红线；一行可清。
-      （非本轮引入，故意不混进本轮 diff，免得改动范围失真。）
+- [x] **`app/rust/src/eh_import.rs:155` 的 `unused_mut` 警告**（第134轮已清）：CI 经
+      `actions-rust-lang/setup-rust-toolchain` 注入 `RUSTFLAGS=-D warnings`，该警告让
+      `cargo build` 直接编译失败 ⇒ 第一次推 master 时 CI 变红（analyze + Rust Test 两个 job）。
+      已去掉 `mut`，并用 CI 同口径（`RUSTFLAGS='-D warnings'` + `cargo build` / `--example`）本地复验通过。
+      **教训：已知会红 CI 的一行警告当轮就清，不要只登记。**
 - [x] **整包/同步恢复的墓碑语义**（第133轮已实现，用户 2026-09-23 拍板"墓碑随行复活而失效"）：
       源库 `sync_tombstones` 有 **2511 条 metas 墓碑**（`115` 前缀 1088 条、`quark` 82 条），
       旧 `apply_tombstone_on` **无条件 DELETE**（不看 `updated_at`）⇒ 刚写入的活行被旧墓碑删掉：

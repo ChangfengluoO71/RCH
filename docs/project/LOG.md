@@ -4984,7 +4984,7 @@ E 站自动刮削目录；只对"作品名命中且唯一"自动写；命名空�
      `_onWebtoonScroll` 直接用这份高度表回写 `_page`（:700-718，无 generation/pending 保护）。
 - **本轮未动阅读器代码**：按项目规则（bug 先对齐现象与根因方向再改），修复方向待用户确认。
 
-**四、步骤①（滚动锚点补偿）已实现并接线（真触发路径复现后一次改对）**
+**三、步骤①（滚动锚点补偿）已实现并接线（真触发路径复现后一次改对）**
 - 用户选定"两只都做、分两步提交"（①锚点补偿 → ②接通 `WebtoonNavigationModel`），验证方式=自动化回归 + 手机实测；
   并确认**未开 AI 超分**（排除 `_toggleAiVersion` 清空页高缓存那条路径）。
 - **定向复现真触发路径**（用户选项：先把真形状钉住再改）：不再用"静态改高度后 pump 一次"的假形状，而是
@@ -5007,7 +5007,7 @@ E 站自动刮削目录；只对"作品名命中且唯一"自动写；命名空�
   `flutter analyze`（reader_page / webtoon_navigation / 测试）→ No issues found。
 - **未完成/待用户**：手机实机复验（50+ 页不等高条漫快速下拉）；步骤②（接通导航模型，覆盖页码回跳/进度写错）。
 
-**三、第133轮独立评审（限定范围）与处置**
+**四、第133轮独立评审（限定范围）与处置**
 - 结论 **FAIL**（1 Important + 3 Minor）；逐条核实后全部成立并已处置：
   - **Important（`force=true` 的删除行越过时间判断）**：`merge_row_on` 的 `deleted` 分支在 `force` 下
     **不看 `updated_at`** ⇒ 整包恢复里一条旧的 `deleted:true` 行会删掉比它**新**的活行（与墓碑同类问题，
@@ -5028,3 +5028,35 @@ E 站自动刮削目录；只对"作品名命中且唯一"自动写；命名空�
   串行全量 **469 passed / 0 failed / 4 ignored**（另有一次 468/1，属既有偶发）。
 - 遗留（评审 Follow-up，已登记 TODO）：探针 `sync_sequence_probe.rs` 仍是未跟踪文件（需随本轮一起提交才可复现）；
   恢复保真度目前只对 metas 有量化对照，library_index / records 未扩测。
+
+
+## 2026-09-23｜第134轮：修 CI 红线（eh_import unused_mut）→ 推 master → 发布 v0.6.2
+
+**背景**：用户发现 GitHub 上的 0.6.2 没有发布成功。核对远端后确认根因：`.github/workflows/release.yml`
+**只在推 `v*` 标签时触发**，而远端标签只到 `v0.6.1` ⇒ **v0.6.2 从没打过标签**（master 上那条
+"release: v0.6.2" 只是提交信息，本身不触发发布）；`origin/master` 与本地 `local-ai/cover-quark-debug`
+相差 **25 个提交、落后 0**（可快进）。本轮同时把 25 个提交的内容并入 v0.6.2 的发布说明与 CHANGELOG。
+
+**第一次推送（26 提交 → master `d36afa6`）后 CI 变红，原因完全查明**
+- `actions-rust-lang/setup-rust-toolchain` 会注入 `RUSTFLAGS: -D warnings`（CI 日志里可见），而
+  `app/rust/src/eh_import.rs:155` 有一个 `unused_mut`（`let mut push_tag = |...|`）⇒
+  analyze 的 `cargo build` 与 Rust Test 两个 job **直接编译失败**（`-D unused-mut implied by -D warnings`）。
+- 这正是**第131轮就登记在 TODO 里的雷**（原文："与第 97 轮『CI 带 `RUSTFLAGS=-D warnings`』的口径冲突，
+  会让 CI 红线；一行可清"）——**现在应验了**。当时的判断是"非本轮引入，故意不混进本轮 diff"，
+  代价是直到发布前才暴露：**教训——已知会红 CI 的一行警告，应当当轮清掉，而不是登记了事。**
+
+**修复与本地验证（CI 同口径）**
+- 改动：去掉那个 `mut`（一行）。
+- `RUSTFLAGS='-D warnings'` 下：`cargo build` → Finished（0 错误）；
+  `cargo build --example sync_sequence_probe`（本轮新增 example）→ Finished（0 错误）；
+  `cargo test --lib -- --test-threads=1` → **469 passed / 0 failed**。
+- **环境说明（如实记录）**：本轮清理删掉了 `D:\Cache
+ust-target`，本机从零构建
+  `cargo test --no-run`（集成测试/examples 全量）会报 `crate ... required to be available in rlib format`
+  一类**本机环境问题**（与本次改动无关；CI 在缓存在位时同命令是绿的）⇒ 本地门禁取"CI 同口径编译 + lib 单测"，
+  集成测试交给 CI 判。
+
+**发布动作**：修复推 master → 等 CI 绿 → 打 **annotated tag `v0.6.2`** 并推送（触发 `release.yml`：
+Windows 安装包 + 分 ABI APK → GitHub Release）。发布说明 `docs/releases/release_notes_v0.6.2.md` 与
+`CHANGELOG.md` 的 0.6.2 段已并入那 25 个提交的内容（E 站刮削 / 卷话 / 条漫回跳 / 阅读器修复）。
+用户选择：**versionCode 口径保持现状**（官方包 `100602` 低于手机已装的 `102602`，升级需先卸载，发布说明已写明）。

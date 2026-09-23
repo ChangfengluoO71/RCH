@@ -516,3 +516,26 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: 卷/话显示与跨设备传播 + 墓碑语义 + 条漫滚动锚点（第131–133轮）
+
+**Date**: 2026-09-23
+**Task**: 卷/话显示与跨设备传播 + 墓碑语义 + 条漫滚动锚点（第131–133轮）
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+卷/话链路三段闭环：物化回填(真实库 0/0→177/2)、Dart 显示出口、同步/整包载荷携带(serde default 兼容旧包)、两条 merge 收敛缺陷修复；ADR-030 墓碑随行复活而失效(恢复到新库 1055/111→1154/177)；条漫快速下拉回跳经真触发路径复现后用 WebtoonAnchorKeeper + correctBy 静默纠偏修复，手机实机确认消失，任务归档。门禁：cargo 469/0、flutter test 217/1、analyze 干净。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `937e9cf` | (see git log) |
+| `2e7b81d` | (see git log) |
+| `5f7edd3` | (see git log) |
+
+### Status
+
+[OK] **Completed**

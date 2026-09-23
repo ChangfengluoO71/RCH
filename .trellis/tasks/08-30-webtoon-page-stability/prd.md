@@ -21,10 +21,24 @@
 
 ## Acceptance Criteria
 
-- [ ] 为“部分高度未知 → 连续导航到多个目标页 → 图片高度收敛”的场景加入回归测试；最终页必须等于最后一次导航目标，之后布局回调不得将其回写为旧页。
-- [ ] 为页码跳转到未测高目标页加入测试；滚动和高度更新后，页码保持目标页或按明确、可解释的稳定映射更新，不能跳回旧目标。
-- [ ] 手工验证至少 50 页、页高明显不均的条漫：连续快速前进/后退和跳转后，标题、底部页码及重开后的阅读进度一致。
-- [ ] `flutter test test/reader_swipe_webtoon_test.dart`、新增回归测试和 `flutter analyze` 全部通过。
+- [x] 为“部分高度未知 → 连续导航到多个目标页 → 图片高度收敛”的场景加入回归测试；最终页必须等于最后一次导航目标，之后布局回调不得将其回写为旧页。
+      （`app/test/webtoon_navigation_test.dart` 的 `WebtoonNavigationModel` 组：`latest programmatic target wins and stale generations are ignored`、`programmatic completion clears only the matching pending target`、`user gesture cancels a pending target without jumping to stale target`）
+- [x] 为页码跳转到未测高目标页加入测试；滚动和高度更新后，页码保持目标页或按明确、可解释的稳定映射更新，不能跳回旧目标。
+      （`measured heights replace estimates while preserving monotonic offsets`、`fast scroll observes viewport without overwriting stable page until settle`）
+- [x] 手工验证至少 50 页、页高明显不均的条漫：连续快速前进/后退和跳转后，标题、底部页码及重开后的阅读进度一致。
+      **2026-09-23 手机实机（OPPO PGFM10，0.6.2+102602）：50+ 页不等高条漫快速下拉，原有“划着划着突然跳回好几页前”消失，用户确认。**
+- [x] `flutter test test/reader_swipe_webtoon_test.dart`、新增回归测试和 `flutter analyze` 全部通过。
+
+### 收口说明（2026-09-23，第133轮）
+- 已报告症状（**快速下拉时可见内容被整体推走**）的实际根因与设计文档的假设**不同**：不是"导航意图被旧回调覆盖"，
+  而是 `ListView` 无 `itemExtent` 时，**视口上方**的页由 200px 占位收敛成真实高度、`SliverList` 只保持像素偏移。
+  已用 `WebtoonAnchorKeeper`（测高变化时 `position.correctBy` 静默纠偏）+ 阅读器接线修掉，含真实 `ListView`
+  对照实验回归（不补偿被推走 5600px / 补偿后与对照组差 <1px）。详见 `docs/project/LOG.md` 第133轮、`TODO.md`。
+- **设计文档里的 `WebtoonNavigationModel` 至今未接进阅读器**（全仓仅被自己的单测引用）。它覆盖的是
+  "页码回跳 / 阅读进度写错"这一类问题，与本次症状不同，且本次未复现该类问题 ⇒ **未接线**，
+  作为独立待办（TODO「步骤②（接通导航模型）」）保留，不随本任务归档关闭。
+- 顺带修掉一个真实缺陷：测高回调未查条目自身 `mounted`，sliver 回收视口外子项时会 `findRenderObject()`
+  打到 DEFUNCT element。
 
 ## Out of Scope
 

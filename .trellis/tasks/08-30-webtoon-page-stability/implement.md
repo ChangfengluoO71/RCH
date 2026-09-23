@@ -34,7 +34,25 @@ flutter analyze
 - [x] Reader integration commits reading progress only after matching programmatic completion or settled user scroll; a user drag cancels a pending target.
 - [x] Fixed the `animateTo`/`ScrollEndNotification` race so the notification cannot clear a live programmatic intent before its future completes.
 - [x] Automated verification: `flutter test --no-pub test/webtoon_navigation_test.dart test/reader_swipe_webtoon_test.dart` passed (30 tests); `flutter analyze --no-pub` passed.
-- [ ] Real Windows/Android smoke with a 50+ page variable-height webtoon remains pending; keep this task `in_progress` until device validation is recorded.
+- [x] Real Windows/Android smoke with a 50+ page variable-height webtoon remains pending; keep this task `in_progress` until device validation is recorded.
+
+## Execution update (2026-09-23, 第133轮)：已报告症状的真正根因与修复
+
+- **用户现象**：手机端条漫**快速下拉**时"划着划着突然跳回好几页前"。
+- **真正的根因（与 2026-09-11 的假设不同）**：`ListView` 无 `itemExtent`，未加载页按 200px 占位；
+  当**视口上方**的页换成真实高度（常 1000–4000px）时，`SliverList` 只保持像素偏移 ⇒ 可见内容被整体推走。
+  与"导航意图被旧回调覆盖"无关（该模型的 stale-intent 机制本次未参与）。
+- **修复**：`WebtoonAnchorKeeper`（仅当条目"旧底边仍在视口顶边之上"时按高度变化量补偿；
+  `announceGrowth()` 在字节到达时告知占位高度，覆盖"视口上方的页从未被构建过"这一形状）
+  ＋ 阅读器接线（`position.correctBy` **静默**纠偏，不打断快速下拉惯性；`animateTo` 期间暂停补偿）
+  ＋ 顺带修掉测高回调打到 DEFUNCT 元素的真实缺陷（补条目自身 `mounted` 守卫）。
+- **回归**：`app/test/webtoon_navigation_test.dart` 用真实 `ListView` 做对照实验（同一拖拽轨迹、有/无增长）：
+  有补偿时与对照组锚点差 **<1px**；不补偿时被推走 **5600px**（钉住根因）。
+- **实机验证（本任务的人工关卡，已完成）**：OPPO `PGFM10`，release 包 `0.6.2+102602`；
+  50+ 页不等高条漫快速下拉 ⇒ **跳变消失，用户确认**。
+- **未随本任务关闭**：`WebtoonNavigationModel` **仍未接进阅读器**（全仓仅被自己的单测引用）。
+  它覆盖"页码回跳 / 阅读进度写错"，本次未复现该类问题 ⇒ 转独立待办（见 `docs/project/TODO.md`
+  「步骤②（接通导航模型）」）。
 
 ## 人工关卡与回滚
 

@@ -10,7 +10,8 @@ RCH 不只是一个“打开漫画文件”的阅读器，而是希望把**本�
 
 > 💬 **用户反馈 / 交流**
 >
-> 欢迎加入 **[RCH Telegram 用户反馈群](https://t.me/+xyP4wLIqc5xjMDQ1)**。
+> - **QQ 用户反馈群：820294784**
+> - **[RCH Telegram 用户反馈群](https://t.me/+xyP4wLIqc5xjMDQ1)**
 >
 > 可以反馈 Bug、提出功能建议，也欢迎分享使用体验。
 

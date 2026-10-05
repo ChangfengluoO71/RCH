@@ -5141,4 +5141,18 @@ Windows 安装包 + 分 ABI APK → GitHub Release）。发布说明 `docs/relea
 - 只从已验证候选中抽选；读完后按来源 ID 和路径排除当前漫画。
 - 主页移除打开前多余的阅读进度写入，保留 `openBook` 的统一记录入口。
 
-**验证与状态**：`flutter analyze lib/ui/home_page.dart lib/ui/reader_page.dart` 无问题；本轮未运行测试套件或设备端随机阅读 smoke。项目版本仍为 v0.6.2，未发布、未提交。
+**验证与状态**：`flutter analyze lib/ui/home_page.dart lib/ui/reader_page.dart` 无问题；本轮未运行测试套件或设备端随机阅读 smoke。项目当时版本为 v0.6.2，后续在第139轮发布 v0.6.3。
+
+## 2026-10-05｜第139轮：发布 v0.6.3
+
+**发布内容**：版本号 `0.6.3+100603`。发布说明和 CHANGELOG 收录阅读器恢复与加载体验、全库随机阅读、夸克扫码恢复、远程书源刷新、更新器校验与重试，以及 Windows PDFium 自动准备等改进。
+
+**CI 与发布过程**
+- 版本提交 `106816f` 推送后，master CI run `37330614423` 首次失败：Flutter 索引哈希测试未包含 `assetKind`，Windows 性能测试的 500ms 阈值受计时分辨率影响。
+- 修正索引哈希字段并将性能测试阈值调整为 400ms 后，以 `0123afb` 推送；master CI run `37332116410` 全部通过（Rust Test、Flutter Analyze 与文档路径检查、Flutter tests、Windows Build、Android Build）。
+- 创建并推送 annotated tag `v0.6.3`，指向 `0123afb`；Release workflow run `37334766477` 成功。
+
+**发布结果**
+- GitHub Release 已公开发布并标记为 Latest：<https://github.com/ChangfengluoO71/RCH/releases/tag/v0.6.3>。
+- 资产共 4 件：`RCH-0.6.3-windows-x64.exe`、`app-arm64-v8a-release.apk`、`app-armeabi-v7a-release.apk`、`app-x86_64-release.apk`。
+- GitHub CI 覆盖构建与自动化检查；阅读器跳页/加载、随机候选分布和 Windows 安装器桌面 smoke 仍按 TODO 等待用户侧复验。

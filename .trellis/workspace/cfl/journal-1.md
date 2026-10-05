@@ -599,3 +599,41 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Status
 
 [IN PROGRESS] Updater task remains open until Windows UAC smoke is completed.
+
+
+## Session 17: v0.6.3 发布与状态文档收敛
+
+**Date**: 2026-10-05
+**Task**: v0.6.3 发布与状态文档收敛
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+发布 v0.6.3 到 GitHub，更新项目状态、发布日志与 LOG 索引。
+
+### Main Changes
+
+- GitHub Release v0.6.3 已公开发布，Windows 与三种 Android ABI 产物齐全。
+- 修复首轮 CI 的索引哈希断言与计时阈值后，master CI 和 Release workflow 均通过。
+- TODO、LOG、LOG-INDEX 已更新；保留尚待用户实测的阅读器与 Windows 安装器验收项。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `106816f` | (see git log) |
+| `0123afb` | (see git log) |
+| `ff80c9e` | (see git log) |
+
+### Testing
+
+- [OK] master CI run 37332116410：Rust、Flutter、Windows、Android jobs 全部通过。
+- [OK] Release workflow run 37334766477：success。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 继续完成 Windows 安装器 UAC 桌面 smoke 与阅读器远跳、连续翻页和随机分布的用户侧复验。

@@ -1191,7 +1191,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod rg_a_atomic_cache_file_tests {
     //! RG-A：raw-cache 写入的**原子可见性**与失败清理契约。
@@ -1226,7 +1225,11 @@ mod rg_a_atomic_cache_file_tests {
             !target.exists(),
             "final cache path must NOT exist while the write is in flight"
         );
-        assert_eq!(part_files(&dir).len(), 1, "exactly one .part-<pid> temp exists");
+        assert_eq!(
+            part_files(&dir).len(),
+            1,
+            "exactly one .part-<pid> temp exists"
+        );
 
         let published = writer.commit().unwrap();
         assert_eq!(published, target);
@@ -1375,7 +1378,6 @@ mod rg_a_atomic_cache_file_tests {
         );
     }
 }
-
 
 #[cfg(test)]
 mod rg_a_atomic_temp_uniqueness_tests {

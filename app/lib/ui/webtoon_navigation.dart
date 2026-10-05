@@ -1,3 +1,9 @@
+/// Height reserved while a webtoon page is still loading.
+const double webtoonPlaceholderHeight = 200;
+
+/// Number of pages kept around the active webtoon viewport/target.
+const int webtoonPageLoadRadius = 3;
+
 /// Pure state model for continuous (webtoon) reading.
 ///
 /// The viewport can move through pages faster than Flutter can measure their
@@ -5,7 +11,10 @@
 /// logical page prevents transient layout estimates from being persisted as
 /// reading progress.
 class WebtoonNavigationIntent {
-  const WebtoonNavigationIntent({required this.generation, required this.targetPage});
+  const WebtoonNavigationIntent({
+    required this.generation,
+    required this.targetPage,
+  });
 
   final int generation;
   final int targetPage;
@@ -28,6 +37,9 @@ class WebtoonNavigationModel {
   int? _pendingTarget;
   int _generation = 0;
   List<double> _measuredHeights;
+  double _measuredHeightTotal = 0;
+  int _measuredHeightCount = 0;
+  double? _frozenUnknownHeight;
 
   int get pageCount => _pageCount;
   int get stablePage => _stablePage;
@@ -40,6 +52,9 @@ class WebtoonNavigationModel {
   void reset({required int pageCount, int initialPage = 0}) {
     _pageCount = pageCount.clamp(0, 1 << 30);
     _measuredHeights = List<double>.filled(_pageCount, 0);
+    _measuredHeightTotal = 0;
+    _measuredHeightCount = 0;
+    _frozenUnknownHeight = null;
     final last = _pageCount > 0 ? _pageCount - 1 : 0;
     _stablePage = initialPage.clamp(0, last);
     _viewportPage = _stablePage;
@@ -65,15 +80,43 @@ class WebtoonNavigationModel {
     }
   }
 
-  void measure(int page, double height) {
-    if (page < 0 || page >= _pageCount || !height.isFinite || height <= 0) return;
+  /// Updates an actual image extent. Returns true when this page's measured
+  /// height changed and the reader should refresh its viewport-to-page mapping.
+  bool measure(int page, double height) {
+    if (page < 0 || page >= _pageCount || !height.isFinite || height <= 0) {
+      return false;
+    }
+    final previous = _measuredHeights[page];
+    if (previous > 0 && (previous - height).abs() < 0.5) return false;
+    if (previous > 0) {
+      _measuredHeightTotal -= previous;
+    } else {
+      _measuredHeightCount++;
+    }
     _measuredHeights[page] = height;
+    _measuredHeightTotal += height;
+    return true;
+  }
+
+  /// Estimated extent used consistently by jump calculations and unloaded
+  /// list items. Once navigation starts, freeze it so learning one page's real
+  /// height cannot resize every unmeasured page above the current viewport.
+  double get estimatedUnknownHeight =>
+      _frozenUnknownHeight ??
+      (_measuredHeightCount == 0
+          ? estimatedHeight
+          : _measuredHeightTotal / _measuredHeightCount);
+
+  void freezeUnknownHeight([double? height]) {
+    final estimate = height ?? estimatedUnknownHeight;
+    if (estimate.isFinite && estimate > 0) _frozenUnknownHeight = estimate;
   }
 
   double heightFor(int page) {
     if (page < 0 || page >= _pageCount) return estimatedHeight;
     final measured = _measuredHeights[page];
-    return measured > 0 && measured.isFinite ? measured : estimatedHeight;
+    if (measured > 0 && measured.isFinite) return measured;
+    return estimatedUnknownHeight;
   }
 
   /// Returns the offset of the top of [page], using an estimate for pages that
@@ -88,18 +131,26 @@ class WebtoonNavigationModel {
     return offset;
   }
 
-  double offsetForIntent(WebtoonNavigationIntent intent) => offsetFor(intent.targetPage);
+  double offsetForIntent(WebtoonNavigationIntent intent) =>
+      offsetFor(intent.targetPage);
 
   /// Observes the page around the viewport center.  During motion this only
   /// updates [viewportPage]; a stable logical page is committed after motion
   /// has ended and [settle] is called.
-  void observe({required double offset, required double viewportExtent, required bool isScrolling}) {
+  void observe({
+    required double offset,
+    required double viewportExtent,
+    required bool isScrolling,
+  }) {
     if (_pageCount == 0) {
       _viewportPage = 0;
       return;
     }
-    final center = (offset.isFinite ? offset : 0) +
-        (viewportExtent.isFinite && viewportExtent > 0 ? viewportExtent / 2 : 0);
+    final center =
+        (offset.isFinite ? offset : 0) +
+        (viewportExtent.isFinite && viewportExtent > 0
+            ? viewportExtent / 2
+            : 0);
     var cumulative = 0.0;
     var page = _pageCount - 1;
     for (var i = 0; i < _pageCount; i++) {
@@ -118,7 +169,9 @@ class WebtoonNavigationModel {
   /// Marks a programmatic animation as complete.  A generation mismatch is a
   /// stale callback and must not clear a newer target.
   bool completeProgrammatic(WebtoonNavigationIntent intent) {
-    if (!accepts(intent.generation) || _pendingTarget != intent.targetPage) return false;
+    if (!accepts(intent.generation) || _pendingTarget != intent.targetPage) {
+      return false;
+    }
     _pendingTarget = null;
     _viewportPage ??= intent.targetPage;
     _stablePage = intent.targetPage;
@@ -140,7 +193,8 @@ class WebtoonNavigationModel {
     _viewportPage = _stablePage;
   }
 
-  int _clampPage(int page) => page.clamp(0, _pageCount > 0 ? _pageCount - 1 : 0);
+  int _clampPage(int page) =>
+      page.clamp(0, _pageCount > 0 ? _pageCount - 1 : 0);
 }
 
 /// 条漫滚动锚点守护：占位高度 → 真实高度的收敛**不得**推动可见内容。

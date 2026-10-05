@@ -1,0 +1,29 @@
+{
+  "id": "reader-random-reliability",
+  "name": "reader-random-reliability",
+  "title": "阅读器随机体验与可靠性",
+  "description": "改进全库随机阅读、阅读器打开/单页加载恢复、PhotoView 生命周期和阅读诊断。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-10-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-03-full-library-random",
+    "10-03-reader-open-recovery"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

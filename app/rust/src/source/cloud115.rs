@@ -1193,7 +1193,11 @@ impl Cloud115WebClient {
                 let range_gate = RateGate::new("115web.cdn", cdn_range_gate_limit());
                 // 把本轮实际生效的门控档位写进证据流，避免事后无法判断"这组数
                 // 是在哪个档位下测的"。
-                crate::perf::note("cdn.gate.limit", "limit", format!("{:?}", range_gate.limit()));
+                crate::perf::note(
+                    "cdn.gate.limit",
+                    "limit",
+                    format!("{:?}", range_gate.limit()),
+                );
                 range_gate
             },
             cdn_cancel: CancelSignal::new(),
@@ -1675,7 +1679,10 @@ impl Cloud115WebClient {
             Err(cancelled) => {
                 crate::perf::bump(crate::perf::Counter::Cancellations);
                 span.field_str("error", "cancelled").end();
-                return Err(io::Error::new(io::ErrorKind::Interrupted, cancelled.to_string()));
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    cancelled.to_string(),
+                ));
             }
         };
         let gate_wait_us = gate_guard.waited_us();

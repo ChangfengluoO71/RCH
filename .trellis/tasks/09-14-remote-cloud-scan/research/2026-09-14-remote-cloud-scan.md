@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为 WebDAV、SFTP、百度网盘、115 和夸克实现首次全量、后续增量、可手动重扫的远程扫描，并让图片文件夹封面、Reader 和失效缓存清理共享同一套一致性边界。
+**Goal:** 为 WebDAV、SFTP、百度网盘、115 和夸克实现自动首次全量与后续增量扫描，并让图片文件夹封面、Reader 和失效缓存清理共享同一套一致性边界。用户界面只提供扫描状态和失败重试。
+
+> **交互范围更新（2026-09-21）**：本文原始规划中的“可手动重扫”及状态面板的暂停/继续、增量/全量重扫按钮已被后续用户决定取代。当前界面只呈现状态并保留失败重试；首次全量和后续增量由生命周期自动调度。后端内部控制 API 与用户界面按钮分开处理。当前验收口径见同任务的 `remote-scan-ui-verify/prd.md`，决策证据见 `docs/project/LOG.md` 第92轮。
 
 **Architecture:** Rust `RemoteScanEngine` 持有 provider adapter、SQLite 清单、检查点、限速队列、封面依赖和 tombstone；Dart `RemoteScanCoordinator` 只负责触发、控制和状态 UI。Reader、ComicCover 和 LibraryStore 通过稳定逻辑书籍键复用扫描结果、前台优先 governor 和分层缓存。
 
@@ -13,7 +15,7 @@
 ## Global Constraints
 
 - 云端范围固定为 WebDAV、SFTP、百度网盘、115（扫码 Cookie/现有兼容模式）和夸克；SMB/NAS 仍按本地文件系统处理。
-- 首次授权或首次打开根目录启动一次可恢复 full job；后续打开/授权启动增量 job；手动入口同时支持增量和全量重扫。
+- 首次授权或首次打开根目录启动一次可恢复 full job；后续打开/授权启动增量 job；界面不提供手动全量/增量重扫。
 - M8 继续 Catalog-only/local-only；不调用线上智能刮削，不新增元数据 provider。
 - 请求优先级固定为：前台当前页 > Reader 预取 > 扫描目录/封面；所有队列、批次、响应和内存缓冲有硬上限。
 - Range 成功必须是 `206 + 与请求一致的 Content-Range`；后台封面 Range 不可用时使用占位符/提示，不自动整本下载。
@@ -266,7 +268,7 @@
 
 - [ ] **Step 1: Write UI and setting tests**
 
-  Assert first auth/root open calls `remote_scan_start(..., "full")` once, a later open calls `"incremental"`, manual actions select the requested mode, duplicate taps join one job, and `remoteBackgroundScanEnabled=false` suppresses automatic starts without removing existing covers.
+  Assert first auth/root open calls `remote_scan_start(..., "full")` once, a later open calls `"incremental"`, repeated lifecycle triggers join one job, the UI exposes failed-job retry but no manual scan-mode buttons, and `remoteBackgroundScanEnabled=false` suppresses automatic starts without removing existing covers.
 
 - [ ] **Step 2: Run Flutter tests and verify failure**
 
@@ -278,7 +280,7 @@
 
 - [ ] **Step 4: Build source and global status surfaces**
 
-  Add a non-blocking status banner/panel with processed counts, pause/resume, retry, incremental rescan and full rescan. Show Range-unavailable and degraded errors without exposing URLs or credentials. Keep card rendering cache-first.
+  Add a non-blocking status banner/panel with processed counts and retry. Show Range-unavailable and degraded errors without exposing URLs or credentials. Keep card rendering cache-first. **Scope correction (2026-09-21):** do not expose pause/resume or manual incremental/full rescan buttons; see `docs/project/LOG.md` round 92 and `09-14-remote-scan-ui-verify/prd.md`.
 
 - [ ] **Step 5: Connect session/root lifecycle hooks**
 

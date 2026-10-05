@@ -253,6 +253,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<RandomBookCandidateDto> dco_decode_list_random_book_candidate_dto(
+    dynamic raw,
+  );
+
+  @protected
   List<ReadRecordDto> dco_decode_list_read_record_dto(dynamic raw);
 
   @protected
@@ -359,6 +364,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   QuarkSessionInfo dco_decode_quark_session_info(dynamic raw);
+
+  @protected
+  RandomBookCandidateDto dco_decode_random_book_candidate_dto(dynamic raw);
 
   @protected
   ReadRecordDto dco_decode_read_record_dto(dynamic raw);
@@ -727,6 +735,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<RandomBookCandidateDto> sse_decode_list_random_book_candidate_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<ReadRecordDto> sse_decode_list_read_record_dto(
     SseDeserializer deserializer,
   );
@@ -853,6 +866,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   QuarkSessionInfo sse_decode_quark_session_info(SseDeserializer deserializer);
+
+  @protected
+  RandomBookCandidateDto sse_decode_random_book_candidate_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   ReadRecordDto sse_decode_read_record_dto(SseDeserializer deserializer);
@@ -1328,6 +1346,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_random_book_candidate_dto(
+    List<RandomBookCandidateDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_read_record_dto(
     List<ReadRecordDto> self,
     SseSerializer serializer,
@@ -1492,6 +1516,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_quark_session_info(
     QuarkSessionInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_random_book_candidate_dto(
+    RandomBookCandidateDto self,
     SseSerializer serializer,
   );
 

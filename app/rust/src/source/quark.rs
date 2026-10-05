@@ -470,10 +470,7 @@ impl QuarkClient {
         };
         // 只缓存成功结果。瞬时错误（网络超时 / 风控）绝不进缓存。
         let epoch = self.cookie_epoch.load(Ordering::SeqCst);
-        self.dlinks
-            .lock()
-            .unwrap()
-            .put(fid, info.clone(), epoch);
+        self.dlinks.lock().unwrap().put(fid, info.clone(), epoch);
         Ok(info)
     }
 
@@ -787,7 +784,6 @@ pub fn raw_cache_path(origin: &str, fid: &str) -> Option<PathBuf> {
     None
 }
 
-
 // ============================================================
 // 网页扫码登录（Cookie 模式，免 F12）
 // ============================================================
@@ -922,7 +918,8 @@ fn cookies_to_string(cookies: &[(String, String)]) -> String {
 /// 扫码流程的 cookie 累积（与参考实现的 `client.cookies.jar` 同义）：
 /// 夸克在**每一步**以及**重定向**里都可能下发会话 cookie，只取最后一步会缺 cookie
 /// ⇒ drive API 判"登录已过期"（第 67 轮实测用户扫码后就撞到这个）。
-fn qr_cookie_jar() -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<(String, String)>>> {
+fn qr_cookie_jar(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Vec<(String, String)>>> {
     static JAR: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, Vec<(String, String)>>>,
     > = std::sync::OnceLock::new();
@@ -934,8 +931,9 @@ fn qr_cookie_jar() -> &'static std::sync::Mutex<std::collections::HashMap<String
 /// 为什么必须存：ticket 是**一次性**凭据。此前第三步为拿 ticket 又轮询了一次，
 /// 第二遍就取不到了 ⇒ 用户看到"扫码尚未确认或已过期"（第 67 轮实测）。
 fn qr_ticket_jar() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
-    static TICKETS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
-        std::sync::OnceLock::new();
+    static TICKETS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, String>>,
+    > = std::sync::OnceLock::new();
     TICKETS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -959,7 +957,10 @@ fn ticket_store(request_id: &str, ticket: String) {
 }
 
 fn ticket_take(request_id: &str) -> Option<String> {
-    qr_ticket_jar().lock().ok().and_then(|mut jar| jar.remove(request_id))
+    qr_ticket_jar()
+        .lock()
+        .ok()
+        .and_then(|mut jar| jar.remove(request_id))
 }
 
 fn jar_merge(request_id: &str, cookies: Vec<(String, String)>) {
@@ -1074,8 +1075,7 @@ pub fn web_qr_cookie(token: &str, request_id: &str) -> Result<String> {
         Some(ticket) => ticket,
         None => {
             let body = qr_ticket_body(token, request_id)?;
-            qr_ticket_of(&body)
-                .ok_or_else(|| anyhow!("扫码尚未确认或已过期，请重新扫码"))?
+            qr_ticket_of(&body).ok_or_else(|| anyhow!("扫码尚未确认或已过期，请重新扫码"))?
         }
     };
     // 第 67 轮修正：Cookie 必须**整条流程累积**（含各跳重定向），只取最后一步会缺
@@ -1235,7 +1235,11 @@ mod tests {
         let epoch = client.cookie_epoch.load(Ordering::SeqCst);
 
         // 命中
-        client.dlinks.lock().unwrap().put("fid-a", sample("fid-a"), epoch);
+        client
+            .dlinks
+            .lock()
+            .unwrap()
+            .put("fid-a", sample("fid-a"), epoch);
         assert_eq!(
             client.cached_dlink("fid-a").map(|value| value.url),
             Some("https://cdn.example.test/fid-a".to_string())
@@ -1270,7 +1274,11 @@ mod tests {
     fn dlink_cache_is_discarded_when_the_cookie_epoch_changes() {
         let client = QuarkClient::new("__puus=a", "0").unwrap();
         let epoch = client.cookie_epoch.load(Ordering::SeqCst);
-        client.dlinks.lock().unwrap().put("fid-a", sample("fid-a"), epoch);
+        client
+            .dlinks
+            .lock()
+            .unwrap()
+            .put("fid-a", sample("fid-a"), epoch);
         assert!(client.cached_dlink("fid-a").is_some());
 
         // 代际推进（等价于 `__puus` 真的变了）。
@@ -1502,7 +1510,10 @@ mod tests {
         let mut cookies = vec![("a".to_string(), "1".to_string())];
         super::merge_cookies(
             &mut cookies,
-            vec![("b".to_string(), "2".to_string()), ("a".to_string(), "9".to_string())],
+            vec![
+                ("b".to_string(), "2".to_string()),
+                ("a".to_string(), "9".to_string()),
+            ],
         );
         assert_eq!(super::cookies_to_string(&cookies), "a=9; b=2");
     }

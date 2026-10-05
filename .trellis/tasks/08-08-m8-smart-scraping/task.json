@@ -30,6 +30,6 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Catalog-only v3 parser and automatic sync integration implemented; awaiting manual real-sample validation before canonical/provider stages.",
+  "notes": "Catalog-only v3 parser and automatic materialization integration are implemented; manual real-sample validation remains the gate before canonical/provider stages. The E-site metadata importer shipped in v0.6.2 is a separate online lookup/import feature and does not close this Catalog-Only task.",
   "meta": {}
 }

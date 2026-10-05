@@ -3,6 +3,20 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 
+/// True only for errors that mean the Quark account cookie needs to be
+/// authenticated again. File-not-found and catalog-route failures must not
+/// send the user through QR login.
+bool isQuarkCookieExpiredError(Object error) {
+  final message = error.toString().toLowerCase();
+  return message.contains('登录状态失效') ||
+      message.contains('请重新粘贴夸克 cookie') ||
+      message.contains('夸克 api http 401') ||
+      message.contains('夸克 api 错误(401)') ||
+      message.contains('夸克 api 错误(4000)') ||
+      message.contains('夸克直链未支持 range(http 401)') ||
+      message.contains('下载失败:http 401');
+}
+
 /// 夸克网盘会话缓存（按书源 id），避免每次打开都重新连接。
 final Map<String, BigInt> _quarkSessions = {};
 

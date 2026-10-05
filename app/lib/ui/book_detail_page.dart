@@ -5,6 +5,7 @@ import 'package:app/store/tag_provenance.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/store/library_catalog.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/sync_manager.dart';
@@ -48,6 +49,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
       _summaryCtrl,
       _commentCtrl;
   int _tagInputKey = 0;
+  bool _showEhImportedTags = true;
 
   bool get _bookAiActive => AiUpscaleManager.instance.tasks.any(
     (t) => t.bookKey == _meta.key && t.isActive,
@@ -162,31 +164,33 @@ class _BookDetailPageState extends State<BookDetailPage> {
               try {
                 final s = widget.source;
                 final strategy = store.settings.bookOpenStrategy.name;
+                final providerPath = await LibraryCatalogStore.instance
+                    .providerPathFor(source: s, path: widget.path);
                 final bk = switch (s.type) {
                   'webdav' => await openWebdavBook(
                     session: await webdavSessionFor(s),
-                    path: widget.path,
+                    path: providerPath,
                     strategy: strategy,
                   ),
                   'sftp' => await openSftpBook(
                     session: await sftpSessionFor(s),
-                    path: widget.path,
+                    path: providerPath,
                     strategy: strategy,
                   ),
                   'baidu' => await openBaiduBook(
                     session: await baiduSessionFor(s),
-                    path: widget.path,
+                    path: providerPath,
                     strategy: strategy,
                   ),
                   '115' => await openCloud115BookFor(
                     s,
                     session: await cloud115SessionFor(s),
-                    path: widget.path,
+                    path: providerPath,
                     strategy: strategy,
                   ),
                   'quark' => await openQuarkBook(
                     session: await quarkSessionFor(s),
-                    path: widget.path,
+                    path: providerPath,
                     strategy: strategy,
                   ),
                   _ => await openLocalBook(path: widget.path),
@@ -264,79 +268,63 @@ class _BookDetailPageState extends State<BookDetailPage> {
     );
   }
 
-  /// 置顶的「源:e站」行：点击可隐藏**该漫画**的 E 站导入标签。
-  ///
-  /// 不用 `removeBookTagsByPrefix`（那个按 bookKey 前缀匹配，语义不同），
-  /// 改为逐条 `unlink` 该书的前缀标签——与本页 `_removeTag` 走同一条持久化路径。
+  /// 置顶的「源:e站」行：只切换当前详情页中的显示状态，不删除标签。
   Widget _ehSourceRow(List<String> tags) {
     final scheme = Theme.of(context).colorScheme;
     final color = tagSourceColor(TagSource.ehImport, scheme);
-    final count = tags.where((t) => tagSourceOf(t) == TagSource.ehImport).length;
+    final count = tags
+        .where((t) => tagSourceOf(t) == TagSource.ehImport)
+        .length;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
-          InkWell(
-            onTap: _hideEhImportedTags,
-            borderRadius: BorderRadius.circular(6),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: color),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.public, size: 13, color: color),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$kEhSourceTag  $count',
-                    style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.visibility_off_outlined, size: 13, color: color),
-                ],
+          Tooltip(
+            message: '${_showEhImportedTags ? '隐藏' : '显示'} E 站导入标签',
+            child: InkWell(
+              onTap: () =>
+                  setState(() => _showEhImportedTags = !_showEhImportedTags),
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: color),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.public, size: 13, color: color),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$kEhSourceTag  $count',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: color,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      _showEhImportedTags
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      size: 13,
+                      color: color,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
           const SizedBox(width: 8),
-          Text('点击隐藏该漫画的 E 站导入标签', style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            '点击${_showEhImportedTags ? '隐藏' : '显示'}该漫画的 E 站导入标签',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       ),
-    );
-  }
-
-  Future<void> _hideEhImportedTags() async {
-    final targets = TagRepository.instance
-        .tagsForBook(_meta.key)
-        .where((t) => tagSourceOf(t) == TagSource.ehImport)
-        .toList();
-    if (targets.isEmpty) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('隐藏 E 站导入标签'),
-        content: Text(
-          '将移除本漫画的 ${targets.length} 个 E 站导入标签（含来源标记）。'
-          '自建标签与刮削标签不受影响。移除后可重新导入恢复。',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('隐藏')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    for (final t in targets) {
-      TagRepository.instance.unlink(_meta.key, t);
-    }
-    LibraryStore.instance.saveToDisk();
-    if (!mounted) return;
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已隐藏 ${targets.length} 个 E 站导入标签')),
     );
   }
 
@@ -351,7 +339,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
   Future<({String title, List<String> creators, String source, String number})>
   _ehWorkIdentity() async {
     try {
-      final proposals = await dbLoadScrapeProposals(limit: 100000, state: 'ready');
+      final proposals = await dbLoadScrapeProposals(
+        limit: 100000,
+        state: 'ready',
+      );
       final mine = proposals.where((p) => p.bookKey == _meta.key).toList();
       if (mine.isNotEmpty) {
         final p = mine.first;
@@ -376,7 +367,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
     } catch (_) {
       // 解析结果不可用时静默回退
     }
-    final raw = _meta.title.trim().isNotEmpty ? _meta.title.trim() : widget.title;
+    final raw = _meta.title.trim().isNotEmpty
+        ? _meta.title.trim()
+        : widget.title;
     final dot = raw.lastIndexOf('.');
     final base = dot > 0 ? raw.substring(0, dot) : raw;
     final creators = _meta.author
@@ -440,7 +433,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
         snapshot: snapshotWithIdentity,
         // 卷/话号：优先用刮削解析产物（`identity.number`），回退物化值；
         // 放宽策略：只帮搜索与排序，不做硬判。
-        number: identity.number.isNotEmpty ? identity.number : _metaSequenceNumber,
+        number: identity.number.isNotEmpty
+            ? identity.number
+            : _metaSequenceNumber,
       );
     } catch (e) {
       // 离线/失败时回退到落盘 manifest（可复现但覆盖窄）
@@ -466,7 +461,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
 
   Future<void> _showImportPlanDialog(
     Map<String, dynamic> plan, {
-    ({String title, List<String> creators, String source, String number})? identity,
+    ({String title, List<String> creators, String source, String number})?
+    identity,
   }) async {
     final status = plan['status'] as String? ?? 'unmatched';
     final tags = (plan['tags'] as List?) ?? const [];
@@ -474,7 +470,8 @@ class _BookDetailPageState extends State<BookDetailPage> {
     final skipped = (plan['skipped'] as List?) ?? const [];
 
     final statusText = switch (status) {
-      'matched' => '已匹配到画廊（按${plan['matched_by'] == 'creator' ? '创作者兜底' : '作品名'}）',
+      'matched' =>
+        '已匹配到画廊（按${plan['matched_by'] == 'creator' ? '创作者兜底' : '作品名'}）',
       'editions' => '匹配到同一作品的多个版本',
       'ambiguous' => '候选接近或有同系列不同卷，需人工确认（本次不导入）',
       _ => '未匹配到画廊（不猜，本次不导入）',
@@ -490,7 +487,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(statusText, style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  statusText,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
                 if (identity != null)
                   Text(
                     '匹配输入（${identity.source}）：'
@@ -498,16 +498,23 @@ class _BookDetailPageState extends State<BookDetailPage> {
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 if (plan['gid'] != null)
-                  Text('gid: ${plan['gid']}   相似度: '
-                      '${(plan['score'] as num?)?.toStringAsFixed(2) ?? '—'}'),
+                  Text(
+                    'gid: ${plan['gid']}   相似度: '
+                    '${(plan['score'] as num?)?.toStringAsFixed(2) ?? '—'}',
+                  ),
                 if ((plan['title_jpn'] as String?)?.isNotEmpty ?? false)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
-                    child: Text(plan['title_jpn'] as String,
-                        style: Theme.of(context).textTheme.bodySmall),
+                    child: Text(
+                      plan['title_jpn'] as String,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ),
                 const SizedBox(height: 12),
-                Text('将新增标签（${tags.length}）', style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  '将新增标签（${tags.length}）',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 4),
                 if (tags.isEmpty)
                   const Text('（无）', style: TextStyle(fontSize: 12))
@@ -520,24 +527,33 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         .toList(),
                   ),
                 const SizedBox(height: 12),
-                Text('将填补空白字段（${fields.length}）',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  '将填补空白字段（${fields.length}）',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 4),
                 if (fields.isEmpty)
                   const Text('（无）', style: TextStyle(fontSize: 12))
                 else
-                  ...fields.map((f) => Text(
-                        '${(f as Map)['field']} = ${f['value']}',
-                        style: const TextStyle(fontSize: 12),
-                      )),
+                  ...fields.map(
+                    (f) => Text(
+                      '${(f as Map)['field']} = ${f['value']}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
                 if (skipped.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  Text('已跳过（${skipped.length}）', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(
+                    '已跳过（${skipped.length}）',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                   const SizedBox(height: 4),
-                  ...skipped.map((x) => Text(
-                        '· ${(x as Map)['what']}：${x['reason']}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      )),
+                  ...skipped.map(
+                    (x) => Text(
+                      '· ${(x as Map)['what']}：${x['reason']}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
                 ],
                 const SizedBox(height: 10),
                 Text(
@@ -549,9 +565,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-            onPressed: (tags.isEmpty && fields.isEmpty) ? null : () => Navigator.of(c).pop(true),
+            onPressed: (tags.isEmpty && fields.isEmpty)
+                ? null
+                : () => Navigator.of(c).pop(true),
             child: Text('写入 ${tags.length} 个标签 / ${fields.length} 个字段'),
           ),
         ],
@@ -760,8 +781,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
     // 卷/话号拼进**显示**标题（用户口径：标题后面跟号码）。只影响显示，
     // 不写回 `_meta.title` —— 那是可编辑的规范字段，不能被号码污染。
     final sequenceNumber = _metaSequenceNumber;
-    final identifiedTitleWithNumber =
-        titleWithSequence(identifiedTitle, sequenceNumber);
+    final identifiedTitleWithNumber = titleWithSequence(
+      identifiedTitle,
+      sequenceNumber,
+    );
     final originalFilename = _originalFilename();
     // Metadata fields are canonical projections as well as tag-manager
     // entries. Merge both sources so details remain readable even when an old
@@ -770,6 +793,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
       ..._meta.metaTags,
       ...TagRepository.instance.tagsForBook(bookKey),
     }.toList();
+    final visibleTags = _showEhImportedTags
+        ? identifiedTags
+        : identifiedTags
+              .where((tag) => tagSourceOf(tag) != TagSource.ehImport)
+              .toList();
     return Scaffold(
       appBar: AppBar(title: const Text('漫画详情')),
       body: LayoutBuilder(
@@ -788,7 +816,10 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   child: Text(
                     '仅元数据\n来自${SyncManager.instance.deviceNameOf(widget.source.originDeviceId)}',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 13,
+                    ),
                   ),
                 ),
               ),
@@ -957,12 +988,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
               _originalFilenameLine(originalFilename),
             if (identifiedTags.isNotEmpty) ...[
               const SizedBox(height: 4),
-              if (hasEhImportedTags(identifiedTags)) _ehSourceRow(identifiedTags.toList()),
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: identifiedTags.map((tag) => TagBox(name: tag)).toList(),
-              ),
+              if (hasEhImportedTags(identifiedTags))
+                _ehSourceRow(identifiedTags),
+              if (visibleTags.isNotEmpty)
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: visibleTags
+                      .map((tag) => TagBox(name: tag))
+                      .toList(),
+                ),
             ],
             const SizedBox(height: 12),
             if (record != null)
@@ -1049,7 +1084,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
                         spacing: 8,
                         runSpacing: 4,
                         children: bookTags
-                            .map((t) => TagBox(name: t, onDeleted: () => _removeTag(t)))
+                            .map(
+                              (t) => TagBox(
+                                name: t,
+                                onDeleted: () => _removeTag(t),
+                              ),
+                            )
                             .toList(),
                       ),
                   ],

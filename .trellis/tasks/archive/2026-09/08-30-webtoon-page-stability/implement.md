@@ -54,7 +54,17 @@ flutter analyze
   它覆盖"页码回跳 / 阅读进度写错"，本次未复现该类问题 ⇒ 转独立待办（见 `docs/project/TODO.md`
   「步骤②（接通导航模型）」）。
 
-## 人工关卡与回滚
+## 最终验收与未纳入事项（2026-09-23）
 
-- [ ] 使用至少 50 页、页高差异明显的条漫，连续快速前进/后退、跳转并重开，确认标题、底部页码和阅读进度一致。
-- [ ] 通过后单独提交；若出现回归，仅回滚本子任务，不删除回归测试。
+- [x] 本任务报告的“快速下拉时跳回前几页”已按真实根因修复；OPPO PGFM10、v0.6.2 release build、50+ 页不等高条漫快速下拉实测通过，用户确认跳变消失。
+- [x] 自动化对照测试确认补偿组锚点偏差小于 1px；不补偿对照组被推移约 5600px。
+- [ ] `WebtoonNavigationModel` 的页码跳转/阅读进度整合未纳入本次完成范围；单独跟踪在 `docs/project/TODO.md`，不作为已修复症状的验收门。
+
+任务归档记录见本文件上方 2026-09-23 执行更新及 `task.json`。
+
+## Follow-up (2026-10-02: streaming page jumps)
+
+- The streaming release changed remote book opening and did not modify `ReaderPage`. The page-jump defect came from `ReaderPage._webtoonOffsetTo`: it summed only measured image heights, while unmeasured pages were padded as zero. A jump past the pages already laid out therefore landed too early.
+- Wired `WebtoonNavigationModel` into the reader. Unmeasured pages initially use the 200px loading-placeholder estimate; after page measurements arrive, unknown extents use the measured-height average while each measured page keeps its exact height. Viewport-page tracking uses those extents, user drag cancels an older programmatic target, and a saved initial page now restores the webtoon scroll position.
+- Added a streaming jump regression for estimated and measured extents. `flutter test --no-pub` passed (227 passed, 1 skipped); `flutter analyze --no-pub` passed.
+- This follow-up did not receive a separate physical-device reading smoke; the 2026-09-23 fast-scroll validation above remains the prior device evidence.

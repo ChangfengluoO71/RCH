@@ -16,6 +16,7 @@ import 'models.dart';
 import 'remote_listing.dart';
 import 'remote_cache_cleanup.dart';
 import 'remote_scan_coordinator.dart';
+import 'random_read_selector.dart';
 
 @visibleForTesting
 List<String> staleCachePathsForTombstones(
@@ -1027,6 +1028,21 @@ class LibraryStore extends ChangeNotifier {
     _syncRemoteScanSettingsGate();
     notifyListeners();
     saveToDisk();
+  }
+
+  /// Persist the recent random-reading history without changing read progress.
+  void recordRandomSelection(String bookKey) {
+    final history = [...settings.recentRandomBookKeys]
+      ..removeWhere((key) => key == bookKey)
+      ..add(bookKey);
+    if (history.length > RandomReadSelector.recentHistoryLimit) {
+      history.removeRange(
+        0,
+        history.length - RandomReadSelector.recentHistoryLimit,
+      );
+    }
+    settings.recentRandomBookKeys = history;
+    updateSettings(settings);
   }
 
   void _syncRemoteScanSettingsGate() {

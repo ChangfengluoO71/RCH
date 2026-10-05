@@ -442,7 +442,10 @@ mod tests {
         let cover = fit_render_dimensions(1600.0, 20000.0, 340.0);
         assert_eq!(cover.0, 340);
         assert_eq!(cover.1, 4250);
-        assert_eq!(full.1, WEBP_MAX_DIMENSION as Pixels, "1600px 路线受高度上限");
+        assert_eq!(
+            full.1, WEBP_MAX_DIMENSION as Pixels,
+            "1600px 路线受高度上限"
+        );
         let full_px = full.0 as u64 * full.1 as u64;
         let cover_px = cover.0 as u64 * cover.1 as u64;
         assert!(

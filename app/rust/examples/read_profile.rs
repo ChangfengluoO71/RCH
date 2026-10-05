@@ -85,7 +85,8 @@ fn parse_args() -> Result<Args, String> {
             other => return Err(format!("未知参数 {other}")),
         }
     }
-    if args.file.is_none() && (args.root.is_empty() || args.source.is_empty() || args.path.is_empty())
+    if args.file.is_none()
+        && (args.root.is_empty() || args.source.is_empty() || args.path.is_empty())
     {
         return Err("必须提供 --file，或 --root / --source / --path".into());
     }
@@ -126,7 +127,12 @@ impl ReadMeter {
     }
 
     fn bytes(&self) -> u64 {
-        self.reads.lock().unwrap().iter().map(|(_, n)| *n as u64).sum()
+        self.reads
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, n)| *n as u64)
+            .sum()
     }
 }
 
@@ -166,9 +172,7 @@ fn run_local_file(args: &Args, path: &str) -> Result<(), String> {
 
     let started = Instant::now();
     let book: Box<dyn Document> = if args.legacy {
-        Box::new(
-            EpubBook::open_legacy(src, path).map_err(|error| format!("打开失败: {error}"))?,
-        )
+        Box::new(EpubBook::open_legacy(src, path).map_err(|error| format!("打开失败: {error}"))?)
     } else {
         open_document(src, path).map_err(|error| format!("打开失败: {error}"))?
     };
@@ -230,8 +234,8 @@ fn generate_epub(path: &std::path::Path, entries: usize) -> std::io::Result<()> 
     let chapters = entries.saturating_sub(4) / 2;
     let file = std::fs::File::create(path)?;
     let mut writer = zip::ZipWriter::new(file);
-    let stored = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let stored =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let deflated = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
@@ -342,13 +346,9 @@ fn run_cloud(args: &Args) {
             let info = cloud115_cookie_connect(cookie.clone(), root_id.clone())
                 .await
                 .expect("连接 115 失败");
-            let handle = open_cloud115_cookie_book(
-                info.id,
-                args.path.clone(),
-                "range".to_string(),
-            )
-            .await
-            .expect("打开书籍失败");
+            let handle = open_cloud115_cookie_book(info.id, args.path.clone(), "range".to_string())
+                .await
+                .expect("打开书籍失败");
             println!("打开成功: handle={}", handle.handle);
             let mut total = 0u128;
             for index in 0..args.pages {
@@ -357,10 +357,7 @@ fn run_cloud(args: &Args) {
                     Ok(bytes) => {
                         let elapsed = started.elapsed().as_millis();
                         total += elapsed;
-                        println!(
-                            "page {index}: {elapsed} ms, {} bytes",
-                            bytes.len()
-                        );
+                        println!("page {index}: {elapsed} ms, {} bytes", bytes.len());
                     }
                     Err(error) => {
                         println!("page {index}: 失败 {error}");

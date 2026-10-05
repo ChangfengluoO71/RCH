@@ -34,6 +34,20 @@ Future<List<DirEntry>> webdavList({
 }) =>
     RustLib.instance.api.crateApiSourceWebdavList(session: session, path: path);
 
+/// Record allowlisted reader timings without accepting arbitrary diagnostic
+/// text, paths, titles, URLs, or credentials from the UI.
+Future<void> logReaderTiming({
+  required String stage,
+  required String sourceType,
+  required String result,
+  required PlatformInt64 elapsedMs,
+}) => RustLib.instance.api.crateApiSourceLogReaderTiming(
+  stage: stage,
+  sourceType: sourceType,
+  result: result,
+  elapsedMs: elapsedMs,
+);
+
 /// 打开 WebDAV 上的书籍。
 /// 策略(strategy): "auto" **流式优先**（第 69 轮语义翻转）：命中 raw 缓存则本地打开，
 /// 否则先按需 range 流式读，失败才整本下载到 raw/ 缓存

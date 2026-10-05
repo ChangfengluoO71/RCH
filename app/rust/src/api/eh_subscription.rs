@@ -80,8 +80,6 @@ pub async fn eh_collect(rules_json: String) -> Result<String, String> {
     .map_err(|e| format!("任务失败：{e}"))?
 }
 
-
-
 /// **实时搜索**规划一本书的导入（影子模式，不写库）。
 ///
 /// 与 `eh_plan_import`（读 manifest、离线）不同：候选来自**实时搜索 E 站**
@@ -99,8 +97,8 @@ pub async fn eh_plan_book_live(
         let rules = rules_from_arg(rules_json)?;
         let creators: Vec<String> =
             serde_json::from_str(&creators_json).map_err(|e| format!("creators 解析失败：{e}"))?;
-        let snapshot: crate::eh_import::BookSnapshot = serde_json::from_str(&snapshot_json)
-            .map_err(|e| format!("snapshot 解析失败：{e}"))?;
+        let snapshot: crate::eh_import::BookSnapshot =
+            serde_json::from_str(&snapshot_json).map_err(|e| format!("snapshot 解析失败：{e}"))?;
         let (decision, semantic, anchor_kind) =
             eh::match_gallery_full(&rules, &work_title, &creators, &number)?;
         let mut plan = crate::eh_import::plan_import(&snapshot, &semantic, &decision);
@@ -128,8 +126,8 @@ pub async fn eh_plan_import(
     tokio::task::spawn_blocking(move || {
         let creators: Vec<String> =
             serde_json::from_str(&creators_json).map_err(|e| format!("creators 解析失败：{e}"))?;
-        let snapshot: crate::eh_import::BookSnapshot = serde_json::from_str(&snapshot_json)
-            .map_err(|e| format!("snapshot 解析失败：{e}"))?;
+        let snapshot: crate::eh_import::BookSnapshot =
+            serde_json::from_str(&snapshot_json).map_err(|e| format!("snapshot 解析失败：{e}"))?;
         let items = eh::read_manifest(&manifest_dir);
         let plan = crate::eh_import::plan_from_manifest(&items, &snapshot, &work_title, &creators);
         serde_json::to_string(&plan).map_err(|e| format!("计划序列化失败：{e}"))

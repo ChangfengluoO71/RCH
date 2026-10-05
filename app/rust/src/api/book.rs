@@ -113,6 +113,27 @@ pub async fn book_page(handle: u64, index: u32, target_width: Option<u32>) -> Re
     Ok((*bytes).clone())
 }
 
+/// 低优先级读取邻页，不触发下一轮预取；跳转目标页仍由 `book_page` 前台读取。
+pub async fn book_page_prefetch(
+    handle: u64,
+    index: u32,
+    target_width: Option<u32>,
+) -> Result<Vec<u8>> {
+    let reader = {
+        let g = sessions().lock().unwrap();
+        g.get(&handle).map(|s| Arc::clone(&s.reader))
+    };
+    let reader = reader.ok_or_else(|| anyhow::anyhow!("无效的书句柄: {handle}"))?;
+    let bytes = tokio::task::spawn_blocking(move || {
+        if let Some(width) = target_width {
+            reader.set_display_width(width);
+        }
+        reader.get_page_prefetch(index)
+    })
+    .await??;
+    Ok((*bytes).clone())
+}
+
 /// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
 /// 若 path 为目录,走 Folder 格式。
 /// 生成本地书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。

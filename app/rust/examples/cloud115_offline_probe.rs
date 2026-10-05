@@ -186,12 +186,21 @@ fn probe_open(http: &reqwest::blocking::Client, args: &Args) -> Result<(), Strin
     );
 
     // 2) 加任务：用**故意无效**的磁力探测端点存在性，不会产生真实任务。
-    let bad_magnet = "magnet:?xt=urn:btih:0000000000000000000000000000000000000000&dn=__rch_probe_invalid__";
+    let bad_magnet =
+        "magnet:?xt=urn:btih:0000000000000000000000000000000000000000&dn=__rch_probe_invalid__";
     let uri = args.add.clone().unwrap_or_else(|| bad_magnet.to_string());
     println!(
         "\n[注意] 下面用 {} 探测加任务端点；{}",
-        if args.add.is_some() { "你提供的真实链接" } else { "一个故意无效的磁力" },
-        if args.add.is_some() { "这会真的创建离线任务" } else { "无效磁力不会产生任务" }
+        if args.add.is_some() {
+            "你提供的真实链接"
+        } else {
+            "一个故意无效的磁力"
+        },
+        if args.add.is_some() {
+            "这会真的创建离线任务"
+        } else {
+            "无效磁力不会产生任务"
+        }
     );
     let add_forms: Vec<(&str, Vec<(&str, String)>)> = vec![
         ("/open/offline/add_task_url", vec![("url", uri.clone())]),
@@ -217,9 +226,7 @@ fn probe_open(http: &reqwest::blocking::Client, args: &Args) -> Result<(), Strin
          拿到 200 后请把响应字段贴回调研报告，作为「磁力/种子是否被接受」的证据。"
     );
     if args.destructive {
-        println!(
-            "[destructive] 已开启，但删除任务必须人工确认任务 id 后再做，探针不自动删。"
-        );
+        println!("[destructive] 已开启，但删除任务必须人工确认任务 id 后再做，探针不自动删。");
     }
     Ok(())
 }
@@ -284,8 +291,16 @@ fn probe_web(http: &reqwest::blocking::Client, args: &Args) -> Result<(), String
     });
     println!(
         "\n[注意] 下面用 {} 探测加任务端点；{}",
-        if args.add.is_some() { "你提供的真实链接" } else { "一个故意无效的磁力" },
-        if args.add.is_some() { "这会真的创建离线任务" } else { "无效磁力不会产生任务" }
+        if args.add.is_some() {
+            "你提供的真实链接"
+        } else {
+            "一个故意无效的磁力"
+        },
+        if args.add.is_some() {
+            "这会真的创建离线任务"
+        } else {
+            "无效磁力不会产生任务"
+        }
     );
     let hash = format!("{WEB_BASE}/offline/add_task_url?uid={uid}");
     let add_variants: Vec<(&str, Vec<(&str, String)>)> = vec![
@@ -295,10 +310,7 @@ fn probe_web(http: &reqwest::blocking::Client, args: &Args) -> Result<(), String
         ),
         (
             "add_task_url",
-            vec![
-                ("url[0]", uri.clone()),
-                ("wp_path_id[0]", "0".to_string()),
-            ],
+            vec![("url[0]", uri.clone()), ("wp_path_id[0]", "0".to_string())],
         ),
         ("add_task", vec![("url", uri.clone())]),
         (

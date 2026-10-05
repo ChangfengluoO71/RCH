@@ -42,8 +42,6 @@ fn columns_of(conn: &Connection, table: &str) -> Vec<String> {
 // 1. migration
 // ---------------------------------------------------------------------------
 
-
-
 #[test]
 fn migration_adds_the_long_compensation_columns_idempotently() {
     let conn = base_connection();
@@ -90,7 +88,10 @@ fn migration_adds_the_long_compensation_columns_idempotently() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(not_before, None, "a plain failed job has no long-retry qualification");
+    assert_eq!(
+        not_before, None,
+        "a plain failed job has no long-retry qualification"
+    );
     assert_eq!(consumed, 0);
     assert_eq!(pending, 0);
 }

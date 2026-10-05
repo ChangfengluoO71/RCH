@@ -699,13 +699,15 @@ pub struct RemoteCoverResetDto {
 /// 4. bump 各源封面 revision，界面据此重新读 durable state。
 pub fn remote_cover_reset_to_current_profile() -> Result<RemoteCoverResetDto, String> {
     let conn = db::get().lock().map_err(|error| error.to_string())?;
-    let profile =
-        crate::api::remote_scan::cover_quality_profile_on(&conn);
+    let profile = crate::api::remote_scan::cover_quality_profile_on(&conn);
     let now = db::now_ms();
 
     // 1) 非当前档的任务与变体。
     let purged_jobs = conn
-        .execute("DELETE FROM remote_cover_job WHERE profile <> ?1", params![profile])
+        .execute(
+            "DELETE FROM remote_cover_job WHERE profile <> ?1",
+            params![profile],
+        )
         .map_err(|error| error.to_string())? as u32;
     let purged_variants = conn
         .execute(
@@ -727,7 +729,9 @@ pub fn remote_cover_reset_to_current_profile() -> Result<RemoteCoverResetDto, St
             )
             .map_err(|error| error.to_string())?;
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .map_err(|error| error.to_string())?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|error| error.to_string())?;
@@ -812,7 +816,11 @@ mod reset_tests {
             let conn = db::get().lock().unwrap();
             crate::remote_scan::persistence::migrate(&conn).unwrap();
             cover_store::migrate(&conn).unwrap();
-            for table in ["remote_cover_job", "remote_cover_variant", "remote_scan_epoch"] {
+            for table in [
+                "remote_cover_job",
+                "remote_cover_variant",
+                "remote_scan_epoch",
+            ] {
                 conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source])
                     .unwrap();
             }
@@ -838,7 +846,11 @@ mod reset_tests {
                 .unwrap();
             };
             current = crate::api::remote_scan::cover_quality_profile_on(&conn);
-            other = if current == "170x240@1" { "340x480@1" } else { "170x240@1" };
+            other = if current == "170x240@1" {
+                "340x480@1"
+            } else {
+                "170x240@1"
+            };
             seed(&current, "keep-ready", CoverJobState::Ready);
             seed(&current, "requeue-me", CoverJobState::Failed);
             seed(&current, "stay-blocked", CoverJobState::Blocked);
@@ -876,7 +888,10 @@ mod reset_tests {
             )
             .unwrap();
         assert_eq!(state, "pending");
-        assert_eq!(attempt, 0, "重排队必须把 attempt 归零（否则又会被 attempt>=3 判死）");
+        assert_eq!(
+            attempt, 0,
+            "重排队必须把 attempt 归零（否则又会被 attempt>=3 判死）"
+        );
 
         let blocked: String = conn
             .query_row(

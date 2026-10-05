@@ -185,7 +185,6 @@ impl SftpClient {
         path: &str,
         progress: Option<Arc<DownloadProgress>>,
     ) -> Result<PathBuf> {
-
         let raw_dir = crate::cache::CacheDir::Raw
             .ensure()
             .context("创建 raw/ 缓存目录失败")?;
@@ -223,8 +222,7 @@ impl SftpClient {
                     .open(path)
                     .await
                     .map_err(|e| anyhow!("SFTP 打开文件失败: {e}"))?;
-                let mut writer =
-                    crate::cache::AtomicCacheFile::create(&file_path_for_write)?;
+                let mut writer = crate::cache::AtomicCacheFile::create(&file_path_for_write)?;
                 let mut buf = vec![0u8; 64 * 1024];
                 let mut written: u64 = 0;
                 loop {
@@ -410,7 +408,11 @@ mod tests {
         assert_eq!(endpoint_for("nas.local.", 22), "nas.local.", "不得去尾点");
         assert_eq!(endpoint_for("[::1]", 22), "[::1]", "不得改 IPv6 方括号表达");
         assert_eq!(endpoint_for("", 22), "", "空 host 也必须原样保留");
-        assert_eq!(endpoint_for(" nas ", 22), " nas ", "不得 trim（Dart 侧已 trim）");
+        assert_eq!(
+            endpoint_for(" nas ", 22),
+            " nas ",
+            "不得 trim（Dart 侧已 trim）"
+        );
 
         // SFTP-CA-2 非默认端口：`{host}:{port}`。
         assert_eq!(endpoint_for("nas.local", 2222), "nas.local:2222");

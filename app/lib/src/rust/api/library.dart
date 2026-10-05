@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_book_query`, `cloud_has_credentials`, `normalized_library_path_sql`, `run_book_query`, `source_status`
+// These functions are ignored because they are not marked as `pub`: `build_book_query`, `cloud_has_credentials`, `local_archive_path_predicate_sql`, `normalized_library_path_sql`, `random_book_key_sql`, `run_book_query`, `source_status`
 
 /// 某书源离线索引总数（浏览模式判定：有索引 → 离线优先）。
 Future<PlatformInt64> dbSourceIndexCount({required String sourceId}) =>
@@ -24,6 +24,33 @@ Future<List<LibEntryDto>> dbSourceDirEntries({
 /// 设备 → 书源树（本机逻辑书源 + 远端书源按设备分组）。
 Future<List<SourceTreeNodeDto>> dbSourceTree() =>
     RustLib.instance.api.crateApiLibraryDbSourceTree();
+
+/// Resolve an indexed logical path to the current provider-facing identifier.
+///
+/// Opaque providers (Baidu, 115 and Quark) expose stable catalog paths to the
+/// UI, but their open APIs require the file identifier stored in the remote
+/// route table. A path that is not a live catalog entry is left untouched so
+/// source-browser callers can continue passing provider identifiers directly.
+Future<String?> dbResolveRemoteProviderPath({
+  required String sourceId,
+  required String logicalPath,
+}) => RustLib.instance.api.crateApiLibraryDbResolveRemoteProviderPath(
+  sourceId: sourceId,
+  logicalPath: logicalPath,
+);
+
+/// Return a random batch from complete catalog data only. Remote candidates
+/// require a published listing proof; this API never starts a source session
+/// or scans the network.
+Future<List<RandomBookCandidateDto>> dbRandomLibraryCandidates({
+  required List<String> excludedBookKeys,
+  required List<String> unavailableCandidateKeys,
+  required PlatformInt64 limit,
+}) => RustLib.instance.api.crateApiLibraryDbRandomLibraryCandidates(
+  excludedBookKeys: excludedBookKeys,
+  unavailableCandidateKeys: unavailableCandidateKeys,
+  limit: limit,
+);
 
 /// 跨设备资料库搜索（分页；直接走 SQL，不整载 library_index）。
 Future<List<BookSearchDto>> dbSearchBooks({
@@ -165,6 +192,42 @@ class LibEntryDto {
           modifiedAt == other.modifiedAt &&
           coverPath == other.coverPath &&
           hash == other.hash;
+}
+
+/// One deduplicated, currently indexed candidate for random reading.
+class RandomBookCandidateDto {
+  final String bookKey;
+  final String sourceId;
+  final String sourceType;
+  final String path;
+  final String title;
+
+  const RandomBookCandidateDto({
+    required this.bookKey,
+    required this.sourceId,
+    required this.sourceType,
+    required this.path,
+    required this.title,
+  });
+
+  @override
+  int get hashCode =>
+      bookKey.hashCode ^
+      sourceId.hashCode ^
+      sourceType.hashCode ^
+      path.hashCode ^
+      title.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RandomBookCandidateDto &&
+          runtimeType == other.runtimeType &&
+          bookKey == other.bookKey &&
+          sourceId == other.sourceId &&
+          sourceType == other.sourceType &&
+          path == other.path &&
+          title == other.title;
 }
 
 /// 书源可用性（设备树节点）。

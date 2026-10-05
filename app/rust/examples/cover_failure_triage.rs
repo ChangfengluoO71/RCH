@@ -101,17 +101,12 @@ fn distribution(conn: &Connection, source: &str) -> rusqlite::Result<Vec<(String
            FROM remote_cover_job WHERE source_id=?1
           GROUP BY 1,2 ORDER BY 3 DESC, 1, 2",
     )?
-    .query_map([source], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-    })?
+    .query_map([source], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
     .collect()
 }
 
 /// 逐 job 明细，便于事后按资产核对。
-fn detail(
-    conn: &Connection,
-    source: &str,
-) -> rusqlite::Result<Vec<(String, String, String, i64)>> {
+fn detail(conn: &Connection, source: &str) -> rusqlite::Result<Vec<(String, String, String, i64)>> {
     conn.prepare(
         "SELECT asset_id, state, COALESCE(NULLIF(error_code,''),'-'), attempt
            FROM remote_cover_job WHERE source_id=?1
@@ -147,7 +142,9 @@ fn failed_keys(
           WHERE source_id=?1 AND state='failed'
           ORDER BY job_key LIMIT ?2 OFFSET ?3",
     )?
-    .query_map(params![source, limit as i64, offset as i64], |row| row.get(0))?
+    .query_map(params![source, limit as i64, offset as i64], |row| {
+        row.get(0)
+    })?
     .collect()
 }
 
@@ -253,7 +250,10 @@ fn main() {
                 eprintln!("读取书源失败（副本里没有这个 source？）: {error}");
                 std::process::exit(1);
             });
-        println!("书源类型    : {source_type}（cookie {} 字节，root_id {}）", cookie_len, root_id);
+        println!(
+            "书源类型    : {source_type}（cookie {} 字节，root_id {}）",
+            cookie_len, root_id
+        );
         if source_type != "quark" && source_type != "115" {
             eprintln!("本工具目前只支持 quark / 115（其它 provider 的会话入口不同）");
             std::process::exit(2);
@@ -268,7 +268,11 @@ fn main() {
         failed_keys(&conn, &args.source, args.limit, args.offset, &args.asset)
             .expect("选取失败 job 失败")
     };
-    println!("\n选中重排: {} 个 failed job（按 job_key 稳定取前 {}）", keys.len(), args.limit);
+    println!(
+        "\n选中重排: {} 个 failed job（按 job_key 稳定取前 {}）",
+        keys.len(),
+        args.limit
+    );
     for key in keys.iter().take(5) {
         println!("  · {key}");
     }
@@ -335,23 +339,21 @@ fn main() {
     println!("epoch 绑定   : {epoch_rows} 行；job session_epoch 对齐 {aligned_jobs} 行");
 
     // 4) 走生产入口唤醒 worker（rebind → 补偿 → 补齐 → wage worker）
-    let reconcile: Value = match runtime.block_on(notify_source_session_ready(
-        args.source.clone(),
-        session,
-    )) {
-        Ok(report) => json!({
-            "binding_available": report.binding_available,
-            "compensation_promoted": report.compensation_promoted,
-            "blocker_cleared": report.blocker_cleared,
-            "jobs_created": report.jobs_created,
-            "truncated": report.truncated,
-            "claimable": report.claimable,
-        }),
-        Err(error) => {
-            eprintln!("notify_source_session_ready 失败: {error}");
-            std::process::exit(1);
-        }
-    };
+    let reconcile: Value =
+        match runtime.block_on(notify_source_session_ready(args.source.clone(), session)) {
+            Ok(report) => json!({
+                "binding_available": report.binding_available,
+                "compensation_promoted": report.compensation_promoted,
+                "blocker_cleared": report.blocker_cleared,
+                "jobs_created": report.jobs_created,
+                "truncated": report.truncated,
+                "claimable": report.claimable,
+            }),
+            Err(error) => {
+                eprintln!("notify_source_session_ready 失败: {error}");
+                std::process::exit(1);
+            }
+        };
     println!("reconcile    : {reconcile}");
 
     // 5) 有界等待 worker 抽干（只看副本里的到期工作）
@@ -366,7 +368,10 @@ fn main() {
             break;
         }
         if started.elapsed() > deadline {
-            println!("等待超时（{}s），仍剩 {} 个到期工作，按当前结果出报告", args.timeout_secs, due);
+            println!(
+                "等待超时（{}s），仍剩 {} 个到期工作，按当前结果出报告",
+                args.timeout_secs, due
+            );
             break;
         }
         std::thread::sleep(Duration::from_millis(1000));

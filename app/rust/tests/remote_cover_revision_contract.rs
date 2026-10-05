@@ -12,10 +12,10 @@
 
 use rusqlite::{params, Connection};
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
+use rust_lib_app::remote_scan::cover_service;
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;
 use rust_lib_app::remote_scan::{cover_store, persistence};
 use rust_lib_app::{cache, db};
-use rust_lib_app::remote_scan::cover_service;
 
 const SIX_HOURS_MS: i64 = 6 * 60 * 60 * 1000;
 
@@ -54,7 +54,13 @@ fn job_key(source_id: &str, asset_id: &str) -> CoverJobKey {
     }
 }
 
-fn bind_epoch(conn: &Connection, source_id: &str, generation: i64, session_epoch: &str, token: i64) {
+fn bind_epoch(
+    conn: &Connection,
+    source_id: &str,
+    generation: i64,
+    session_epoch: &str,
+    token: i64,
+) {
     conn.execute(
         "INSERT OR REPLACE INTO remote_scan_epoch(
              source_id,generation,source_fingerprint,root_path,session_epoch,session_token)
@@ -312,8 +318,11 @@ fn rev7_prepare(source_id: &str) {
         "remote_scan_epoch",
         "remote_view_revision",
     ] {
-        conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source_id])
-            .unwrap();
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE source_id=?1"),
+            [source_id],
+        )
+        .unwrap();
     }
     conn.execute(
         "INSERT OR REPLACE INTO book_sources(id,type,name) VALUES(?1,'115','rev7')",
@@ -385,9 +394,17 @@ fn rev7_ready_with_missing_material_is_reconciled_and_bumps_revision_once() {
     // 磁盘上没有字节 ⇒ 真实读路径必须探测到缺失并对账。
     rev7_read(source);
 
-    assert_eq!(rev7_state(source), "pending", "ready + missing bytes => pending");
+    assert_eq!(
+        rev7_state(source),
+        "pending",
+        "ready + missing bytes => pending"
+    );
     let after = rev7_revision(source);
-    assert_eq!(after - before, 1, "the real reconcile transition must bump exactly once");
+    assert_eq!(
+        after - before,
+        1,
+        "the real reconcile transition must bump exactly once"
+    );
 }
 
 #[test]
@@ -410,7 +427,11 @@ fn rev7_ready_with_present_material_does_not_bump_revision() {
 
     rev7_read(source);
 
-    assert_eq!(rev7_state(source), "ready", "material present => no reconcile");
+    assert_eq!(
+        rev7_state(source),
+        "ready",
+        "material present => no reconcile"
+    );
     assert_eq!(
         rev7_revision(source),
         before,
@@ -446,7 +467,12 @@ fn rev8_long_compensation_promotion_bumps_revision_once() {
     .unwrap();
     assert_eq!(report.compensation_promoted, 1);
     assert_eq!(state_of(&conn, &key), "pending");
-    assert_delta(&conn, "source", before, "REV-8 failed -> pending (long compensation)");
+    assert_delta(
+        &conn,
+        "source",
+        before,
+        "REV-8 failed -> pending (long compensation)",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +491,14 @@ fn rev9_mutations_without_durable_effect_do_not_bump_revision() {
 
     // (a) 错误 lease owner：affected = 0
     let ok = cover_store::mark_job_ready_owned_on(
-        &conn, &key, "not-the-owner", 2_000, 340, 480, 4_096, "checksum",
+        &conn,
+        &key,
+        "not-the-owner",
+        2_000,
+        340,
+        480,
+        4_096,
+        "checksum",
     )
     .unwrap();
     assert!(!ok, "a foreign owner must not be able to mutate the job");
@@ -520,10 +553,8 @@ fn rev_no_transition_ever_bumps_more_than_once() {
     assert_eq!(current - previous, 1, "claim must bump exactly once");
     previous = current;
 
-    cover_store::mark_job_ready_owned_on(
-        &conn, &key, "worker", 2_000, 340, 480, 4_096, "checksum",
-    )
-    .unwrap();
+    cover_store::mark_job_ready_owned_on(&conn, &key, "worker", 2_000, 340, 480, 4_096, "checksum")
+        .unwrap();
     current = revision(&conn, "source");
     assert_eq!(
         current - previous,
@@ -544,10 +575,8 @@ fn rev_bump_uses_the_jobs_own_generation() {
     seed_job(&conn, &key, CoverJobState::Pending, 1, "e1", 0);
     cover_store::claim_next_job_for_source_session_on(&conn, "source", "worker", 1_000, 60_000, 42)
         .unwrap();
-    cover_store::mark_job_ready_owned_on(
-        &conn, &key, "worker", 2_000, 340, 480, 4_096, "checksum",
-    )
-    .unwrap();
+    cover_store::mark_job_ready_owned_on(&conn, &key, "worker", 2_000, 340, 480, 4_096, "checksum")
+        .unwrap();
 
     // revision 行记录的 listing_generation 必须来自该 job 自身的 generation（=1），
     // 而不是任何"当前最新"猜测。
@@ -558,5 +587,8 @@ fn rev_bump_uses_the_jobs_own_generation() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(recorded, 1, "the bump must be bound to the job's own generation");
+    assert_eq!(
+        recorded, 1,
+        "the bump must be bound to the job's own generation"
+    );
 }

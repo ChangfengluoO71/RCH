@@ -22,9 +22,10 @@
   "parent": "08-30-post-release-feedback-remediation",
   "relatedFiles": [
     "app/lib/store/update_manager.dart",
+    "app/lib/ui/update_panel.dart",
     "app/test/update_handoff_test.dart"
   ],
-  "notes": "Atomic .part commit, single-flight download, verified-package reuse, and retry-preserving platform handoff are covered by automated tests. Real Windows UAC and Android installer smoke remain pending.",
+  "notes": "Download/install use single-flight operations, .part commit, GitHub SHA-256 verification before commit/install, verified-package reuse, and retry-preserving failures. Windows waits for the Inno Setup process; UAC cancellation or non-zero exit preserves the verified package and exposes retry without a fixed-delay duplicate-install window. Updater tests pass (21), the full Flutter suite passes (231 passed, 1 skipped), analysis and Windows release build pass, and MuMu Android 0.6.1-to-0.6.2 system-installer smoke passed. Windows desktop UI/UAC smoke remains pending because Computer Use was stopped during target selection. The unrelated installed D:\\RCH\\RCH.exe v0.5.7 was not counted as a test.",
   "meta": {
     "executionBatch": "cover-and-update",
     "pairedTask": "08-02-cover-loading-perf"

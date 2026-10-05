@@ -1,21 +1,56 @@
 use rusqlite::Connection;
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
 use rust_lib_app::remote_scan::cover_service::ConsumerRegistry;
-use rust_lib_app::remote_scan::cover_store;
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;
+use rust_lib_app::remote_scan::cover_store;
 
 #[test]
 fn ordinary_visible_demand_does_not_bypass_backoff_or_terminal_errors() {
     let conn = Connection::open_in_memory().unwrap();
     cover_store::migrate(&conn).unwrap();
-    for state in [CoverJobState::RetryWait, CoverJobState::Unsupported, CoverJobState::Failed, CoverJobState::Blocked] {
+    for state in [
+        CoverJobState::RetryWait,
+        CoverJobState::Unsupported,
+        CoverJobState::Failed,
+        CoverJobState::Blocked,
+    ] {
         let key = CoverJobKey {
-            source_id: "source".into(), asset_id: state.as_str().into(),
-            content_revision: "v1".into(), selection_revision: "default".into(), profile: "170x240@1".into(),
+            source_id: "source".into(),
+            asset_id: state.as_str().into(),
+            content_revision: "v1".into(),
+            selection_revision: "default".into(),
+            profile: "170x240@1".into(),
         };
-        cover_store::upsert_job_on(&conn, &key, state, "background", 10, 1, "epoch", 1, CoverJobUpsertCause::Demand).unwrap();
-        let demanded = cover_store::upsert_job_on(&conn, &key, CoverJobState::Pending, "visible", 300, 1, "epoch", 2, CoverJobUpsertCause::Demand).unwrap();
-        assert_eq!(demanded.state, state, "visible demand must not restart {}", state.as_str());
+        cover_store::upsert_job_on(
+            &conn,
+            &key,
+            state,
+            "background",
+            10,
+            1,
+            "epoch",
+            1,
+            CoverJobUpsertCause::Demand,
+        )
+        .unwrap();
+        let demanded = cover_store::upsert_job_on(
+            &conn,
+            &key,
+            CoverJobState::Pending,
+            "visible",
+            300,
+            1,
+            "epoch",
+            2,
+            CoverJobUpsertCause::Demand,
+        )
+        .unwrap();
+        assert_eq!(
+            demanded.state,
+            state,
+            "visible demand must not restart {}",
+            state.as_str()
+        );
         assert_eq!(demanded.priority, 300);
     }
 }
@@ -41,7 +76,7 @@ fn identical_jobs_are_upserted_once_and_consumer_release_is_scoped() {
         "session-a",
         10,
         CoverJobUpsertCause::Demand,
-)
+    )
     .unwrap();
     let second = cover_store::upsert_job_on(
         &conn,
@@ -53,7 +88,7 @@ fn identical_jobs_are_upserted_once_and_consumer_release_is_scoped() {
         "session-a",
         11,
         CoverJobUpsertCause::Demand,
-)
+    )
     .unwrap();
     assert_eq!(first.key, second.key);
     assert_eq!(second.priority, 10);
@@ -98,7 +133,7 @@ fn claim_is_short_lived_prioritized_and_recovery_requeues_expired_leases() {
         "epoch",
         100,
         CoverJobUpsertCause::Demand,
-)
+    )
     .unwrap();
     cover_store::upsert_job_on(
         &conn,
@@ -110,7 +145,7 @@ fn claim_is_short_lived_prioritized_and_recovery_requeues_expired_leases() {
         "epoch",
         101,
         CoverJobUpsertCause::Demand,
-)
+    )
     .unwrap();
     let claimed = cover_store::claim_next_job_on(&conn, "worker-a", 200, 1_000)
         .unwrap()
@@ -150,7 +185,7 @@ fn retry_wait_is_not_claimed_before_next_attempt() {
         "epoch",
         100,
         CoverJobUpsertCause::Demand,
-)
+    )
     .unwrap();
     conn.execute(
         "UPDATE remote_cover_job SET next_attempt_at=500 WHERE job_key=?1",
@@ -186,7 +221,7 @@ fn ready_publish_records_blob_metadata_and_reference_atomically() {
         "epoch",
         1,
         CoverJobUpsertCause::Demand,
-)
+    )
     .unwrap();
     cover_store::claim_next_job_on(&conn, "worker", 2, 1_000)
         .unwrap()
@@ -251,7 +286,14 @@ fn requeue_failed_for_source_only_touches_current_profile_failures() {
     let b = key("s1", "b", "170x240@1");
     for (k, attempt) in [(&a, 3_i64), (&b, 1_i64)] {
         cover_store::upsert_job_on(
-            &conn, k, CoverJobState::Failed, "background", 10, 1, "e1", attempt,
+            &conn,
+            k,
+            CoverJobState::Failed,
+            "background",
+            10,
+            1,
+            "e1",
+            attempt,
             CoverJobUpsertCause::Demand,
         )
         .unwrap();
@@ -268,17 +310,38 @@ fn requeue_failed_for_source_only_touches_current_profile_failures() {
     let other_state = key("s1", "d", "170x240@1");
     let other_source = key("s2", "e", "170x240@1");
     cover_store::upsert_job_on(
-        &conn, &other_profile, CoverJobState::Failed, "background", 10, 1, "e1", 1,
+        &conn,
+        &other_profile,
+        CoverJobState::Failed,
+        "background",
+        10,
+        1,
+        "e1",
+        1,
         CoverJobUpsertCause::Demand,
     )
     .unwrap();
     cover_store::upsert_job_on(
-        &conn, &other_state, CoverJobState::Pending, "background", 10, 1, "e1", 0,
+        &conn,
+        &other_state,
+        CoverJobState::Pending,
+        "background",
+        10,
+        1,
+        "e1",
+        0,
         CoverJobUpsertCause::Demand,
     )
     .unwrap();
     cover_store::upsert_job_on(
-        &conn, &other_source, CoverJobState::Failed, "background", 10, 1, "e1", 1,
+        &conn,
+        &other_source,
+        CoverJobState::Failed,
+        "background",
+        10,
+        1,
+        "e1",
+        1,
         CoverJobUpsertCause::Demand,
     )
     .unwrap();
@@ -299,8 +362,8 @@ fn requeue_failed_for_source_only_touches_current_profile_failures() {
     );
 
     // attempt/退避/长期补偿三列都要归零，否则重试一次又会被挡回去。
-    let (attempt, long_pending, long_consumed, long_not_before): (i64, i64, i64, Option<i64>) = conn
-        .query_row(
+    let (attempt, long_pending, long_consumed, long_not_before): (i64, i64, i64, Option<i64>) =
+        conn.query_row(
             "SELECT attempt,long_retry_pending,long_retry_consumed,long_retry_not_before
                FROM remote_cover_job WHERE job_key=?1",
             [a.encode()],

@@ -11,6 +11,7 @@ import '../src/rust/api/db.dart';
 import '../src/rust/api/source.dart';
 import 'baidu_session.dart';
 import 'cloud115_session.dart';
+import 'library_catalog.dart';
 import 'library_store.dart';
 import 'models.dart';
 import 'quark_session.dart';
@@ -102,6 +103,7 @@ class AiUpscaleManager extends ChangeNotifier {
   final List<AiTask> _tasks = [];
   bool _workerRunning = false;
   String? _readingBookKey;
+  Object? _readingBookOwner;
   String? _forceAiVersionBookKey;
   String? _lastCompletedTitle;
   String? _lastFailedMessage;
@@ -220,10 +222,22 @@ class AiUpscaleManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// ReaderPage 挂载时注册、卸载时注销当前阅读的书。
-  void setReadingBook(String? bookKey) {
-    if (_readingBookKey == bookKey) return;
+  /// ReaderPage registers an owner-scoped reading state after its first frame.
+  void setReadingBook(String? bookKey, {required Object owner}) {
+    if (_readingBookKey == bookKey && identical(_readingBookOwner, owner)) {
+      return;
+    }
     _readingBookKey = bookKey;
+    _readingBookOwner = owner;
+    notifyListeners();
+  }
+
+  /// Clear only the registration owned by the ReaderPage that is disposing.
+  void clearReadingBook({required Object owner}) {
+    if (!identical(_readingBookOwner, owner)) return;
+    _readingBookOwner = null;
+    if (_readingBookKey == null) return;
+    _readingBookKey = null;
     notifyListeners();
   }
 
@@ -277,28 +291,32 @@ class AiUpscaleManager extends ChangeNotifier {
 
     try {
       final strategy = store.settings.bookOpenStrategy.name;
+      final providerPath = await LibraryCatalogStore.instance.providerPathFor(
+        source: source,
+        path: task.path,
+      );
       final openFuture = switch (source.type) {
         'webdav' => openWebdavBook(
             session: await webdavSessionFor(source),
-            path: task.path,
+            path: providerPath,
             strategy: strategy),
         'sftp' => openSftpBook(
             session: await sftpSessionFor(source),
-            path: task.path,
+            path: providerPath,
             strategy: strategy),
         'baidu' => openBaiduBook(
             session: await baiduSessionFor(source),
-            path: task.path,
+            path: providerPath,
             strategy: strategy),
         '115' => openCloud115BookFor(source,
             session: await cloud115SessionFor(source),
-            path: task.path,
+            path: providerPath,
             strategy: strategy),
         'quark' => openQuarkBook(
             session: await quarkSessionFor(source),
-            path: task.path,
+            path: providerPath,
             strategy: strategy),
-        _ => openLocalBook(path: task.path),
+        _ => openLocalBook(path: providerPath),
       };
       final bk = await openFuture.timeout(const Duration(seconds: 60));
       task.total = bk.pageCount;

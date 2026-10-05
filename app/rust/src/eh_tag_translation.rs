@@ -35,7 +35,11 @@ fn overlay() -> &'static Mutex<HashMap<String, String>> {
 }
 
 fn key(namespace: &str, raw: &str) -> String {
-    format!("{}:{}", namespace.trim().to_lowercase(), raw.trim().to_lowercase())
+    format!(
+        "{}:{}",
+        namespace.trim().to_lowercase(),
+        raw.trim().to_lowercase()
+    )
 }
 
 /// 查中文译名。命中基线或已更新的增量即返回。
@@ -57,7 +61,11 @@ pub fn clean(zh: &str) -> String {
     let no_html = strip_html(zh);
     let no_emoji = strip_emoji(&no_html);
     let trimmed = no_emoji.trim();
-    if trimmed.is_empty() { zh.trim().to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        zh.trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn strip_html(s: &str) -> String {
@@ -215,7 +223,10 @@ mod tests {
 
     #[test]
     fn lookup_is_case_and_space_insensitive() {
-        assert_eq!(translate("Female", "  BIG BREASTS ").as_deref(), Some("巨乳"));
+        assert_eq!(
+            translate("Female", "  BIG BREASTS ").as_deref(),
+            Some("巨乳")
+        );
         assert!(translate("female", "definitely-not-a-tag").is_none());
     }
 
@@ -223,8 +234,14 @@ mod tests {
     fn namespaced_key_prevents_collisions() {
         // 裸标签名做键会把同名跨命名空间条目吞掉（male 575 → 86）；
         // 这里确认两个命名空间可各自命中原生条目。
-        assert!(translate("male", "blindfold").is_some(), "male 条目应能命中");
-        assert!(translate("female", "blindfold").is_some(), "female 同名条目也应能命中");
+        assert!(
+            translate("male", "blindfold").is_some(),
+            "male 条目应能命中"
+        );
+        assert!(
+            translate("female", "blindfold").is_some(),
+            "female 同名条目也应能命中"
+        );
     }
 
     #[test]
@@ -238,7 +255,10 @@ mod tests {
 |  | 分类标题但无英文名 | 描述 |  |
 "#;
         let m = parse_upstream_markdown("female", md);
-        assert_eq!(m.get("female:age progression").map(String::as_str), Some("年龄增长"));
+        assert_eq!(
+            m.get("female:age progression").map(String::as_str),
+            Some("年龄增长")
+        );
         // emoji 应被清洗
         assert_eq!(m.get("female:lolicon").map(String::as_str), Some("萝莉"));
         // `== 分类 ==` 行与无英文名的行应被跳过
@@ -273,12 +293,14 @@ mod tests {
         // 先确认基线里没有的键（构造一个不可能存在的标签）会走更新流程
         assert!(translate("female", "zzz-not-a-real-tag").is_none());
         let added = update_namespace("female", &dir).expect("上游拉取应成功");
-        println!("本次新增 {added} 条；缓存文件存在 = {}", cache_path(&dir).exists());
+        println!(
+            "本次新增 {added} 条；缓存文件存在 = {}",
+            cache_path(&dir).exists()
+        );
         // 真实标签应从上游拿到（即便基线缺失也能译出）
         let zh = translate("female", "lolicon");
         println!("female:lolicon -> {zh:?}");
         assert!(zh.is_some(), "上游更新后应能译出常见标签");
         assert!(cache_path(&dir).exists(), "应写出缓存文件");
     }
-
 }

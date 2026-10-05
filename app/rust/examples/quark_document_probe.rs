@@ -78,7 +78,12 @@ impl ReadMeter {
     }
 
     fn bytes(&self) -> u64 {
-        self.reads.lock().unwrap().iter().map(|(_, n)| *n as u64).sum()
+        self.reads
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, n)| *n as u64)
+            .sum()
     }
 }
 
@@ -213,7 +218,11 @@ fn run_pdf(client: &Arc<QuarkClient>, fid: &str, name: &str, url: &str, size: u6
         let same = left.len() == right.len() && left.iter().zip(right).all(|(a, b)| a == b);
         println!(
             "  内容一致性: {}（{left_label} vs {right_label}，{} 页）",
-            if same { "✓ 逐字节相同" } else { "✗ 不一致" },
+            if same {
+                "✓ 逐字节相同"
+            } else {
+                "✗ 不一致"
+            },
             left.len()
         );
     }
@@ -360,7 +369,9 @@ fn main() {
         size - (eocd_abs + 22 + comment as u64)
     );
     println!("条目数(EOCD)    : {entries}");
-    println!("CD              : offset={cd_offset} size={cd_size} ⇒ 实际读自 {cd_at}（delta={delta}）");
+    println!(
+        "CD              : offset={cd_offset} size={cd_size} ⇒ 实际读自 {cd_at}（delta={delta}）"
+    );
     let cd = read_range(quark, &url, cd_at, cd_size as usize).expect("读中央目录失败");
     let mut at = 0usize;
     let mut n = 0usize;
@@ -437,8 +448,14 @@ fn main() {
             "**否**"
         }
     );
-    println!("⑤ 无加密条目                     : {}", if encrypted == 0 { "是" } else { "**否**" });
-    println!("⑥ 无 ZIP64 尺寸哨兵              : {}", if zip64_csize == 0 { "是" } else { "**否**" });
+    println!(
+        "⑤ 无加密条目                     : {}",
+        if encrypted == 0 { "是" } else { "**否**" }
+    );
+    println!(
+        "⑥ 无 ZIP64 尺寸哨兵              : {}",
+        if zip64_csize == 0 { "是" } else { "**否**" }
+    );
     println!(
         "⑦ local header 全部可信          : {}",
         if bad_offset == 0 { "是" } else { "**否**" }

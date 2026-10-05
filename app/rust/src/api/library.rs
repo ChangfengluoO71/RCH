@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use rusqlite::{params, OptionalExtension};
 
 use crate::{db, sync};
 
@@ -60,6 +61,15 @@ pub struct BookSearchDto {
     pub status: String,
     pub last_read_at: i64,
     pub tags: String,
+}
+
+/// One deduplicated, currently indexed candidate for random reading.
+pub struct RandomBookCandidateDto {
+    pub book_key: String,
+    pub source_id: String,
+    pub source_type: String,
+    pub path: String,
+    pub title: String,
 }
 
 /// library_index 目录条目（书源内离线浏览）。
@@ -338,6 +348,223 @@ fn normalized_library_path_sql(path_expr: &str) -> String {
             ELSE {path_expr}
          END"
     )
+}
+
+fn random_book_key_sql(path_expr: &str) -> String {
+    let slash_normalized = format!("rtrim(trim(replace({path_expr}, char(92), '/')), '/')");
+    let drive_normalized = format!(
+        "CASE WHEN substr({slash_normalized}, 2, 1) = ':' \
+         THEN lower(substr({slash_normalized}, 1, 1)) || substr({slash_normalized}, 2) \
+         ELSE {slash_normalized} END"
+    );
+    format!(
+        "CASE
+            WHEN lower({drive_normalized}) LIKE '%.cbz' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4)
+            WHEN lower({drive_normalized}) LIKE '%.zip' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4)
+            WHEN lower({drive_normalized}) LIKE '%.cbr' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4)
+            WHEN lower({drive_normalized}) LIKE '%.rar' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4)
+            WHEN lower({drive_normalized}) LIKE '%.cb7' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4)
+            WHEN lower({drive_normalized}) LIKE '%.7z' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 3)
+            WHEN lower({drive_normalized}) LIKE '%.cbt' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4)
+            WHEN lower({drive_normalized}) LIKE '%.tar' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4)
+            WHEN lower({drive_normalized}) LIKE '%.azw3' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 5) || '.mobi'
+            WHEN lower({drive_normalized}) LIKE '%.azw' THEN substr({drive_normalized}, 1, length({drive_normalized}) - 4) || '.mobi'
+            ELSE {drive_normalized}
+         END"
+    )
+}
+
+fn local_archive_path_predicate_sql() -> String {
+    ["li.path", "li.name"]
+        .into_iter()
+        .flat_map(|expr| {
+            [
+                ".cbz", ".zip", ".epub", ".cb7", ".7z", ".cbt", ".tar", ".pdf", ".cbr", ".rar",
+                ".mobi", ".azw", ".azw3",
+            ]
+            .into_iter()
+            .map(move |ext| format!("lower({expr}) LIKE '%{ext}'"))
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
+/// Resolve an indexed logical path to the current provider-facing identifier.
+///
+/// Opaque providers (Baidu, 115 and Quark) expose stable catalog paths to the
+/// UI, but their open APIs require the file identifier stored in the remote
+/// route table. A path that is not a live catalog entry is left untouched so
+/// source-browser callers can continue passing provider identifiers directly.
+pub fn db_resolve_remote_provider_path(
+    source_id: String,
+    logical_path: String,
+) -> Result<Option<String>, String> {
+    let conn = db::get().lock().map_err(|error| error.to_string())?;
+    let source: Option<(String, String)> = conn
+        .query_row(
+            "SELECT type,fingerprint FROM book_sources
+             WHERE id=?1 AND deleted=0 AND remote_only=0",
+            params![source_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((source_type, fingerprint)) = source else {
+        return Ok(None);
+    };
+    if !matches!(source_type.as_str(), "baidu" | "115" | "quark") {
+        return Ok(None);
+    }
+
+    let preview_path: Option<String> = conn
+        .query_row(
+            "SELECT preview.provider_file_id
+             FROM remote_scan_preview preview
+             JOIN remote_scan_state state
+               ON state.source_id=preview.source_id
+              AND state.generation=preview.generation
+              AND state.status='Running'
+             WHERE preview.source_id=?1 AND preview.logical_path=?2
+               AND preview.session_epoch<>''
+               AND preview.source_fingerprint=?3
+               AND preview.provider_file_id IS NOT NULL
+               AND preview.provider_file_id<>''
+             ORDER BY preview.generation DESC
+             LIMIT 1",
+            params![source_id, logical_path, fingerprint],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if preview_path.is_some() {
+        return Ok(preview_path);
+    }
+
+    let provider_path: Option<String> = conn
+        .query_row(
+            "SELECT route.provider_file_id
+             FROM remote_asset_route route
+             JOIN library_index item
+               ON item.source_id=route.source_id AND item.id=route.asset_id
+              AND item.path=route.logical_path AND item.deleted=0
+             WHERE route.source_id=?1 AND route.logical_path=?2
+               AND route.source_fingerprint=?3
+               AND route.provider_file_id IS NOT NULL AND route.provider_file_id<>''
+             ORDER BY route.generation DESC,route.route_revision DESC
+             LIMIT 1",
+            params![source_id, logical_path, fingerprint],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if provider_path.is_some() {
+        return Ok(provider_path);
+    }
+
+    let is_indexed_book: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM library_index
+                 WHERE source_id=?1 AND path=?2 AND deleted=0
+                   AND entry_type='file' AND asset_kind='ArchiveFile'
+             )",
+            params![source_id, logical_path],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    if is_indexed_book {
+        return Err("远程书籍索引缺少有效的文件映射，请刷新书源后重试".to_string());
+    }
+
+    Ok(None)
+}
+
+/// Return a random batch from complete catalog data only. Remote candidates
+/// require a published listing proof; this API never starts a source session
+/// or scans the network.
+pub fn db_random_library_candidates(
+    excluded_book_keys: Vec<String>,
+    unavailable_candidate_keys: Vec<String>,
+    limit: i64,
+) -> Result<Vec<RandomBookCandidateDto>, String> {
+    let conn = db::get().lock().map_err(|error| error.to_string())?;
+    let book_key = format!(
+        "(s.type || '|' || s.id || '|' || {})",
+        random_book_key_sql("li.path")
+    );
+    let local_archive = local_archive_path_predicate_sql();
+    let sql = format!(
+        "WITH eligible AS (
+            SELECT {book_key} AS book_key, s.id AS source_id, s.type AS source_type,
+                   li.path AS path, COALESCE(NULLIF(m.title, ''), li.name) AS title
+            FROM library_index li
+            JOIN book_sources s ON s.id = li.source_id AND s.deleted = 0 AND s.remote_only = 0
+            LEFT JOIN book_metas m ON m.key = {book_key} AND m.deleted = 0
+            WHERE li.deleted = 0
+              AND {book_key} NOT IN (SELECT value FROM json_each(?1))
+              AND {book_key} NOT IN (SELECT value FROM json_each(?2))
+              AND (
+                (s.type IN ('local', 'smb') AND (
+                    (li.entry_type = 'file' AND (li.asset_kind = 'ArchiveFile' OR ({local_archive})))
+                    OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder')
+                ))
+                OR
+                (s.type NOT IN ('local', 'smb') AND (
+                    (li.entry_type = 'file' AND li.asset_kind = 'ArchiveFile' AND EXISTS (
+                        SELECT 1
+                        FROM library_index parent
+                        JOIN remote_listing_state listing
+                          ON listing.source_id = parent.source_id
+                         AND listing.logical_path = parent.path
+                         AND listing.scan_generation = li.scan_generation
+                         AND listing.listing_complete = 1
+                        WHERE parent.id = li.parent_id
+                          AND parent.source_id = li.source_id
+                          AND parent.entry_type = 'dir'
+                          AND parent.deleted = 0
+                    ))
+                    OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder'
+                        AND li.listing_complete = 1 AND EXISTS (
+                            SELECT 1 FROM remote_listing_state listing
+                            WHERE listing.source_id = li.source_id
+                              AND listing.logical_path = li.path
+                              AND listing.scan_generation = li.scan_generation
+                              AND listing.listing_complete = 1
+                        ))
+                ))
+              )
+        ), unique_candidates AS (
+            SELECT book_key, MIN(source_id) AS source_id, MIN(source_type) AS source_type,
+                   MIN(path) AS path, MIN(title) AS title
+            FROM eligible
+            GROUP BY book_key
+        )
+        SELECT book_key, source_id, source_type, path, title
+        FROM unique_candidates
+        ORDER BY RANDOM()
+        LIMIT ?3"
+    );
+    let excluded_json = serde_json::to_string(&excluded_book_keys).map_err(|e| e.to_string())?;
+    let unavailable_json =
+        serde_json::to_string(&unavailable_candidate_keys).map_err(|e| e.to_string())?;
+    let limit = limit.clamp(1, 32);
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![excluded_json, unavailable_json, limit],
+            |row| {
+                Ok(RandomBookCandidateDto {
+                    book_key: row.get(0)?,
+                    source_id: row.get(1)?,
+                    source_type: row.get(2)?,
+                    path: row.get(3)?,
+                    title: row.get(4)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())
 }
 
 fn build_book_query(

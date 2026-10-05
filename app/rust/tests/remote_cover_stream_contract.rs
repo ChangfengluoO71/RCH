@@ -16,7 +16,9 @@
 
 use rusqlite::{params, Connection};
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
-use rust_lib_app::remote_scan::cover_revision_stream::{reset_wake_decided_count, wake_decided_count};
+use rust_lib_app::remote_scan::cover_revision_stream::{
+    reset_wake_decided_count, wake_decided_count,
+};
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;
 use rust_lib_app::remote_scan::{cover_service, cover_store, persistence};
 
@@ -54,7 +56,13 @@ fn job_key(source_id: &str, asset_id: &str) -> CoverJobKey {
     }
 }
 
-fn bind_epoch(conn: &Connection, source_id: &str, generation: i64, session_epoch: &str, token: i64) {
+fn bind_epoch(
+    conn: &Connection,
+    source_id: &str,
+    generation: i64,
+    session_epoch: &str,
+    token: i64,
+) {
     conn.execute(
         "INSERT OR REPLACE INTO remote_scan_epoch(
              source_id,generation,source_fingerprint,root_path,session_epoch,session_token)
@@ -114,8 +122,18 @@ fn assert_sync(before_rev: i64, before_wake: u64, conn: &Connection, source: &st
     );
 }
 
-fn assert_no_change(before_rev: i64, before_wake: u64, conn: &Connection, source: &str, what: &str) {
-    assert_eq!(revision(conn, source), before_rev, "{what}: revision must not change");
+fn assert_no_change(
+    before_rev: i64,
+    before_wake: u64,
+    conn: &Connection,
+    source: &str,
+    what: &str,
+) {
+    assert_eq!(
+        revision(conn, source),
+        before_rev,
+        "{what}: revision must not change"
+    );
     assert_eq!(woken(), before_wake, "{what}: no durable change => no wake");
 }
 
@@ -133,7 +151,13 @@ fn stream_1a_create_to_pending_wakes_once() {
 
     seed(&conn, &job_key("source", "a"), CoverJobState::Pending, 0);
 
-    assert_sync(before_rev, before_wake, &conn, "source", "STREAM-1A create -> pending");
+    assert_sync(
+        before_rev,
+        before_wake,
+        &conn,
+        "source",
+        "STREAM-1A create -> pending",
+    );
 }
 
 #[test]
@@ -151,7 +175,13 @@ fn stream_1b_claim_to_running_wakes_once() {
     .unwrap();
     assert!(claimed.is_some());
 
-    assert_sync(before_rev, before_wake, &conn, "source", "STREAM-1B claim -> running");
+    assert_sync(
+        before_rev,
+        before_wake,
+        &conn,
+        "source",
+        "STREAM-1B claim -> running",
+    );
 }
 
 #[test]
@@ -174,7 +204,13 @@ fn stream_1c_ready_wakes_once() {
 
     // E-SCAN-TERMINAL-READY 的核心生产事件：*必须*有 post-commit wake，
     // 不能只靠 missed-event recovery 兜底。
-    assert_sync(before_rev, before_wake, &conn, "source", "STREAM-1C running -> ready");
+    assert_sync(
+        before_rev,
+        before_wake,
+        &conn,
+        "source",
+        "STREAM-1C running -> ready",
+    );
 }
 
 #[test]
@@ -190,10 +226,22 @@ fn stream_1d_failure_and_state_transitions_wake_once() {
     let mut rev = revision(&conn, "source");
     let mut wake = woken();
     cover_store::mark_job_failure_owned_on(
-        &conn, &a, "worker", CoverJobState::RetryWait, Some("transient"), 2_000, None,
+        &conn,
+        &a,
+        "worker",
+        CoverJobState::RetryWait,
+        Some("transient"),
+        2_000,
+        None,
     )
     .unwrap();
-    assert_sync(rev, wake, &conn, "source", "STREAM-1D running -> retry_wait");
+    assert_sync(
+        rev,
+        wake,
+        &conn,
+        "source",
+        "STREAM-1D running -> retry_wait",
+    );
 
     cover_store::claim_next_job_for_source_session_on(&conn, "source", "worker", 3_000, 60_000, 42)
         .unwrap();
@@ -219,7 +267,12 @@ fn stream_1d_failure_and_state_transitions_wake_once() {
     rev = revision(&conn, "source");
     wake = woken();
     cover_store::mark_job_state_owned_on(
-        &conn, &b, "worker", CoverJobState::Blocked, Some("authExpired"), 7_000,
+        &conn,
+        &b,
+        "worker",
+        CoverJobState::Blocked,
+        Some("authExpired"),
+        7_000,
     )
     .unwrap();
     assert_sync(rev, wake, &conn, "source", "STREAM-1D running -> blocked");
@@ -245,13 +298,26 @@ fn stream_1f_compensation_batch_wakes_once_regardless_of_batch_size() {
     let before_wake = woken();
 
     let report = cover_store::reconcile_cover_compensation_for_source_on(
-        &conn, "source", 42, SIX_HOURS_MS, budget(64),
+        &conn,
+        "source",
+        42,
+        SIX_HOURS_MS,
+        budget(64),
     )
     .unwrap();
-    assert_eq!(report.compensation_promoted, 3, "the batch must promote all three");
+    assert_eq!(
+        report.compensation_promoted, 3,
+        "the batch must promote all three"
+    );
 
     // atomic batch：revision +1，wake **也只 +1**（source-generation token，不是 row counter）。
-    assert_sync(before_rev, before_wake, &conn, "source", "STREAM-1F compensation batch");
+    assert_sync(
+        before_rev,
+        before_wake,
+        &conn,
+        "source",
+        "STREAM-1F compensation batch",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +347,14 @@ fn stream_2_no_durable_change_means_no_wake() {
 
     // (b) wrong lease owner
     let ok = cover_store::mark_job_ready_owned_on(
-        &conn, &key, "not-the-owner", 3_000, 340, 480, 4_096, "checksum",
+        &conn,
+        &key,
+        "not-the-owner",
+        3_000,
+        340,
+        480,
+        4_096,
+        "checksum",
     )
     .unwrap();
     assert!(!ok);
@@ -311,7 +384,13 @@ fn latest_state_for_asset(conn: &Connection, source: &str, asset: &str, generati
     .unwrap()
 }
 
-fn upsert_at(conn: &Connection, key: &CoverJobKey, state: CoverJobState, generation: i64, now: i64) {
+fn upsert_at(
+    conn: &Connection,
+    key: &CoverJobKey,
+    state: CoverJobState,
+    generation: i64,
+    now: i64,
+) {
     cover_store::upsert_job_on(
         conn,
         key,
@@ -427,12 +506,23 @@ fn stream_3_rollback_leaves_state_revision_and_wake_untouched() {
             2_000,
         )
         .unwrap();
-        assert!(ok, "the mutation itself succeeds inside the caller's transaction");
+        assert!(
+            ok,
+            "the mutation itself succeeds inside the caller's transaction"
+        );
         // drop(tx) == rollback
     }
 
-    assert_eq!(state_of(&conn, &key), state_before, "rollback must not persist the mutation");
-    assert_eq!(revision(&conn, "source"), rev, "rollback must not persist the revision");
+    assert_eq!(
+        state_of(&conn, &key),
+        state_before,
+        "rollback must not persist the mutation"
+    );
+    assert_eq!(
+        revision(&conn, "source"),
+        rev,
+        "rollback must not persist the revision"
+    );
     assert_eq!(
         woken(),
         wake,
@@ -516,7 +606,13 @@ fn stream_1e_ready_missing_reconcile_wakes_once() {
     let _ = cover_service::read_cached_cover("s1e", "asset", SELECTION, PROFILE).unwrap();
 
     let conn = rust_lib_app::db::get().lock().unwrap();
-    assert_sync(before_rev, before_wake, &conn, "s1e", "STREAM-1E ready-missing reconcile");
+    assert_sync(
+        before_rev,
+        before_wake,
+        &conn,
+        "s1e",
+        "STREAM-1E ready-missing reconcile",
+    );
 }
 
 /// 恢复默认 cache root，避免污染同进程内其它测试。

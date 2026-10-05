@@ -10,7 +10,9 @@
 
 use rusqlite::{params, Connection};
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
-use rust_lib_app::remote_scan::cover_revision_stream::{reset_wake_decided_count, wake_decided_count};
+use rust_lib_app::remote_scan::cover_revision_stream::{
+    reset_wake_decided_count, wake_decided_count,
+};
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;
 use rust_lib_app::remote_scan::{cover_store, persistence};
 
@@ -114,7 +116,11 @@ fn nw1_outer_commit_wakes_exactly_once_after_commit() {
     // 外层 commit 之后：调用者 emit 一次。
     rust_lib_app::remote_scan::cover_revision_stream::notify_cover_revision("source", None);
 
-    assert_eq!(revision(&conn, "source") - before_rev, 1, "NW-1: revision +1");
+    assert_eq!(
+        revision(&conn, "source") - before_rev,
+        1,
+        "NW-1: revision +1"
+    );
     assert_eq!(
         woken() - before_wake,
         1,
@@ -145,7 +151,11 @@ fn nw2_outer_rollback_persists_nothing_and_never_wakes() {
         )
         .unwrap();
     assert_eq!(rows, 0, "NW-2: the rolled-back mutation must not persist");
-    assert_eq!(revision(&conn, "source"), before_rev, "NW-2: revision must not persist");
+    assert_eq!(
+        revision(&conn, "source"),
+        before_rev,
+        "NW-2: revision must not persist"
+    );
     assert_eq!(woken(), before_wake, "NW-2: a rollback must never wake");
 }
 
@@ -184,9 +194,16 @@ fn nw3_outer_commit_without_durable_change_does_not_wake() {
         rust_lib_app::remote_scan::cover_revision_stream::notify_cover_revision("source", None);
     }
 
-    assert!(!changed_any, "NW-3: a 0-affected mutation reports no change");
+    assert!(
+        !changed_any,
+        "NW-3: a 0-affected mutation reports no change"
+    );
     assert_eq!(revision(&conn, "source"), before_rev, "NW-3: revision +0");
-    assert_eq!(woken(), before_wake, "NW-3: no durable change ⇒ no wake even after commit");
+    assert_eq!(
+        woken(),
+        before_wake,
+        "NW-3: no durable change ⇒ no wake even after commit"
+    );
 }
 
 // ------------------------------------------------- NW-1b（真实 production owner）
@@ -223,10 +240,21 @@ fn nw1b_missing_covers_reconcile_batch_wakes_once() {
     )
     .unwrap();
 
-    assert!(report.jobs_created >= 1, "the replenishment must create cover jobs");
+    assert!(
+        report.jobs_created >= 1,
+        "the replenishment must create cover jobs"
+    );
     // 一次批次：revision +1，wake 只 +1（即使创建了多本）。
-    assert_eq!(revision(&conn, "source") - before_rev, 1, "NW-1b: revision +1");
-    assert_eq!(woken() - before_wake, 1, "NW-1b: exactly one source-level wake");
+    assert_eq!(
+        revision(&conn, "source") - before_rev,
+        1,
+        "NW-1b: revision +1"
+    );
+    assert_eq!(
+        woken() - before_wake,
+        1,
+        "NW-1b: exactly one source-level wake"
+    );
 }
 
 // ---------------------------------------------------------------- NW-1c

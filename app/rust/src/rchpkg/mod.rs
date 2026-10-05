@@ -950,12 +950,10 @@ mod tests {
 
         apply_tombstone_on(&conn, "metas", "k1", 100).unwrap();
         assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM book_metas WHERE key='k1'",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap(),
+            conn.query_row("SELECT COUNT(*) FROM book_metas WHERE key='k1'", [], |r| {
+                r.get::<_, i64>(0)
+            },)
+                .unwrap(),
             1,
             "过期墓碑不得删掉复活的行"
         );
@@ -972,12 +970,10 @@ mod tests {
 
         apply_tombstone_on(&conn, "metas", "k1", 500).unwrap();
         assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM book_metas WHERE key='k1'",
-                [],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap(),
+            conn.query_row("SELECT COUNT(*) FROM book_metas WHERE key='k1'", [], |r| {
+                r.get::<_, i64>(0)
+            },)
+                .unwrap(),
             0,
             "更新的墓碑仍须删除旧行"
         );
@@ -1167,6 +1163,7 @@ mod tests {
             name: "a.cbz".into(),
             path: "/books/a.cbz".into(),
             entry_type: "file".into(),
+            asset_kind: None,
             size: Some(1024),
             modified_at: Some(2000),
             cover_path: None,
@@ -1258,6 +1255,7 @@ mod tests {
             name: "a.cbz".into(),
             path: "/books/a.cbz".into(),
             entry_type: "file".into(),
+            asset_kind: None,
             size: None,
             modified_at: None,
             cover_path: None,

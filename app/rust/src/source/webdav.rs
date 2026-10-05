@@ -1032,7 +1032,6 @@ mod tests {
     }
 }
 
-
 /// 一次性诊断（`#[ignore]`，不进 CI）：复现应用启动时的 WebDAV 会话建立，
 /// 打印**真实错误原文**。
 ///
@@ -1064,14 +1063,12 @@ mod webdav_session_probe {
     #[test]
     #[ignore = "本机诊断用：需要真实书源数据库与局域网可达的 WebDAV 服务"]
     fn probe_real_webdav_session() {
-        let db = std::env::var("RCH_DB")
-            .unwrap_or_else(|_| "D:/Documents/RCH/database.db".to_string());
+        let db =
+            std::env::var("RCH_DB").unwrap_or_else(|_| "D:/Documents/RCH/database.db".to_string());
         println!("db = {db}");
-        let conn = rusqlite::Connection::open_with_flags(
-            &db,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .expect("打开数据库失败");
+        let conn =
+            rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .expect("打开数据库失败");
         let (url, user, pass): (String, String, String) = conn
             .query_row(
                 "SELECT COALESCE(url,''), COALESCE(username,''), COALESCE(password,'')                  FROM book_sources WHERE type='webdav' LIMIT 1",

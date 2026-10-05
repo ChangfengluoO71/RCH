@@ -110,7 +110,10 @@ impl<S: ByteSource> ZipBook<S> {
             // by_index opens a local file header and can initialize a decoder.
             // Doing that for all pages makes first-cover cost scale with the
             // entire archive. Names are already in the parsed central directory.
-            let name = zip.name_for_index(i).context("读取中心目录失败")?.to_string();
+            let name = zip
+                .name_for_index(i)
+                .context("读取中心目录失败")?
+                .to_string();
             if !is_image(&name) {
                 continue;
             }
@@ -148,32 +151,26 @@ impl<S: ByteSource> Document for ZipBook<S> {
             .with_context(|| format!("页索引越界: {index}"))?;
         match &p.source {
             PageSource::Central(entry) => {
-                let src = self
-                    .central
-                    .as_ref()
-                    .context("ZIP 快路径缺少字节源")?;
+                let src = self.central.as_ref().context("ZIP 快路径缺少字节源")?;
                 read_entry_bytes(src.as_ref(), entry, ZIP_PAGE_MAX_BYTES)?
                     .with_context(|| format!("读取页数据失败: {}", p.name))
             }
             PageSource::Crate(archive_index) => {
                 // ZipArchive shares immutable central metadata on clone; each reader
                 // has its own cursor, so foreground and prefetch need no archive lock.
-                let archive = self
-                    .archive
-                    .as_ref()
-                    .context("ZIP 回退路径缺少归档")?;
+                let archive = self.archive.as_ref().context("ZIP 回退路径缺少归档")?;
                 let mut archive = archive.clone();
                 let mut page = archive
                     .by_index(*archive_index)
                     .context("读取页文件头失败")?;
                 let mut bytes = Vec::new();
-                page.read_to_end(&mut bytes).context("读取或解压页数据失败")?;
+                page.read_to_end(&mut bytes)
+                    .context("读取或解压页数据失败")?;
                 Ok(bytes)
             }
         }
     }
 }
-
 
 // ============================================================
 // 封面快通道：最小 ZIP 读取器（第 62 轮）
@@ -280,12 +277,7 @@ pub(crate) fn read_central_directory<S: ByteSource>(src: &S) -> Result<Option<Ve
             }
         }
     }
-    let eocd_fields = |at: usize| {
-        (
-            u32_at(&tail, at + 12) as u64,
-            u32_at(&tail, at + 16) as u64,
-        )
-    };
+    let eocd_fields = |at: usize| (u32_at(&tail, at + 12) as u64, u32_at(&tail, at + 16) as u64);
     if let Some(at) = strict_at {
         let (cd_size, cd_offset) = eocd_fields(at);
         return central_directory_at(src, len, cd_offset, cd_size);
@@ -616,7 +608,9 @@ mod tests {
             reads: Arc<Mutex<Vec<(u64, usize)>>>,
         }
         impl ByteSource for CountingSource {
-            fn len(&self) -> u64 { self.data.len() }
+            fn len(&self) -> u64 {
+                self.data.len()
+            }
             fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
                 self.reads.lock().unwrap().push((offset, buf.len()));
                 self.data.read_at(offset, buf)
@@ -631,9 +625,14 @@ mod tests {
         }
         let data = writer.finish().unwrap().into_inner();
         let reads = Arc::new(Mutex::new(Vec::new()));
-        let book = super::ZipBook::open(CountingSource {
-            data: MemSource(data), reads: reads.clone(),
-        }, "many.cbz").unwrap();
+        let book = super::ZipBook::open(
+            CountingSource {
+                data: MemSource(data),
+                reads: reads.clone(),
+            },
+            "many.cbz",
+        )
+        .unwrap();
         assert_eq!(crate::document::Document::page_count(&book), 40);
 
         // ------------------------------------------------------------------
@@ -675,9 +674,15 @@ mod tests {
             "no single metadata read may be amplified to the read-ahead size: {open_max_fetch} B"
         );
 
-        assert_eq!(crate::document::Document::page_bytes(&book, 10).unwrap(), vec![10; 300 * 1024]);
+        assert_eq!(
+            crate::document::Document::page_bytes(&book, 10).unwrap(),
+            vec![10; 300 * 1024]
+        );
         let page_reads = reads.lock().unwrap().clone();
-        let page_fetched: u64 = page_reads[open_reads..].iter().map(|(_, n)| *n as u64).sum();
+        let page_fetched: u64 = page_reads[open_reads..]
+            .iter()
+            .map(|(_, n)| *n as u64)
+            .sum();
         assert!(
             page_fetched <= 512 * 1024,
             "300 KiB 的页不得触发自适应放大：实际取数 {page_fetched} B"
@@ -740,8 +745,6 @@ mod tests {
         std::fs::create_dir_all("../testdata").unwrap();
         std::fs::write("../testdata/sample.cbz", cursor.into_inner()).unwrap();
     }
-
-
 
     /// 第 68 轮保险：**大条目之后紧跟小条目**时，窗口必须立刻回落，
     /// 不能继续用放大后的 1 MiB 去读一个小文件（否则就是白传流量）。
@@ -831,7 +834,10 @@ mod tests {
         let bytes = crate::document::Document::page_bytes(&book, 0).unwrap();
         assert_eq!(bytes.len(), page.len());
         let page_reads = reads.lock().unwrap().clone();
-        let page_fetched: u64 = page_reads[open_reads..].iter().map(|(_, n)| *n as u64).sum();
+        let page_fetched: u64 = page_reads[open_reads..]
+            .iter()
+            .map(|(_, n)| *n as u64)
+            .sum();
         assert!(
             page_reads.len() - open_reads <= 3,
             "1.3 MiB 的页应当靠自适应窗口压到 ≤3 次读：实际 {} 次",
@@ -876,7 +882,9 @@ mod tests {
         writer.start_file("pages/001.png", deflated).unwrap();
         writer.write_all(&first_page).unwrap();
         for page in 2..200 {
-            writer.start_file(format!("pages/{page:03}.png"), stored).unwrap();
+            writer
+                .start_file(format!("pages/{page:03}.png"), stored)
+                .unwrap();
             writer.write_all(&vec![page as u8; 1024]).unwrap();
         }
         let data = writer.finish().unwrap().into_inner();
@@ -911,9 +919,11 @@ mod tests {
         }
         // 1) 根本不是 ZIP
         let junk = Plain(MemSource(vec![0x41; 4096]));
-        assert!(super::first_image_bytes_via_central_directory(&junk, 1 << 20)
-            .unwrap()
-            .is_none());
+        assert!(
+            super::first_image_bytes_via_central_directory(&junk, 1 << 20)
+                .unwrap()
+                .is_none()
+        );
 
         // 2) 正常 CBZ，但把 EOCD 的中央目录偏移改成 ZIP64 哨兵
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -960,7 +970,9 @@ mod tests {
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
         for page in 0..800 {
-            writer.start_file(format!("{page:04}.jpg"), options).unwrap();
+            writer
+                .start_file(format!("{page:04}.jpg"), options)
+                .unwrap();
             writer.write_all(&vec![page as u8; 512]).unwrap();
         }
         let data = writer.finish().unwrap().into_inner();

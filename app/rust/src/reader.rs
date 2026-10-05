@@ -190,6 +190,7 @@ impl Lru {
         }
     }
 
+    #[cfg(test)]
     fn contains(&self, k: &u32) -> bool {
         self.map.contains_key(k)
     }
@@ -224,6 +225,8 @@ pub struct Reader {
     cache: Mutex<Lru>,
     /// 所有正在生成的页。前台读取与后台预取共享，避免同一页重复解码/渲染。
     inflight: Mutex<HashSet<u32>>,
+    /// 已排入 Rust 预取队列的页，避免相邻前台页反复提交同一批预取任务。
+    prefetch_scheduled: Mutex<HashSet<u32>>,
     /// 某页生成完成（成功或失败）后唤醒等待该页的前台读取。
     inflight_done: Condvar,
     /// 该书的磁盘缓存目录(原始页字节)。
@@ -260,6 +263,7 @@ impl Reader {
             book,
             cache: Mutex::new(Lru::new(CACHE_CAP)),
             inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: dir,
             display_width: std::sync::atomic::AtomicU32::new(0),
@@ -287,9 +291,23 @@ impl Reader {
             return Ok(bytes);
         }
 
-        let bytes = self.load_or_wait(index)?;
+        let bytes = self.load_or_wait(index, RequestPriority::Foreground)?;
         span.field_str("source", "load").end();
         self.spawn_prefetch(index);
+        Ok(bytes)
+    }
+
+    /// 读取邻页时使用低优先级，且不再展开一圈新的预取请求。
+    pub fn get_page_prefetch(&self, index: u32) -> Result<Arc<Vec<u8>>> {
+        let span =
+            crate::perf::Span::new("reader.get_page_prefetch").field_u64("index", index as u64);
+        if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+            crate::perf::bump(crate::perf::Counter::PageMemoryHits);
+            span.field_str("source", "l1").end();
+            return Ok(bytes);
+        }
+        let bytes = self.load_or_wait(index, RequestPriority::Prefetch)?;
+        span.field_str("source", "load").end();
         Ok(bytes)
     }
 
@@ -300,43 +318,76 @@ impl Reader {
         self.spawn_prefetch(0);
     }
 
-    /// 前台读取：若同页已有后台/前台生成任务则等待；否则成为唯一生成者。
-    fn load_or_wait(&self, index: u32) -> Result<Arc<Vec<u8>>> {
+    /// 有优先级地读取一页。等待 governor 许可时不先认领页，保证后来到达的前台请求
+    /// 可以越过仍在队列里的同页低优先级预取。
+    fn load_or_wait(&self, index: u32, priority: RequestPriority) -> Result<Arc<Vec<u8>>> {
         loop {
-            // 所有涉及 inflight + cache 的嵌套加锁统一使用 inflight -> cache 顺序。
             let mut inflight = self.inflight.lock().unwrap();
             while inflight.contains(&index) {
                 inflight = self.inflight_done.wait(inflight).unwrap();
             }
+            if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+                return Ok(bytes);
+            }
+            drop(inflight);
 
-            // 生成者完成后缓存可能已经可用；在认领前必须二次检查，避免完成/认领竞态。
+            // 本地磁盘命中不经过 governor，避免网络请求繁忙时重复阅读也被排队。
+            let disk_enter = Instant::now();
+            if let Some(bytes) = self.disk_get(index) {
+                let mut inflight = self.inflight.lock().unwrap();
+                while inflight.contains(&index) {
+                    inflight = self.inflight_done.wait(inflight).unwrap();
+                }
+                if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+                    return Ok(bytes);
+                }
+                let bytes = Arc::new(bytes);
+                self.cache.lock().unwrap().insert(index, Arc::clone(&bytes));
+                crate::perf::bump(crate::perf::Counter::PageLoads);
+                crate::perf::bump(crate::perf::Counter::PageDiskHits);
+                crate::perf::observe_us(
+                    crate::perf::Counter::PageLoadUsTotal,
+                    crate::perf::Counter::PageLoadUsMax,
+                    disk_enter.elapsed().as_micros() as u64,
+                );
+                return Ok(bytes);
+            }
+
+            let governor_enter = Instant::now();
+            let permit = self.governor.acquire(priority)?;
+            let mut inflight = self.inflight.lock().unwrap();
+            if inflight.contains(&index) {
+                // 另一个高优先级请求已经开始同一页时，先归还许可再等它完成。
+                drop(inflight);
+                drop(permit);
+                let mut inflight = self.inflight.lock().unwrap();
+                while inflight.contains(&index) {
+                    inflight = self.inflight_done.wait(inflight).unwrap();
+                }
+                continue;
+            }
             if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
                 return Ok(bytes);
             }
 
             inflight.insert(index);
             drop(inflight);
-            return self.load_claimed(index, RequestPriority::Foreground);
+            return self.load_claimed(index, priority, permit, governor_enter);
         }
-    }
-
-    /// 后台预取尝试认领一页；已缓存或已在生成时不再额外启动线程。
-    fn try_claim_prefetch(&self, index: u32) -> bool {
-        let mut inflight = self.inflight.lock().unwrap();
-        if inflight.contains(&index) || self.cache.lock().unwrap().contains(&index) {
-            return false;
-        }
-        inflight.insert(index);
-        true
     }
 
     /// 已认领页的唯一实际读取路径。无论成功、失败还是 panic 都释放 inflight 并唤醒等待者。
-    fn load_claimed(&self, index: u32, priority: RequestPriority) -> Result<Arc<Vec<u8>>> {
+    fn load_claimed(
+        &self,
+        index: u32,
+        priority: RequestPriority,
+        _permit: BlockingRequestPermit<'_>,
+        governor_enter: Instant,
+    ) -> Result<Arc<Vec<u8>>> {
         use crate::perf::{add, bump, observe_us, Counter};
         let span = crate::perf::Span::new("reader.load_claimed")
             .field_u64("index", index as u64)
             .field_str("priority", format!("{priority:?}"));
-        let governor_enter = Instant::now();
         let mut disk_hit = false;
         let mut governor_wait_us = 0_u64;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -350,7 +401,6 @@ impl Reader {
             if priority == RequestPriority::Foreground {
                 note_foreground_read();
             }
-            let _permit = self.governor.acquire(priority)?;
             governor_wait_us = governor_enter.elapsed().as_micros() as u64;
             // 把优先级标注到本线程，使底层每一次网络请求（CDN Range / 取链）
             // 都能按同一个优先级排队 —— 这是"外层优先级贯通到底层"的落点。
@@ -360,7 +410,11 @@ impl Reader {
         if disk_hit {
             bump(Counter::PageDiskHits);
         }
-        observe_us(Counter::PageLoadUsTotal, Counter::PageLoadUsMax, span.elapsed_us());
+        observe_us(
+            Counter::PageLoadUsTotal,
+            Counter::PageLoadUsMax,
+            span.elapsed_us(),
+        );
         observe_us(
             Counter::GovernorWaitUsTotal,
             Counter::GovernorWaitUsMax,
@@ -396,7 +450,8 @@ impl Reader {
 
     /// 当前显示宽度（0 = 未指定）。
     pub fn display_width(&self) -> u32 {
-        self.display_width.load(std::sync::atomic::Ordering::Relaxed)
+        self.display_width
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// 设置显示宽度（0 = 回到默认）。**变化时清空 L1**，避免新旧尺寸混用同一页。
@@ -456,7 +511,7 @@ impl Reader {
     }
 
     /// 后台并行预取 index 前后各 PREFETCH_RADIUS 页。
-    /// 同页前台/后台共用 inflight claim，因此每页最多存在一个实际生成者。
+    /// 请求先进入低优先级 governor 队列，取得许可后才认领 inflight；前台跳转可以先开始。
     fn spawn_prefetch(self: &Arc<Self>, index: u32) {
         let count = self.page_count() as i64;
         for off in -PREFETCH_RADIUS..=PREFETCH_RADIUS {
@@ -468,12 +523,18 @@ impl Reader {
                 continue;
             }
             let t = t as u32;
-            if !self.try_claim_prefetch(t) {
+            if !self.prefetch_scheduled.lock().unwrap().insert(t) {
                 continue;
             }
             let me = Arc::clone(self);
             std::thread::spawn(move || {
-                let _ = me.load_claimed(t, RequestPriority::Prefetch);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = me.load_or_wait(t, RequestPriority::Prefetch);
+                }));
+                me.prefetch_scheduled.lock().unwrap().remove(&t);
+                if let Err(payload) = result {
+                    std::panic::resume_unwind(payload);
+                }
             });
         }
     }
@@ -621,6 +682,7 @@ mod tests {
             }),
             cache: Mutex::new(Lru::new(CACHE_CAP)),
             inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
             display_width: std::sync::atomic::AtomicU32::new(0),
@@ -644,7 +706,10 @@ mod tests {
         assert!(!reader.cache.lock().unwrap().contains(&1));
         reader.get_page(1).unwrap();
         assert!(disk_dir.join("w1600").join("1.bin").exists());
-        assert!(disk_dir.join("w1080").join("1.bin").exists(), "旧宽度缓存保留，互不干扰");
+        assert!(
+            disk_dir.join("w1080").join("1.bin").exists(),
+            "旧宽度缓存保留，互不干扰"
+        );
 
         let _ = std::fs::remove_dir_all(disk_dir);
     }
@@ -653,7 +718,11 @@ mod tests {
     fn disk_hit_does_not_wait_for_network_permits() {
         let (started_tx, _) = mpsc::channel();
         let disk_dir = std::env::temp_dir().join(format!(
-            "rch_reader_disk_priority_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            "rch_reader_disk_priority_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&disk_dir).unwrap();
         std::fs::write(disk_dir.join("0.bin"), [42]).unwrap();
@@ -668,20 +737,27 @@ mod tests {
             }),
             cache: Mutex::new(Lru::new(CACHE_CAP)),
             inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
             display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::clone(&governor),
         });
         let (tx, rx) = mpsc::channel();
-        let handle = std::thread::spawn(move || tx.send(reader.load_or_wait(0)).unwrap());
+        let handle = std::thread::spawn(move || {
+            tx.send(reader.load_or_wait(0, RequestPriority::Foreground))
+                .unwrap()
+        });
         let cached = rx.recv_timeout(Duration::from_secs(2));
         // Always release/join before asserting so a failure cannot leak a blocked worker.
         drop(first);
         drop(second);
         handle.join().unwrap();
         std::fs::remove_dir_all(disk_dir).unwrap();
-        assert_eq!(&**cached.expect("disk hit queued behind network I/O").unwrap(), &[42]);
+        assert_eq!(
+            &**cached.expect("disk hit queued behind network I/O").unwrap(),
+            &[42]
+        );
     }
 
     impl Document for BlockingDoc {
@@ -730,6 +806,7 @@ mod tests {
             book: Box::new(doc),
             cache: Mutex::new(Lru::new(CACHE_CAP)),
             inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
             display_width: std::sync::atomic::AtomicU32::new(0),
@@ -798,6 +875,7 @@ mod tests {
             book: Box::new(NotifyDoc(started_tx)),
             cache: Mutex::new(Lru::new(CACHE_CAP)),
             inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
             display_width: std::sync::atomic::AtomicU32::new(0),
@@ -829,6 +907,7 @@ mod tests {
             book: Box::new(NotifyDoc(started_tx)),
             cache: Mutex::new(Lru::new(CACHE_CAP)),
             inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
             display_width: std::sync::atomic::AtomicU32::new(0),

@@ -9,14 +9,14 @@
 //! 出现"详情页有图、海报墙获取失败"（见 STATE-READ-4）。
 
 use rusqlite::{params, Connection};
-use rust_lib_app::api::remote_cover::{
-    remote_cover_state, CoverProfileDto, CoverSelectionDto,
-};
+use rust_lib_app::api::remote_cover::{remote_cover_state, CoverProfileDto, CoverSelectionDto};
+use rust_lib_app::db;
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
-use rust_lib_app::remote_scan::cover_revision_stream::{reset_wake_decided_count, wake_decided_count};
+use rust_lib_app::remote_scan::cover_revision_stream::{
+    reset_wake_decided_count, wake_decided_count,
+};
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;
 use rust_lib_app::remote_scan::{cover_store, persistence};
-use rust_lib_app::db;
 
 fn connection() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
@@ -84,10 +84,9 @@ fn seed_running(source: &str, asset: &str) {
     )
     .unwrap();
     // pending → running（真实 claim）
-    let claimed = cover_store::claim_next_job_for_source_session_on(
-        &conn, source, "worker", 100, 60_000, 42,
-    )
-    .unwrap();
+    let claimed =
+        cover_store::claim_next_job_for_source_session_on(&conn, source, "worker", 100, 60_000, 42)
+            .unwrap();
     assert!(claimed.is_some(), "the seeded job must be claimable");
 }
 
@@ -97,7 +96,11 @@ fn state_read_1_existing_job_returns_its_durable_state() {
     let source = "state-read-1";
     {
         let conn = connection();
-        for table in ["remote_cover_job", "remote_cover_variant", "remote_scan_epoch"] {
+        for table in [
+            "remote_cover_job",
+            "remote_cover_variant",
+            "remote_scan_epoch",
+        ] {
             conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source])
                 .unwrap();
         }
@@ -107,7 +110,11 @@ fn state_read_1_existing_job_returns_its_durable_state() {
         let conn = db::get().lock().unwrap();
         persistence::migrate(&conn).unwrap();
         cover_store::migrate(&conn).unwrap();
-        for table in ["remote_cover_job", "remote_cover_variant", "remote_scan_epoch"] {
+        for table in [
+            "remote_cover_job",
+            "remote_cover_variant",
+            "remote_scan_epoch",
+        ] {
             conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source])
                 .unwrap();
         }
@@ -130,7 +137,11 @@ fn state_read_2_missing_job_is_none() {
         let conn = db::get().lock().unwrap();
         persistence::migrate(&conn).unwrap();
         cover_store::migrate(&conn).unwrap();
-        for table in ["remote_cover_job", "remote_cover_variant", "remote_scan_epoch"] {
+        for table in [
+            "remote_cover_job",
+            "remote_cover_variant",
+            "remote_scan_epoch",
+        ] {
             conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source])
                 .unwrap();
         }
@@ -180,21 +191,11 @@ fn state_read_3_is_pure_read_with_zero_side_effects() {
 
     // 读两次，确认幂等且无副作用。
     let (selection, profile) = state_keys_for(340, 480);
-    let _ = remote_cover_state(
-        source.to_string(),
-        "asset".to_string(),
-        selection,
-        profile,
-    )
-    .unwrap();
+    let _ =
+        remote_cover_state(source.to_string(), "asset".to_string(), selection, profile).unwrap();
     let (selection, profile) = state_keys_for(340, 480);
-    let _ = remote_cover_state(
-        source.to_string(),
-        "asset".to_string(),
-        selection,
-        profile,
-    )
-    .unwrap();
+    let _ =
+        remote_cover_state(source.to_string(), "asset".to_string(), selection, profile).unwrap();
 
     let (jobs_after, revision_after) = {
         let conn = db::get().lock().unwrap();
@@ -207,7 +208,10 @@ fn state_read_3_is_pure_read_with_zero_side_effects() {
             .unwrap();
         (jobs, cover_store::view_revision(&conn, source).unwrap())
     };
-    assert_eq!(jobs_after, jobs_before, "STATE-READ-3: job rows must not change");
+    assert_eq!(
+        jobs_after, jobs_before,
+        "STATE-READ-3: job rows must not change"
+    );
     assert_eq!(
         revision_after, revision_before,
         "STATE-READ-3: a pure read must NOT bump the revision"
@@ -234,7 +238,11 @@ fn state_read_4_is_scoped_by_selection_and_profile() {
         let conn = db::get().lock().unwrap();
         persistence::migrate(&conn).unwrap();
         cover_store::migrate(&conn).unwrap();
-        for table in ["remote_cover_job", "remote_cover_variant", "remote_scan_epoch"] {
+        for table in [
+            "remote_cover_job",
+            "remote_cover_variant",
+            "remote_scan_epoch",
+        ] {
             conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source])
                 .unwrap();
         }

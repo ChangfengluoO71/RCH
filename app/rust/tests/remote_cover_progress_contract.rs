@@ -153,7 +153,10 @@ fn f_availability_and_stale_ready_split_the_ready_bucket() {
 
     let s = status_of(source);
     assert_eq!(s.ready_books, 2, "raw ready count stays truthful");
-    assert_eq!(s.available_books, 1, "only the asset with real bytes is available");
+    assert_eq!(
+        s.available_books, 1,
+        "only the asset with real bytes is available"
+    );
     // stale_ready = 1 ⇒ 至少计入 waiting
     assert!(
         s.waiting_books >= 1,
@@ -250,7 +253,7 @@ fn f_unknown_durable_state_is_surfaced_as_other() {
 fn f_staged_greater_than_indexed_still_balances() {
     let source = "f-prog-staged";
     let _guard = prepare(source, 1); // indexed = 1
-    // staged cover tasks 比 indexed 多 ⇒ discovered 取较大者
+                                     // staged cover tasks 比 indexed 多 ⇒ discovered 取较大者
     {
         let conn = db::get().lock().unwrap();
         for i in 0..3 {
@@ -273,7 +276,6 @@ fn f_staged_greater_than_indexed_still_balances() {
     assert_eq!(s.discovered_books, 3, "discovered = max(indexed, staged)");
     assert_invariant(&s, "F-7 staged > indexed");
 }
-
 
 // ---------------------------------------------------------------------------
 // RG-B 性能修复（方案 B）：`available_books` 按 revision 记忆化 + 廉价校验

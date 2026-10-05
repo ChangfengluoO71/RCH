@@ -1,5 +1,7 @@
 # Executive Status
 
+> **历史证据快照：** 下文记录本报告所列 commit 和测试环境的结果，不代表 2026-10-01 的项目状态。扫描 UI 范围后来按第92轮决定变更为“显示状态 + 失败重试”；不提供暂停/继续或手动全量/增量重扫。下文 Flutter suite 对 manual modes 的覆盖描述是当时的测试记录，不是当前需求；当前验收口径见父任务 `prd.md` 与 `remote-scan-ui-verify/prd.md`。
+
 **YELLOW / DO NOT RELEASE**
 
 Task 6 adds deterministic provider-labelled contract coverage for WebDAV,

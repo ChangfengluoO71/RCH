@@ -434,11 +434,9 @@ pub(crate) fn cover_job_failure_decision(
             Some(error_code(error).into()),
             None,
         ),
-        RemoteScanError::Unauthorized | RemoteScanError::Forbidden => decide(
-            CoverJobState::Blocked,
-            Some(error_code(error).into()),
-            None,
-        ),
+        RemoteScanError::Unauthorized | RemoteScanError::Forbidden => {
+            decide(CoverJobState::Blocked, Some(error_code(error).into()), None)
+        }
         RemoteScanError::TransientNetwork(_) | RemoteScanError::RateLimited { .. }
             if attempt < 3 =>
         {
@@ -1497,12 +1495,8 @@ impl ByteSource for AdapterByteSource {
         let requested = (self.length - offset).min(buf.len() as u64) as usize;
         // 预算：病态归档（例如尾部 233MB 的 EOCD 扫描）必须快速失败，
         // 具体失败码由 `cover_open_reason` 从这段稳定文案映射出来。
-        let used = self
-            .read_bytes
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let calls = self
-            .read_calls
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let used = self.read_bytes.load(std::sync::atomic::Ordering::Relaxed);
+        let calls = self.read_calls.load(std::sync::atomic::Ordering::Relaxed);
         let elapsed_ms = self.started_at.elapsed().as_millis();
         // 2026-09-21（用户决策"取消拒绝"，依赖既有的整本缓存清理机制）：
         // **故意整本读**（offset 0 且一次就要完整个文件）不再受 64 MiB 字节预算约束。
@@ -1936,12 +1930,10 @@ fn fetch_cover_from_document(
     // 超限 / 解压失败）就照旧回退，行为不变。
     let lower_name = document_name.to_lowercase();
     if lower_name.ends_with(".zip") || lower_name.ends_with(".cbz") {
-        if let Ok(Some(page_bytes)) =
-            crate::document::zip::first_image_bytes_via_central_directory(
-                &source,
-                COVER_FAST_PAGE_MAX_BYTES,
-            )
-        {
+        if let Ok(Some(page_bytes)) = crate::document::zip::first_image_bytes_via_central_directory(
+            &source,
+            COVER_FAST_PAGE_MAX_BYTES,
+        ) {
             if let Ok(image) =
                 decode_cover_bounded(&page_bytes, cover_width, cover_height, crop, false)
             {
@@ -2323,15 +2315,16 @@ fn refresh_status_counts(
         }) {
             // P1-F：latest-per-asset（与 UI 的"当前 job"语义一致），
             // 并保留 cover 身份供**锁外**做缓存可用性校验。
-            let mut latest_by_asset: HashMap<String, (String, i64, String, String, String, String)> =
-                HashMap::new();
+            let mut latest_by_asset: HashMap<
+                String,
+                (String, i64, String, String, String, String),
+            > = HashMap::new();
             for row in rows.flatten() {
                 let replace = latest_by_asset
                     .get(&row.0)
                     .is_none_or(|(_, updated_at, _, _, _, _)| row.2 >= *updated_at);
                 if replace {
-                    latest_by_asset
-                        .insert(row.0, (row.1, row.2, row.3, row.4, row.5, row.6));
+                    latest_by_asset.insert(row.0, (row.1, row.2, row.3, row.4, row.5, row.6));
                 }
             }
             let tracked_distinct = latest_by_asset.len() as u64;
@@ -3600,18 +3593,17 @@ mod tests {
         let large = 100 * 1024 * 1024;
         assert_eq!(
             cover_read_windows(large),
+            Some(vec![COVER_HEAD_BYTES, COVER_HEAD_MAX_BYTES, large])
+        );
+
+        assert_eq!(
+            cover_read_windows(COVER_FETCH_LIMIT_BYTES),
             Some(vec![
                 COVER_HEAD_BYTES,
                 COVER_HEAD_MAX_BYTES,
-                large
+                COVER_FETCH_LIMIT_BYTES,
             ])
         );
-
-        assert_eq!(cover_read_windows(COVER_FETCH_LIMIT_BYTES), Some(vec![
-            COVER_HEAD_BYTES,
-            COVER_HEAD_MAX_BYTES,
-            COVER_FETCH_LIMIT_BYTES,
-        ]));
         assert_eq!(cover_read_windows(COVER_FETCH_LIMIT_BYTES + 1), None);
         assert_eq!(cover_read_windows(0), None);
     }
@@ -3624,7 +3616,10 @@ mod tests {
         let (x, y, w, h) = cover_top_band_crop(800, 20_000, 340, 480).unwrap();
         assert_eq!((x, y, w), (0.0, 0.0, 1.0));
         let expected = (480.0 / 340.0) / (20_000.0 / 800.0);
-        assert!((h - expected).abs() < 1e-9, "band height must match the cover aspect");
+        assert!(
+            (h - expected).abs() < 1e-9,
+            "band height must match the cover aspect"
+        );
         assert!(h < 0.06, "the band must come from the top, not the middle");
 
         assert_eq!(cover_top_band_crop(0, 20_000, 340, 480), None);
@@ -3870,21 +3865,33 @@ mod tests {
         assert!(!long_retry_is_retryable(&RemoteScanError::Unsupported));
     }
 
-
     /// 第 60 轮实测回归：病态归档（尾部 233MB 的 EOCD 扫描）必须被**读取预算**挡住，
     /// 而不是拖着单线程 worker 把整条封面队列堵死。
     #[test]
     fn safe_http_class_only_returns_safe_classes() {
         // 只返回固定类别，绝不回显 provider 原文。
         assert_eq!(safe_http_class("服务器未按 Range 返回(HTTP 404)"), "404");
-        assert_eq!(safe_http_class("range 请求失败: connection refused"), "range-bad");
+        assert_eq!(
+            safe_http_class("range 请求失败: connection refused"),
+            "range-bad"
+        );
         assert_eq!(safe_http_class("HTTP 503 Service Unavailable"), "5xx");
         assert_eq!(safe_http_class("401 Unauthorized"), "401");
         assert_eq!(safe_http_class("403 Forbidden"), "403");
         assert_eq!(safe_http_class("请求超时 timeout"), "timeout");
         assert_eq!(safe_http_class("cover_read_queue_full"), "queue-full");
         assert_eq!(safe_http_class("某种未知错误"), "none");
-        for m in ["404", "5xx", "range-bad", "none", "timeout", "queue-full", "401", "403", "429"] {
+        for m in [
+            "404",
+            "5xx",
+            "range-bad",
+            "none",
+            "timeout",
+            "queue-full",
+            "401",
+            "403",
+            "429",
+        ] {
             assert!(safe_http_class(m).len() <= 10);
         }
     }
@@ -3901,8 +3908,10 @@ mod tests {
                 &self,
                 _: &str,
                 _: Option<&str>,
-            ) -> Result<(Vec<crate::remote_scan::model::RemoteEntry>, Option<String>), RemoteScanError>
-            {
+            ) -> Result<
+                (Vec<crate::remote_scan::model::RemoteEntry>, Option<String>),
+                RemoteScanError,
+            > {
                 Err(RemoteScanError::Unsupported)
             }
             fn read_range(
@@ -3924,7 +3933,8 @@ mod tests {
                 &self,
                 _: &str,
                 _: &str,
-            ) -> Result<crate::remote_scan::adapter::RemoteCapabilities, RemoteScanError> {
+            ) -> Result<crate::remote_scan::adapter::RemoteCapabilities, RemoteScanError>
+            {
                 Err(RemoteScanError::Unsupported)
             }
         }
@@ -4007,7 +4017,8 @@ mod tests {
                 &self,
                 _: &str,
                 _: &str,
-            ) -> Result<crate::remote_scan::adapter::RemoteCapabilities, RemoteScanError> {
+            ) -> Result<crate::remote_scan::adapter::RemoteCapabilities, RemoteScanError>
+            {
                 Err(RemoteScanError::Unsupported)
             }
         }
@@ -4017,12 +4028,8 @@ mod tests {
             calls: AtomicU64::new(0),
         });
         let file_len = 8 * 1024 * 1024; // 8 MiB > budget，但 < 绝对上限
-        let source = AdapterByteSource::with_budget(
-            adapter.clone(),
-            "/big.mobi".into(),
-            file_len,
-            budget,
-        );
+        let source =
+            AdapterByteSource::with_budget(adapter.clone(), "/big.mobi".into(), file_len, budget);
         let mut whole = vec![0u8; file_len as usize];
         let read = source
             .read_at(0, &mut whole)
@@ -4146,9 +4153,7 @@ mod tests {
             ) -> Result<Vec<u8>, RemoteScanError> {
                 self.requests.lock().unwrap().push((offset, length));
                 let start = (offset as usize).min(self.bytes.len());
-                let end = start
-                    .saturating_add(length as usize)
-                    .min(self.bytes.len());
+                let end = start.saturating_add(length as usize).min(self.bytes.len());
                 Ok(self.bytes[start..end].to_vec())
             }
             fn read_file_limited(&self, _: &str, _: u64) -> Result<Vec<u8>, RemoteScanError> {
@@ -4170,12 +4175,7 @@ mod tests {
         }
 
         let image = image::RgbaImage::from_fn(400, 800, |x, y| {
-            image::Rgba([
-                (x % 251) as u8,
-                (y % 241) as u8,
-                ((x + y) % 239) as u8,
-                255,
-            ])
+            image::Rgba([(x % 251) as u8, (y % 241) as u8, ((x + y) % 239) as u8, 255])
         });
         let mut encoded = io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(image)
@@ -4258,10 +4258,7 @@ mod tests {
             "封面首行必须是长图顶部的标记，实际 ({top_r},{top_g})"
         );
         let (bottom_r, bottom_g, _) = pixel(0, cover.height - 1);
-        assert!(
-            !(bottom_r > 150 && bottom_g < 100),
-            "封面不得取自长图中间"
-        );
+        assert!(!(bottom_r > 150 && bottom_g < 100), "封面不得取自长图中间");
 
         if let Ok(path) = std::env::var("RCH_STEP31_PROOF") {
             let mut out = io::Cursor::new(Vec::new());
@@ -4876,7 +4873,11 @@ mod rg_a_cover_failure_decision_tests {
             2,
         );
         assert_eq!(d.state, CoverJobState::RetryWait);
-        assert_eq!(d.retry_after_ms, Some(7_000), "server value must win over 4s");
+        assert_eq!(
+            d.retry_after_ms,
+            Some(7_000),
+            "server value must win over 4s"
+        );
     }
 
     #[test]
@@ -5056,11 +5057,23 @@ mod provider_failure_code_tests {
     /// 分类必须安全（固定枚举）且**绝不泄露**提供商原文。
     #[test]
     fn classifies_safely_and_never_leaks_provider_text() {
-        assert_eq!(provider_failure_code("HTTP 404 Not Found"), "provider:notFound");
+        assert_eq!(
+            provider_failure_code("HTTP 404 Not Found"),
+            "provider:notFound"
+        );
         assert_eq!(provider_failure_code("403 Forbidden"), "provider:forbidden");
-        assert_eq!(provider_failure_code("429 too many requests"), "provider:rateLimited");
-        assert_eq!(provider_failure_code("request timed out"), "provider:timeout");
-        assert_eq!(provider_failure_code("image decode failed"), "provider:decodeFailed");
+        assert_eq!(
+            provider_failure_code("429 too many requests"),
+            "provider:rateLimited"
+        );
+        assert_eq!(
+            provider_failure_code("request timed out"),
+            "provider:timeout"
+        );
+        assert_eq!(
+            provider_failure_code("image decode failed"),
+            "provider:decodeFailed"
+        );
         assert_eq!(provider_failure_code("封面缺失"), "provider:noCover");
         // 含敏感信息的未知错误 ⇒ 只留枚举，不透传。
         assert_eq!(

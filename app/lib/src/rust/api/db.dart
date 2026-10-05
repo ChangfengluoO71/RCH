@@ -604,6 +604,7 @@ class LibraryIndexDto {
   final String name;
   final String path;
   final String entryType;
+  final String? assetKind;
   final PlatformInt64? size;
   final PlatformInt64? modifiedAt;
   final String? coverPath;
@@ -618,6 +619,7 @@ class LibraryIndexDto {
     required this.name,
     required this.path,
     required this.entryType,
+    this.assetKind,
     this.size,
     this.modifiedAt,
     this.coverPath,
@@ -634,6 +636,7 @@ class LibraryIndexDto {
       name.hashCode ^
       path.hashCode ^
       entryType.hashCode ^
+      assetKind.hashCode ^
       size.hashCode ^
       modifiedAt.hashCode ^
       coverPath.hashCode ^
@@ -652,6 +655,7 @@ class LibraryIndexDto {
           name == other.name &&
           path == other.path &&
           entryType == other.entryType &&
+          assetKind == other.assetKind &&
           size == other.size &&
           modifiedAt == other.modifiedAt &&
           coverPath == other.coverPath &&

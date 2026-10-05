@@ -63,7 +63,9 @@ impl Ctx {
         Self {
             http,
             host: std::env::var("EH_HOST").unwrap_or_else(|_| "e-hentai.org".into()),
-            cookie: std::env::var("EH_COOKIE").ok().filter(|s| !s.trim().is_empty()),
+            cookie: std::env::var("EH_COOKIE")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
             interval_secs: None,
         }
     }
@@ -103,7 +105,9 @@ impl Ctx {
             "[http] {} -> {status}  bytes={}  retry-after={:?}  x-ratelimit={:?}",
             url,
             body.len(),
-            headers.get("retry-after").map(|v| v.to_str().unwrap_or("?")),
+            headers
+                .get("retry-after")
+                .map(|v| v.to_str().unwrap_or("?")),
             headers
                 .get("x-ratelimit-remaining")
                 .map(|v| v.to_str().unwrap_or("?"))
@@ -233,7 +237,11 @@ fn run() {
     println!(
         "host={} cookie={} cmd={}",
         ctx.host,
-        if ctx.cookie.is_some() { "已提供" } else { "匿名" },
+        if ctx.cookie.is_some() {
+            "已提供"
+        } else {
+            "匿名"
+        },
         args.cmd
     );
     let result = match args.cmd.as_str() {
@@ -262,13 +270,19 @@ fn run() {
 
 fn probe_basic(ctx: &Ctx) -> Result<(), String> {
     let (status, body) = ctx.get(&format!("https://{}/", ctx.host))?;
-    println!("[A1] 首页 status={status} challenge={}", is_challenge(status, &body));
+    println!(
+        "[A1] 首页 status={status} challenge={}",
+        is_challenge(status, &body)
+    );
 
     let (status, body) = ctx.get(&format!(
         "https://{}/api.php?method=gdata&gid=1&token=1",
         ctx.host
     ))?;
-    println!("[A2] 非法 gid 的 gdata status={status} challenge={}", is_challenge(status, &body));
+    println!(
+        "[A2] 非法 gid 的 gdata status={status} challenge={}",
+        is_challenge(status, &body)
+    );
     let head: String = body.chars().take(200).collect();
     println!("     body head: {}", head.replace('\n', " "));
 
@@ -364,13 +378,32 @@ fn language_of(v: &serde_json::Value) -> String {
 
 /// 打印 gdata 的真实字段形状（调研报告 B/C 的证据来源）。
 fn dump_gdata_shape(v: &serde_json::Value) {
-    println!("[A4] gdata item 键：{:?}", v.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()));
-    for key in ["gid", "token", "title", "title_jpn", "category", "rating", "torrentcount", "filecount", "filesize", "posted", "uploader"] {
+    println!(
+        "[A4] gdata item 键：{:?}",
+        v.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>())
+    );
+    for key in [
+        "gid",
+        "token",
+        "title",
+        "title_jpn",
+        "category",
+        "rating",
+        "torrentcount",
+        "filecount",
+        "filesize",
+        "posted",
+        "uploader",
+    ] {
         if let Some(val) = v.get(key) {
             println!("     {key} = {val}  (type={})", json_type(val));
         }
     }
-    println!("     [判定] language 字段存在? {} ；实际语言标签={}", v.get("language").is_some(), language_of(v));
+    println!(
+        "     [判定] language 字段存在? {} ；实际语言标签={}",
+        v.get("language").is_some(),
+        language_of(v)
+    );
     if let Some(tags) = v.get("tags").and_then(|t| t.as_array()) {
         println!("     tags ({} 条)：", tags.len());
         for t in tags.iter().take(40) {
@@ -518,7 +551,9 @@ fn probe_torrents(ctx: &Ctx, args: &Args) -> Result<(), String> {
         gid,
         rating_of(&item),
         torrentcount_of(&item),
-        item.get("title_jpn").and_then(|v| v.as_str()).unwrap_or("?")
+        item.get("title_jpn")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
     );
     let url = ctx.gallerytorrents_url(&gid, &token);
     println!("\n[D] 种子列表页：{url}");
@@ -529,7 +564,10 @@ fn probe_torrents(ctx: &Ctx, args: &Args) -> Result<(), String> {
     let stats = parse_torrent_stats(&body);
     println!("[D1] 页面统计字段 {} 组（下载数在此）", stats.len());
     for s in &stats {
-        println!("     Seeds={} Peers={} Downloads={} Size={}", s.0, s.1, s.2, s.3);
+        println!(
+            "     Seeds={} Peers={} Downloads={} Size={}",
+            s.0, s.1, s.2, s.3
+        );
     }
     // gdata 里的 torrents[] 是权威列表（含 infohash），页面用于取下载数。
     if let Some(list) = item.get("torrents").and_then(|t| t.as_array()) {
@@ -593,7 +631,10 @@ fn parse_torrent_stats(html: &str) -> Vec<(i64, i64, i64, String)> {
 ///   搜索(GET) → gdata 批量(≤25/次) → 代码内按 rating/tag 过滤 → 取该画廊种子页的下载数 → 过阈值。
 /// 注意：`rating>=4` / `torrents=1` 不是有效搜索语法，评分与是否有种子都必须在本地过滤。
 fn probe_scan(ctx: &Ctx, args: &Args) -> Result<(), String> {
-    println!("\n[C] 扫描 min_dl={} pages={} min_rating=4.0", args.min_dl, args.pages);
+    println!(
+        "\n[C] 扫描 min_dl={} pages={} min_rating=4.0",
+        args.min_dl, args.pages
+    );
     let query = "language:chinese$ uncensored";
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut next: Option<String> = Some(format!(
@@ -634,9 +675,7 @@ fn probe_scan(ctx: &Ctx, args: &Args) -> Result<(), String> {
     for chunk in uniq.chunks(25) {
         let list: Vec<Vec<String>> = chunk
             .iter()
-            .filter_map(|(u, _)| {
-                parse_gid_token(u).map(|(g, t)| vec![g, t])
-            })
+            .filter_map(|(u, _)| parse_gid_token(u).map(|(g, t)| vec![g, t]))
             .collect();
         let payload =
             serde_json::json!({"method":"gdata","gidlist":list,"namespace":1}).to_string();
@@ -650,8 +689,8 @@ fn probe_scan(ctx: &Ctx, args: &Args) -> Result<(), String> {
             .send()
             .map_err(|e| format!("gdata 批量失败：{e}"))?;
         let body = resp.text().unwrap_or_default();
-        let v: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("gdata 批量非 JSON：{e} / {body}"))?;
+        let v: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("gdata 批量非 JSON：{e} / {body}"))?;
         if let Some(arr) = v.get("gmetadata").and_then(|m| m.as_array()) {
             meta.extend(arr.iter().cloned());
         }
@@ -764,11 +803,26 @@ impl Default for Rules {
             // 用户口径：时间越久要求越高；五年前 800。最年轻一档不设门槛（新发种子下载数天然为个位数），
             // 靠"重复扫描 + 已有条目去重"自然实现"累积达标再推"。
             age_tiers: vec![
-                AgeTier { min_age_years: 5.0, min_downloads: 800 },
-                AgeTier { min_age_years: 2.0, min_downloads: 500 },
-                AgeTier { min_age_years: 0.5, min_downloads: 300 },
-                AgeTier { min_age_years: 0.083, min_downloads: 100 },
-                AgeTier { min_age_years: 0.0, min_downloads: 0 },
+                AgeTier {
+                    min_age_years: 5.0,
+                    min_downloads: 800,
+                },
+                AgeTier {
+                    min_age_years: 2.0,
+                    min_downloads: 500,
+                },
+                AgeTier {
+                    min_age_years: 0.5,
+                    min_downloads: 300,
+                },
+                AgeTier {
+                    min_age_years: 0.083,
+                    min_downloads: 100,
+                },
+                AgeTier {
+                    min_age_years: 0.0,
+                    min_downloads: 0,
+                },
             ],
             out_dir: "eh_torrents".into(),
             pages: 2,
@@ -787,7 +841,11 @@ impl Rules {
     /// 按画龄选出该段要求的下载数下限。
     fn required_dl(&self, age_years: f64) -> i64 {
         let mut tiers = self.age_tiers.clone();
-        tiers.sort_by(|a, b| b.min_age_years.partial_cmp(&a.min_age_years).unwrap_or(std::cmp::Ordering::Equal));
+        tiers.sort_by(|a, b| {
+            b.min_age_years
+                .partial_cmp(&a.min_age_years)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         tiers
             .iter()
             .find(|t| age_years >= t.min_age_years)
@@ -972,7 +1030,8 @@ fn probe_collect(ctx: &mut Ctx, args: &Args) -> Result<(), String> {
     }
     let (mut saved, mut skipped) = (0usize, 0usize);
     // 分项拒绝计数：没有这一步就无法判断"0 命中"是哪条规则造成的（规则可编辑时必须可解释）
-    let (mut no_rating, mut no_marker, mut no_torrent, mut no_dl) = (0usize, 0usize, 0usize, 0usize);
+    let (mut no_rating, mut no_marker, mut no_torrent, mut no_dl) =
+        (0usize, 0usize, 0usize, 0usize);
     for p in items.iter() {
         let rating = rating_of(p);
         let gid = p.get("gid").map(|g| g.to_string()).unwrap_or_default();
@@ -994,7 +1053,10 @@ fn probe_collect(ctx: &mut Ctx, args: &Args) -> Result<(), String> {
             if no_marker <= 3 {
                 println!(
                     "[collect] 被标记规则排除：{}",
-                    format!("{title} {title_jpn}").chars().take(60).collect::<String>()
+                    format!("{title} {title_jpn}")
+                        .chars()
+                        .take(60)
+                        .collect::<String>()
                 );
             }
             continue;
@@ -1011,7 +1073,11 @@ fn probe_collect(ctx: &mut Ctx, args: &Args) -> Result<(), String> {
             break;
         }
         let stats = parse_torrent_stats(&b);
-        let list = p.get("torrents").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+        let list = p
+            .get("torrents")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
         for (i, t) in list.iter().enumerate() {
             let hash = t.get("hash").and_then(|h| h.as_str()).unwrap_or("");
             let tname = t.get("name").and_then(|h| h.as_str()).unwrap_or("");
@@ -1044,14 +1110,14 @@ fn probe_collect(ctx: &mut Ctx, args: &Args) -> Result<(), String> {
                 continue;
             }
             std::thread::sleep(ctx.interval());
-            let bytes = match ctx.get_bytes(&format!("https://ehtracker.org/get/{gid}/{hash}.torrent"))
-            {
-                Ok(b) => b,
-                Err(e) => {
-                    println!("[collect] 下载失败 {hash}：{e}");
-                    continue;
-                }
-            };
+            let bytes =
+                match ctx.get_bytes(&format!("https://ehtracker.org/get/{gid}/{hash}.torrent")) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        println!("[collect] 下载失败 {hash}：{e}");
+                        continue;
+                    }
+                };
             if bytes.first() != Some(&b'd') {
                 println!("[collect] 非 bencode，拒绝保存 {hash}");
                 continue;
@@ -1100,7 +1166,8 @@ fn probe_collect(ctx: &mut Ctx, args: &Args) -> Result<(), String> {
             );
         }
     }
-    let json = serde_json::to_string_pretty(&manifest).map_err(|e| format!("manifest 序列化失败：{e}"))?;
+    let json =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("manifest 序列化失败：{e}"))?;
     std::fs::write(&manifest_path, json).map_err(|e| format!("写 manifest 失败：{e}"))?;
     println!(
         "\n[collect] 新保存 {saved} 个 .torrent；映射未确认跳过 {skipped}\n\
@@ -1283,14 +1350,15 @@ fn parse_gallery_pairs(html: &str, host: &str) -> Vec<(String, String)> {
     let mut rest = html;
     while let Some(i) = rest.find(&needle) {
         rest = &rest[i..];
-        let url: String = rest.chars().take_while(|c| *c != '"' && *c != '\'' && !c.is_whitespace()).collect();
+        let url: String = rest
+            .chars()
+            .take_while(|c| *c != '"' && *c != '\'' && !c.is_whitespace())
+            .collect();
         let after = &rest[url.len().min(rest.len())..];
         let title = between(after, ">", "</a>")
             .map(|s| strip_tags(&s))
             .unwrap_or_default();
-        if title.len() > 1
-            && parse_gid_token(&url).is_some()
-            && !out.iter().any(|(u, _)| u == &url)
+        if title.len() > 1 && parse_gid_token(&url).is_some() && !out.iter().any(|(u, _)| u == &url)
         {
             out.push((url.clone(), title));
         }

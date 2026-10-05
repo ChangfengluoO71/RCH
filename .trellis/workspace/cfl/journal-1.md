@@ -539,3 +539,63 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: v0.6.2 文档与 Trellis 状态收敛
+
+**Date**: 2026-10-01
+**Task**: v0.6.2 文档与 Trellis 状态收敛
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+统一当前版本文档、用户操作说明、架构快照与 TODO；修正远程扫描 UI 旧需求、条漫实机验收及同步历史缺口状态。
+
+### Main Changes
+
+- 更新 README 与用户手册，区分离线目录刮削、E 站导入和 EH 订阅。
+- 重写架构快照和 TODO，保留未验收工作并链接 Trellis 任务。
+- 修订远程扫描 PRD/设计/研究记录和已归档条漫任务状态；新增同步建连历史规划任务。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] git diff --check、Markdown 本地链接、Trellis context 校验、日志索引行号与 SHA-256 前缀均通过；未运行测试套件。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 继续 .trellis/tasks/09-14-remote-cloud-scan 的跨 provider 与失败恢复验收。
+
+
+## Session 17: v0.6.2 更新器收敛与条漫跳页修复
+
+**Date**: 2026-10-02
+**Task**: 应用内更新器桌面/手机测试；流式阅读后条漫跳页无法定位
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+- ????? `.part`?SHA-256 ?????single-flight??????????????Windows ?? Inno Setup ??????UAC/????????????????? 10 ??????????????????????/?????
+- 通过本地 fixture 在 MuMu 实测从签名一致的 0.6.1 测试 APK 下载并系统安装正式 0.6.2 APK；确认版本号并重新启动。
+- 定位条漫跳页根因为 `ReaderPage` 对未测页面高度按零计算；`WebtoonNavigationModel` 接入阅读器后用占位估算、实测高度更新、用户手势取消旧跳转，并恢复条漫初始页滚动位置。
+- 修正文档设置路径漂移守卫的 UI 词表，并同步 TODO、Trellis 与本日志。
+
+### Testing
+
+- `[OK]` `flutter test --no-pub`: 231 passed, 1 skipped; updater suite: 21 passed.
+- `[OK]` `flutter analyze --no-pub`: no issues found.
+- `[OK]` Windows release test build rebuilt after installer handoff fix.
+- `[OK]` MuMu Android package installer covered update detection, local download, SHA-256, unknown-source settings and successful v0.6.2 replacement/relaunch.
+- `[PENDING]` Windows desktop updater/UAC UI smoke: Computer Use was stopped by physical Esc while resolving the intended window; no installer result recorded.
+- `[PENDING]` Separate on-device reader smoke for the newly wired page-jump path.
+
+### Status
+
+[IN PROGRESS] Updater task remains open until Windows UAC smoke is completed.

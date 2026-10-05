@@ -55,7 +55,11 @@ fn utc_stamp() -> String {
     let mp = (5 * doy + 2) / 153;
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if month <= 2 { yoe + era * 400 + 1 } else { yoe + era * 400 };
+    let year = if month <= 2 {
+        yoe + era * 400 + 1
+    } else {
+        yoe + era * 400
+    };
     format!(
         "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
         rem / 3_600,
@@ -91,6 +95,9 @@ mod tests {
         let label = safe_asset_label(path_shaped);
         assert_eq!(label.len(), 12);
         assert!(!label.contains('/') && !label.contains("漫画"));
-        assert_ne!(label, safe_asset_label("quark|source-1|/私人/漫画/另一本.cbz"));
+        assert_ne!(
+            label,
+            safe_asset_label("quark|source-1|/私人/漫画/另一本.cbz")
+        );
     }
 }

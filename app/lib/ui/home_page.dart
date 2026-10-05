@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
@@ -14,6 +13,7 @@ import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/random_read_selector.dart';
 import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/store/update_manager.dart';
@@ -73,6 +73,8 @@ class _HomePageState extends State<HomePage> {
   String? _tagDetailFutureKey;
   Future<List<ReadRecord>>? _tagDetailFuture;
   late final Listenable _tagManagerListenable;
+  bool _randomPicking = false;
+  bool _refreshingSources = false;
 
   /// 阅读统计当前维度（漫画/系列/标签/作者/类别）。
   String _statsDim = '漫画';
@@ -479,12 +481,27 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
               ),
               const Spacer(),
-              InkWell(
-                onTap: () => _refreshSources(),
-                borderRadius: BorderRadius.circular(4),
-                child: Padding(
-                  padding: EdgeInsets.all(2),
-                  child: Icon(Icons.refresh, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              Tooltip(
+                message: '重载书源列表与本机索引视图',
+                child: InkWell(
+                  onTap: _refreshingSources
+                      ? null
+                      : () => _refreshSources(showFeedback: true),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: _refreshingSources
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            Icons.refresh,
+                            size: 18,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                  ),
                 ),
               ),
               InkWell(
@@ -540,7 +557,9 @@ class _HomePageState extends State<HomePage> {
   /// 另一个窗口改动的），用户就只能重启应用才能看到正确结果——"删了没反应"。
   /// 这里给一个不重启的兜底：重载设备/书源树 → 从 SQLite 重载资料库 → 再按当前
   /// 书源列表恢复远程扫描状态。全部只读/重载，不写业务数据。
-  Future<void> _refreshSources() async {
+  Future<void> _refreshSources({bool showFeedback = false}) async {
+    if (_refreshingSources) return;
+    if (mounted) setState(() => _refreshingSources = true);
     final store = LibraryStore.instance;
     var failure = '';
     try {
@@ -553,17 +572,25 @@ class _HomePageState extends State<HomePage> {
       debugPrint('[HomePage] refresh sources failed: $error');
     }
     final devices = LibraryCatalogStore.instance.devices.length;
-    await appendScanDiag(
-      failure.isEmpty
-          ? 'sources_refreshed sources=${store.sources.length} devices=$devices'
-          : 'sources_refresh_failed error=$failure',
-    );
+    try {
+      await appendScanDiag(
+        failure.isEmpty
+            ? 'sources_refreshed sources=${store.sources.length} devices=$devices'
+            : 'sources_refresh_failed error=$failure',
+      );
+    } catch (_) {
+      // Diagnostics must not hide the refresh result from the user.
+    }
     if (!mounted) return;
-    setState(() {});
+    setState(() => _refreshingSources = false);
     if (failure.isNotEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('刷新失败：$failure')));
+    } else if (showFeedback) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('书源列表与本机索引视图已重载')),
+      );
     }
   }
 
@@ -725,43 +752,29 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ---- 本地视图结果（最近/最多） ----
-  /// 从给定记录里随机挑一本并打开。
-  ///
-  /// 为什么从「已读记录」里挑而不是全库枚举：读过的书必然有可用书源与路径
-  /// （远程源的浏览路径是内部 id，只有记录里才带得全），不需要重新枚举远端目录。
-  Future<void> _randomPickFrom(List<ReadRecord> records) async {
-    final all = records.where((r) => r.path.isNotEmpty).toList();
-    // 已读记录里可能残留已被删除/移动的文件；本地的先做存在性过滤，
-    // 否则会随机打开一个"文件不存在"的书（实测 os error 2）。
-    final pool = all.where((r) {
-      final s = _sourceForRecord(r);
-      if (s == null) return false;
-      if (s.needsSession) return true; // 远程源无法在本地判存，打开时再报错
-      return File(r.path).existsSync();
-    }).toList();
-    final candidates = pool.isNotEmpty ? pool : all;
-    if (candidates.isEmpty) return;
-    final pick = candidates[Random().nextInt(candidates.length)];
-    final source = _sourceForRecord(pick);
-    if (source == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('随机挑到的书找不到对应书源：${pick.title}')),
+  /// 从完整的已索引书库中随机挑一本并打开。
+  Future<void> _randomPickFrom() async {
+    if (_randomPicking) return;
+    setState(() => _randomPicking = true);
+    try {
+      final store = LibraryStore.instance;
+      final pick = await RandomReadSelector.instance.pick(
+        loadCandidates: LibraryCatalogStore.instance.randomCandidates,
+        sourceById: store.sourceById,
+        recentBookKeys: store.settings.recentRandomBookKeys,
+        recordSelection: store.recordRandomSelection,
       );
-      return;
+      if (!mounted) return;
+      if (pick == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('索引中没有可随机阅读的漫画')),
+        );
+        return;
+      }
+      await openBook(context, pick.source, pick.path, pick.title);
+    } finally {
+      if (mounted) setState(() => _randomPicking = false);
     }
-    LibraryStore.instance.recordRead(
-      source: source, path: pick.path, title: pick.title, page: pick.lastPage,
-    );
-    if (!mounted) return;
-    await openBook(context, source, pick.path, pick.title);
-  }
-
-  BookSource? _sourceForRecord(ReadRecord r) {
-    for (final s in LibraryStore.instance.sources) {
-      if (s.id == r.sourceId || s.type == r.sourceType) return s;
-    }
-    return null;
   }
 
   Widget _buildLocalResults(List<ReadRecord> records, String title) {
@@ -795,12 +808,17 @@ class _HomePageState extends State<HomePage> {
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
-              if (records.isNotEmpty)
-                TextButton.icon(
-                  onPressed: () => _randomPickFrom(records),
-                  icon: const Icon(Icons.casino_outlined, size: 18),
-                  label: const Text('随机一本'),
-                ),
+              TextButton.icon(
+                onPressed: _randomPicking ? null : _randomPickFrom,
+                icon: _randomPicking
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.casino_outlined, size: 18),
+                label: Text(_randomPicking ? '正在挑选…' : '随机一本'),
+              ),
             ],
           ),
         ),
@@ -808,7 +826,7 @@ class _HomePageState extends State<HomePage> {
           child: list.isEmpty
               ? Center(
                   child: Text(
-                    '暂无记录\n去书源里打开一本漫画吧',
+                    '当前列表暂无记录\n可点“随机一本”从已索引书库阅读',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),

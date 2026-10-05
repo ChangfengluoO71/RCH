@@ -14,7 +14,7 @@
 
 use anyhow::{Context, Result};
 use rust_lib_app::{db, rchpkg, sync};
-use std::{env, collections::HashMap};
+use std::{collections::HashMap, env};
 
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
@@ -111,7 +111,10 @@ fn main() -> Result<()> {
         let stats = rchpkg::import_package_from_file(&package)?;
         let metas = db::load_all_metas();
         let volume = metas.iter().filter(|m| !m.volume.trim().is_empty()).count();
-        let chapter = metas.iter().filter(|m| !m.chapter.trim().is_empty()).count();
+        let chapter = metas
+            .iter()
+            .filter(|m| !m.chapter.trim().is_empty())
+            .count();
         println!(
             "[4] 导入新库：导入 metas={}（跳过 {}）→ 恢复后 metas={} volume={} chapter={}",
             stats.metas,

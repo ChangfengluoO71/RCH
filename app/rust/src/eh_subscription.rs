@@ -48,7 +48,10 @@ pub struct AgeTier {
 
 impl Default for AgeTier {
     fn default() -> Self {
-        Self { min_age_years: 0.0, min_downloads: 0 }
+        Self {
+            min_age_years: 0.0,
+            min_downloads: 0,
+        }
     }
 }
 
@@ -97,11 +100,26 @@ impl Default for EhRules {
             age_tiers: vec![
                 // 用户口径（2026-09-22）：分时间段，时间越久要求越高；
                 // 在首版（800/500/300/100/0）基础上各档 +200。
-                AgeTier { min_age_years: 5.0, min_downloads: 1000 },
-                AgeTier { min_age_years: 2.0, min_downloads: 700 },
-                AgeTier { min_age_years: 0.5, min_downloads: 500 },
-                AgeTier { min_age_years: 0.083, min_downloads: 300 },
-                AgeTier { min_age_years: 0.0, min_downloads: 200 },
+                AgeTier {
+                    min_age_years: 5.0,
+                    min_downloads: 1000,
+                },
+                AgeTier {
+                    min_age_years: 2.0,
+                    min_downloads: 700,
+                },
+                AgeTier {
+                    min_age_years: 0.5,
+                    min_downloads: 500,
+                },
+                AgeTier {
+                    min_age_years: 0.083,
+                    min_downloads: 300,
+                },
+                AgeTier {
+                    min_age_years: 0.0,
+                    min_downloads: 200,
+                },
             ],
             out_dir: String::new(),
             pages: 10,
@@ -148,7 +166,8 @@ impl EhRules {
         {
             return false;
         }
-        if self.title_markers.trim().is_empty() || self.title_markers.trim().eq_ignore_ascii_case("any")
+        if self.title_markers.trim().is_empty()
+            || self.title_markers.trim().eq_ignore_ascii_case("any")
         {
             return true;
         }
@@ -229,7 +248,11 @@ impl Client {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败：{e}"))?;
-        Ok(Self { http, host: host.to_string(), interval })
+        Ok(Self {
+            http,
+            host: host.to_string(),
+            interval,
+        })
     }
 
     fn get(&self, url: &str) -> Result<String, String> {
@@ -620,7 +643,11 @@ pub fn derive_semantic(
     let title_jpn = text_field(item, "title_jpn").to_string();
     let title = text_field(item, "title").to_string();
     let mut sem = EhSemantic {
-        work_title: if title_jpn.is_empty() { title.clone() } else { title_jpn.clone() },
+        work_title: if title_jpn.is_empty() {
+            title.clone()
+        } else {
+            title_jpn.clone()
+        },
         ..Default::default()
     };
     if !title.is_empty() && title != sem.work_title {
@@ -630,7 +657,11 @@ pub fn derive_semantic(
     let tags: Vec<String> = item
         .get("tags")
         .and_then(|t| t.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     for tag in &tags {
@@ -667,8 +698,9 @@ pub fn derive_semantic(
     // 中文译名：与 resource_tags 一一对应，缺译名留空串（保持下标对齐）。
     for tag in &sem.resource_tags {
         let (ns, value) = split_tag(tag);
-        let zh = eh_tag_translation::translate_with_update(ns, value, allow_network_update, cache_dir)
-            .unwrap_or_default();
+        let zh =
+            eh_tag_translation::translate_with_update(ns, value, allow_network_update, cache_dir)
+                .unwrap_or_default();
         sem.resource_tags_zh.push(zh);
     }
 
@@ -721,7 +753,6 @@ pub fn read_manifest(out_dir: &str) -> Vec<EhSavedItem> {
 // 主流程
 // ---------------------------------------------------------------------------
 
-
 /// 按锚点顺序检索并判定：作品名优先，其次创作者名（见 `eh_match::search_anchors`）。
 ///
 /// 只要某轮锚点得到 `Matched` / `Editions` 就返回；都没命中但有 `Ambiguous` 则返回
@@ -746,13 +777,21 @@ pub fn match_gallery_full(
 ) -> Result<(crate::eh_match::MatchDecision, EhSemantic, String), String> {
     use crate::eh_match::{self, MatchDecision};
 
-    let host = if rules.host.trim().is_empty() { DEFAULT_HOST } else { rules.host.trim() };
+    let host = if rules.host.trim().is_empty() {
+        DEFAULT_HOST
+    } else {
+        rules.host.trim()
+    };
     let client = Client::new(host, rules.interval())?;
     // 放宽策略：先把"作品名 + 卷/话号"作为首个锚点（便于命中对应卷/话），
     // 再退回纯作品名与创作者锚点。
     let anchors = crate::eh_match::search_anchors_with_number(work_title, creators, number);
     if anchors.is_empty() {
-        return Ok((MatchDecision::Unmatched, EhSemantic::default(), String::new()));
+        return Ok((
+            MatchDecision::Unmatched,
+            EhSemantic::default(),
+            String::new(),
+        ));
     }
 
     let mut pending_ambiguous: Option<MatchDecision> = None;
@@ -770,8 +809,11 @@ pub fn match_gallery_full(
         if pairs.is_empty() {
             continue;
         }
-        let reqs: Vec<(String, String)> =
-            pairs.iter().filter_map(|(u, _)| parse_gid_token(u)).take(25).collect();
+        let reqs: Vec<(String, String)> = pairs
+            .iter()
+            .filter_map(|(u, _)| parse_gid_token(u))
+            .take(25)
+            .collect();
         if reqs.is_empty() {
             continue;
         }
@@ -953,7 +995,12 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         }
         progress.page = page;
         progress.candidates = pairs.len();
-        emit(terminal, "searching", format!("搜索第 {page} 页：累计候选 {} 条", pairs.len()), &progress);
+        emit(
+            terminal,
+            "searching",
+            format!("搜索第 {page} 页：累计候选 {} 条", pairs.len()),
+            &progress,
+        );
         match parse_next_page(&html, &client.host) {
             Some(next) => url = next,
             None => break,
@@ -968,7 +1015,12 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
 
     // 2) 元数据（每次 ≤25 个 gid）
     progress.stage = "metadata".into();
-    emit(terminal, "metadata", format!("拉取 {} 条元数据", pairs.len()), &progress);
+    emit(
+        terminal,
+        "metadata",
+        format!("拉取 {} 条元数据", pairs.len()),
+        &progress,
+    );
     let mut items: Vec<serde_json::Value> = Vec::new();
     for chunk in pairs.chunks(25) {
         std::thread::sleep(client.interval);
@@ -1072,7 +1124,11 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
                 tags: item
                     .get("tags")
                     .and_then(|x| x.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 category: text_field(item, "category").to_string(),
                 filecount: int_field(item, "filecount"),
@@ -1096,14 +1152,19 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         }
     }
 
-    let json = serde_json::to_string_pretty(&manifest).map_err(|e| format!("清单序列化失败：{e}"))?;
+    let json =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("清单序列化失败：{e}"))?;
     std::fs::write(manifest_path(&rules.out_dir), json).map_err(|e| format!("写清单失败：{e}"))?;
 
     progress.running = false;
     progress.stage = "done".into();
     progress.message = format!(
         "本轮新增 {saved} 个；评分不足 {}｜标记排除 {}｜无种子 {}｜下载数不达标 {}｜映射未确认 {}",
-        progress.no_rating, progress.no_marker, progress.no_torrent, progress.no_downloads, progress.unmapped
+        progress.no_rating,
+        progress.no_marker,
+        progress.no_torrent,
+        progress.no_downloads,
+        progress.unmapped
     );
     Ok(progress)
 }
@@ -1139,7 +1200,11 @@ mod tests {
         assert!(r.marker_ok("[Digital] x", ""));
         assert!(!r.marker_ok("x", "[AI Generated] foo"), "排除名单优先");
         assert!(!r.marker_ok("x", "no marker here"));
-        let any = EhRules { title_markers: "any".into(), exclude_markers: vec![], ..Default::default() };
+        let any = EhRules {
+            title_markers: "any".into(),
+            exclude_markers: vec![],
+            ..Default::default()
+        };
         assert!(any.marker_ok("whatever", ""));
     }
 
@@ -1168,7 +1233,10 @@ mod tests {
         let html = r#"<a href="https://e-hentai.org/g/4204783/6a915060bd/"><div class="glink">T</div></a>"#;
         let pairs = parse_gallery_pairs(html, DEFAULT_HOST);
         assert_eq!(pairs.len(), 1);
-        assert_eq!(parse_gid_token(&pairs[0].0), Some(("4204783".into(), "6a915060bd".into())));
+        assert_eq!(
+            parse_gid_token(&pairs[0].0),
+            Some(("4204783".into(), "6a915060bd".into()))
+        );
         assert_eq!(pairs[0].1, "T");
     }
 
@@ -1184,7 +1252,11 @@ mod tests {
         let jpn = "[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4";
         let torrent = "[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4〜長女レミィ編(前編)〜.zip";
         assert!(maps_to_gallery(jpn, torrent, &[]));
-        assert!(!maps_to_gallery("Akatsuki Myuuto Boku ni shika Furenai", torrent, &[]));
+        assert!(!maps_to_gallery(
+            "Akatsuki Myuuto Boku ni shika Furenai",
+            torrent,
+            &[]
+        ));
     }
 
     #[test]
@@ -1232,7 +1304,10 @@ mod tests {
     #[test]
     fn semantic_layer_aligns_with_scraper_vocabulary() {
         let sem = derive_semantic(&sample_gallery(), false, "");
-        assert!(sem.work_title.contains("赤月屋"), "work_title 应取 title_jpn");
+        assert!(
+            sem.work_title.contains("赤月屋"),
+            "work_title 应取 title_jpn"
+        );
         assert!(!sem.title_aliases.is_empty(), "罗马字标题应进别名");
 
         // creators：artist / group 分开且带角色
@@ -1250,12 +1325,19 @@ mod tests {
         // other:uncensored 归入 censorship，不应再重复出现在 resource_tags
         assert!(!sem.resource_tags.iter().any(|t| t == "other:uncensored"));
         assert!(sem.resource_tags.iter().any(|t| t == "female:big breasts"));
-        assert!(sem.resource_tags.iter().any(|t| t == "other:multi-work series"));
+        assert!(sem
+            .resource_tags
+            .iter()
+            .any(|t| t == "other:multi-work series"));
 
         // 中文译名与 resource_tags 一一对应
         assert_eq!(sem.resource_tags.len(), sem.resource_tags_zh.len());
         let zh_of = |raw: &str| {
-            let i = sem.resource_tags.iter().position(|t| t == raw).expect("tag 存在");
+            let i = sem
+                .resource_tags
+                .iter()
+                .position(|t| t == raw)
+                .expect("tag 存在");
             sem.resource_tags_zh[i].clone()
         };
         assert_eq!(zh_of("female:big breasts"), "巨乳");
@@ -1273,20 +1355,26 @@ mod tests {
             "source_url":"s","saved_at_utc":"now"}]"#;
         let items: Vec<EhSavedItem> = serde_json::from_str(old).expect("旧清单应可反序列化");
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].semantic, EhSemantic::default(), "缺失的语义层应为默认值");
+        assert_eq!(
+            items[0].semantic,
+            EhSemantic::default(),
+            "缺失的语义层应为默认值"
+        );
     }
-
 
     #[test]
     fn match_anchors_are_offline_ordered() {
         // 纯逻辑：作品名优先、创作者去重（不联网）
         let a = match_gallery_anchors(
             "[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4 [中国翻訳]",
-            &["赤月みゅうと".into(), "赤月屋".into(), "赤月みゅうと".into()],
+            &[
+                "赤月みゅうと".into(),
+                "赤月屋".into(),
+                "赤月みゅうと".into(),
+            ],
         );
         assert_eq!(a[0], "僕にしか触れないサキュバス三姉妹に搾られる話4");
         assert_eq!(a.len(), 3, "重复创作者名应去重");
         assert!(match_gallery_anchors("", &[]).is_empty());
     }
-
 }

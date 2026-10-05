@@ -17,7 +17,7 @@
 |---|---|---|
 | `scan_diag.log` | 远程扫描 / 封面 worker | `scan_terminal status=… mode=… gen=… checked=…`、`cover_fail … code=… asset=…`、`cover_budget detail=…`、`cover_whole_file_read bytes=…`、`startup_recovered_cover_leases=…` |
 | `pdf_diag.log` | PDF 文档层 | `pdf_open mode=lazy ms=… lazy_reads=… lazy_bytes=… size=…`、`pdf_page index=… width=… ask_reads=… ask_bytes=… out_bytes=…` |
-| `reader_diag.log` | 阅读打开路径 | `reader_open mode=raw-cache|stream|fallback-download stream_ms=… download_ms=…` |
+| `reader_diag.log` | 阅读打开与前台页读取 | `reader_open mode=raw-cache|stream|fallback-download stream_ms=… download_ms=…`、`reader_timing stage=page_load source_type=… result=success|error elapsed_ms=…` |
 | `mobi_diag.log` | MOBI 文档层 | `mobi_open mode=lazy|cover-lazy|lazy-cached|full-fallback pages=… cache=hit|miss ms=…`、`mobi_page index=… bytes=… ms=…`、`mobi_lazy_declined reason=…`、`mobi_lazy_skipped_ranges count=…`、`mobi_lazy_clamped_offsets count=…` |
 
 规则：

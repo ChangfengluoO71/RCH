@@ -2,7 +2,7 @@
   "id": "remote-cloud-scan",
   "name": "remote-cloud-scan",
   "title": "全云端远程扫描与封面索引",
-  "description": "所有云端书源首次授权/打开后台全量扫描，后续增量扫描与手动重扫；识别图片文件夹漫画，接入封面、Reader、缓存清理和远程删除一致性。",
+  "description": "云端书源自动全量/增量扫描，识别图片文件夹漫画，并与封面、Reader、缓存清理和远程删除保持一致。UI 只提供状态与失败重试，不提供手动暂停/继续或全量/增量重扫按钮（第92轮决定）。",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
@@ -27,6 +27,6 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "状态截至 2026-10-01：扫描引擎、持久化、FRB API、Dart coordinator、文件夹阅读与封面处理均已有实现；父任务仍未通过跨 provider/失败恢复完整验收。5 个子任务均未完成归档；manifest 为 planning，其余四项 in_progress。父计划的阶段清单是验收门，不代表代码尚未开始。UI 不恢复第92轮移除的暂停/继续和手动全量/增量重扫按钮。",
   "meta": {}
 }

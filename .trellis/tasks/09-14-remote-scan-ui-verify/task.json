@@ -2,7 +2,7 @@
   "id": "remote-scan-ui-verify",
   "name": "remote-scan-ui-verify",
   "title": "云端扫描界面与跨 provider 验证",
-  "description": "",
+  "description": "验证自动全量/增量扫描状态界面、设置兼容、失败重试和五类 provider；用户界面不提供手动暂停/继续或全量/增量重扫按钮。",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "09-14-remote-cloud-scan",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "状态截至 2026-10-01：当前 UI 仅保留失败重试入口。暂停/继续、增量重扫、全量重扫按钮及对应死回调已按 2026-09-21 用户决定移除；验收聚焦状态可见性、重试顺序、设置兼容与跨 provider 证据，不重新引入这些按钮。",
   "meta": {}
 }

@@ -91,7 +91,9 @@ pub trait ByteSource: Send + Sync {
 }
 
 impl<S: ByteSource + ?Sized> ByteSource for std::sync::Arc<S> {
-    fn len(&self) -> u64 { (**self).len() }
+    fn len(&self) -> u64 {
+        (**self).len()
+    }
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         (**self).read_at(offset, buf)
     }

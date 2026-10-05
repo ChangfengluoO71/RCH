@@ -258,7 +258,9 @@ fn open_lazy(
     let mut probe_holder: Option<Vec<u8>> = None;
     let header_at = PALMDB_HEADER_LEN + PALMDB_RECORD_INFO_LEN * record_count + 2;
     for candidate in [header_at, offsets[0]] {
-        if candidate.checked_add(RECORD0_FIRST_IMAGE_INDEX + 4).is_none()
+        if candidate
+            .checked_add(RECORD0_FIRST_IMAGE_INDEX + 4)
+            .is_none()
             || candidate + RECORD0_FIRST_IMAGE_INDEX + 4 > file_len
         {
             continue;
@@ -491,8 +493,9 @@ fn serial_probe_until_first_image(
         }
         let mut magic = [0u8; MAGIC_PROBE_BYTES];
         src.read_exact_at(*offset, &mut magic[..probe_len]).ok()?;
-        if !crate::decode::image_magic_decodable(crate::decode::sniff_image_magic(&magic[..probe_len]))
-        {
+        if !crate::decode::image_magic_decodable(crate::decode::sniff_image_magic(
+            &magic[..probe_len],
+        )) {
             continue;
         }
         decodable[index] = true;
@@ -503,10 +506,7 @@ fn serial_probe_until_first_image(
 
 /// 并发探测（`MAGIC_PROBE_WORKERS` 个 worker）：顺序无关的小读并发取，结果按**原索引**
 /// 写回，所以页序与串行版本逐字一致；任一次读失败仍整体返回 `None`（语义不变）。
-fn concurrent_probe(
-    src: &Arc<dyn ByteSource>,
-    candidates: &[(u64, u64)],
-) -> Option<Vec<bool>> {
+fn concurrent_probe(src: &Arc<dyn ByteSource>, candidates: &[(u64, u64)]) -> Option<Vec<bool>> {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     if candidates.is_empty() {
@@ -522,8 +522,9 @@ fn concurrent_probe(
 
     let next = AtomicUsize::new(0);
     let failed = std::sync::atomic::AtomicBool::new(false);
-    let buckets: Vec<std::sync::Mutex<Vec<(usize, bool)>>> =
-        (0..workers).map(|_| std::sync::Mutex::new(Vec::new())).collect();
+    let buckets: Vec<std::sync::Mutex<Vec<(usize, bool)>>> = (0..workers)
+        .map(|_| std::sync::Mutex::new(Vec::new()))
+        .collect();
 
     std::thread::scope(|scope| {
         for bucket in &buckets {
@@ -543,9 +544,9 @@ fn concurrent_probe(
                     match src.read_exact_at(offset, &mut magic[..probe_len]) {
                         Ok(()) => local.push((
                             index,
-                            crate::decode::image_magic_decodable(
-                                crate::decode::sniff_image_magic(&magic[..probe_len]),
-                            ),
+                            crate::decode::image_magic_decodable(crate::decode::sniff_image_magic(
+                                &magic[..probe_len],
+                            )),
                         )),
                         Err(_) => {
                             failed.store(true, Ordering::Relaxed);
@@ -765,8 +766,7 @@ mod tests {
         let r0 = table_len;
         data[r0 + MOBI_HEADER_IN_RECORD as usize..r0 + MOBI_HEADER_IN_RECORD as usize + 4]
             .copy_from_slice(b"MOBI");
-        data[r0 + RECORD0_FIRST_IMAGE_INDEX as usize
-            ..r0 + RECORD0_FIRST_IMAGE_INDEX as usize + 4]
+        data[r0 + RECORD0_FIRST_IMAGE_INDEX as usize..r0 + RECORD0_FIRST_IMAGE_INDEX as usize + 4]
             .copy_from_slice(&1u32.to_be_bytes());
         let title = b"Fixture MOBI Title";
         data[r0 + RECORD0_NAME_OFFSET as usize..r0 + RECORD0_NAME_OFFSET as usize + 4]
@@ -784,8 +784,12 @@ mod tests {
 
     fn first_image_offset(fixture: &[u8]) -> usize {
         let at = PALMDB_HEADER_LEN as usize + 8; // 记录表第 2 条（索引 1）
-        u32::from_be_bytes([fixture[at], fixture[at + 1], fixture[at + 2], fixture[at + 3]])
-            as usize
+        u32::from_be_bytes([
+            fixture[at],
+            fixture[at + 1],
+            fixture[at + 2],
+            fixture[at + 3],
+        ]) as usize
     }
 
     /// 第 81 轮核心断言：惰性打开只读"头 + 记录表 + 探测字节"，
@@ -797,8 +801,13 @@ mod tests {
         let fixture = synth_mobi(3, 4 * 1024 * 1024); // 3 条各约 4 MB
         let file_len = fixture.len() as u64;
         let src = Arc::new(CountingSource::new(fixture));
-        let (lazy, title) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).expect("合成文件应走惰性路径");
+        let (lazy, title) = open_lazy(
+            Arc::clone(&src) as Arc<dyn ByteSource>,
+            "t.mobi",
+            "t",
+            false,
+        )
+        .expect("合成文件应走惰性路径");
         assert_eq!(lazy.records.len(), 3, "三条图片记录都要进页表");
         assert_eq!(title, "Fixture MOBI Title");
         let read = src.total_read();
@@ -852,10 +861,8 @@ mod tests {
     }
 
     fn use_temp_cache_root(tag: &str) -> (std::path::PathBuf, CacheRootGuard) {
-        let root = std::env::temp_dir().join(format!(
-            "rch_mobi_table_{tag}_{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rch_mobi_table_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         crate::cache::set_custom_cache_root(root.to_str().unwrap());
         (root, CacheRootGuard)
@@ -922,7 +929,8 @@ mod tests {
         let fixture = synth_mobi(40, 512 * 1024);
 
         let first_src = Arc::new(CountingSource::new(fixture.clone()));
-        let _ = MobiBook::open(Arc::clone(&first_src) as Arc<dyn ByteSource>, "t.mobi").expect("首次");
+        let _ =
+            MobiBook::open(Arc::clone(&first_src) as Arc<dyn ByteSource>, "t.mobi").expect("首次");
 
         // 篡改记录表里第二条记录的偏移（长度不变 ⇒ 只靠 digest 才能发现）。
         let mut tampered = fixture;
@@ -997,10 +1005,14 @@ mod tests {
     #[test]
     fn full_open_probes_concurrently_while_cover_open_stays_serial() {
         // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
-        let (_root, _guard) = use_temp_cache_root("full_open_probes_concurrently_while_cover_open_stays_serial");
+        let (_root, _guard) =
+            use_temp_cache_root("full_open_probes_concurrently_while_cover_open_stays_serial");
         let delay = std::time::Duration::from_millis(3);
 
-        let full_src = Arc::new(CountingSource::with_delay(synth_mobi(40, 512 * 1024), delay));
+        let full_src = Arc::new(CountingSource::with_delay(
+            synth_mobi(40, 512 * 1024),
+            delay,
+        ));
         let full = MobiBook::open(Arc::clone(&full_src) as Arc<dyn ByteSource>, "t.mobi")
             .expect("完整打开");
         assert_eq!(full.page_count(), 40, "页表不得缩水");
@@ -1010,7 +1022,10 @@ mod tests {
             full_src.max_in_flight()
         );
 
-        let cover_src = Arc::new(CountingSource::with_delay(synth_mobi(40, 512 * 1024), delay));
+        let cover_src = Arc::new(CountingSource::with_delay(
+            synth_mobi(40, 512 * 1024),
+            delay,
+        ));
         let cover = MobiBook::open_cover(Arc::clone(&cover_src) as Arc<dyn ByteSource>, "t.mobi")
             .expect("封面打开");
         assert_eq!(cover.page_count(), 1);
@@ -1023,7 +1038,10 @@ mod tests {
 
         // 并发取回的结果必须逐条就位：第 0 页内容与夹具里第一条图片记录一致。
         let page = full_page_bytes(&full, 0);
-        assert_eq!(&page[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &page[..8],
+            &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+        );
     }
 
     fn full_page_bytes(book: &MobiBook, index: u32) -> Vec<u8> {
@@ -1040,8 +1058,13 @@ mod tests {
         let second = first_image_offset(&fixture) + 4096; // 第 2 条图片记录
         fixture[second + 8] = 0xAB; // 魔数之后（前 8 字节是 PNG 魔数，不能动）
         let src = Arc::new(CountingSource::new(fixture));
-        let (lazy, _) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).expect("惰性路径");
+        let (lazy, _) = open_lazy(
+            Arc::clone(&src) as Arc<dyn ByteSource>,
+            "t.mobi",
+            "t",
+            false,
+        )
+        .expect("惰性路径");
         let (offset, len) = lazy.records[1];
         let mut buf = vec![0u8; len as usize];
         src.read_exact_at(offset, &mut buf).unwrap();
@@ -1053,13 +1076,19 @@ mod tests {
     #[test]
     fn lazy_open_skips_records_that_are_not_decodable_images() {
         // 隔离缓存根：页表缓存会跨用例互相影响，且绝不能写进用户真实缓存目录。
-        let (_root, _guard) = use_temp_cache_root("lazy_open_skips_records_that_are_not_decodable_images");
+        let (_root, _guard) =
+            use_temp_cache_root("lazy_open_skips_records_that_are_not_decodable_images");
         let mut fixture = synth_mobi(2, 512);
         let first = first_image_offset(&fixture);
         fixture[first..first + 8].fill(0); // 擦掉第一条的 PNG 魔数
         let src = Arc::new(CountingSource::new(fixture));
-        let (lazy, _) =
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).expect("仍有一条可解码图片");
+        let (lazy, _) = open_lazy(
+            Arc::clone(&src) as Arc<dyn ByteSource>,
+            "t.mobi",
+            "t",
+            false,
+        )
+        .expect("仍有一条可解码图片");
         assert_eq!(lazy.records.len(), 1, "不可解码的那条必须被跳过");
     }
 
@@ -1073,7 +1102,13 @@ mod tests {
         fixture[table_len + MOBI_HEADER_IN_RECORD as usize] = b'X'; // 破坏 "MOBI"
         let src = Arc::new(CountingSource::new(fixture));
         assert!(
-            open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false).is_none(),
+            open_lazy(
+                Arc::clone(&src) as Arc<dyn ByteSource>,
+                "t.mobi",
+                "t",
+                false
+            )
+            .is_none(),
             "魔数不对时必须返回 None ⇒ 调用方整份回退"
         );
     }
@@ -1112,8 +1147,13 @@ mod tests {
             data[at..at + 8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         }
         let src = Arc::new(CountingSource::new(data));
-        let (lazy, _) = open_lazy(Arc::clone(&src) as Arc<dyn ByteSource>, "t.mobi", "t", false)
-            .expect("crate 式布局必须被接受（否则真机上会退回整份读）");
+        let (lazy, _) = open_lazy(
+            Arc::clone(&src) as Arc<dyn ByteSource>,
+            "t.mobi",
+            "t",
+            false,
+        )
+        .expect("crate 式布局必须被接受（否则真机上会退回整份读）");
         assert_eq!(lazy.records.len(), 2);
         assert_eq!(lazy.records[0].0, image_at as u64);
     }

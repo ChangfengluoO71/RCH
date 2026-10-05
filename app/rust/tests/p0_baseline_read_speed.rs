@@ -30,20 +30,20 @@
 //! 每个用例都会打印一行 `P0-BASELINE {...}` JSON，供 baseline → P0-B → P0-C → P0-D
 //! 的同口径对比。
 
+use rust_lib_app::api::source::{open_webdav_book, webdav_connect, webdav_disconnect};
+use rust_lib_app::cache;
 use rust_lib_app::document::open_document;
 use rust_lib_app::perf::{self, Counter};
 use rust_lib_app::reader::Reader;
 use rust_lib_app::source::cloud115::Cloud115WebClient;
 use rust_lib_app::source::gate::{with_priority, RequestPriority};
+use rust_lib_app::source::webdav::WebDavClient;
 use rust_lib_app::source::ByteSource;
 use std::io::{Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use rust_lib_app::cache;
-use rust_lib_app::api::source::{open_webdav_book, webdav_connect, webdav_disconnect};
-use rust_lib_app::source::webdav::WebDavClient;
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,9 @@ impl MockCdn {
 
     /// RG-A：206 携带**非法** `Content-Range`（A2-6）。
     fn with_malformed_content_range(self) -> Self {
-        self.state.malformed_content_range.store(1, Ordering::SeqCst);
+        self.state
+            .malformed_content_range
+            .store(1, Ordering::SeqCst);
         self
     }
 
@@ -456,7 +458,11 @@ fn handle_conn(stream: &mut std::net::TcpStream, state: &MockState, body: &[u8])
     let drip_ms = state.drip_ms.load(Ordering::SeqCst);
     if synthetic > 0 {
         // 合成体：始终分块写出（零内存）——慢滴时按 drip_bytes/间隔，否则 64KiB 零等待。
-        let chunk = if drip_bytes > 0 { drip_bytes } else { 64 * 1024 };
+        let chunk = if drip_bytes > 0 {
+            drip_bytes
+        } else {
+            64 * 1024
+        };
         let mut cursor = start;
         while cursor < end {
             let chunk_end = (cursor + chunk).min(end);
@@ -1237,7 +1243,6 @@ fn p0a_range_statuses_are_accounted_for_forbidden_and_waf() {
     );
 }
 
-
 // ---------------------------------------------------------------------------
 // RG-A A-1 / A-5：WebDAV `download_to_raw_cache` 作为 ADR-005 production 参考路径
 // ---------------------------------------------------------------------------
@@ -1305,9 +1310,7 @@ fn rga_part_files(root: &Path) -> Vec<PathBuf> {
 }
 
 fn rga_base(cdn: &MockCdn) -> String {
-    cdn.url()
-        .trim_end_matches("/file.cbz")
-        .to_string()
+    cdn.url().trim_end_matches("/file.cbz").to_string()
 }
 
 /// 走**生产** `WebDavClient::download_to_raw_cache`（每次调用新建 client 实例）。
@@ -1358,11 +1361,7 @@ fn rg_a_a1_webdav_full_download_matrix_20_100_300_mib() {
         let samples = rga_sample_offsets(&target, &[0, mid, total - 1]);
         assert_eq!(samples[0], synth_byte(0), "{mib} MiB: offset 0");
         assert_eq!(samples[1], synth_byte(mid), "{mib} MiB: mid offset");
-        assert_eq!(
-            samples[2],
-            synth_byte(total - 1),
-            "{mib} MiB: last byte"
-        );
+        assert_eq!(samples[2], synth_byte(total - 1), "{mib} MiB: last byte");
 
         assert!(
             rga_part_files(&root).is_empty(),
@@ -1452,7 +1451,11 @@ fn rg_a_a5_webdav_mid_body_abort_never_publishes_cache() {
         rga_part_files(&root).is_empty(),
         "the aborted writer must clean up its .part-* file"
     );
-    assert_eq!(cdn.request_count(), 1, "the aborted attempt issued one request");
+    assert_eq!(
+        cdn.request_count(),
+        1,
+        "the aborted attempt issued one request"
+    );
 
     // 关闭断流 ⇒ 必须重新请求并成功完整下载。
     cdn.set_abort_after(0);
@@ -1502,7 +1505,10 @@ fn rg_a_a5_webdav_raw_cache_is_reused_across_new_client_instance() {
 
     // 全新 client 实例（新的生产对象），同一 URL + 同一 path。
     let second = rga_download(&base, "file.cbz").expect("second (cached) access");
-    assert_eq!(second, first, "cross-session reuse must return the same cache path");
+    assert_eq!(
+        second, first,
+        "cross-session reuse must return the same cache path"
+    );
     assert_eq!(
         cdn.request_count(),
         1,
@@ -1514,11 +1520,8 @@ fn rg_a_a5_webdav_raw_cache_is_reused_across_new_client_instance() {
 /// A-5：production 侧确实使用 atomic helper（结构性断言：raw-cache 写入不再直接 create 最终路径）。
 #[test]
 fn rg_a_a5_webdav_production_uses_atomic_helper() {
-    let src = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/source/webdav.rs"
-    ))
-    .expect("read webdav.rs");
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/source/webdav.rs"))
+        .expect("read webdav.rs");
     assert!(
         src.contains("AtomicCacheFile::create"),
         "WebDAV raw-cache writers must go through AtomicCacheFile"
@@ -1532,7 +1535,6 @@ fn rg_a_a5_webdav_production_uses_atomic_helper() {
         "download_full must stream through the atomic writer, not io::copy to a final path"
     );
 }
-
 
 // ---------------------------------------------------------------------------
 // RG-A A-2：ADR-005 orchestration（真实 seam：webdav_connect → open_webdav_book）
@@ -1584,11 +1586,7 @@ fn rga_connect(base: &str) -> rust_lib_app::api::source::WebDavSession {
         .expect("webdav_connect must succeed")
 }
 
-fn rga_open(
-    session: u64,
-    path: &str,
-    strategy: &str,
-) -> anyhow::Result<()> {
+fn rga_open(session: u64, path: &str, strategy: &str) -> anyhow::Result<()> {
     let path = path.to_string();
     let strategy = strategy.to_string();
     rga_rt()
@@ -1606,7 +1604,9 @@ fn rga_local_pages(local_path: &std::path::Path, doc_path: &str) -> Vec<Arc<Vec<
     let document = open_document(src, doc_path).expect("open document");
     let pages = document.page_count();
     let reader = Arc::new(Reader::new(document, &format!("rga-a2-{}", perf::now_us())));
-    (0..pages).map(|i| reader.get_page(i).expect("get page")).collect()
+    (0..pages)
+        .map(|i| reader.get_page(i).expect("get page"))
+        .collect()
 }
 
 /// A2-1：Range probe 收到 200 ⇒ unsupported ⇒ **进入 ADR-005 整包 fallback**，并原子发布。
@@ -1635,7 +1635,11 @@ fn rg_a_a2_1_unsupported_range_triggers_full_download_fallback() {
     );
 
     let found = rga_find_named(&root, "file.cbz");
-    assert_eq!(found.len(), 1, "fallback must publish exactly one raw cache file");
+    assert_eq!(
+        found.len(),
+        1,
+        "fallback must publish exactly one raw cache file"
+    );
     assert_eq!(
         std::fs::metadata(&found[0]).unwrap().len(),
         body.len() as u64,
@@ -1677,7 +1681,10 @@ fn rg_a_a2_2_fallback_material_becomes_local_document_authority() {
         "page count must match the same CBZ opened locally"
     );
     for (index, (want, got)) in baseline.iter().zip(fallback.iter()).enumerate() {
-        assert_eq!(want, got, "page {index} bytes must match the local baseline");
+        assert_eq!(
+            want, got,
+            "page {index} bytes must match the local baseline"
+        );
     }
 }
 
@@ -1791,7 +1798,11 @@ fn rg_a_a2_5_valid_partial_content_stays_range_backed() {
     let after_open = rga_counts(&cdn.requests());
     let open_delta = rga_delta(before_open, after_open);
 
-    assert!(info.is_ok(), "Range-backed open must succeed: {:?}", info.as_ref().err());
+    assert!(
+        info.is_ok(),
+        "Range-backed open must succeed: {:?}",
+        info.as_ref().err()
+    );
     assert!(
         open_delta.ranged >= 1,
         "Range-backed path must read via Range requests"

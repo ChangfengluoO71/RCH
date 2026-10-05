@@ -282,6 +282,7 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             name TEXT NOT NULL,
             path TEXT NOT NULL,
             entry_type TEXT NOT NULL,
+            asset_kind TEXT,
             size INTEGER,
             modified_at INTEGER,
             cover_path TEXT,
@@ -591,7 +592,11 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
         )?;
     }
     // Phase 5.0：library_index 增加 hash 列（条目元数据哈希，增量检测/同 path 判定用）。
-    ensure_columns(conn, "library_index", &[("hash", "hash TEXT")])?;
+    ensure_columns(
+        conn,
+        "library_index",
+        &[("hash", "hash TEXT"), ("asset_kind", "asset_kind TEXT")],
+    )?;
     ensure_columns(
         conn,
         "scrape_proposals",
@@ -1612,11 +1617,8 @@ pub(crate) fn delete_source_on(conn: &Connection, id: &str) -> Result<()> {
     // 已删源会留残行并继续出现在扫描类视图里（第 56 轮实测：三个测试源在 10 张表里
     // 留了 40+ 行，其中 `remote_scan_state.status` 还是 `interrupted`）。
     let remote_prefix = format!("{}|{}|", source_type.unwrap_or_default(), id);
-    let _ = crate::remote_scan::persistence::delete_remote_rows_for_source_on(
-        conn,
-        id,
-        &remote_prefix,
-    );
+    let _ =
+        crate::remote_scan::persistence::delete_remote_rows_for_source_on(conn, id, &remote_prefix);
     conn.execute("DELETE FROM book_sources WHERE id = ?1", params![id])?;
     upsert_tombstone_on(&conn, "sources", id)?;
     Ok(())
@@ -2530,7 +2532,12 @@ fn entity_live_timestamp(conn: &Connection, entity: &str, key: &str) -> Option<i
 /// **墓碑随行复活而失效**（用户 2026-09-23 决策）。原来的实现让墓碑永久有效，
 /// 于是"删过又回来"的书在下一次同步/整包恢复时会被旧墓碑再删一次
 /// （实测：真实库恢复到全新库 1154 行 → 1055 行、章节 177 → 111）。
-pub(crate) fn tombstone_is_stale(conn: &Connection, entity: &str, key: &str, tombstone_at: i64) -> bool {
+pub(crate) fn tombstone_is_stale(
+    conn: &Connection,
+    entity: &str,
+    key: &str,
+    tombstone_at: i64,
+) -> bool {
     entity_live_timestamp(conn, entity, key).is_some_and(|live| live >= tombstone_at)
 }
 
@@ -2779,6 +2786,9 @@ pub struct LibraryIndexRow {
     pub name: String,
     pub path: String,
     pub entry_type: String,
+    /// Unified classification shared with remote scan; absent on legacy rows.
+    #[serde(default)]
+    pub asset_kind: Option<String>,
     pub size: Option<i64>,
     pub modified_at: Option<i64>,
     pub cover_path: Option<String>,
@@ -2814,11 +2824,12 @@ pub fn library_index_id(fingerprint: &str, path: &str) -> String {
 pub(crate) fn upsert_library_index_on(conn: &Connection, r: &LibraryIndexRow) -> Result<()> {
     conn.execute(
         "INSERT INTO library_index
-         (id, source_id, parent_id, name, path, entry_type, size, modified_at, cover_path, hash, deleted, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         (id, source_id, parent_id, name, path, entry_type, asset_kind, size, modified_at, cover_path, hash, deleted, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(id) DO UPDATE SET
             source_id=excluded.source_id, parent_id=excluded.parent_id, name=excluded.name,
-            path=excluded.path, entry_type=excluded.entry_type, size=excluded.size,
+            path=excluded.path, entry_type=excluded.entry_type,
+            asset_kind=COALESCE(excluded.asset_kind, library_index.asset_kind), size=excluded.size,
             modified_at=excluded.modified_at, cover_path=excluded.cover_path, hash=excluded.hash,
             deleted=excluded.deleted, updated_at=excluded.updated_at",
         params![
@@ -2828,6 +2839,7 @@ pub(crate) fn upsert_library_index_on(conn: &Connection, r: &LibraryIndexRow) ->
             r.name,
             r.path,
             r.entry_type,
+            r.asset_kind,
             r.size,
             r.modified_at,
             r.cover_path,
@@ -2997,6 +3009,7 @@ pub(crate) fn ensure_index_entry_on(
             },
             path: norm,
             entry_type: entry_type.to_string(),
+            asset_kind: None,
             size,
             modified_at,
             cover_path: None,
@@ -3032,7 +3045,7 @@ pub(crate) fn load_library_index_for_sync_on(
 ) -> Vec<LibraryIndexRow> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, source_id, parent_id, name, path, entry_type, size, modified_at, cover_path, hash, updated_at, deleted
+            "SELECT id, source_id, parent_id, name, path, entry_type, asset_kind, size, modified_at, cover_path, hash, updated_at, deleted
              FROM library_index WHERE updated_at > ?1 ORDER BY updated_at",
         )
         .unwrap();
@@ -3044,12 +3057,13 @@ pub(crate) fn load_library_index_for_sync_on(
             name: row.get(3)?,
             path: row.get(4)?,
             entry_type: row.get(5)?,
-            size: row.get(6)?,
-            modified_at: row.get(7)?,
-            cover_path: row.get(8)?,
-            hash: row.get(9)?,
-            updated_at: row.get(10)?,
-            deleted: row.get::<_, i64>(11)? != 0,
+            asset_kind: row.get(6)?,
+            size: row.get(7)?,
+            modified_at: row.get(8)?,
+            cover_path: row.get(9)?,
+            hash: row.get(10)?,
+            updated_at: row.get(11)?,
+            deleted: row.get::<_, i64>(12)? != 0,
         })
     })
     .unwrap()
@@ -3069,7 +3083,7 @@ pub(crate) fn load_library_index_for_source_on(
 ) -> Vec<LibraryIndexRow> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, source_id, parent_id, name, path, entry_type, size, modified_at, cover_path, hash, updated_at, deleted
+            "SELECT id, source_id, parent_id, name, path, entry_type, asset_kind, size, modified_at, cover_path, hash, updated_at, deleted
              FROM library_index WHERE source_id = ?1 AND deleted = 0 ORDER BY path",
         )
         .unwrap();
@@ -3081,12 +3095,13 @@ pub(crate) fn load_library_index_for_source_on(
             name: row.get(3)?,
             path: row.get(4)?,
             entry_type: row.get(5)?,
-            size: row.get(6)?,
-            modified_at: row.get(7)?,
-            cover_path: row.get(8)?,
-            hash: row.get(9)?,
-            updated_at: row.get(10)?,
-            deleted: row.get::<_, i64>(11)? != 0,
+            asset_kind: row.get(6)?,
+            size: row.get(7)?,
+            modified_at: row.get(8)?,
+            cover_path: row.get(9)?,
+            hash: row.get(10)?,
+            updated_at: row.get(11)?,
+            deleted: row.get::<_, i64>(12)? != 0,
         })
     })
     .unwrap()
@@ -3105,7 +3120,7 @@ pub fn load_all_library_index() -> Vec<LibraryIndexRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
         .prepare(
-            "SELECT id, source_id, parent_id, name, path, entry_type, size, modified_at, cover_path, hash, updated_at, deleted
+            "SELECT id, source_id, parent_id, name, path, entry_type, asset_kind, size, modified_at, cover_path, hash, updated_at, deleted
              FROM library_index WHERE deleted = 0 ORDER BY source_id, path",
         )
         .unwrap();
@@ -3117,12 +3132,13 @@ pub fn load_all_library_index() -> Vec<LibraryIndexRow> {
             name: row.get(3)?,
             path: row.get(4)?,
             entry_type: row.get(5)?,
-            size: row.get(6)?,
-            modified_at: row.get(7)?,
-            cover_path: row.get(8)?,
-            hash: row.get(9)?,
-            updated_at: row.get(10)?,
-            deleted: row.get::<_, i64>(11)? != 0,
+            asset_kind: row.get(6)?,
+            size: row.get(7)?,
+            modified_at: row.get(8)?,
+            cover_path: row.get(9)?,
+            hash: row.get(10)?,
+            updated_at: row.get(11)?,
+            deleted: row.get::<_, i64>(12)? != 0,
         })
     })
     .unwrap()
@@ -5264,7 +5280,8 @@ mod tests {
         assert!(tombstone_is_stale(&conn, "metas", "k1", 500));
         assert!(!merge_meta_sync_on(&conn, &meta_sync_row("k1", 500, true), true).unwrap());
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r.get::<_, i64>(0))
+            conn.query_row("SELECT COUNT(*) FROM book_metas", [], |r| r
+                .get::<_, i64>(0))
                 .unwrap(),
             1,
             "同刻保留活行（不变量：墓碑只对更旧的行有效）"
@@ -5701,6 +5718,7 @@ mod tests {
             name: "a.cbz".into(),
             path: "/D:/Comics/a.cbz".into(),
             entry_type: "file".into(),
+            asset_kind: None,
             size: Some(123),
             modified_at: Some(456),
             cover_path: None,
@@ -5882,6 +5900,7 @@ mod tests {
                 name: "汉化组".into(),
                 path: "dir-fid".into(),
                 entry_type: "dir".into(),
+                asset_kind: None,
                 size: None,
                 modified_at: None,
                 cover_path: None,
@@ -6025,6 +6044,7 @@ mod tests {
             name: name.into(),
             path: path.into(),
             entry_type: "file".into(),
+            asset_kind: None,
             size: None,
             modified_at: None,
             cover_path: None,
@@ -6072,6 +6092,7 @@ mod tests {
             name: "book.cbz".into(),
             path: "/book.cbz".into(),
             entry_type: "file".into(),
+            asset_kind: None,
             size: None,
             modified_at: None,
             cover_path: None,
@@ -6131,6 +6152,7 @@ mod tests {
             name: name.into(),
             path: path.into(),
             entry_type: "file".into(),
+            asset_kind: None,
             size: None,
             modified_at: None,
             cover_path: None,
@@ -6296,6 +6318,7 @@ mod tests {
             name: "漫画.cbz".into(),
             path: "asset-fid".into(),
             entry_type: "file".into(),
+            asset_kind: None,
             size: None,
             modified_at: None,
             cover_path: None,

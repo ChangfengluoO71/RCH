@@ -2546,7 +2546,6 @@ mod verified_remote_deletion_tests {
     }
 }
 
-
 #[cfg(test)]
 mod rg_b_recovery_tests {
     use super::*;
@@ -2697,10 +2696,18 @@ mod orphan_cleanup_tests {
         let recovered = recover_expired_cover_leases_on(&conn, 2000).unwrap();
         assert_eq!(recovered, 1, "只回收已过期的租约");
         let stale: String = conn
-            .query_row("SELECT state FROM remote_cover_job WHERE job_key='stale'", [], |r| r.get(0))
+            .query_row(
+                "SELECT state FROM remote_cover_job WHERE job_key='stale'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let live: String = conn
-            .query_row("SELECT state FROM remote_cover_job WHERE job_key='live'", [], |r| r.get(0))
+            .query_row(
+                "SELECT state FROM remote_cover_job WHERE job_key='live'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(stale, "pending");
         assert_eq!(live, "running", "未过期的租约不得被抢");

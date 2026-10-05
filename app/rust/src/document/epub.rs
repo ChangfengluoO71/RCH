@@ -382,8 +382,8 @@ fn build_pages<A: EpubArchive>(archive: &A) -> Result<Vec<PageSlot>> {
     let opf_path = find_opf_path(archive)?;
 
     // 2. 解析 OPF
-    let opf_xml = read_zip_entry(archive, &opf_path)
-        .with_context(|| format!("读取 OPF 失败: {opf_path}"))?;
+    let opf_xml =
+        read_zip_entry(archive, &opf_path).with_context(|| format!("读取 OPF 失败: {opf_path}"))?;
     let (manifest, spine) = parse_opf(&opf_xml)?;
 
     // 3. 按 spine 顺序登记页
@@ -428,10 +428,7 @@ fn build_pages<A: EpubArchive>(archive: &A) -> Result<Vec<PageSlot>> {
             let Some(name) = archive.name_for_index(index) else {
                 continue;
             };
-            if is_image_ext(&name)
-                && !name.contains("__MACOSX")
-                && !name.ends_with(".DS_Store")
-            {
+            if is_image_ext(&name) && !name.contains("__MACOSX") && !name.ends_with(".DS_Store") {
                 all_images.push((name, index));
             }
         }

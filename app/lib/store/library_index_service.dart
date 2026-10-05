@@ -36,6 +36,16 @@ class LibraryIndexService {
     '.azw3',
   ];
 
+  static const List<String> _folderImageExts = [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.avif',
+  ];
+
   static bool isComicPath(String path) {
     final lower = path.toLowerCase();
     return comicExts.any(lower.endsWith);
@@ -69,7 +79,8 @@ class LibraryIndexService {
             // rootHash 变化会触发一次重写，自动把旧 raw-path id 迁移为新 id。
             .map(
               (e) =>
-                  '${e.id}|${e.path}|${e.entryType}|${e.name}|${e.size}|${e.modifiedAt}',
+                  '${e.id}|${e.path}|${e.entryType}|${e.name}|${e.size}|${e.modifiedAt}'
+                  '${e.assetKind == null ? '' : '|${e.assetKind}'}',
             )
             .toList()
           ..sort();
@@ -241,10 +252,12 @@ class LibraryIndexService {
     required String entryType,
     int? size,
     int? modifiedAt,
+    String? assetKind,
   }) => sha256
       .convert(
         utf8.encode(
-          '${normalizeIndexPath(path)}|$name|$entryType|$size|$modifiedAt',
+          '${normalizeIndexPath(path)}|$name|$entryType|$size|$modifiedAt'
+          '${assetKind == null ? '' : '|$assetKind'}',
         ),
       )
       .toString();
@@ -265,9 +278,30 @@ class LibraryIndexService {
     final root = Directory(rootPath);
     if (!await root.exists()) return entries;
     final rootId = libraryIndexId(fingerprint, rootPath);
+    final unclassifiedSubtrees = <String>{};
+    for (final entry in previous ?? const <frb.LibraryIndexDto>[]) {
+      if (entry.assetKind != null) continue;
+      var path = entry.path;
+      while (path.isNotEmpty) {
+        unclassifiedSubtrees.add(path);
+        final parentEnd = path.lastIndexOf(Platform.pathSeparator);
+        if (parentEnd < 0) break;
+        final parent = path.substring(0, parentEnd);
+        if (parent.isEmpty || parent == path) break;
+        // Keep the Windows drive root intact while marking all indexed parents.
+        if (Platform.pathSeparator == '\\' && parent.endsWith(':')) {
+          unclassifiedSubtrees.add(parent);
+          break;
+        }
+        path = parent;
+      }
+    }
     final prevDirs = <String, int>{
       for (final e in previous ?? const <frb.LibraryIndexDto>[])
-        if (e.entryType == 'dir' && e.modifiedAt != null) e.path: e.modifiedAt!,
+        if (e.entryType == 'dir' &&
+            e.assetKind != null &&
+            e.modifiedAt != null)
+          e.path: e.modifiedAt!,
     };
 
     Future<void> walk(Directory dir, String parentId) async {
@@ -276,7 +310,9 @@ class LibraryIndexService {
       String myId = rootId;
       if (!isRoot) {
         myId = libraryIndexId(fingerprint, dirPath);
-        if (!force && prevDirs.containsKey(dirPath)) {
+        if (!force &&
+            prevDirs.containsKey(dirPath) &&
+            !unclassifiedSubtrees.contains(dirPath)) {
           final st = await dir.stat();
           if (st.modified.millisecondsSinceEpoch == prevDirs[dirPath]) {
             // 子树未变：原样保留旧条目（含 dir 自身与子级），不再遍历
@@ -289,37 +325,26 @@ class LibraryIndexService {
             return;
           }
         }
-        final dirStat = await dir.stat();
-        final dirMtime = dirStat.modified.millisecondsSinceEpoch;
-        final name = dirPath.split(Platform.pathSeparator).last;
-        entries.add(
-          frb.LibraryIndexDto(
-            id: myId,
-            sourceId: sourceId,
-            parentId: parentId,
-            name: name,
-            path: dirPath,
-            entryType: 'dir',
-            size: null,
-            modifiedAt: dirMtime,
-            coverPath: null,
-            hash: entryHashOf(
-              path: dirPath,
-              name: name,
-              entryType: 'dir',
-              modifiedAt: dirMtime,
-            ),
-            updatedAt: now,
-            deleted: false,
-          ),
-        );
       }
-      await for (final e in dir.list(followLinks: false)) {
+      final children = await dir.list(followLinks: false).toList();
+      var hasArchive = false;
+      var hasImage = false;
+      for (final e in children) {
         final path = e.path;
         final name = path.split(Platform.pathSeparator).last;
         if (e is Directory) {
           await walk(e, myId);
-        } else if (e is File && isComicPath(path)) {
+        } else if (e is File) {
+          if (isComicPath(path)) hasArchive = true;
+          final lowerName = name.toLowerCase();
+          final isFolderBookImage =
+              !name.startsWith('.') &&
+              !name.startsWith('__MACOSX') &&
+              !lowerName.contains('__macosx') &&
+              !lowerName.endsWith('.ds_store') &&
+              _folderImageExts.any(lowerName.endsWith);
+          if (isFolderBookImage) hasImage = true;
+          if (!isComicPath(path)) continue;
           final st = await e.stat();
           entries.add(
             frb.LibraryIndexDto(
@@ -329,6 +354,7 @@ class LibraryIndexService {
               name: name,
               path: path,
               entryType: 'file',
+              assetKind: 'ArchiveFile',
               size: st.size,
               modifiedAt: st.modified.millisecondsSinceEpoch,
               coverPath: null,
@@ -338,12 +364,46 @@ class LibraryIndexService {
                 entryType: 'file',
                 size: st.size,
                 modifiedAt: st.modified.millisecondsSinceEpoch,
+                assetKind: 'ArchiveFile',
               ),
               updatedAt: now,
               deleted: false,
             ),
           );
         }
+      }
+      if (!isRoot) {
+        final dirStat = await dir.stat();
+        final dirMtime = dirStat.modified.millisecondsSinceEpoch;
+        final name = dirPath.split(Platform.pathSeparator).last;
+        final assetKind = hasArchive
+            ? 'ContainerDir'
+            : hasImage
+            ? 'ImageFolder'
+            : 'PlainDir';
+        entries.add(
+          frb.LibraryIndexDto(
+            id: myId,
+            sourceId: sourceId,
+            parentId: parentId,
+            name: name,
+            path: dirPath,
+            entryType: 'dir',
+            assetKind: assetKind,
+            size: null,
+            modifiedAt: dirMtime,
+            coverPath: null,
+            hash: entryHashOf(
+              path: dirPath,
+              name: name,
+              entryType: 'dir',
+              modifiedAt: dirMtime,
+              assetKind: assetKind,
+            ),
+            updatedAt: now,
+            deleted: false,
+          ),
+        );
       }
     }
 
@@ -396,6 +456,7 @@ class LibraryIndexService {
               name: e.name,
               path: e.path,
               entryType: 'dir',
+              assetKind: null,
               size: null,
               modifiedAt: null,
               coverPath: null,
@@ -416,6 +477,7 @@ class LibraryIndexService {
               name: e.name,
               path: e.path,
               entryType: 'file',
+              assetKind: null,
               size: null,
               modifiedAt: null,
               coverPath: null,

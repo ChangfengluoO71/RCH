@@ -280,10 +280,7 @@ pub fn three_way(
         }
     };
     // 决策结果必须反映"实际会落库的状态"，否则 base 与库内值不一致会引发每轮重推。
-    (
-        align_persisted_sequence(entity, result, local),
-        decision,
-    )
+    (align_persisted_sequence(entity, result, local), decision)
 }
 
 /// 判定前把对端的卷/话对齐到"本机非空值"；无需对齐时返回 `None`（调用方沿用原引用）。
@@ -329,10 +326,9 @@ fn align_persisted_sequence(
     }
     match (result, local) {
         (Some(mut merged), Some(local)) if !merged.deleted => {
-            if let (Some(obj), Some(local_obj)) = (
-                merged.data.as_object_mut(),
-                local.data.as_object(),
-            ) {
+            if let (Some(obj), Some(local_obj)) =
+                (merged.data.as_object_mut(), local.data.as_object())
+            {
                 adopt_sequence(obj, local_obj);
             }
             Some(merged)
@@ -481,9 +477,21 @@ mod tests {
     fn metas_sequence_fields_merge_like_any_other_field() {
         // 卷/话是载荷里的普通字段 ⇒ 远端改了号码、本地未改时必须采用远端，
         // 否则"号码能跨设备显示"就不成立（第132轮把两列接进载荷后的关键一步）。
-        let b = metas("k", 10, json!({"title": "A", "volume": "1", "chapter": "7"}));
-        let l = metas("k", 10, json!({"title": "A", "volume": "1", "chapter": "7"}));
-        let r = metas("k", 20, json!({"title": "A", "volume": "2", "chapter": "8"}));
+        let b = metas(
+            "k",
+            10,
+            json!({"title": "A", "volume": "1", "chapter": "7"}),
+        );
+        let l = metas(
+            "k",
+            10,
+            json!({"title": "A", "volume": "1", "chapter": "7"}),
+        );
+        let r = metas(
+            "k",
+            20,
+            json!({"title": "A", "volume": "2", "chapter": "8"}),
+        );
         let merged = three_way(base::ENTITY_METAS, Some(&b), Some(&l), Some(&r))
             .0
             .unwrap();
@@ -496,8 +504,16 @@ mod tests {
         // 首次配对：两端都有同一本书、尚无 base。旧实现整条返回 None（判 Deleted）
         // ⇒ 条目既不进 merged、`advance_base` 也永远建不起 base ⇒ 该 key 永久不收敛
         // （title/author/series/卷/话全都过不去）。第132轮评审 Important。
-        let l = metas("k", 10, json!({"title": "本地", "volume": "1", "chapter": "7"}));
-        let r = metas("k", 20, json!({"title": "远端", "volume": "2", "chapter": "8"}));
+        let l = metas(
+            "k",
+            10,
+            json!({"title": "本地", "volume": "1", "chapter": "7"}),
+        );
+        let r = metas(
+            "k",
+            20,
+            json!({"title": "远端", "volume": "2", "chapter": "8"}),
+        );
         let merged = three_way(base::ENTITY_METAS, None, Some(&l), Some(&r))
             .0
             .expect("无 base 时也必须产出条目，否则永远建不起 base");
@@ -517,8 +533,16 @@ mod tests {
     fn metas_sequence_empty_side_is_not_a_clear() {
         // 对端（旧版本）载荷没有卷/话 ⇒ 空串不得清掉本机值；且结果必须仍是"本机值"，
         // 否则 base 会记成空串、每轮重推（跨版本对端 revision 无谓增长）。
-        let b = metas("k", 10, json!({"title": "A", "volume": "1", "chapter": "7"}));
-        let l = metas("k", 10, json!({"title": "A", "volume": "1", "chapter": "7"}));
+        let b = metas(
+            "k",
+            10,
+            json!({"title": "A", "volume": "1", "chapter": "7"}),
+        );
+        let l = metas(
+            "k",
+            10,
+            json!({"title": "A", "volume": "1", "chapter": "7"}),
+        );
         let r = metas("k", 20, json!({"title": "A"}));
         let merged = three_way(base::ENTITY_METAS, Some(&b), Some(&l), Some(&r))
             .0
@@ -529,7 +553,11 @@ mod tests {
         // 反向：本机空、对端有值 ⇒ 采纳对端（号码能过来）
         let b2 = metas("k", 10, json!({"title": "A", "volume": "", "chapter": ""}));
         let l2 = metas("k", 10, json!({"title": "A", "volume": "", "chapter": ""}));
-        let r2 = metas("k", 20, json!({"title": "A", "volume": "2", "chapter": "8"}));
+        let r2 = metas(
+            "k",
+            20,
+            json!({"title": "A", "volume": "2", "chapter": "8"}),
+        );
         let merged2 = three_way(base::ENTITY_METAS, Some(&b2), Some(&l2), Some(&r2))
             .0
             .unwrap();

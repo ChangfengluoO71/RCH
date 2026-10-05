@@ -246,6 +246,35 @@ pub(crate) fn reader_diag(line: &str) {
     }
 }
 
+/// Record allowlisted reader timings without accepting arbitrary diagnostic
+/// text, paths, titles, URLs, or credentials from the UI.
+pub fn log_reader_timing(
+    stage: String,
+    source_type: String,
+    result: String,
+    elapsed_ms: i64,
+) -> Result<(), String> {
+    let stage = match stage.as_str() {
+        "connect" | "book_open" | "first_page" | "page_load" => stage,
+        _ => return Err("invalid reader timing stage".to_string()),
+    };
+    let source_type = match source_type.as_str() {
+        "local" | "smb" | "webdav" | "sftp" | "baidu" | "115" | "quark" => source_type,
+        _ => return Err("invalid reader timing source".to_string()),
+    };
+    let result = match result.as_str() {
+        "success" | "error" => result,
+        _ => return Err("invalid reader timing result".to_string()),
+    };
+    if elapsed_ms < 0 {
+        return Err("reader timing must be non-negative".to_string());
+    }
+    reader_diag(&format!(
+        "reader_timing stage={stage} source_type={source_type} result={result} elapsed_ms={elapsed_ms}"
+    ));
+    Ok(())
+}
+
 /// 打开 WebDAV 上的书籍。
 /// 策略(strategy): "auto" **流式优先**（第 69 轮语义翻转）：命中 raw 缓存则本地打开，
 /// 否则先按需 range 流式读，失败才整本下载到 raw/ 缓存
@@ -1365,24 +1394,26 @@ pub async fn open_cloud115_cookie_book(
                         None => open_stream(Arc::clone(&client)),
                     }
                 }
-                OpenStrategy::Auto => match cloud115_source::web_raw_cache_path(&client.origin(), &path) {
-                    Some(local_path) => {
-                        tracing::info!("115 命中缓存，直接本地打开: {}", local_path.display());
-                        open_local(local_path)
-                    }
-                    None => match open_stream(Arc::clone(&client)) {
-                        Ok(book) => {
-                            tracing::info!("115 流式打开成功");
-                            Ok(book)
-                        }
-                        Err(e) => {
-                            tracing::warn!("115 流式失败，回退整本下载: {e}");
-                            let local_path = client.download_to_raw_cache(&path, progress)?;
-                            tracing::info!("115 整本已缓存: {}", local_path.display());
+                OpenStrategy::Auto => {
+                    match cloud115_source::web_raw_cache_path(&client.origin(), &path) {
+                        Some(local_path) => {
+                            tracing::info!("115 命中缓存，直接本地打开: {}", local_path.display());
                             open_local(local_path)
                         }
+                        None => match open_stream(Arc::clone(&client)) {
+                            Ok(book) => {
+                                tracing::info!("115 流式打开成功");
+                                Ok(book)
+                            }
+                            Err(e) => {
+                                tracing::warn!("115 流式失败，回退整本下载: {e}");
+                                let local_path = client.download_to_raw_cache(&path, progress)?;
+                                tracing::info!("115 整本已缓存: {}", local_path.display());
+                                open_local(local_path)
+                            }
+                        },
                     }
-                },
+                }
             }
         })
         .await??
@@ -1638,17 +1669,18 @@ pub async fn open_quark_book(session: u64, path: String, strategy: String) -> Re
                         }
                         Err(e) => {
                             tracing::warn!("夸克网盘流式失败，回退整本下载: {e}");
+                            let stream_ms = started.elapsed().as_millis();
                             let fallback_started = std::time::Instant::now();
                             let local_path = client.download_to_raw_cache(&path, progress)?;
+                            let download_ms = fallback_started.elapsed().as_millis();
                             tracing::info!("夸克网盘整本已缓存: {}", local_path.display());
+                            let book = open_local(local_path)?;
                             reader_diag(&format!(
-                                "reader_open mode=fallback-download stream_ms={} download_ms={} total_ms={} name={}",
-                                started.elapsed().as_millis(),
-                                fallback_started.elapsed().as_millis(),
+                                "reader_open mode=fallback-download stream_ms={stream_ms} download_ms={download_ms} total_ms={} name={}",
                                 started.elapsed().as_millis(),
                                 file_stem(&path)
                             ));
-                            open_local(local_path)
+                            Ok(book)
                         }
                     }
                 },
@@ -2173,7 +2205,7 @@ pub async fn open_baidu_book(session: u64, path: String, strategy: String) -> Re
                             tracing::info!("百度网盘整本已缓存: {}", local_path.display());
                             open_local(local_path)
                         }
-                    }
+                    },
                 },
             }
         })
@@ -2543,7 +2575,6 @@ pub async fn cloud115_cover(
     })
 }
 
-
 #[cfg(test)]
 mod d2_cache_authority_tests {
     //! P1-D-2：legacy cover 的**双历史 key** 兼容契约（CA 套件）。
@@ -2722,10 +2753,12 @@ mod d2_cache_authority_tests {
             }
             "webdav" => crate::source::webdav::raw_cache_path(authority, logical(dto))
                 .unwrap_or(logical_buf),
-            "sftp" => crate::source::sftp::raw_cache_path(authority, logical(dto))
-                .unwrap_or(logical_buf),
-            "baidu" => crate::source::baidu::raw_cache_path(authority, logical(dto))
-                .unwrap_or(logical_buf),
+            "sftp" => {
+                crate::source::sftp::raw_cache_path(authority, logical(dto)).unwrap_or(logical_buf)
+            }
+            "baidu" => {
+                crate::source::baidu::raw_cache_path(authority, logical(dto)).unwrap_or(logical_buf)
+            }
             "115" => crate::source::cloud115::raw_cache_path(authority, logical(dto))
                 .unwrap_or(logical_buf),
             other => panic!("unknown kind {other}"),

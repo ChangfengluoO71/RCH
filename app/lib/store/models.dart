@@ -388,6 +388,8 @@ class AppSettings {
   int updateMirrorFetchedAt; // 镜像列表最后成功拉取时间（ms epoch，0=从未）
   bool remoteBackgroundScanEnabled;
   bool remoteCoverFetchEnabled;
+  /// Canonical keys for the most recently selected random-reading comics.
+  List<String> recentRandomBookKeys;
 
   AppSettings({
     this.coverQuality = CoverQuality.low,
@@ -415,7 +417,9 @@ class AppSettings {
     this.updateMirrorFetchedAt = 0,
     this.remoteBackgroundScanEnabled = true,
     this.remoteCoverFetchEnabled = true,
-  }) : keys = keys ?? KeyBinds();
+    List<String>? recentRandomBookKeys,
+  }) : keys = keys ?? KeyBinds(),
+       recentRandomBookKeys = recentRandomBookKeys ?? [];
 
   Map<String, dynamic> toJson() => {
     'coverQuality': coverQuality.name,
@@ -437,6 +441,7 @@ class AppSettings {
     'updateMirrorFetchedAt': updateMirrorFetchedAt,
     'remoteBackgroundScanEnabled': remoteBackgroundScanEnabled,
     'remoteCoverFetchEnabled': remoteCoverFetchEnabled,
+    'recentRandomBookKeys': recentRandomBookKeys,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -476,6 +481,7 @@ class AppSettings {
     remoteBackgroundScanEnabled:
         (j['remoteBackgroundScanEnabled'] as bool?) ?? true,
     remoteCoverFetchEnabled: (j['remoteCoverFetchEnabled'] as bool?) ?? true,
+    recentRandomBookKeys: _stringListFromJson(j['recentRandomBookKeys']),
   );
 }
 
@@ -487,6 +493,19 @@ String _stringFromJson(dynamic raw, String fallback) {
   if (raw is String) return raw;
   if (raw is List || raw is Map) return jsonEncode(raw);
   return fallback;
+}
+
+List<String> _stringListFromJson(dynamic raw) {
+  dynamic value = raw;
+  if (value is String) {
+    try {
+      value = jsonDecode(value);
+    } catch (_) {
+      return [];
+    }
+  }
+  if (value is! List) return [];
+  return value.whereType<String>().toList();
 }
 
 /// 兼容 `keys` 设置的两种存储形态：Map 或 JSON 字符串。

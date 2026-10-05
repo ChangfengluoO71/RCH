@@ -58,7 +58,9 @@ class _ListHarnessState extends State<_ListHarness> {
                 final ro = itemCtx.findRenderObject();
                 final listBox = listCtx.findRenderObject();
                 if (ro is! RenderBox || listBox is! RenderBox) return;
-                final top = listBox.globalToLocal(ro.localToGlobal(Offset.zero)).dy;
+                final top = listBox
+                    .globalToLocal(ro.localToGlobal(Offset.zero))
+                    .dy;
                 final correction = anchor.record(
                   index: i,
                   newHeight: ro.size.height,
@@ -68,8 +70,10 @@ class _ListHarnessState extends State<_ListHarness> {
                   return;
                 }
                 final pos = ctrl.position;
-                final target = (pos.pixels + correction)
-                    .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+                final target = (pos.pixels + correction).clamp(
+                  pos.minScrollExtent,
+                  pos.maxScrollExtent,
+                );
                 pos.correctBy(target - pos.pixels);
                 // correctBy 是静默纠偏（Flutter 内部在 layout 中用），帧后调用需要显式要求重排
                 setState(() {});
@@ -109,16 +113,28 @@ void main() {
     test('条目跨视口顶边或仍在视口内 ⇒ 不补偿', () {
       final keeper = WebtoonAnchorKeeper();
       keeper.record(index: 1, newHeight: 200, itemTopInViewport: -50);
-      expect(keeper.record(index: 1, newHeight: 3000, itemTopInViewport: -50), 0);
+      expect(
+        keeper.record(index: 1, newHeight: 3000, itemTopInViewport: -50),
+        0,
+      );
       keeper.record(index: 2, newHeight: 200, itemTopInViewport: 300);
-      expect(keeper.record(index: 2, newHeight: 900, itemTopInViewport: 300), 0);
+      expect(
+        keeper.record(index: 2, newHeight: 900, itemTopInViewport: 300),
+        0,
+      );
     });
 
     test('变矮同样补偿（负值）；高度不变不补偿', () {
       final keeper = WebtoonAnchorKeeper();
       keeper.record(index: 0, newHeight: 900, itemTopInViewport: -5000);
-      expect(keeper.record(index: 0, newHeight: 400, itemTopInViewport: -5000), -500);
-      expect(keeper.record(index: 0, newHeight: 400, itemTopInViewport: -5000), 0);
+      expect(
+        keeper.record(index: 0, newHeight: 400, itemTopInViewport: -5000),
+        -500,
+      );
+      expect(
+        keeper.record(index: 0, newHeight: 400, itemTopInViewport: -5000),
+        0,
+      );
     });
 
     test('未构建过的页（只有增长预警）也能算出补偿', () {
@@ -142,7 +158,10 @@ void main() {
       keeper.announceGrowth(1, 200);
       keeper.reset();
       expect(keeper.trackedCount, 0);
-      expect(keeper.record(index: 0, newHeight: 3000, itemTopInViewport: -900), 0);
+      expect(
+        keeper.record(index: 0, newHeight: 3000, itemTopInViewport: -900),
+        0,
+      );
       expect(
         keeper.record(index: 1, newHeight: 3000, itemTopInViewport: -900),
         0,
@@ -193,61 +212,102 @@ void main() {
     }
 
     testWidgets('对照实验：上方占位收敛 + 持续拖拽 ⇒ 锚点不动（修复目标）', (tester) async {
-      final control = await run(tester: tester, compensate: true, resolveMidway: false);
+      final control = await run(
+        tester: tester,
+        compensate: true,
+        resolveMidway: false,
+      );
       expect(control, isNotNull, reason: '对照跑：无增长时 item1 应当可见');
 
       // 换新 tester 场景重跑（每个 testWidgets 只有一棵树，这里在同一个 test 里顺序跑两次）
       await tester.pumpWidget(const SizedBox.shrink());
-      final fixed = await run(tester: tester, compensate: true, resolveMidway: true);
-
-      expect(
-        fixed,
-        isNotNull,
-        reason: '有补偿时 item1 必须仍在视口内（不补偿会被推到 5600px 之外）',
+      final fixed = await run(
+        tester: tester,
+        compensate: true,
+        resolveMidway: true,
       );
+
+      expect(fixed, isNotNull, reason: '有补偿时 item1 必须仍在视口内（不补偿会被推到 5600px 之外）');
       expect(
         fixed,
         moreOrLessEquals(control!, epsilon: 1.0),
-        reason: '同样的拖拽轨迹下，上方占位收敛不得额外推动可见内容：'
+        reason:
+            '同样的拖拽轨迹下，上方占位收敛不得额外推动可见内容：'
             '对照 dy=$control，收敛后 dy=$fixed',
       );
     });
 
     testWidgets('对照实验：不补偿时锚点被推走（钉住根因，防止修复被误删）', (tester) async {
-      final control = await run(tester: tester, compensate: false, resolveMidway: false);
+      final control = await run(
+        tester: tester,
+        compensate: false,
+        resolveMidway: false,
+      );
       await tester.pumpWidget(const SizedBox.shrink());
-      final broken = await run(tester: tester, compensate: false, resolveMidway: true);
+      final broken = await run(
+        tester: tester,
+        compensate: false,
+        resolveMidway: true,
+      );
 
       expect(
         broken == null || (control != null && (broken - control).abs() > 100),
         isTrue,
-        reason: '没有锚点补偿时可见内容会被推走（用户报的"跳回好几页前"）：'
+        reason:
+            '没有锚点补偿时可见内容会被推走（用户报的"跳回好几页前"）：'
             '对照 dy=$control，收敛后 dy=$broken',
       );
     });
   });
 
   group('WebtoonNavigationModel', () {
-    test('unknown extents use a non-zero estimate and keep offsets monotonic', () {
-      final model = WebtoonNavigationModel(pageCount: 100, estimatedHeight: 240);
+    test(
+      'streaming page jumps estimate unknown extents from measured images',
+      () {
+        final model = WebtoonNavigationModel(
+          pageCount: 100,
+          estimatedHeight: webtoonPlaceholderHeight,
+        );
+        final target = model.requestTarget(50);
 
-      expect(model.offsetFor(0), 0);
-      expect(model.offsetFor(1), 240);
-      expect(model.offsetFor(50), 50 * 240);
-      expect(model.offsetFor(100), 100 * 240);
-    });
+        expect(model.offsetForIntent(target), 50 * webtoonPlaceholderHeight);
 
-    test('latest programmatic target wins and stale generations are ignored', () {
-      final model = WebtoonNavigationModel(pageCount: 20);
-      final first = model.requestTarget(10);
-      final second = model.requestTarget(3);
+        model.measure(0, 640);
+        model.measure(1, 640);
+        model.measure(2, 640);
+        expect(model.offsetForIntent(target), 50 * 640);
+      },
+    );
 
-      expect(first.generation, lessThan(second.generation));
-      expect(model.pendingTarget, 3);
-      expect(model.accepts(first.generation), isFalse);
-      expect(model.accepts(second.generation), isTrue);
-      expect(model.offsetForIntent(first), model.offsetFor(10));
-    });
+    test(
+      'unknown extents use a non-zero estimate and keep offsets monotonic',
+      () {
+        final model = WebtoonNavigationModel(
+          pageCount: 100,
+          estimatedHeight: 240,
+        );
+
+        expect(model.offsetFor(0), 0);
+        expect(model.offsetFor(1), 240);
+        expect(model.offsetFor(50), 50 * 240);
+        expect(model.offsetFor(100), 100 * 240);
+      },
+    );
+
+    test(
+      'latest programmatic target wins and stale generations are ignored',
+      () {
+        final model = WebtoonNavigationModel(pageCount: 20);
+        final first = model.requestTarget(10);
+        final second = model.requestTarget(3);
+
+        expect(first.generation, lessThan(second.generation));
+        expect(model.pendingTarget, 3);
+        expect(model.accepts(first.generation), isFalse);
+        expect(model.accepts(second.generation), isTrue);
+        expect(model.offsetForIntent(first), model.offsetFor(10));
+      },
+    );
 
     test('programmatic completion clears only the matching pending target', () {
       final model = WebtoonNavigationModel(pageCount: 20);
@@ -261,39 +321,57 @@ void main() {
       expect(model.stablePage, 3);
     });
 
-    test('fast scroll observes viewport without overwriting stable page until settle', () {
-      final model = WebtoonNavigationModel(pageCount: 20, estimatedHeight: 200);
-      expect(model.stablePage, 0);
+    test(
+      'fast scroll observes viewport without overwriting stable page until settle',
+      () {
+        final model = WebtoonNavigationModel(
+          pageCount: 20,
+          estimatedHeight: 200,
+        );
+        expect(model.stablePage, 0);
 
-      model.observe(offset: 1700, viewportExtent: 200, isScrolling: true);
-      expect(model.viewportPage, 9);
-      expect(model.stablePage, 0);
+        model.observe(offset: 1700, viewportExtent: 200, isScrolling: true);
+        expect(model.viewportPage, 9);
+        expect(model.stablePage, 0);
 
-      model.observe(offset: 1700, viewportExtent: 200, isScrolling: false);
-      model.settle();
-      expect(model.stablePage, 9);
-    });
+        model.observe(offset: 1700, viewportExtent: 200, isScrolling: false);
+        model.settle();
+        expect(model.stablePage, 9);
+      },
+    );
 
-    test('user gesture cancels a pending target without jumping to stale target', () {
-      final model = WebtoonNavigationModel(pageCount: 20, estimatedHeight: 200);
-      final intent = model.requestTarget(12);
-      model.cancelPendingForUserGesture();
-      model.observe(offset: 400, viewportExtent: 200, isScrolling: false);
-      model.settle();
+    test(
+      'user gesture cancels a pending target without jumping to stale target',
+      () {
+        final model = WebtoonNavigationModel(
+          pageCount: 20,
+          estimatedHeight: 200,
+        );
+        final intent = model.requestTarget(12);
+        model.cancelPendingForUserGesture();
+        model.observe(offset: 400, viewportExtent: 200, isScrolling: false);
+        model.settle();
 
-      expect(model.accepts(intent.generation), isFalse);
-      expect(model.pendingTarget, isNull);
-      expect(model.stablePage, 2);
-    });
+        expect(model.accepts(intent.generation), isFalse);
+        expect(model.pendingTarget, isNull);
+        expect(model.stablePage, 2);
+      },
+    );
 
-    test('measured heights replace estimates while preserving monotonic offsets', () {
-      final model = WebtoonNavigationModel(pageCount: 3, estimatedHeight: 200);
-      model.measure(0, 500);
-      model.measure(1, 100);
+    test(
+      'measured heights replace estimates while preserving monotonic offsets',
+      () {
+        final model = WebtoonNavigationModel(
+          pageCount: 3,
+          estimatedHeight: 200,
+        );
+        model.measure(0, 500);
+        model.measure(1, 100);
 
-      expect(model.offsetFor(1), 500);
-      expect(model.offsetFor(2), 600);
-      expect(model.offsetFor(3), 800);
-    });
+        expect(model.offsetFor(1), 500);
+        expect(model.offsetFor(2), 600);
+        expect(model.offsetFor(3), 900);
+      },
+    );
   });
 }

@@ -242,6 +242,7 @@ mod tests {
             name: name.into(),
             path: path.into(),
             entry_type: entry_type.into(),
+            asset_kind: None,
             size: None,
             modified_at: None,
             cover_path: None,

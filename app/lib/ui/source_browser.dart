@@ -667,7 +667,20 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 刷新：重新列出目录；本地来源且开启"自动转 CBZ"时，后台转换后再次列出。
   Future<void> _refresh() async {
+    if (_loading) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前目录正在刷新')));
+      return;
+    }
     await _relist();
+    if (!mounted) return;
+    final error = _error;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error == null ? '当前书源目录已刷新' : '刷新失败：$error'),
+      ),
+    );
     // 2026-09-21（真机："墙上大片获取失败，可图其实抓得到" + "反复刷新也没用"）：
     // 刷新时顺带把该源**当前档**的终态失败封面重新排队 —— 失败是粘性的（只有 6h 补偿/重置
     // 才会重来），而失败原因往往早已修好（DB 里成片的 `cover_native_lib_missing` 就是缺

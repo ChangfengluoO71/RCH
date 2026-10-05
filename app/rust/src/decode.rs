@@ -155,7 +155,10 @@ mod magic_tests {
             sniff_image_magic(&[0x49, 0x49, 0x2A, 0x00]),
             ImageMagic::Tiff
         );
-        assert_eq!(sniff_image_magic(b"\x00\x00\x00\x18ftypavif"), ImageMagic::Heif);
+        assert_eq!(
+            sniff_image_magic(b"\x00\x00\x00\x18ftypavif"),
+            ImageMagic::Heif
+        );
         assert_eq!(sniff_image_magic(b"<!DOCTYPE html>"), ImageMagic::TextLike);
         assert_eq!(sniff_image_magic(b"PK\x03\x04zipdata"), ImageMagic::Zip);
         assert_eq!(sniff_image_magic(b"\x01\x02\x03"), ImageMagic::Unknown);

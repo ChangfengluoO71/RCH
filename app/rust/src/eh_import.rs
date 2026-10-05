@@ -82,7 +82,10 @@ impl ImportPlan {
             score: None,
             tags: Vec::new(),
             fields: Vec::new(),
-            skipped: vec![SkippedItem { what: "整个导入".into(), reason: reason.into() }],
+            skipped: vec![SkippedItem {
+                what: "整个导入".into(),
+                reason: reason.into(),
+            }],
         }
     }
 
@@ -110,7 +113,11 @@ pub fn namespace_prefix(ns: &str) -> &'static str {
 }
 
 /// 规划导入：给定本地现状与 E 站语义层，产出"将要写入什么"。
-pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &MatchDecision) -> ImportPlan {
+pub fn plan_import(
+    snapshot: &BookSnapshot,
+    semantic: &EhSemantic,
+    decision: &MatchDecision,
+) -> ImportPlan {
     let (status, hit) = match decision {
         MatchDecision::Matched(h) => ("matched", Some(h)),
         MatchDecision::Editions(v) => ("editions", v.first()),
@@ -153,19 +160,30 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
 
     // 2) 语义层标签：中文优先，缺译名退回原始值
     let push_tag = |ns: &str, raw: &str, zh: &str, plan: &mut ImportPlan| {
-        let display = if zh.trim().is_empty() { raw.trim() } else { zh.trim() };
+        let display = if zh.trim().is_empty() {
+            raw.trim()
+        } else {
+            zh.trim()
+        };
         if display.is_empty() {
             return;
         }
         let name = format!("{}:{}", namespace_prefix(ns), display);
         if existing.iter().any(|t| t == &name) {
-            plan.skipped.push(SkippedItem { what: name, reason: "标签已存在".into() });
+            plan.skipped.push(SkippedItem {
+                what: name,
+                reason: "标签已存在".into(),
+            });
             return;
         }
         if plan.tags.iter().any(|t| t.name == name) {
             return; // 同一计划内去重
         }
-        plan.tags.push(PlannedTag { name, namespace: ns.into(), raw: raw.into() });
+        plan.tags.push(PlannedTag {
+            name,
+            namespace: ns.into(),
+            raw: raw.into(),
+        });
     };
 
     // creators（artist / group）
@@ -185,7 +203,11 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
             Some((a, b)) => (a, b),
             None => ("", tag.as_str()),
         };
-        let zh = semantic.resource_tags_zh.get(i).map(String::as_str).unwrap_or("");
+        let zh = semantic
+            .resource_tags_zh
+            .get(i)
+            .map(String::as_str)
+            .unwrap_or("");
         push_tag(ns, raw, zh, &mut plan);
     }
 
@@ -212,7 +234,10 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
 
     if !creator_value.is_empty() {
         if snapshot.author.trim().is_empty() {
-            plan.fields.push(PlannedField { field: "author".into(), value: creator_value });
+            plan.fields.push(PlannedField {
+                field: "author".into(),
+                value: creator_value,
+            });
         } else {
             plan.skipped.push(SkippedItem {
                 what: "author".into(),
@@ -220,9 +245,16 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
             });
         }
     }
-    if let Some(series) = semantic.source_series.first().filter(|s| !s.trim().is_empty()) {
+    if let Some(series) = semantic
+        .source_series
+        .first()
+        .filter(|s| !s.trim().is_empty())
+    {
         if snapshot.series.trim().is_empty() {
-            plan.fields.push(PlannedField { field: "series".into(), value: series.trim().into() });
+            plan.fields.push(PlannedField {
+                field: "series".into(),
+                value: series.trim().into(),
+            });
         } else {
             plan.skipped.push(SkippedItem {
                 what: "series".into(),
@@ -233,7 +265,6 @@ pub fn plan_import(snapshot: &BookSnapshot, semantic: &EhSemantic, decision: &Ma
 
     plan
 }
-
 
 /// 从**已落盘的 manifest** 规划导入（离线、可复现；符合"只从 manifest 导入"的决策）。
 ///
@@ -343,15 +374,26 @@ mod tests {
     use crate::eh_match::MatchHit;
 
     fn hit(gid: &str, jpn: &str) -> MatchHit {
-        MatchHit { gid: gid.into(), title: String::new(), title_jpn: jpn.into(), score: 0.92 }
+        MatchHit {
+            gid: gid.into(),
+            title: String::new(),
+            title_jpn: jpn.into(),
+            score: 0.92,
+        }
     }
 
     fn semantic() -> EhSemantic {
         EhSemantic {
             work_title: "人生リサイクル".into(),
             creators: vec![
-                crate::eh_subscription::EhCreator { role: "artist".into(), name: "朝凪".into() },
-                crate::eh_subscription::EhCreator { role: "group".into(), name: "Fatalpulse".into() },
+                crate::eh_subscription::EhCreator {
+                    role: "artist".into(),
+                    name: "朝凪".into(),
+                },
+                crate::eh_subscription::EhCreator {
+                    role: "group".into(),
+                    name: "Fatalpulse".into(),
+                },
             ],
             source_series: vec!["original".into()],
             resource_tags: vec![
@@ -367,7 +409,11 @@ mod tests {
 
     #[test]
     fn plans_prefixed_tags_with_chinese_names() {
-        let plan = plan_import(&BookSnapshot::default(), &semantic(), &MatchDecision::Matched(hit("1", "T")));
+        let plan = plan_import(
+            &BookSnapshot::default(),
+            &semantic(),
+            &MatchDecision::Matched(hit("1", "T")),
+        );
         assert_eq!(plan.status, "matched");
         assert!(plan.has_changes());
         let names: Vec<&str> = plan.tags.iter().map(|t| t.name.as_str()).collect();
@@ -390,17 +436,30 @@ mod tests {
         };
         let plan = plan_import(&snap, &semantic(), &MatchDecision::Matched(hit("1", "T")));
         assert!(plan.fields.is_empty(), "已有值不应被覆盖");
-        assert!(plan.skipped.iter().any(|s| s.what == "author" && s.reason.contains("不覆盖")));
+        assert!(plan
+            .skipped
+            .iter()
+            .any(|s| s.what == "author" && s.reason.contains("不覆盖")));
         assert!(plan.skipped.iter().any(|s| s.what == "series"));
     }
 
     #[test]
     fn fills_only_blank_fields() {
-        let snap = BookSnapshot { author: "".into(), series: "".into(), ..Default::default() };
+        let snap = BookSnapshot {
+            author: "".into(),
+            series: "".into(),
+            ..Default::default()
+        };
         let plan = plan_import(&snap, &semantic(), &MatchDecision::Matched(hit("1", "T")));
-        let fields: Vec<(&str, &str)> =
-            plan.fields.iter().map(|f| (f.field.as_str(), f.value.as_str())).collect();
-        assert!(fields.contains(&("author", "朝凪")), "空白作者应被填补（取 artist）");
+        let fields: Vec<(&str, &str)> = plan
+            .fields
+            .iter()
+            .map(|f| (f.field.as_str(), f.value.as_str()))
+            .collect();
+        assert!(
+            fields.contains(&("author", "朝凪")),
+            "空白作者应被填补（取 artist）"
+        );
         assert!(fields.contains(&("series", "original")));
     }
 
@@ -419,7 +478,10 @@ mod tests {
     #[test]
     fn ambiguous_and_unmatched_produce_no_writes() {
         for (decision, expect) in [
-            (MatchDecision::Ambiguous(vec![hit("a", "x"), hit("b", "y")]), "ambiguous"),
+            (
+                MatchDecision::Ambiguous(vec![hit("a", "x"), hit("b", "y")]),
+                "ambiguous",
+            ),
             (MatchDecision::Unmatched, "unmatched"),
         ] {
             let plan = plan_import(&BookSnapshot::default(), &semantic(), &decision);
@@ -453,7 +515,11 @@ mod tests {
         assert_eq!(namespace_prefix("unknown-ns"), "其他");
     }
 
-    fn manifest_item(gid: &str, work_title: &str, creators: Vec<(String, String)>) -> crate::eh_subscription::EhSavedItem {
+    fn manifest_item(
+        gid: &str,
+        work_title: &str,
+        creators: Vec<(String, String)>,
+    ) -> crate::eh_subscription::EhSavedItem {
         crate::eh_subscription::EhSavedItem {
             infohash: format!("hash{gid}"),
             gid: gid.into(),
@@ -494,7 +560,11 @@ mod tests {
     #[test]
     fn plans_from_saved_manifest_offline() {
         let items = vec![
-            manifest_item("11", "人生リサイクル", vec![("artist".into(), "朝凪".into())]),
+            manifest_item(
+                "11",
+                "人生リサイクル",
+                vec![("artist".into(), "朝凪".into())],
+            ),
             manifest_item("22", "全然違う作品", vec![]),
         ];
         let plan = plan_from_manifest(&items, &BookSnapshot::default(), "人生リサイクル", &[]);
@@ -509,8 +579,17 @@ mod tests {
     #[test]
     fn manifest_planner_falls_back_to_creator_anchor() {
         // 作品名对不上时，用创作者名兜底（真实语料 creators 仅 41% 覆盖，故只作兜底）
-        let items = vec![manifest_item("33", "ヒミツの睡眠学習", vec![("artist".into(), "Bicolor".into())])];
-        let plan = plan_from_manifest(&items, &BookSnapshot::default(), "完全不相关的本地名", &["Bicolor".into()]);
+        let items = vec![manifest_item(
+            "33",
+            "ヒミツの睡眠学習",
+            vec![("artist".into(), "Bicolor".into())],
+        )];
+        let plan = plan_from_manifest(
+            &items,
+            &BookSnapshot::default(),
+            "完全不相关的本地名",
+            &["Bicolor".into()],
+        );
         assert_eq!(plan.gid.as_deref(), Some("33"), "应通过创作者锚点命中");
         assert_eq!(plan.matched_by, "creator", "应标明是按创作者兜底命中的");
     }
@@ -522,5 +601,4 @@ mod tests {
         assert!(!plan.has_changes());
         assert!(plan.skipped[0].reason.contains("manifest 为空"));
     }
-
 }

@@ -116,22 +116,38 @@ if(EXISTS "${AI_SOURCE_DIR}")
   )
 endif()
 
-# 把 pdfium.dll 复制到 bundle（必须与 RCH.exe 同目录）——**Debug 与 Release 都要**。
-#
-# 背景（2026-09-21 真机回归）：PDF 解析在**运行时**动态加载 pdfium.dll
-# （`app/rust/src/document/pdf.rs` 依次查找 NATIVE_LIB_DIR → cwd → exe 同目录 → PATH → 系统目录）。
-# 这份 dll 不进 git（7 MB 二进制；CI 在 `.github/workflows/release.yml` 里自行下载并拷进
-# Release 产物），此前只有**手工**拷进 Debug 的习惯 ⇒ 切到 Release 后 PDF 全部打不开
-# （`pdfium.dll` 不在 exe 同目录）。这里补一条构建规则，让两个 profile 自动带上；
-# 缺失时静默跳过，避免没有 PDF 需求的构建失败。
-# 本地准备方式见 `docs/development/setup.md`「PDF 支持依赖」：
-# 把 `pdfium-win-x64/bin/pdfium.dll` 放到 `app/windows/pdfium/win-x64/`。
-set(PDFIUM_DLL "${CMAKE_CURRENT_SOURCE_DIR}/pdfium/win-x64/pdfium.dll")
-if(EXISTS "${PDFIUM_DLL}")
-  install(FILES "${PDFIUM_DLL}"
-    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-    COMPONENT Runtime)
-  message(STATUS "Bundling pdfium.dll from ${PDFIUM_DLL}")
-else()
-  message(STATUS "pdfium.dll 不在 ${PDFIUM_DLL}；本产物不含 PDF 支持（见 docs/development/setup.md）")
+# Provision one pinned Windows x64 PDFium runtime for every build profile.
+# The ignored source cache is shared by Debug/Profile/Release; install() places
+# the DLL and its license beside RCH.exe, where pdfium-render looks for it.
+set(PDFIUM_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/pdfium/win-x64")
+set(PDFIUM_DLL "${PDFIUM_SOURCE_DIR}/pdfium.dll")
+set(PDFIUM_LICENSE "${PDFIUM_SOURCE_DIR}/pdfium-LICENSE.txt")
+if(NOT EXISTS "${PDFIUM_DLL}" OR NOT EXISTS "${PDFIUM_LICENSE}")
+  find_program(RCH_POWERSHELL_EXECUTABLE NAMES pwsh.exe powershell.exe)
+  if(NOT RCH_POWERSHELL_EXECUTABLE)
+    message(FATAL_ERROR "PowerShell is required to provision the Windows PDFium runtime.")
+  endif()
+  execute_process(
+    COMMAND "${RCH_POWERSHELL_EXECUTABLE}" -NoLogo -NoProfile -NonInteractive
+      -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/prepare_pdfium.ps1"
+    RESULT_VARIABLE PDFIUM_SETUP_RESULT
+    OUTPUT_VARIABLE PDFIUM_SETUP_OUTPUT
+    ERROR_VARIABLE PDFIUM_SETUP_ERROR
+  )
+  if(NOT "${PDFIUM_SETUP_RESULT}" STREQUAL "0" OR
+     NOT EXISTS "${PDFIUM_DLL}" OR NOT EXISTS "${PDFIUM_LICENSE}")
+    message(FATAL_ERROR
+      "Could not provision the Windows PDFium runtime.\n"
+      "${PDFIUM_SETUP_OUTPUT}\n${PDFIUM_SETUP_ERROR}\n"
+      "Run app/windows/prepare_pdfium.ps1 and retry the Windows build.")
+  endif()
 endif()
+
+install(FILES "${PDFIUM_DLL}"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+install(FILES "${PDFIUM_LICENSE}"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  RENAME "pdfium-LICENSE.txt"
+  COMPONENT Runtime)
+message(STATUS "Bundling Windows PDFium runtime from ${PDFIUM_SOURCE_DIR}")

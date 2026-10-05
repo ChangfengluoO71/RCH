@@ -6,6 +6,7 @@ import 'package:app/src/rust/api/remote_cover.dart' as rust;
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
@@ -778,6 +779,10 @@ class _ComicCoverState extends State<ComicCover> {
     required int height,
     CropRect? crop,
   }) async {
+    final providerPath = await LibraryCatalogStore.instance.providerPathFor(
+      source: source,
+      path: path,
+    );
     if (source.isWebDav) {
       final session = await _guardRemoteCoverIo(
         () => webdavSessionFor(source),
@@ -785,7 +790,7 @@ class _ComicCoverState extends State<ComicCover> {
       final p = await _guardRemoteCoverIo(
         () => webdavCover(
           session: session,
-          path: path,
+          path: providerPath,
           page: page,
           width: width,
           height: height,
@@ -800,7 +805,7 @@ class _ComicCoverState extends State<ComicCover> {
       final p = await _guardRemoteCoverIo(
         () => sftpCover(
           session: session,
-          path: path,
+          path: providerPath,
           page: page,
           width: width,
           height: height,
@@ -815,7 +820,7 @@ class _ComicCoverState extends State<ComicCover> {
       final p = await _guardRemoteCoverIo(
         () => baiduCover(
           session: session,
-          path: path,
+          path: providerPath,
           page: page,
           width: width,
           height: height,
@@ -831,7 +836,7 @@ class _ComicCoverState extends State<ComicCover> {
         () => cloud115CoverFor(
           source,
           session: session,
-          path: path,
+            path: providerPath,
           page: page,
           width: width,
           height: height,
@@ -846,7 +851,7 @@ class _ComicCoverState extends State<ComicCover> {
       final p = await _guardRemoteCoverIo(
         () => quarkCover(
           session: session,
-          path: path,
+          path: providerPath,
           page: page,
           width: width,
           height: height,
@@ -857,7 +862,7 @@ class _ComicCoverState extends State<ComicCover> {
     } else {
       final p = await _guardRemoteCoverIo(
         () => bookCover(
-          path: path,
+          path: providerPath,
           page: page,
           width: width,
           height: height,

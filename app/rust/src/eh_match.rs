@@ -159,7 +159,11 @@ pub fn decide(local_title: &str, candidates: &[(String, String, String)]) -> Mat
     if hits.is_empty() {
         return MatchDecision::Unmatched;
     }
-    hits.sort_by(|x, y| y.score.partial_cmp(&x.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|x, y| {
+        y.score
+            .partial_cmp(&x.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // 保护 1：同系列不同卷 → 交人工确认，不自动采纳
     let conflicting: Vec<MatchHit> = hits
@@ -233,9 +237,13 @@ fn strip_markers(s: &str) -> String {
     for marker in ["[中国翻訳]", "[無修正]", "[DL版]", "[Digital]"] {
         cleaned = cleaned.replace(marker, " ");
     }
-    cleaned.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string()
+    cleaned
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
 }
-
 
 /// 数字加权：候选标题里**含有**本地卷/话号时加分（放宽策略——不匹配也不判死，
 /// 只是排在后面，避免"拼数字导致正确作品掉出阈值"）。
@@ -276,7 +284,11 @@ pub fn decide_with_number(
     if hits.is_empty() {
         return MatchDecision::Unmatched;
     }
-    hits.sort_by(|x, y| y.score.partial_cmp(&x.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|x, y| {
+        y.score
+            .partial_cmp(&x.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // 数字命中者优先（已通过加分排前）；只有当**最高分候选数字明确冲突**且没有命中者时才需人工确认
     let top_norm = normalize_title(&hits[0].title_jpn);
@@ -342,8 +354,14 @@ mod tests {
     #[test]
     fn normalization_strips_markers_and_keeps_cjk() {
         // 注意：`to_lowercase()` 只影响拉丁字母，片假名不做假名转换
-        assert_eq!(normalize_title("[KAROMIX (karory)] 清楚ビッチな巫女先輩"), "清楚ビッチな巫女先輩");
-        assert_eq!(normalize_title("[デジタル] Full Color Vol.2"), "fullcolorvol2");
+        assert_eq!(
+            normalize_title("[KAROMIX (karory)] 清楚ビッチな巫女先輩"),
+            "清楚ビッチな巫女先輩"
+        );
+        assert_eq!(
+            normalize_title("[デジタル] Full Color Vol.2"),
+            "fullcolorvol2"
+        );
         assert_eq!(normalize_title(""), "");
     }
 
@@ -361,28 +379,47 @@ mod tests {
         // 1) 清楚ビッチな巫女先輩1 ← [KAROMIX (karory)] 清楚ビッチな巫女先輩（实测 0.95）
         let d = decide(
             "清楚ビッチな巫女先輩1",
-            &[hit("1", "[KAROMIX (karory)] 清楚ビッチな巫女先輩 [中国翻訳] [無修正]", "")],
+            &[hit(
+                "1",
+                "[KAROMIX (karory)] 清楚ビッチな巫女先輩 [中国翻訳] [無修正]",
+                "",
+            )],
         );
-        assert!(matches!(d, MatchDecision::Matched(_)), "应唯一命中，实得 {d:?}");
+        assert!(
+            matches!(d, MatchDecision::Matched(_)),
+            "应唯一命中，实得 {d:?}"
+        );
 
         // 2) ヒミツの睡眠学習 ← 同名（实测 1.00）
         let d = decide(
             "ヒミツの睡眠学習",
-            &[hit("2", "[Bicolor (黒白音子)] ヒミツの睡眠学習 [ドイツ翻訳] [無修正] [DL版]", "")],
+            &[hit(
+                "2",
+                "[Bicolor (黒白音子)] ヒミツの睡眠学習 [ドイツ翻訳] [無修正] [DL版]",
+                "",
+            )],
         );
         assert!(matches!(d, MatchDecision::Matched(_)));
 
         // 3) 人生リサイクル ← 同名（实测 1.00）
         let d = decide(
             "人生リサイクル",
-            &[hit("3", "[Fatalpulse (朝凪)] 人生リサイクル [中国翻訳] [無修正] [DL版]", "")],
+            &[hit(
+                "3",
+                "[Fatalpulse (朝凪)] 人生リサイクル [中国翻訳] [無修正] [DL版]",
+                "",
+            )],
         );
         assert!(matches!(d, MatchDecision::Matched(_)));
 
         // 4) 同系列不同卷：孕ませ屋2 vs 孕ませ屋4（实测 0.75，高于阈值）→ 必须交人工确认
         let d = decide(
             "孕ませ屋2",
-            &[hit("4", "[Digital Lover (なかじまゆか)] 孕ませ屋4 [中国翻訳]", "")],
+            &[hit(
+                "4",
+                "[Digital Lover (なかじまゆか)] 孕ませ屋4 [中国翻訳]",
+                "",
+            )],
         );
         match d {
             MatchDecision::Ambiguous(v) => assert_eq!(v.len(), 1),
@@ -392,7 +429,11 @@ mod tests {
         // 5) 完全不相关的候选 → 未命中（实测 0.00）
         let d = decide(
             "いっぱいわけてね",
-            &[hit("5", "[Bicolor (黒白音子)] ヒミツの睡眠学習 [ドイツ翻訳]", "")],
+            &[hit(
+                "5",
+                "[Bicolor (黒白音子)] ヒミツの睡眠学習 [ドイツ翻訳]",
+                "",
+            )],
         );
         assert_eq!(d, MatchDecision::Unmatched);
     }
@@ -403,8 +444,16 @@ mod tests {
         let d = decide(
             "人生リサイクル",
             &[
-                hit("a", "[Fatalpulse (朝凪)] 人生リサイクル [中国翻訳] [無修正]", ""),
-                hit("b", "[Fatalpulse (朝凪)] 人生リサイクル [韓国翻訳] [無修正]", ""),
+                hit(
+                    "a",
+                    "[Fatalpulse (朝凪)] 人生リサイクル [中国翻訳] [無修正]",
+                    "",
+                ),
+                hit(
+                    "b",
+                    "[Fatalpulse (朝凪)] 人生リサイクル [韓国翻訳] [無修正]",
+                    "",
+                ),
                 hit("c", "[Fatalpulse (朝凪)] 人生リサイクル [日本語]", ""),
             ],
         );
@@ -436,8 +485,16 @@ mod tests {
         let d = decide(
             "人生リサイクル",
             &[
-                hit("best", "[Fatalpulse (朝凪)] 人生リサイクル [中国翻訳] [無修正]", ""),
-                hit("worse", "[Fatalpulse (朝凪)] 人生リサイクル 総集編 完全版 限定", ""),
+                hit(
+                    "best",
+                    "[Fatalpulse (朝凪)] 人生リサイクル [中国翻訳] [無修正]",
+                    "",
+                ),
+                hit(
+                    "worse",
+                    "[Fatalpulse (朝凪)] 人生リサイクル 総集編 完全版 限定",
+                    "",
+                ),
             ],
         );
         match d {
@@ -452,7 +509,10 @@ mod tests {
             "[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4 [中国翻訳]",
             &["赤月みゅうと".into(), "赤月屋".into()],
         );
-        assert_eq!(a[0], "僕にしか触れないサキュバス三姉妹に搾られる話4", "首个锚点应为作品名");
+        assert_eq!(
+            a[0], "僕にしか触れないサキュバス三姉妹に搾られる話4",
+            "首个锚点应为作品名"
+        );
         assert!(a.contains(&"赤月みゅうと".to_string()));
         assert!(a.contains(&"赤月屋".to_string()));
         // 去重：重复创作者名只出现一次
@@ -499,5 +559,4 @@ mod tests {
             other => panic!("卷号冲突应需人工确认，实得 {other:?}"),
         }
     }
-
 }

@@ -58,7 +58,13 @@ fn job_key(source_id: &str, asset_id: &str) -> CoverJobKey {
     }
 }
 
-fn bind_epoch(conn: &Connection, source_id: &str, generation: i64, session_epoch: &str, token: i64) {
+fn bind_epoch(
+    conn: &Connection,
+    source_id: &str,
+    generation: i64,
+    session_epoch: &str,
+    token: i64,
+) {
     conn.execute(
         "INSERT OR REPLACE INTO remote_scan_epoch(
              source_id,generation,source_fingerprint,root_path,session_epoch,session_token)
@@ -68,7 +74,14 @@ fn bind_epoch(conn: &Connection, source_id: &str, generation: i64, session_epoch
     .unwrap();
 }
 
-fn seed_job(conn: &Connection, key: &CoverJobKey, state: CoverJobState, generation: i64, epoch: &str, now: i64) {
+fn seed_job(
+    conn: &Connection,
+    key: &CoverJobKey,
+    state: CoverJobState,
+    generation: i64,
+    epoch: &str,
+    now: i64,
+) {
     cover_store::upsert_job_on(
         conn,
         key,
@@ -84,7 +97,13 @@ fn seed_job(conn: &Connection, key: &CoverJobKey, state: CoverJobState, generati
 }
 
 /// 直接写 long-retry 三列（模拟"已经形成 failure episode"的 durable 状态）。
-fn set_long_retry(conn: &Connection, key: &CoverJobKey, not_before: Option<i64>, consumed: i64, pending: i64) {
+fn set_long_retry(
+    conn: &Connection,
+    key: &CoverJobKey,
+    not_before: Option<i64>,
+    consumed: i64,
+    pending: i64,
+) {
     conn.execute(
         "UPDATE remote_cover_job SET long_retry_not_before=?1,long_retry_consumed=?2,long_retry_pending=?3
           WHERE job_key=?4",
@@ -140,7 +159,10 @@ fn retryable_failure_is_not_promoted_before_six_hours() {
     )
     .unwrap();
 
-    assert_eq!(report.compensation_promoted, 0, "must not promote before 6h");
+    assert_eq!(
+        report.compensation_promoted, 0,
+        "must not promote before 6h"
+    );
     assert_eq!(state_of(&conn, &key), "failed");
     assert_eq!(long_retry(&conn, &key).1, 0, "budget must stay unused");
 }
@@ -177,7 +199,10 @@ fn retryable_failure_is_promoted_exactly_once_after_six_hours() {
         budget(64),
     )
     .unwrap();
-    assert_eq!(again.compensation_promoted, 0, "promotion must be at-most-once");
+    assert_eq!(
+        again.compensation_promoted, 0,
+        "promotion must be at-most-once"
+    );
     assert_eq!(long_retry(&conn, &key).1, 0);
 }
 
@@ -193,17 +218,30 @@ fn a_crash_between_reconcile_and_claim_preserves_the_compensation_opportunity() 
     seed_job(&conn, &key, CoverJobState::Failed, 1, "e1", 0);
     set_long_retry(&conn, &key, Some(SIX_HOURS_MS), 0, 0);
 
-    cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, SIX_HOURS_MS, budget(64))
-        .unwrap();
+    cover_store::reconcile_cover_compensation_for_source_on(
+        &conn,
+        "source",
+        42,
+        SIX_HOURS_MS,
+        budget(64),
+    )
+    .unwrap();
     // 模拟崩溃/重启：不消耗任何额度，重新打开连接也只看 durable 状态。
     let (_, consumed, pending) = long_retry(&conn, &key);
     assert_eq!(consumed, 0, "no budget may be consumed before a real claim");
     assert_eq!(pending, 1);
 
     // 重启后该 job 必须仍然可被 claim（compensation 机会仍在）。
-    let claimed = cover_store::claim_next_job_for_source_session_on(&conn, "source", "worker", SIX_HOURS_MS + 10, 60_000, 42)
-        .unwrap()
-        .expect("a compensation-pending job must still be claimable after a restart");
+    let claimed = cover_store::claim_next_job_for_source_session_on(
+        &conn,
+        "source",
+        "worker",
+        SIX_HOURS_MS + 10,
+        60_000,
+        42,
+    )
+    .unwrap()
+    .expect("a compensation-pending job must still be claimable after a restart");
     assert_eq!(claimed.key, key);
     assert_eq!(claimed.state, CoverJobState::Running);
 }
@@ -219,16 +257,35 @@ fn the_claim_is_what_consumes_the_long_retry_budget() {
     let key = job_key("source", "asset");
     seed_job(&conn, &key, CoverJobState::Failed, 1, "e1", 0);
     set_long_retry(&conn, &key, Some(SIX_HOURS_MS), 0, 0);
-    cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, SIX_HOURS_MS, budget(64))
-        .unwrap();
+    cover_store::reconcile_cover_compensation_for_source_on(
+        &conn,
+        "source",
+        42,
+        SIX_HOURS_MS,
+        budget(64),
+    )
+    .unwrap();
 
-    cover_store::claim_next_job_for_source_session_on(&conn, "source", "worker", SIX_HOURS_MS + 10, 60_000, 42)
-        .unwrap()
-        .unwrap();
+    cover_store::claim_next_job_for_source_session_on(
+        &conn,
+        "source",
+        "worker",
+        SIX_HOURS_MS + 10,
+        60_000,
+        42,
+    )
+    .unwrap()
+    .unwrap();
 
     let (_, consumed, pending) = long_retry(&conn, &key);
-    assert_eq!(consumed, 1, "claiming must durably consume the compensation");
-    assert_eq!(pending, 0, "the compensation-pending marker must be cleared");
+    assert_eq!(
+        consumed, 1,
+        "claiming must durably consume the compensation"
+    );
+    assert_eq!(
+        pending, 0,
+        "the compensation-pending marker must be cleared"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -244,11 +301,24 @@ fn a_failed_compensation_does_not_start_another_six_hour_cycle() {
     set_long_retry(&conn, &key, Some(SIX_HOURS_MS), 0, 0);
 
     // 第一轮：promote → claim（消耗）→ 再次终态失败（retryable）。
-    cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, SIX_HOURS_MS, budget(64))
-        .unwrap();
-    cover_store::claim_next_job_for_source_session_on(&conn, "source", "worker", SIX_HOURS_MS + 10, 60_000, 42)
-        .unwrap()
-        .unwrap();
+    cover_store::reconcile_cover_compensation_for_source_on(
+        &conn,
+        "source",
+        42,
+        SIX_HOURS_MS,
+        budget(64),
+    )
+    .unwrap();
+    cover_store::claim_next_job_for_source_session_on(
+        &conn,
+        "source",
+        "worker",
+        SIX_HOURS_MS + 10,
+        60_000,
+        42,
+    )
+    .unwrap()
+    .unwrap();
     cover_store::mark_job_failure_owned_on(
         &conn,
         &key,
@@ -261,7 +331,10 @@ fn a_failed_compensation_does_not_start_another_six_hour_cycle() {
     .unwrap();
 
     let (not_before, consumed, pending) = long_retry(&conn, &key);
-    assert_eq!(consumed, 1, "the exhausted episode must stay marked as consumed");
+    assert_eq!(
+        consumed, 1,
+        "the exhausted episode must stay marked as consumed"
+    );
     assert_eq!(pending, 0);
     assert_eq!(
         not_before,
@@ -271,9 +344,14 @@ fn a_failed_compensation_does_not_start_another_six_hour_cycle() {
 
     // 再过 6h（甚至 24h）也不得再自动补偿。
     for now in [2 * SIX_HOURS_MS + 30, 4 * SIX_HOURS_MS + 30] {
-        let report =
-            cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, now, budget(64))
-                .unwrap();
+        let report = cover_store::reconcile_cover_compensation_for_source_on(
+            &conn,
+            "source",
+            42,
+            now,
+            budget(64),
+        )
+        .unwrap();
         assert_eq!(
             report.compensation_promoted, 0,
             "a consumed episode must never be promoted again (now={now})"
@@ -321,7 +399,11 @@ fn a_new_failure_episode_after_ready_regains_one_compensation() {
         "checksum"
     )
     .unwrap());
-    assert_eq!(long_retry(&conn, &key), (None, 0, 0), "ready must clear the episode");
+    assert_eq!(
+        long_retry(&conn, &key),
+        (None, 0, 0),
+        "ready must clear the episode"
+    );
 
     // 之后一次全新的终态失败（retryable）应重新获得一次 6h 资格。
     //
@@ -359,7 +441,10 @@ fn a_new_failure_episode_after_ready_regains_one_compensation() {
         budget(64),
     )
     .unwrap();
-    assert_eq!(report.compensation_promoted, 1, "the new episode may be compensated once");
+    assert_eq!(
+        report.compensation_promoted, 1,
+        "the new episode may be compensated once"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -394,9 +479,16 @@ fn a_manual_retry_does_not_refresh_the_long_retry_budget() {
     );
 
     // 它再次终态失败后依旧不得获得新的自动补偿。
-    cover_store::claim_next_job_for_source_session_on(&conn, "source", "worker", SIX_HOURS_MS + 60, 60_000, 42)
-        .unwrap()
-        .unwrap();
+    cover_store::claim_next_job_for_source_session_on(
+        &conn,
+        "source",
+        "worker",
+        SIX_HOURS_MS + 60,
+        60_000,
+        42,
+    )
+    .unwrap()
+    .unwrap();
     cover_store::mark_job_failure_owned_on(
         &conn,
         &key,
@@ -440,7 +532,10 @@ fn unsupported_is_never_promoted_by_time_or_by_a_session_event() {
         budget(64),
     )
     .unwrap();
-    assert_eq!(report.compensation_promoted, 0, "unsupported must not be time-promoted");
+    assert_eq!(
+        report.compensation_promoted, 0,
+        "unsupported must not be time-promoted"
+    );
     assert_eq!(state_of(&conn, &key), "unsupported");
 }
 
@@ -568,9 +663,15 @@ fn replenishment_uses_the_caller_supplied_profile() {
     let asset_id = seed_library_asset(&conn, "source", "/low.cbz", "fp-low");
 
     let low = "170x240@1";
-    let first =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 5_000, budget(64), low)
-            .unwrap();
+    let first = cover_store::reconcile_missing_covers_for_source_on(
+        &conn,
+        "source",
+        42,
+        5_000,
+        budget(64),
+        low,
+    )
+    .unwrap();
     assert_eq!(first.jobs_created, 1, "缺口必须被补齐");
 
     let key = CoverJobKey {
@@ -587,9 +688,15 @@ fn replenishment_uses_the_caller_supplied_profile() {
     );
 
     // 同一档位再跑：不得重复创建（旧实现按 340 判缺口 ⇒ 每次都会再创建一遍）。
-    let again =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 5_100, budget(64), low)
-            .unwrap();
+    let again = cover_store::reconcile_missing_covers_for_source_on(
+        &conn,
+        "source",
+        42,
+        5_100,
+        budget(64),
+        low,
+    )
+    .unwrap();
     assert_eq!(again.jobs_created, 0, "同一档位不得重复补齐");
 
     // 换档位是另一条缺口判定：该资产在默认档确实还没有任务。
@@ -641,9 +748,19 @@ fn replenishment_leaves_live_and_terminal_states_alone() {
     };
     seed_job(&conn, &failed_key, CoverJobState::Failed, 1, "e1", 0);
 
-    let report =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 2_000, budget(64), "340x480@1").unwrap();
-    assert_eq!(report.jobs_created, 0, "existing job rows must never be duplicated");
+    let report = cover_store::reconcile_missing_covers_for_source_on(
+        &conn,
+        "source",
+        42,
+        2_000,
+        budget(64),
+        "340x480@1",
+    )
+    .unwrap();
+    assert_eq!(
+        report.jobs_created, 0,
+        "existing job rows must never be duplicated"
+    );
     assert_eq!(state_of(&conn, &ready_key), "ready");
     assert_eq!(state_of(&conn, &running_key), "running");
     assert_eq!(state_of(&conn, &failed_key), "failed");
@@ -670,14 +787,31 @@ fn replenishment_is_bounded_by_its_budget() {
         );
     }
 
-    let report =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 3_000, budget(10), "340x480@1").unwrap();
+    let report = cover_store::reconcile_missing_covers_for_source_on(
+        &conn,
+        "source",
+        42,
+        3_000,
+        budget(10),
+        "340x480@1",
+    )
+    .unwrap();
     assert_eq!(report.jobs_created, 10, "one pass must respect max_jobs");
-    assert!(report.truncated, "a bounded pass must report that more work remains");
+    assert!(
+        report.truncated,
+        "a bounded pass must report that more work remains"
+    );
 
     // 后续 pass 继续推进，而不是一次 fan-out 出全部 25 个。
-    let next =
-        cover_store::reconcile_missing_covers_for_source_on(&conn, "source", 42, 3_100, budget(10), "340x480@1").unwrap();
+    let next = cover_store::reconcile_missing_covers_for_source_on(
+        &conn,
+        "source",
+        42,
+        3_100,
+        budget(10),
+        "340x480@1",
+    )
+    .unwrap();
     assert_eq!(next.jobs_created, 10);
     let total: i64 = conn
         .query_row(
@@ -705,8 +839,14 @@ fn reconciliation_is_strictly_source_scoped() {
     set_long_retry(&conn, &a, Some(0), 0, 0);
     set_long_retry(&conn, &b, Some(0), 0, 0);
 
-    let report =
-        cover_store::reconcile_cover_compensation_for_source_on(&conn, "source-a", 42, 1, budget(64)).unwrap();
+    let report = cover_store::reconcile_cover_compensation_for_source_on(
+        &conn,
+        "source-a",
+        42,
+        1,
+        budget(64),
+    )
+    .unwrap();
     assert_eq!(report.compensation_promoted, 1);
     assert_eq!(state_of(&conn, &a), "pending");
     assert_eq!(
@@ -821,9 +961,14 @@ fn stale_resolution_failures_are_rearmed_once_after_they_become_resolvable() {
     )
     .unwrap();
 
-    let report =
-        cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, 1_000, budget(64))
-            .unwrap();
+    let report = cover_store::reconcile_cover_compensation_for_source_on(
+        &conn,
+        "source",
+        42,
+        1_000,
+        budget(64),
+    )
+    .unwrap();
     assert_eq!(
         report.compensation_promoted, 3,
         "同指纹行、预算中止、遗留通用码 provider 三类都必须能重挂"
@@ -839,7 +984,11 @@ fn stale_resolution_failures_are_rearmed_once_after_they_become_resolvable() {
         1,
         "重挂必须带 long_retry_pending（额度在 claim 时才消耗）"
     );
-    assert_eq!(state_of(&conn, &orphan), "failed", "索引行已删除的仍保持终态");
+    assert_eq!(
+        state_of(&conn, &orphan),
+        "failed",
+        "索引行已删除的仍保持终态"
+    );
     assert_eq!(
         state_of(&conn, &noroute),
         "failed",
@@ -847,8 +996,13 @@ fn stale_resolution_failures_are_rearmed_once_after_they_become_resolvable() {
     );
 
     // 幂等：第二次 reconcile 不得重复推进。
-    let again =
-        cover_store::reconcile_cover_compensation_for_source_on(&conn, "source", 42, 2_000, budget(64))
-            .unwrap();
+    let again = cover_store::reconcile_cover_compensation_for_source_on(
+        &conn,
+        "source",
+        42,
+        2_000,
+        budget(64),
+    )
+    .unwrap();
     assert_eq!(again.compensation_promoted, 0, "同一次重挂只能推进一次");
 }

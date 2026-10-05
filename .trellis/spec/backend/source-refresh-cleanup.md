@@ -133,3 +133,10 @@ The executable provider matrix and Flutter fake coordinator/status contracts
 under `app/rust/tests/remote_scan_contract.rs` and
 `app/test/remote_scan_provider_contract_test.dart` are the current regression
 boundary for these invariants.
+
+## Remote Logical Paths and Provider Identity
+
+- `library_index.path` and `RemoteEntry.logical_path` are stable catalog/read-history identities. For opaque providers (Baidu, 115, Quark), they are not API file identifiers.
+- Before a file operation from an indexed path, resolve `(source_id, logical_path)` to `provider_file_id`. Prefer a current running preview only when its generation, source fingerprint, and non-empty session epoch match; otherwise use the published route only when its source fingerprint matches and its library row is live.
+- A path not present in the logical index may already be a provider identifier from direct source browsing; preserve it unchanged. A live indexed `file/ArchiveFile` without a valid route must fail with a refresh instruction. Directories and unclassified/non-book entries without routes are not missing book mappings and must not raise that error.
+- Keep catalog paths for reading history, metadata, manifest checks, and remote-use leases. Use the resolved provider identity for provider requests and raw-cache operations so cache cleanup addresses the same key used during open.

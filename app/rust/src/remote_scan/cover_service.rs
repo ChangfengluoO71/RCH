@@ -141,7 +141,8 @@ pub fn read_cached_cover(
     // selection|profile`，每段 `len:value`），缓存文件名又正是由这 5 段派生
     // （`cache::remote_cover_cache_filename`）⇒ 不需要 variant 行也能读到同一份字节。
     // 这里只**在锁内取候选**，文件读取放到锁外（与既有设计一致：不持锁做 I/O）。
-    let ref_backed = ref_backed_revisions_on(&conn, source_id, asset_id, selection_revision, profile);
+    let ref_backed =
+        ref_backed_revisions_on(&conn, source_id, asset_id, selection_revision, profile);
     drop(stmt);
     drop(conn);
     for (revision, observed_at) in revisions {
@@ -247,12 +248,11 @@ fn ref_backed_revisions_on(
     ) else {
         return Vec::new();
     };
-    let keys: Vec<String> = match stmt.query_map(params![source_id, asset_id], |row| {
-        row.get::<_, String>(0)
-    }) {
-        Ok(rows) => rows.filter_map(Result::ok).collect(),
-        Err(_) => return Vec::new(),
-    };
+    let keys: Vec<String> =
+        match stmt.query_map(params![source_id, asset_id], |row| row.get::<_, String>(0)) {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(_) => return Vec::new(),
+        };
     keys.iter()
         .filter_map(|owner_key| cover_owner_tail(owner_key))
         .filter(|(_, selection, owner_profile)| {

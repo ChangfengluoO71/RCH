@@ -5,13 +5,13 @@
 ## 1. 选型结论
 
 - 夸克网盘**无官方开放平台 API**（M6 已确认排除，见 `.trellis/tasks/archive/2026-08/08-03-m6-netdisk-official-api/`），改走被 AList / quark-auto-save / QuarkPanTool 等长期使用的**非官方 Web API**，契约以 AList `drivers/quark_uc` 为基准。
-- 认证采用**粘贴 Cookie**（pan.quark.cn 登录后复制），不做扫码登录逆向（v2 候选）。
+- 认证支持两种方式：从夸克 App 扫码自动获取 Cookie，或粘贴浏览器 Cookie。
 
 ## 2. 认证
 
 - 请求头三件套：`Cookie` + `Referer: https://pan.quark.cn` + quark-cloud-drive Electron UA；query 固定 `pr=ucpro&fr=pc`。
 - 响应 Set-Cookie 中的 `__puus` 回写续期（会话内更新，Dart 侧对比后回写 DB `cookie` 列）。
-- Cookie 失效/风控错误码以真机冒烟为准（目前 401/4000 映射为「登录状态失效，请重新粘贴 Cookie」，其余透出 message）。
+- Cookie 失效/风控错误码以真机冒烟为准（目前 401/4000 映射为「登录状态失效，请重新粘贴 Cookie」，其余透出 message）。阅读器只对明确的夸克认证失效错误触发一次扫码续登；取消扫码保留原始错误，404 与资料库映射错误不触发认证流程。
 
 ## 3. 文件接口
 
@@ -38,7 +38,7 @@
 - 非官方接口，官方随时可能变动：错误透出 + cookie 续期 + 单点封装便于快速修复。
 - 直链敏感：必须带 Cookie/Referer/UA；Range 支持需真机验证。
 - Cookie 明文存 SQLite（与现有 password/refresh_token 同级保护）。
-- 分享链接/上传/移动/删除/搜索不支持；扫码登录为 v2 候选。
+- 分享链接/上传/移动/删除/搜索不支持。书源编辑页和阅读器认证恢复都复用夸克二维码登录能力，取得 Cookie 后写回书源。
 - 若 `open_document` 前拿不到文件名会报「无法获取夸克文件名，请从书源浏览打开」——从历史记录打开且 download 响应无 `file_name` 时可能出现。
 
 ## 6. 前置条件

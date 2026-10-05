@@ -4,6 +4,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
@@ -48,31 +49,36 @@ class _CoverEditorPageState extends State<CoverEditorPage> {
     try {
       final s = widget.source;
       final strategy = LibraryStore.instance.settings.bookOpenStrategy.name;
+      final providerPath =
+          await LibraryCatalogStore.instance.providerPathFor(
+        source: s,
+        path: widget.path,
+      );
       // 封面编辑是纯本地操作：先试 raw/ 缓存，命中直接本地打开、不联网；
       // 未命中再按全局打开策略（auto/download/stream）走远程。
-      final b = (await _openCached()) ??
+      final b = (await _openCached(path: providerPath)) ??
           switch (s.type) {
             'webdav' => await openWebdavBook(
                 session: await webdavSessionFor(s),
-                path: widget.path,
+                path: providerPath,
                 strategy: strategy),
             'sftp' => await openSftpBook(
                 session: await sftpSessionFor(s),
-                path: widget.path,
+                path: providerPath,
                 strategy: strategy),
             'baidu' => await openBaiduBook(
                 session: await baiduSessionFor(s),
-                path: widget.path,
+                path: providerPath,
                 strategy: strategy),
             '115' => await openCloud115BookFor(s,
                 session: await cloud115SessionFor(s),
-                path: widget.path,
+                path: providerPath,
                 strategy: strategy),
             'quark' => await openQuarkBook(
                 session: await quarkSessionFor(s),
-                path: widget.path,
+                path: providerPath,
                 strategy: strategy),
-            _ => await openLocalBook(path: widget.path),
+            _ => await openLocalBook(path: providerPath),
           };
       if (!mounted) return;
       setState(() => _book = b);
@@ -83,7 +89,7 @@ class _CoverEditorPageState extends State<CoverEditorPage> {
   }
 
   /// 尝试从 raw/ 本地缓存直接打开远程书；无缓存或打开失败返回 null（由 _open 回退远程）。
-  Future<BookInfo?> _openCached() async {
+  Future<BookInfo?> _openCached({required String path}) async {
     final s = widget.source;
     if (!s.needsSession) return null;
     try {
@@ -97,7 +103,7 @@ class _CoverEditorPageState extends State<CoverEditorPage> {
       };
       if (session == null) return null;
       return await openCachedRemoteBook(
-          kind: s.type, session: session, path: widget.path);
+          kind: s.type, session: session, path: path);
     } catch (_) {
       return null; // 缓存路径失败（如会话未建立）时交给远程策略兜底
     }

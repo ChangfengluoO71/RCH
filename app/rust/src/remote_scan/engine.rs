@@ -357,12 +357,11 @@ impl RemoteScanEngine {
             .acquire(RequestPriority::Scan)
             .map_err(|_| RemoteScanError::Provider("request_queue_full".into()))?;
         // 目录发现标注 Scan（最低优先级），保证它不会与当前阅读页抢许可。
-        let entries = crate::source::gate::with_priority(RequestPriority::Scan, || {
-            match initial_entries {
+        let entries =
+            crate::source::gate::with_priority(RequestPriority::Scan, || match initial_entries {
                 Some(entries) => self.normalize_entries(entries),
                 None => self.list_complete(&task.source_id, &task.logical_path),
-            }
-        })?;
+            })?;
         if self.token.is_cancelled() {
             return Err(RemoteScanError::Cancelled);
         }

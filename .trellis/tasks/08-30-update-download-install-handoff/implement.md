@@ -42,5 +42,13 @@ flutter analyze
 ## 平台关卡与回滚
 
 - [ ] Windows：用测试安装包验证确认下载后出现进度、校验成功后只启动一次安装器、取消 UAC 后可重试。
-- [ ] Android：验证确认下载后出现进度，完成后只拉起系统安装确认；拒绝未知来源权限后可回到已下载状态重试。
+- [x] Android：MuMu 上用签名与正式版一致的 0.6.1 测试 APK 验证发现更新、下载、SHA-256 校验、未知来源设置引导、重试安装、系统覆盖安装到 0.6.2 并重新启动。测试结束后将安装权限恢复为 `default`。
 - [ ] 将 UI/状态机提交与平台通道提交保持可回滚边界；出现平台回归时先关闭自动交接入口，保留手动安装。
+
+## Execution update (2026-10-02)
+
+- Added `.part` downloads, SHA-256 verification from GitHub asset digests before commit and again before install, single-flight download/install, verified package reuse, and retry-preserving failures.
+- Unified startup update details and Settings into one visible progress/install flow. The Windows helper waits for the Inno Setup process; UAC cancellation or non-zero installer exit keeps the verified package and exposes retry instead of reopening Install after a fixed delay.
+- `flutter test --no-pub test/update_handoff_test.dart --reporter expanded`: passed (21 tests). Full `flutter test --no-pub`: passed (231 passed, 1 skipped). `flutter analyze --no-pub`: passed.
+- Android smoke passed on MuMu: the locally built 0.6.1 x86_64 APK had the same signer certificate as the official 0.6.2 APK; the updater downloaded the official asset from a local fixture, verified it, handed it to Android Package Installer, upgraded to version `0.6.2` / code `104602`, and relaunched successfully.
+- Windows release test build rebuilt successfully after the installer-wait fix, but the desktop interaction smoke is still pending: the Computer Use flow was stopped with physical Esc while resolving an app-target mismatch, so no Windows installer/UAC result was recorded. Do not count the unrelated existing `D:\RCH\RCH.exe` v0.5.7 as a test.

@@ -28,6 +28,17 @@ Future<Uint8List> bookPage({
   targetWidth: targetWidth,
 );
 
+/// 低优先级读取邻页，不触发下一轮预取；跳转目标页仍由 `book_page` 前台读取。
+Future<Uint8List> bookPagePrefetch({
+  required BigInt handle,
+  required int index,
+  int? targetWidth,
+}) => RustLib.instance.api.crateApiBookBookPagePrefetch(
+  handle: handle,
+  index: index,
+  targetWidth: targetWidth,
+);
+
 /// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
 /// 若 path 为目录,走 Folder 格式。
 /// 生成本地书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。

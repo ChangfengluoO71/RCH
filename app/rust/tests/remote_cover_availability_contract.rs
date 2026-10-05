@@ -5,7 +5,9 @@
 
 use rusqlite::params;
 use rust_lib_app::remote_scan::cover_model::{CoverJobKey, CoverJobState};
-use rust_lib_app::remote_scan::cover_revision_stream::{reset_wake_decided_count, wake_decided_count};
+use rust_lib_app::remote_scan::cover_revision_stream::{
+    reset_wake_decided_count, wake_decided_count,
+};
 use rust_lib_app::remote_scan::cover_state::CoverJobUpsertCause;
 use rust_lib_app::remote_scan::{cover_service, cover_store, persistence};
 use rust_lib_app::{cache, db};
@@ -35,8 +37,11 @@ fn prepare(source_id: &str) -> CacheRootGuard {
         "remote_scan_epoch",
         "remote_view_revision",
     ] {
-        conn.execute(&format!("DELETE FROM {table} WHERE source_id=?1"), [source_id])
-            .unwrap();
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE source_id=?1"),
+            [source_id],
+        )
+        .unwrap();
     }
     conn.execute(
         "INSERT OR REPLACE INTO remote_scan_epoch(
@@ -79,7 +84,14 @@ fn f_availability_reflects_the_real_bytes() {
     );
 
     cache::remote_cover_cache_write(
-        source, "asset", "content", SELECTION, PROFILE, 4, 4, &vec![7_u8; 4 * 4 * 4],
+        source,
+        "asset",
+        "content",
+        SELECTION,
+        PROFILE,
+        4,
+        4,
+        &vec![7_u8; 4 * 4 * 4],
     )
     .unwrap();
 
@@ -95,7 +107,14 @@ fn f_availability_is_a_pure_read() {
     let source = "f-avail-pure";
     let _guard = prepare(source);
     cache::remote_cover_cache_write(
-        source, "asset", "content", SELECTION, PROFILE, 4, 4, &vec![9_u8; 4 * 4 * 4],
+        source,
+        "asset",
+        "content",
+        SELECTION,
+        PROFILE,
+        4,
+        4,
+        &vec![9_u8; 4 * 4 * 4],
     )
     .unwrap();
 
@@ -115,7 +134,8 @@ fn f_availability_is_a_pure_read() {
     let wake_before = wake_decided_count();
 
     for _ in 0..3 {
-        let _ = cover_service::cover_material_available(source, "asset", "content", SELECTION, PROFILE);
+        let _ =
+            cover_service::cover_material_available(source, "asset", "content", SELECTION, PROFILE);
     }
 
     let (revision_after, jobs_after) = {
@@ -130,8 +150,14 @@ fn f_availability_is_a_pure_read() {
             .unwrap();
         (rev, jobs)
     };
-    assert_eq!(revision_after, revision_before, "F: availability check must not bump the revision");
-    assert_eq!(jobs_after, jobs_before, "F: availability check must not mutate jobs");
+    assert_eq!(
+        revision_after, revision_before,
+        "F: availability check must not bump the revision"
+    );
+    assert_eq!(
+        jobs_after, jobs_before,
+        "F: availability check must not mutate jobs"
+    );
     assert_eq!(
         wake_decided_count(),
         wake_before,

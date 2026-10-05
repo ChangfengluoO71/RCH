@@ -18,13 +18,14 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const groups = <String>[
     "书源与网络",
+    "EH 订阅",
     "同步与备份",
     "外观与布局",
     "关于与更新",
     "缓存与存储",
     "阅读",
   ];
-  const sections = <String>["主题", "存储权限", "封面质量", "平板布局", "本地漫画", "自定义按键", "跨书源搜索", "远程书源", "阅读渲染宽度", "阅读默认"];
+  const sections = <String>["主题", "存储权限", "封面质量", "平板布局", "本地漫画", "自定义按键", "跨书源搜索", "远程书源", "阅读渲染宽度", "阅读默认", "E 站自动刮削"];
   const panels = <String>["关于与更新", "备份", "缓存管理"];
   const rowLabels = <String>["阅读渲染宽度", "自动转 CBZ", "下载通道", "关于与更新", "缓存管理", "直接流式", "阅读完成后删除整包（封面缓存保留）"];
   const buttons = <String>["重新刮削", "立即同步"];
@@ -91,6 +92,8 @@ void main() {
       'lib/ui/update_panel.dart',
       'lib/ui/backup_panel.dart',
       'lib/ui/scrape_panel.dart',
+      'lib/ui/eh_auto_scrape_panel.dart',
+      'lib/ui/eh_subscription_panel.dart',
       'lib/ui/sync_panel.dart',
     ].where((p) => File(p).existsSync()).map((p) => File(p).readAsStringSync()).join('\n');
 

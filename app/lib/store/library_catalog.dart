@@ -4,7 +4,16 @@
 // 不在此处重新判断 remote_only / fingerprint / 设备归属。
 
 import 'package:app/src/rust/api/library.dart' as frb;
+import 'package:app/store/models.dart';
 import 'package:flutter/foundation.dart';
+
+typedef RandomCatalogCandidate = ({
+  String bookKey,
+  String sourceId,
+  String sourceType,
+  String path,
+  String title,
+});
 
 class LibraryCatalogStore extends ChangeNotifier {
   LibraryCatalogStore._();
@@ -56,6 +65,49 @@ class LibraryCatalogStore extends ChangeNotifier {
         limit: limit,
         offset: offset,
       );
+
+  /// Resolve catalog logical paths to the provider identity required by file
+  /// APIs. Paths from source browsing are already provider-facing and remain
+  /// unchanged when they have no indexed route.
+  Future<String> providerPathFor({
+    required BookSource source,
+    required String path,
+  }) async {
+    if (!source.needsSession ||
+        !(source.isBaidu || source.is115 || source.isQuark)) {
+      return path;
+    }
+    final providerPath = await frb.dbResolveRemoteProviderPath(
+      sourceId: source.id,
+      logicalPath: path,
+    );
+    return providerPath ?? path;
+  }
+
+  /// Load a small random batch from the already indexed, published catalog.
+  /// This API does not open source sessions or trigger scans.
+  Future<List<RandomCatalogCandidate>> randomCandidates({
+    List<String> excludedBookKeys = const [],
+    List<String> unavailableCandidateKeys = const [],
+    int limit = 32,
+  }) async {
+    final rows = await frb.dbRandomLibraryCandidates(
+      excludedBookKeys: excludedBookKeys,
+      unavailableCandidateKeys: unavailableCandidateKeys,
+      limit: limit,
+    );
+    return rows
+        .map(
+          (row) => (
+            bookKey: row.bookKey,
+            sourceId: row.sourceId,
+            sourceType: row.sourceType,
+            path: row.path,
+            title: row.title,
+          ),
+        )
+        .toList();
+  }
 
   /// 三状态图标映射（语义由 Rust DTO 给出，这里只做展示）。
   static String statusEmoji(String status) => switch (status) {

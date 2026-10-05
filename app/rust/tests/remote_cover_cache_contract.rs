@@ -55,7 +55,11 @@ fn ref_backed_read_serves_bytes_when_durable_rows_were_purged() {
         rust_lib_app::remote_scan::persistence::migrate(&conn).unwrap();
         rust_lib_app::remote_scan::cover_store::migrate(&conn).unwrap();
         // 复现 purge 后的形状：job/variant 行全无，只剩 ref + 磁盘字节。
-        for table in ["remote_cover_job", "remote_cover_variant", "remote_cover_ref"] {
+        for table in [
+            "remote_cover_job",
+            "remote_cover_variant",
+            "remote_cover_ref",
+        ] {
             conn.execute(&format!("DELETE FROM {table} WHERE source_id='src'"), [])
                 .unwrap();
         }

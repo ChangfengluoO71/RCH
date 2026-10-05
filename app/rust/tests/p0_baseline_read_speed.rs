@@ -870,9 +870,12 @@ fn p0a_single_page_latency_without_background_load() {
         "reading pages over the network must issue range reads: {:?}",
         probe.range_requests_per_page
     );
+    // The nominal gate interval is 250 ms. Windows runner timer resolution can
+    // report two intervals a little below 500 ms, so retain a 100 ms margin
+    // while still rejecting a page that bypasses the cold-read gate entirely.
     assert!(
-        probe.page_ms.iter().any(|&v| v >= 500),
-        "at least one cold page must pay the gate floor: {:?}",
+        probe.page_ms.iter().any(|&v| v >= 400),
+        "at least one cold page must pay the gate floor within timer tolerance: {:?}",
         probe.page_ms
     );
 }

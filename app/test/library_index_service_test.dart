@@ -131,6 +131,7 @@ void main() {
         entryType: a.entryType,
         size: a.size,
         modifiedAt: a.modifiedAt,
+        assetKind: a.assetKind,
       ),
     );
   });

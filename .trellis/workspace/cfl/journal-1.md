@@ -679,3 +679,25 @@ Implemented four global color palettes and app font choices for system default, 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: Prepare and publish RCH v0.6.4
+
+**Date**: 2026-10-09
+**Task**: Prepare and publish RCH v0.6.4
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+Committed and archived mobile wide-page splitting, prepared v0.6.4 version metadata, changelog, README and release notes for poster wall, themes/fonts and reader changes. Rebased onto latest origin/master. Debug x86_64 APK built with both bundled fonts and librust_lib_app.so, installed and launched on API 36 emulator. Awaiting master CI before tagging/publishing release.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `470b1bf` | (see git log) |
+| `7718074` | (see git log) |
+
+### Status
+
+[OK] **Completed**

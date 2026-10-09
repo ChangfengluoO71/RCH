@@ -145,7 +145,9 @@ class _BookDetailPageState extends State<BookDetailPage> {
             child: const Text('返回'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             onPressed: () async {
               Navigator.of(ctx).pop();
               final store = LibraryStore.instance;
@@ -708,7 +710,12 @@ class _BookDetailPageState extends State<BookDetailPage> {
       children: [
         SizedBox(
           width: 58,
-          child: Text('$label：', style: const TextStyle(color: Colors.white60)),
+          child: Text(
+            '$label：',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
         ),
         Expanded(child: Text(value)),
       ],
@@ -720,9 +727,14 @@ class _BookDetailPageState extends State<BookDetailPage> {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(
+        SizedBox(
           width: 72,
-          child: Text('原文件名：', style: TextStyle(color: Colors.white60)),
+          child: Text(
+            '原文件名：',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
         ),
         Expanded(child: SelectableText(filename)),
         IconButton(
@@ -746,7 +758,11 @@ class _BookDetailPageState extends State<BookDetailPage> {
       children: [
         Row(
           children: [
-            Icon(Icons.label, size: 16, color: Colors.redAccent.shade200),
+            Icon(
+              Icons.label,
+              size: 16,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(width: 4),
             Text(
               label,
@@ -897,11 +913,17 @@ class _BookDetailPageState extends State<BookDetailPage> {
                       ? Icons.check_circle
                       : Icons.radio_button_unchecked,
                   size: 18,
-                  color: hasReadTag ? Colors.redAccent : Colors.grey,
+                  color: hasReadTag
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
                 label: Text(
                   hasReadTag ? '已读' : '标记已读',
-                  style: TextStyle(color: hasReadTag ? Colors.redAccent : null),
+                  style: TextStyle(
+                    color: hasReadTag
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
                 ),
               ),
             ),
@@ -922,14 +944,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
                     : hasAiTag
                     ? OutlinedButton.icon(
                         onPressed: _showAiConfirm,
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.auto_fix_high,
                           size: 18,
-                          color: Colors.purple,
+                          color: Theme.of(context).colorScheme.tertiary,
                         ),
-                        label: const Text(
+                        label: Text(
                           '重新 AI 超分',
-                          style: TextStyle(color: Colors.purple),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.tertiary,
+                          ),
                         ),
                       )
                     : OutlinedButton.icon(
@@ -944,14 +968,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   width: 220,
                   child: OutlinedButton.icon(
                     onPressed: _cancelAiSuperResolve,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.delete_outline,
                       size: 18,
-                      color: Colors.redAccent,
+                      color: Theme.of(context).colorScheme.error,
                     ),
-                    label: const Text(
+                    label: Text(
                       '取消 AI 超分',
-                      style: TextStyle(color: Colors.redAccent),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
                 ),

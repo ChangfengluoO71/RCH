@@ -177,7 +177,10 @@ class _WebDavPageState extends State<WebDavPage> {
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
                 ),
               SizedBox(
                 width: double.infinity,
@@ -198,7 +201,7 @@ class _WebDavPageState extends State<WebDavPage> {
     return Column(
       children: [
         Material(
-          color: Colors.black26,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
           child: ListTile(
             dense: true,
             leading: IconButton(
@@ -217,7 +220,10 @@ class _WebDavPageState extends State<WebDavPage> {
         if (_error != null)
           Padding(
             padding: const EdgeInsets.all(8),
-            child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+            child: Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ),
         Expanded(
           child: _loading

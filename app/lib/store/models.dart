@@ -370,6 +370,8 @@ class AppSettings {
   /// 阅读页渲染宽度（默认标准 1600，与历史行为一致）。
   RenderWidth renderWidth;
   String themeMode; // 'light' | 'dark'
+  String themePalette; // classic | seaGlass | warmPaper | inkNight
+  String appFont; // systemDefault | systemSerif | wenKaiGbLite | zhiMangXing
   ReadMode readMode; // 阅读模式:日漫/美漫/条漫
   bool invertTap; // 日漫模式下点击区是否反向
   DualPageMode dualPageMode; // 双页拼接模式
@@ -402,6 +404,8 @@ class AppSettings {
     this.coverQuality = CoverQuality.low,
     this.renderWidth = RenderWidth.standard,
     this.themeMode = 'dark',
+    this.themePalette = 'classic',
+    this.appFont = 'systemDefault',
     this.readMode = ReadMode.manga,
     this.invertTap = false,
     this.dualPageMode = DualPageMode.off,
@@ -434,6 +438,8 @@ class AppSettings {
     'coverQuality': coverQuality.name,
     'renderWidth': renderWidth.name,
     'themeMode': themeMode,
+    'themePalette': themePalette,
+    'appFont': appFont,
     'readMode': readMode.name,
     'invertTap': invertTap,
     'dualPageMode': dualPageMode.name,
@@ -465,6 +471,22 @@ class AppSettings {
       orElse: () => CoverQuality.low,
     ),
     themeMode: (j['themeMode'] as String?) ?? 'dark',
+    themePalette: const {
+      'classic',
+      'seaGlass',
+      'warmPaper',
+      'inkNight',
+    }.contains(j['themePalette'])
+        ? j['themePalette'] as String
+        : 'classic',
+    appFont: const {
+      'systemDefault',
+      'systemSerif',
+      'wenKaiGbLite',
+      'zhiMangXing',
+    }.contains(j['appFont'])
+        ? j['appFont'] as String
+        : 'systemDefault',
     readMode: ReadMode.values.firstWhere(
       (r) => r.name == j['readMode'],
       orElse: () => ReadMode.manga,

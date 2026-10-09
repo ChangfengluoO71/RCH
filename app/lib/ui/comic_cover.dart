@@ -303,8 +303,8 @@ class ComicCover extends StatefulWidget {
   /// 原因：封面格子会在「等待获取」与旧「未缓存」之间来回跳，视觉上像两个互相矛盾的
   /// 状态；统一成同一个"等待"语义后不再自相矛盾。
   /// （状态抖动的**根因**另在扫描 reconcile 的档位错位与读路径回写，不是这条文案本身。）
-  static Widget waitingScanPlaceholder() => Container(
-    color: Colors.black26,
+  static Widget waitingScanPlaceholder(BuildContext context) => Container(
+    color: Theme.of(context).colorScheme.surfaceContainerHighest,
     child: Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -312,14 +312,15 @@ class ComicCover extends StatefulWidget {
           Icon(
             Icons.schedule,
             size: 36,
-            color: Colors.lightBlueAccent.withAlpha(120),
+            color: Theme.of(context).colorScheme.primary,
           ),
           SizedBox(height: 4),
           Text(
             '等待扫描',
-            // TODO(第75轮): 该处在 const 子树内取不到 context ⇒ 暂用中性灰（明暗都可读）；
-            // 下一轮把父级 const 拆掉后换回 colorScheme.onSurfaceVariant。
-            style: TextStyle(fontSize: 10, color: Colors.grey),
+            style: TextStyle(
+              fontSize: 10,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -1103,8 +1104,8 @@ class _ComicCoverState extends State<ComicCover> {
   }
 
   Widget _loading() => Container(
-    color: Colors.black26,
-    child: const Center(
+    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    child: Center(
       child: SizedBox(
         width: 22,
         height: 22,
@@ -1122,18 +1123,16 @@ class _ComicCoverState extends State<ComicCover> {
       'blocked' => '暂不可用',
       _ => null,
     };
-    if (label == null) return ComicCover.waitingScanPlaceholder();
+    if (label == null) return ComicCover.waitingScanPlaceholder(context);
+    final colors = Theme.of(context).colorScheme;
     return Container(
-      color: Colors.black26,
+      color: colors.surfaceContainerHighest,
       alignment: Alignment.center,
       padding: const EdgeInsets.all(4),
       child: Text(
         label,
         textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontSize: 12,
-        ),
+        style: TextStyle(color: colors.onSurfaceVariant, fontSize: 12),
       ),
     );
   }
@@ -1200,7 +1199,8 @@ class ComicCard extends StatelessWidget {
               ),
             ),
             Container(
-              color: Colors.black45,
+              // Dark caption keeps text readable over covers in every palette.
+              color: Colors.black.withValues(alpha: 0.72),
               padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1209,16 +1209,17 @@ class ComicCard extends StatelessWidget {
                     title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, height: 1.2),
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.2,
+                      color: Colors.white,
+                    ),
                   ),
                   if (subtitle != null) ...[
                     const SizedBox(height: 2),
                     Text(
                       subtitle!,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                      style: TextStyle(fontSize: 10, color: Colors.white70),
                     ),
                   ],
                 ],

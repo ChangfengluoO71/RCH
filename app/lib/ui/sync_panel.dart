@@ -149,9 +149,12 @@ class _SyncPanelState extends State<SyncPanel> {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           '通过 WebDAV 同步文件夹进行多设备同步；浏览使用离线索引，凭据仅保存在本机。',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 8),
         _configField(
@@ -203,15 +206,21 @@ class _SyncPanelState extends State<SyncPanel> {
             ),
           ],
         ),
-        const Text(
+        Text(
           '同步间隔 60 秒；启动/回前台/本地变更（防抖 2 秒）自动触发；失败自动重试。',
-          style: TextStyle(fontSize: 11, color: Colors.grey),
+          style: TextStyle(
+            fontSize: 11,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 8),
         Text('最后同步: $_lastSyncText', style: const TextStyle(fontSize: 12)),
         Text(
           '自动流程状态：${AutomationCoordinator.instance.lastStatus}',
-          style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 12),
         const Text(

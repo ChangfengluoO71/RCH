@@ -221,7 +221,11 @@ class _UpdatePanelState extends State<UpdatePanel> {
       case UpdateStatus.upToDate:
         return Row(
           children: [
-            const Icon(Icons.check_circle, color: Colors.green, size: 18),
+            Icon(
+              Icons.check_circle,
+              color: Theme.of(context).colorScheme.tertiary,
+              size: 18,
+            ),
             const SizedBox(width: 8),
             const Expanded(child: Text('当前已是最新版本')),
             TextButton(onPressed: () => m.check(), child: const Text('重新检查')),

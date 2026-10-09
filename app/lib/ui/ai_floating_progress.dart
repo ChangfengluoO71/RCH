@@ -55,7 +55,7 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
           key: const ValueKey('ai_progress'),
           elevation: 6,
           borderRadius: BorderRadius.circular(12),
-          color: Colors.black.withValues(alpha: 0.82),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
           child: _expanded && active.isNotEmpty
               ? _expandedPanel(m, active)
               : _miniPanel(m, active, completed, failed),
@@ -107,10 +107,12 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
             Text(failed,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.redAccent, fontSize: 12))
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.error, fontSize: 12))
           else if (completed != null)
             Text('已完成《$completed》',
-                style: const TextStyle(color: Colors.greenAccent, fontSize: 13))
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.tertiary, fontSize: 13))
           else
             for (final t in active) _taskTile(t),
         ],
@@ -210,8 +212,10 @@ class _AiFloatingProgressState extends State<AiFloatingProgress> {
               const SizedBox(width: 10),
               InkWell(
                 onTap: () => AiUpscaleManager.instance.cancel(t.id),
-                child: const Text('取消',
-                    style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                child: Text('取消',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 12)),
               ),
             ],
           ),

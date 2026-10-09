@@ -116,7 +116,7 @@ class _LibraryPageState extends State<LibraryPage> {
               padding: const EdgeInsets.all(8),
               child: Text(
                 '错误: $_error',
-                style: const TextStyle(color: Colors.redAccent),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
           Expanded(
@@ -209,7 +209,7 @@ class _EntryCard extends StatelessWidget {
                 );
               }
               return Container(
-                color: Colors.black26,
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: Center(
                   child: snap.hasError
                       ? Icon(
@@ -227,7 +227,8 @@ class _EntryCard extends StatelessWidget {
           ),
         ),
         Container(
-          color: Colors.black45,
+          // Dark caption keeps text readable over covers in every palette.
+          color: Colors.black.withValues(alpha: 0.72),
           padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -236,15 +237,16 @@ class _EntryCard extends StatelessWidget {
                 entry.name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, height: 1.2),
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.2,
+                  color: Colors.white,
+                ),
               ),
               const SizedBox(height: 2),
               Text(
                 fmtSize(entry.size),
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+                style: TextStyle(fontSize: 10, color: Colors.white70),
               ),
             ],
           ),

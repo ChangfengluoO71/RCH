@@ -17,6 +17,7 @@ import 'package:app/store/random_read_selector.dart';
 import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/store/update_manager.dart';
+import 'package:app/theme/app_theme.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/book_navigation.dart';
 import 'package:app/ui/backup_panel.dart';
@@ -383,7 +384,7 @@ class _HomePageState extends State<HomePage> {
                 message: _globalMode ? '切换为视图筛选' : '切换为跨书源搜索',
                 child: Material(
                   color: _globalMode
-                      ? Colors.amber.shade800
+                      ? Theme.of(context).colorScheme.primary
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                   child: InkWell(
@@ -400,7 +401,9 @@ class _HomePageState extends State<HomePage> {
                       child: Icon(
                         _globalMode ? Icons.public : Icons.public_off,
                         size: 18,
-                        color: _globalMode ? Colors.white : Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: _globalMode
+                            ? Theme.of(context).colorScheme.onPrimary
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -1526,13 +1529,16 @@ class _HomePageState extends State<HomePage> {
         leading: Icon(
           Icons.label,
           size: 20,
-          color: isMeta ? Colors.redAccent : Colors.amber,
+          color: isMeta ? Theme.of(context).colorScheme.error : Colors.amber,
         ),
         title: Text('${t.$1} (${t.$2} 本 · ${t.$3} 次阅读)'),
         subtitle: isMeta
-            ? const Text(
+            ? Text(
                 '元数据标签',
-                style: TextStyle(fontSize: 11, color: Colors.redAccent),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Theme.of(context).colorScheme.error,
+                ),
               )
             : null,
         onTap: () => setState(() {
@@ -1638,14 +1644,14 @@ class _HomePageState extends State<HomePage> {
                               : (_metaExpandedGroups[g.$1] ?? false),
                           onExpansionChanged: (v) =>
                               setState(() => _metaExpandedGroups[g.$1] = v),
-                          leading: const Icon(
+                          leading: Icon(
                             Icons.label,
-                            color: Colors.redAccent,
+                            color: Theme.of(context).colorScheme.error,
                           ),
                           title: Text(
                             '${g.$1} (${g.$2.length})',
-                            style: const TextStyle(
-                              color: Colors.redAccent,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -2278,17 +2284,27 @@ class _HomePageState extends State<HomePage> {
     ],
   );
 
-  Widget _theme(AppSettings s) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        '主题',
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-      ),
-      const SizedBox(height: 10),
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SegmentedButton<String>(
+  Widget _theme(AppSettings s) {
+    final theme = Theme.of(context);
+    final paletteOptions = <(String, String, Color)>[
+      (AppTheme.classic, '经典', const Color(0xFF6750A4)),
+      (AppTheme.seaGlass, '海雾', const Color(0xFF3A7773)),
+      (AppTheme.warmPaper, '暖纸', const Color(0xFF876044)),
+      (AppTheme.inkNight, '墨夜', const Color(0xFF617187)),
+    ];
+    final fontOptions = <(String, String)>[
+      (AppTheme.systemDefault, '系统默认'),
+      (AppTheme.systemSerif, '系统衬线'),
+      (AppTheme.wenKaiGbLite, '霞鹜文楷 GB 轻便版'),
+      (AppTheme.zhiMangXing, '钟齐志莽行书'),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('亮度', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
           segments: const [
             ButtonSegment(
               value: 'dark',
@@ -2302,14 +2318,72 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
           selected: {s.themeMode},
-          onSelectionChanged: (ms) {
-            s.themeMode = ms.first;
+          onSelectionChanged: (modes) {
+            s.themeMode = modes.first;
             LibraryStore.instance.updateSettings(s);
           },
         ),
-      ),
-    ],
-  );
+        const SizedBox(height: 18),
+        Text('配色', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final option in paletteOptions)
+              ChoiceChip(
+                avatar: CircleAvatar(radius: 8, backgroundColor: option.$3),
+                label: Text(option.$2),
+                selected: s.themePalette == option.$1,
+                onSelected: (_) {
+                  s.themePalette = option.$1;
+                  LibraryStore.instance.updateSettings(s);
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Text('应用字体', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          initialValue: s.appFont,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          items: [
+            for (final option in fontOptions)
+              DropdownMenuItem<String>(
+                value: option.$1,
+                child: Text(
+                  option.$2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: AppTheme.fontFamilyFor(option.$1),
+                  ),
+                ),
+              ),
+          ],
+          onChanged: (font) {
+            if (font == null) return;
+            s.appFont = font;
+            LibraryStore.instance.updateSettings(s);
+          },
+        ),
+        const SizedBox(height: 6),
+        Text(
+          s.appFont == AppTheme.zhiMangXing
+              ? '示例：最近阅读 · 统计 123。行书较有个性，小字号信息的辨认度会降低。'
+              : '示例：最近阅读 · 统计 123。字体只影响应用界面，不影响漫画图片。',
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontFamily: AppTheme.fontFamilyFor(s.appFont),
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _KeyCaptureDialog extends StatefulWidget {
@@ -3314,7 +3388,10 @@ class _AddDialogState extends State<AddSourceDialog> {
                 padding: const EdgeInsets.only(top: 10),
                 child: Text(
                   _e!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontSize: 12,
+                  ),
                 ),
               ),
           ],

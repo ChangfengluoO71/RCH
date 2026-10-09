@@ -966,7 +966,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   /// 底部转换进度条（非模态，转换期间不阻塞浏览）。
   Widget _convertProgressBar() => Material(
-    color: Colors.black87,
+    color: Theme.of(context).colorScheme.inverseSurface,
     elevation: 6,
     child: Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
@@ -981,7 +981,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   '正在转 CBZ：$_convertDone/$_convertTotal（$_convertCurrent）',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.onInverseSurface,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 LinearProgressIndicator(
@@ -993,7 +996,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.close, size: 18),
+            icon: Icon(
+              Icons.close,
+              size: 18,
+              color: Theme.of(context).colorScheme.onInverseSurface,
+            ),
             tooltip: '取消转换',
             onPressed: () => _safeSetState(() {
               _convertCancelled = true;
@@ -1181,7 +1188,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                                   Icons.label,
                                   size: 16,
                                   color: metaSet.contains(o)
-                                      ? Colors.redAccent
+                                      ? Theme.of(context).colorScheme.error
                                       : Colors.amber,
                                 ),
                                 title: Text(
@@ -1189,7 +1196,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: metaSet.contains(o)
-                                        ? Colors.redAccent
+                                        ? Theme.of(context).colorScheme.error
                                         : null,
                                   ),
                                 ),
@@ -1242,7 +1249,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
               Column(
                 children: [
                   Material(
-                    color: Colors.black26,
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
                     child: ListTile(
                       dense: true,
                       leading: Row(
@@ -1378,11 +1385,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
                       padding: const EdgeInsets.all(8),
                       child: Text(
                         _error!,
-                        style: const TextStyle(color: Colors.redAccent),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                       ),
                     ),
                   if (_offlineMode && !_loading && _error == null)
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.fromLTRB(12, 2, 12, 2),
                       child: Align(
                         alignment: Alignment.centerLeft,
@@ -1390,7 +1399,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                           '离线索引浏览（不连服务器）· 阅读时按本机资源/凭据判断',
                           style: TextStyle(
                             fontSize: 11,
-                            color: Colors.blueGrey,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -1497,7 +1506,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
                     width: 22,
                     height: 22,
                     decoration: BoxDecoration(
-                      color: sel ? Colors.blue : Colors.black45,
+                      color: sel
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.surfaceContainerHighest,
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1507,7 +1518,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                         ? Icon(
                             Icons.check,
                             size: 16,
-                            color: Theme.of(context).colorScheme.onSurface,
+                            color: Theme.of(context).colorScheme.onPrimary,
                           )
                         : null,
                   ),
@@ -1580,7 +1591,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   width: 22,
                   height: 22,
                   decoration: BoxDecoration(
-                    color: sel ? Colors.blue : Colors.black45,
+                    color: sel
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1590,7 +1603,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                       ? Icon(
                           Icons.check,
                           size: 16,
-                          color: Theme.of(context).colorScheme.onSurface,
+                          color: Theme.of(context).colorScheme.onPrimary,
                         )
                       : null,
                 ),
@@ -1678,7 +1691,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
               width: 22,
               height: 22,
               decoration: BoxDecoration(
-                color: sel ? Colors.blue : Colors.black45,
+                color: sel
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.surfaceContainerHighest,
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1688,7 +1703,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   ? Icon(
                       Icons.check,
                       size: 16,
-                      color: Theme.of(context).colorScheme.onSurface,
+                      color: Theme.of(context).colorScheme.onPrimary,
                     )
                   : null,
             ),
@@ -1911,7 +1926,8 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
           children: [
             Expanded(child: _buildCover()),
             Container(
-              color: Colors.black45,
+              // Dark caption keeps text readable over covers in every palette.
+              color: Colors.black.withValues(alpha: 0.72),
               padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1925,7 +1941,11 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
                           widget.name,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, height: 1.2),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            height: 1.2,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ],
@@ -1946,12 +1966,14 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
     // 网盘无本地数据 → 与漫画文件一致统一显示「等待扫描」（2026-09-21 用户决定，
     // 删除原「未缓存」文案）
     if (widget.kind == _FolderCoverKind.uncached) {
-      return ComicCover.waitingScanPlaceholder();
+      return ComicCover.waitingScanPlaceholder(context);
     }
     // 容器文件夹 → 第一个漫画文件封面（未就绪时由 ComicCover 显示「等待扫描」）
     if (widget.kind == _FolderCoverKind.container) {
       final f = widget.firstComicFile;
-      return f == null ? ComicCover.waitingScanPlaceholder() : _loadCover(f);
+      return f == null
+          ? ComicCover.waitingScanPlaceholder(context)
+          : _loadCover(f);
     }
     // 有显式封面 → 优先用封面路径解码（第 0 页）
     if (_coverPath != null && _coverPath!.isNotEmpty) {
@@ -1963,7 +1985,7 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
     }
     // 还在检测中 → 占位
     return Container(
-      color: Colors.black26,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: const Center(
         child: SizedBox(
           width: 22,

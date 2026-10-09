@@ -29,7 +29,9 @@ class _ScrapePanelState extends State<ScrapePanel> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
-          backgroundColor: run == null ? Colors.red : null,
+          backgroundColor: run == null
+              ? Theme.of(context).colorScheme.error
+              : null,
         ),
       );
     } catch (error) {

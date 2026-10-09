@@ -25,7 +25,7 @@ class RemoteScanStatusPanel extends StatelessWidget {
     return ValueListenableBuilder<RemoteScanViewState?>(
       valueListenable: stateListenable,
       builder: (context, state, _) {
-        if (state == null) return _idlePanel();
+        if (state == null) return _idlePanel(context);
         final normalizedStatus = state.status.trim().toLowerCase();
         final discovering = state.total <= 0 && _canPause(state.status);
         final hasDetailedProgress =
@@ -51,7 +51,7 @@ class RemoteScanStatusPanel extends StatelessWidget {
         final statusLabel = _statusLabel(state.status);
         final modeLabel = _modeLabel(state.mode);
         return Material(
-          color: Colors.blueGrey.withAlpha(32),
+          color: Theme.of(context).colorScheme.secondaryContainer.withAlpha(96),
           child: Padding(
             padding: compact
                 ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
@@ -110,9 +110,9 @@ class RemoteScanStatusPanel extends StatelessWidget {
     return '$listing\n$cover';
   }
 
-  Widget _idlePanel() {
+  Widget _idlePanel(BuildContext context) {
     return Material(
-      color: Colors.blueGrey.withAlpha(24),
+      color: Theme.of(context).colorScheme.secondaryContainer.withAlpha(72),
       child: Padding(
         padding: compact
             ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)

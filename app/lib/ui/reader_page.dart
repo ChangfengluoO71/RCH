@@ -1834,7 +1834,9 @@ class _ReaderPageState extends State<ReaderPage> {
   Widget _rotationButton(int page) => Tooltip(
     message: '旋转该页（当前 ${_rotationOf(page)}°）',
     child: Material(
-      color: Colors.black54,
+      color: Theme.of(
+        context,
+      ).colorScheme.inverseSurface.withValues(alpha: 0.8),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
@@ -1844,7 +1846,7 @@ class _ReaderPageState extends State<ReaderPage> {
           child: Icon(
             Icons.rotate_right,
             size: 22,
-            color: Theme.of(context).colorScheme.onSurface,
+            color: Theme.of(context).colorScheme.onInverseSurface,
           ),
         ),
       ),

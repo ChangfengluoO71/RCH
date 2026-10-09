@@ -92,9 +92,12 @@ class BackupPanel extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('备份', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
       const SizedBox(height: 4),
-      const Text(
+      Text(
         '导出/导入完整 .rchpkg 备份（书源、目录索引、元数据、标签、进度；可选加密凭据）。与日常同步相互独立。',
-        style: TextStyle(fontSize: 12, color: Colors.grey),
+        style: TextStyle(
+          fontSize: 12,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
       const SizedBox(height: 8),
       Row(children: [

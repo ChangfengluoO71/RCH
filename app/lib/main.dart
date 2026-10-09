@@ -15,6 +15,7 @@ import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/store/library_catalog.dart';
+import 'package:app/theme/app_theme.dart';
 import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/ai_floating_progress.dart';
@@ -208,11 +209,12 @@ class RchApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 监听设置变化,主题(白天/夜间)即时生效。
+    // 监听设置变化，亮度、配色与应用字体即时生效。
     return AnimatedBuilder(
       animation: LibraryStore.instance,
       builder: (context, _) {
-        final dark = LibraryStore.instance.settings.themeMode != 'light';
+        final settings = LibraryStore.instance.settings;
+        final dark = settings.themeMode != 'light';
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'RCH',
@@ -232,8 +234,16 @@ class RchApp extends StatelessWidget {
               ],
             ),
           ),
-          theme: ThemeData.light(useMaterial3: true),
-          darkTheme: ThemeData.dark(useMaterial3: true),
+          theme: AppTheme.build(
+            brightness: Brightness.light,
+            palette: settings.themePalette,
+            font: settings.appFont,
+          ),
+          darkTheme: AppTheme.build(
+            brightness: Brightness.dark,
+            palette: settings.themePalette,
+            font: settings.appFont,
+          ),
           themeMode: dark ? ThemeMode.dark : ThemeMode.light,
           home: _LifecycleFlush(startupPending: startupPending, child: const HomePage()),
         );

@@ -415,7 +415,13 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       child: ListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        leading: Icon(icon, size: 20, color: size > BigInt.zero ? Colors.lightBlueAccent : Theme.of(context).colorScheme.onSurfaceVariant),
+        leading: Icon(
+          icon,
+          size: 20,
+          color: size > BigInt.zero
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
         title: Text(label, style: const TextStyle(fontSize: 13)),
         subtitle: Text(hint, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [

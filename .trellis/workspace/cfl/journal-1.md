@@ -658,3 +658,24 @@ Committed and archived mobile poster wall, direct-read setting, and EH host UI u
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: Add app theme palettes and Chinese fonts
+
+**Date**: 2026-10-09
+**Task**: Add app theme palettes and Chinese fonts
+**Branch**: `codex/app-theme-font`
+
+### Summary
+
+Implemented four global color palettes and app font choices for system default, serif, LXGW WenKai GB Lite, and Zhi Mang Xing. Bundled font licenses, applied readable Material 3 color roles across global UI, verified with flutter analyze and git diff --check, committed and archived task 10-09-app-theme-font.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4f3e052f93169e929a7591fa6d197278ead8e4e2` | (see git log) |
+
+### Status
+
+[OK] **Completed**

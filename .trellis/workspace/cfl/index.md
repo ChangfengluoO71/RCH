@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-10-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~660 | Active |
+| `journal-1.md` | ~681 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-10-09 | Add app theme palettes and Chinese fonts | `4f3e052f93169e929a7591fa6d197278ead8e4e2` | `codex/app-theme-font` |
 | 18 | 2026-10-09 | Mobile comic browsing settings | `08d0e04` | `local-ai/cover-quark-debug` |
 | 17 | 2026-10-05 | v0.6.3 发布与状态文档收敛 | `106816f`, `0123afb`, `ff80c9e` | `local-ai/cover-quark-debug` |
 | 16 | 2026-10-01 | v0.6.2 文档与 Trellis 状态收敛 | - | `local-ai/cover-quark-debug` |

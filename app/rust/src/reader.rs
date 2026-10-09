@@ -175,9 +175,11 @@ pub fn blocking_request_governor() -> Arc<BlockingRequestGovernor> {
 }
 
 /// 轻量 LRU:容量有限的内存缓存。
+type PageCacheKey = (u32, Option<u32>);
+
 struct Lru {
-    map: HashMap<u32, Arc<Vec<u8>>>,
-    order: VecDeque<u32>, // 队首 = 最近使用
+    map: HashMap<PageCacheKey, Arc<Vec<u8>>>,
+    order: VecDeque<PageCacheKey>,
     cap: usize,
 }
 
@@ -190,71 +192,62 @@ impl Lru {
         }
     }
 
-    #[cfg(test)]
-    fn contains(&self, k: &u32) -> bool {
-        self.map.contains_key(k)
-    }
-
-    fn get(&mut self, k: &u32) -> Option<Arc<Vec<u8>>> {
-        if let Some(v) = self.map.get(k) {
-            let v = v.clone();
-            self.order.retain(|x| x != k);
-            self.order.push_front(*k);
-            Some(v)
+    fn get(&mut self, key: &PageCacheKey) -> Option<Arc<Vec<u8>>> {
+        if let Some(value) = self.map.get(key) {
+            let value = Arc::clone(value);
+            self.order.retain(|entry| entry != key);
+            self.order.push_front(*key);
+            Some(value)
         } else {
             None
         }
     }
 
-    fn insert(&mut self, k: u32, v: Arc<Vec<u8>>) {
-        if self.map.contains_key(&k) {
-            self.order.retain(|x| x != &k);
+    fn insert(&mut self, key: PageCacheKey, value: Arc<Vec<u8>>) {
+        if self.map.contains_key(&key) {
+            self.order.retain(|entry| entry != &key);
         } else if self.map.len() >= self.cap {
             if let Some(old) = self.order.pop_back() {
                 self.map.remove(&old);
             }
         }
-        self.order.push_front(k);
-        self.map.insert(k, v);
+        self.order.push_front(key);
+        self.map.insert(key, value);
     }
 }
 
-/// 一本书的阅读会话。
+const MAX_PAGE_RENDER_WIDTH: u32 = 8192;
+
+fn normalize_target_width(target_width: Option<u32>) -> Option<u32> {
+    target_width
+        .filter(|width| *width > 0)
+        .map(|width| width.min(MAX_PAGE_RENDER_WIDTH))
+}
+
+/// A reading session with width-specific L1/L2 caches and lazy prefetch.
 pub struct Reader {
-    book: Box<dyn Document>, // page_bytes 为 &self,可并发调用,无需锁
+    book: Box<dyn Document>,
     cache: Mutex<Lru>,
-    /// 所有正在生成的页。前台读取与后台预取共享，避免同一页重复解码/渲染。
-    inflight: Mutex<HashSet<u32>>,
-    /// 已排入 Rust 预取队列的页，避免相邻前台页反复提交同一批预取任务。
-    prefetch_scheduled: Mutex<HashSet<u32>>,
-    /// 某页生成完成（成功或失败）后唤醒等待该页的前台读取。
+    inflight: Mutex<HashSet<PageCacheKey>>,
+    prefetch_scheduled: Mutex<HashSet<PageCacheKey>>,
     inflight_done: Condvar,
-    /// 该书的磁盘缓存目录(原始页字节)。
     disk_dir: PathBuf,
-    /// 当前显示宽度（0 = 未指定 ⇒ 沿用文档默认渲染宽度 1600）。
-    ///
-    /// D7（2026-09-21）：阅读页一页 1600 宽的渲染结果约 1.9 MB 要经 FRB 交给 Dart，
-    /// 是"翻页重"的主要来源；把宽度交给用户选（省流 1080 / 标准 1600 / 跟随屏幕）。
-    /// 宽度是**每个 Reader 的会话状态**：前台取页设置它，预取沿用同一个值，
-    /// 这样同一本书不会因为前台/预取而写出两套尺寸的页。
-    display_width: std::sync::atomic::AtomicU32,
     governor: Arc<BlockingRequestGovernor>,
 }
 
 impl Reader {
-    /// `cache_ns`:该书在磁盘缓存中的命名空间(同一本书应稳定不变)。
+    /// `cache_ns` is the stable namespace for this book's disk cache.
     pub fn new(book: Box<dyn Document>, cache_ns: &str) -> Self {
         let disk_dir = crate::cache::CacheDir::Page
             .ensure()
             .ok()
             .unwrap_or_else(|| {
-                // 兜底：直接构造路径
-                let p = crate::cache::cache_root()
+                let path = crate::cache::cache_root()
                     .join("cache")
                     .join("page")
                     .join(crate::cache::stable_hash(cache_ns));
-                let _ = std::fs::create_dir_all(&p);
-                p
+                let _ = std::fs::create_dir_all(&path);
+                path
             });
 
         let dir = disk_dir.join(crate::cache::stable_hash(cache_ns));
@@ -266,7 +259,6 @@ impl Reader {
             prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: dir,
-            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: blocking_request_governor(),
         }
     }
@@ -275,74 +267,104 @@ impl Reader {
         self.book.page_count()
     }
 
+    pub fn page_dimensions(&self, index: u32) -> Result<Option<(u32, u32)>> {
+        self.book.page_dimensions(index)
+    }
+
     pub fn title(&self) -> String {
         self.book.metadata().title
     }
 
-    /// 获取一页:先 L1 内存,未命中则等待/认领唯一一次实际生成;完成后触发周边预取。
+    /// Read a source page using the historical/default render width.
     pub fn get_page(self: &Arc<Self>, index: u32) -> Result<Arc<Vec<u8>>> {
-        // P0 埋点：单页端到端 wall time（含等 inflight、等许可、等门控、网络）。
-        let span = crate::perf::Span::new("reader.get_page").field_u64("index", index as u64);
-        let cached = { self.cache.lock().unwrap().get(&index) };
+        self.get_page_with_width(index, None)
+    }
+
+    /// Read a source page using a request-scoped render width.
+    pub fn get_page_with_width(
+        self: &Arc<Self>,
+        index: u32,
+        target_width: Option<u32>,
+    ) -> Result<Arc<Vec<u8>>> {
+        let target_width = normalize_target_width(target_width);
+        let key = (index, target_width);
+        let span = crate::perf::Span::new("reader.get_page")
+            .field_u64("index", index as u64)
+            .field_u64("target_width", u64::from(target_width.unwrap_or(0)));
+        let cached = { self.cache.lock().unwrap().get(&key) };
         if let Some(bytes) = cached {
             crate::perf::bump(crate::perf::Counter::PageMemoryHits);
             span.field_str("source", "l1").end();
-            self.spawn_prefetch(index);
+            self.spawn_prefetch(index, target_width);
             return Ok(bytes);
         }
 
-        let bytes = self.load_or_wait(index, RequestPriority::Foreground)?;
+        let bytes = self.load_or_wait(index, target_width, RequestPriority::Foreground)?;
         span.field_str("source", "load").end();
-        self.spawn_prefetch(index);
+        self.spawn_prefetch(index, target_width);
         Ok(bytes)
     }
 
-    /// 读取邻页时使用低优先级，且不再展开一圈新的预取请求。
+    /// Low-priority read using the historical/default render width.
     pub fn get_page_prefetch(&self, index: u32) -> Result<Arc<Vec<u8>>> {
-        let span =
-            crate::perf::Span::new("reader.get_page_prefetch").field_u64("index", index as u64);
-        if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+        self.get_page_prefetch_with_width(index, None)
+    }
+
+    /// Low-priority read using a request-scoped render width.
+    pub fn get_page_prefetch_with_width(
+        &self,
+        index: u32,
+        target_width: Option<u32>,
+    ) -> Result<Arc<Vec<u8>>> {
+        let target_width = normalize_target_width(target_width);
+        let key = (index, target_width);
+        let span = crate::perf::Span::new("reader.get_page_prefetch")
+            .field_u64("index", index as u64)
+            .field_u64("target_width", u64::from(target_width.unwrap_or(0)));
+        if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
             crate::perf::bump(crate::perf::Counter::PageMemoryHits);
             span.field_str("source", "l1").end();
             return Ok(bytes);
         }
-        let bytes = self.load_or_wait(index, RequestPriority::Prefetch)?;
+        let bytes = self.load_or_wait(index, target_width, RequestPriority::Prefetch)?;
         span.field_str("source", "load").end();
         Ok(bytes)
     }
 
-    /// 打开书后立即预取开头若干页。
-    ///
-    /// 保留给显式 warm-up 场景；前台 get_page 与这些预取会共享 inflight，不会重复生成同一页。
+    /// Start lazy prefetch around the first page using the legacy/default size.
     pub fn warm_up(self: &Arc<Self>) {
-        self.spawn_prefetch(0);
+        self.spawn_prefetch(0, None);
     }
 
-    /// 有优先级地读取一页。等待 governor 许可时不先认领页，保证后来到达的前台请求
-    /// 可以越过仍在队列里的同页低优先级预取。
-    fn load_or_wait(&self, index: u32, priority: RequestPriority) -> Result<Arc<Vec<u8>>> {
+    fn load_or_wait(
+        &self,
+        index: u32,
+        target_width: Option<u32>,
+        priority: RequestPriority,
+    ) -> Result<Arc<Vec<u8>>> {
+        let target_width = normalize_target_width(target_width);
+        let key = (index, target_width);
         loop {
             let mut inflight = self.inflight.lock().unwrap();
-            while inflight.contains(&index) {
+            while inflight.contains(&key) {
                 inflight = self.inflight_done.wait(inflight).unwrap();
             }
-            if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+            if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
                 return Ok(bytes);
             }
             drop(inflight);
 
-            // 本地磁盘命中不经过 governor，避免网络请求繁忙时重复阅读也被排队。
             let disk_enter = Instant::now();
-            if let Some(bytes) = self.disk_get(index) {
+            if let Some(bytes) = self.disk_get(index, target_width) {
                 let mut inflight = self.inflight.lock().unwrap();
-                while inflight.contains(&index) {
+                while inflight.contains(&key) {
                     inflight = self.inflight_done.wait(inflight).unwrap();
                 }
-                if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+                if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
                     return Ok(bytes);
                 }
                 let bytes = Arc::new(bytes);
-                self.cache.lock().unwrap().insert(index, Arc::clone(&bytes));
+                self.cache.lock().unwrap().insert(key, Arc::clone(&bytes));
                 crate::perf::bump(crate::perf::Counter::PageLoads);
                 crate::perf::bump(crate::perf::Counter::PageDiskHits);
                 crate::perf::observe_us(
@@ -356,30 +378,30 @@ impl Reader {
             let governor_enter = Instant::now();
             let permit = self.governor.acquire(priority)?;
             let mut inflight = self.inflight.lock().unwrap();
-            if inflight.contains(&index) {
-                // 另一个高优先级请求已经开始同一页时，先归还许可再等它完成。
+            if inflight.contains(&key) {
                 drop(inflight);
                 drop(permit);
                 let mut inflight = self.inflight.lock().unwrap();
-                while inflight.contains(&index) {
+                while inflight.contains(&key) {
                     inflight = self.inflight_done.wait(inflight).unwrap();
                 }
                 continue;
             }
-            if let Some(bytes) = self.cache.lock().unwrap().get(&index) {
+            if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
                 return Ok(bytes);
             }
 
-            inflight.insert(index);
+            inflight.insert(key);
             drop(inflight);
-            return self.load_claimed(index, priority, permit, governor_enter);
+            return self.load_claimed(index, target_width, key, priority, permit, governor_enter);
         }
     }
 
-    /// 已认领页的唯一实际读取路径。无论成功、失败还是 panic 都释放 inflight 并唤醒等待者。
     fn load_claimed(
         &self,
         index: u32,
+        target_width: Option<u32>,
+        key: PageCacheKey,
         priority: RequestPriority,
         _permit: BlockingRequestPermit<'_>,
         governor_enter: Instant,
@@ -387,24 +409,20 @@ impl Reader {
         use crate::perf::{add, bump, observe_us, Counter};
         let span = crate::perf::Span::new("reader.load_claimed")
             .field_u64("index", index as u64)
+            .field_u64("target_width", u64::from(target_width.unwrap_or(0)))
             .field_str("priority", format!("{priority:?}"));
         let mut disk_hit = false;
         let mut governor_wait_us = 0_u64;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Local cache hits must not queue behind remote requests.
-            if let Some(bytes) = self.disk_get(index) {
+            if let Some(bytes) = self.disk_get(index, target_width) {
                 disk_hit = true;
                 return Ok(Arc::new(bytes));
             }
-            // 真正要上网取页了：前台请求据此让后台封面让路（磁盘命中不算 —— 那种情况下
-            // 不占网络，后台封面可以继续跑）。
             if priority == RequestPriority::Foreground {
                 note_foreground_read();
             }
             governor_wait_us = governor_enter.elapsed().as_micros() as u64;
-            // 把优先级标注到本线程，使底层每一次网络请求（CDN Range / 取链）
-            // 都能按同一个优先级排队 —— 这是"外层优先级贯通到底层"的落点。
-            crate::source::gate::with_priority(priority, || self.read_page(index))
+            crate::source::gate::with_priority(priority, || self.read_page(index, target_width))
         }));
         bump(Counter::PageLoads);
         if disk_hit {
@@ -431,16 +449,16 @@ impl Reader {
             Ok(result) => {
                 let mut inflight = self.inflight.lock().unwrap();
                 if let Ok(bytes) = &result {
-                    self.cache.lock().unwrap().insert(index, Arc::clone(bytes));
+                    self.cache.lock().unwrap().insert(key, Arc::clone(bytes));
                 }
-                inflight.remove(&index);
+                inflight.remove(&key);
                 self.inflight_done.notify_all();
                 drop(inflight);
                 result
             }
             Err(payload) => {
                 let mut inflight = self.inflight.lock().unwrap_or_else(|p| p.into_inner());
-                inflight.remove(&index);
+                inflight.remove(&key);
                 self.inflight_done.notify_all();
                 drop(inflight);
                 std::panic::resume_unwind(payload);
@@ -448,90 +466,60 @@ impl Reader {
         }
     }
 
-    /// 当前显示宽度（0 = 未指定）。
-    pub fn display_width(&self) -> u32 {
-        self.display_width
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// 设置显示宽度（0 = 回到默认）。**变化时清空 L1**，避免新旧尺寸混用同一页。
-    ///
-    /// 只清内存缓存：L2 页缓存按宽度分目录（见 [`Reader::page_disk_path`]），
-    /// 因此换宽度既不误用旧尺寸的页，也不作废标准档已有的缓存。
-    pub fn set_display_width(&self, width: u32) {
-        let previous = self
-            .display_width
-            .swap(width, std::sync::atomic::Ordering::Relaxed);
-        if previous != width {
-            // `Lru` 没有 clear()：直接换一个新的（容量常量复用同一处定义）。
-            *self.cache.lock().unwrap() = Lru::new(CACHE_CAP);
-        }
-    }
-
-    /// 一页在磁盘缓存里的路径。
-    ///
-    /// 宽度为 0（标准档）时**沿用历史布局** `page/<ns>/<index>.bin`，
-    /// 否则放进 `page/<ns>/w<width>/<index>.bin`（不会与标准档互相污染）。
-    fn page_disk_path(&self, index: u32) -> PathBuf {
-        let width = self.display_width();
-        let dir = if width == 0 {
-            self.disk_dir.clone()
-        } else {
-            self.disk_dir.join(format!("w{width}"))
+    fn page_disk_path(&self, index: u32, target_width: Option<u32>) -> PathBuf {
+        let dir = match normalize_target_width(target_width) {
+            None => self.disk_dir.clone(),
+            Some(width) => self.disk_dir.join(format!("w{width}")),
         };
         dir.join(format!("{index}.bin"))
     }
 
-    /// 读一页:L2 磁盘命中则直接用,否则从书源下载并写盘。
-    fn read_page(&self, index: u32) -> Result<Arc<Vec<u8>>> {
-        if let Some(bytes) = self.disk_get(index) {
+    fn read_page(&self, index: u32, target_width: Option<u32>) -> Result<Arc<Vec<u8>>> {
+        if let Some(bytes) = self.disk_get(index, target_width) {
             return Ok(Arc::new(bytes));
         }
-        let width = self.display_width();
-        let bytes = if width == 0 {
-            self.book.page_bytes(index)?
-        } else {
-            // 只有显式指定显示宽度时才走"按显示尺寸渲染"（目前仅 PDF 覆写）。
-            self.book.page_bytes_for_display(index, width)?
+        let bytes = match normalize_target_width(target_width) {
+            None => self.book.page_bytes(index)?,
+            Some(width) => self.book.page_bytes_for_display(index, width)?,
         };
-        self.disk_put(index, &bytes);
+        self.disk_put(index, target_width, &bytes);
         Ok(Arc::new(bytes))
     }
 
-    fn disk_get(&self, index: u32) -> Option<Vec<u8>> {
-        std::fs::read(self.page_disk_path(index)).ok()
+    fn disk_get(&self, index: u32, target_width: Option<u32>) -> Option<Vec<u8>> {
+        std::fs::read(self.page_disk_path(index, target_width)).ok()
     }
 
-    fn disk_put(&self, index: u32, data: &[u8]) {
-        let path = self.page_disk_path(index);
+    fn disk_put(&self, index: u32, target_width: Option<u32>, data: &[u8]) {
+        let path = self.page_disk_path(index, target_width);
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         let _ = std::fs::write(path, data);
     }
 
-    /// 后台并行预取 index 前后各 PREFETCH_RADIUS 页。
-    /// 请求先进入低优先级 governor 队列，取得许可后才认领 inflight；前台跳转可以先开始。
-    fn spawn_prefetch(self: &Arc<Self>, index: u32) {
+    fn spawn_prefetch(self: &Arc<Self>, index: u32, target_width: Option<u32>) {
+        let target_width = normalize_target_width(target_width);
         let count = self.page_count() as i64;
         for off in -PREFETCH_RADIUS..=PREFETCH_RADIUS {
             if off == 0 {
                 continue;
             }
-            let t = index as i64 + off;
-            if t < 0 || t >= count {
+            let target = index as i64 + off;
+            if target < 0 || target >= count {
                 continue;
             }
-            let t = t as u32;
-            if !self.prefetch_scheduled.lock().unwrap().insert(t) {
+            let target = target as u32;
+            let key = (target, target_width);
+            if !self.prefetch_scheduled.lock().unwrap().insert(key) {
                 continue;
             }
-            let me = Arc::clone(self);
+            let reader = Arc::clone(self);
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let _ = me.load_or_wait(t, RequestPriority::Prefetch);
+                    let _ = reader.load_or_wait(target, target_width, RequestPriority::Prefetch);
                 }));
-                me.prefetch_scheduled.lock().unwrap().remove(&t);
+                reader.prefetch_scheduled.lock().unwrap().remove(&key);
                 if let Err(payload) = result {
                     std::panic::resume_unwind(payload);
                 }
@@ -651,7 +639,7 @@ mod tests {
         widths: Arc<std::sync::Mutex<Vec<Option<u32>>>>,
     }
 
-    impl crate::document::Document for WidthDoc {
+    impl Document for WidthDoc {
         fn page_count(&self) -> u32 {
             2
         }
@@ -659,14 +647,18 @@ mod tests {
             self.widths.lock().unwrap().push(None);
             Ok(vec![index as u8; 4])
         }
-        fn page_bytes_for_display(&self, index: u32, target_width: u32) -> anyhow::Result<Vec<u8>> {
+        fn page_bytes_for_display(
+            &self,
+            _index: u32,
+            target_width: u32,
+        ) -> anyhow::Result<Vec<u8>> {
             self.widths.lock().unwrap().push(Some(target_width));
-            Ok(vec![index as u8; 8])
+            Ok(vec![target_width as u8; 8])
         }
     }
 
     #[test]
-    fn display_width_is_forwarded_and_partitions_the_page_cache() {
+    fn request_width_partitions_memory_and_disk_caches_and_keeps_legacy_path() {
         let widths = Arc::new(std::sync::Mutex::new(Vec::new()));
         let disk_dir = std::env::temp_dir().join(format!(
             "rch_reader_width_{}",
@@ -685,32 +677,254 @@ mod tests {
             prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
-            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::new(BlockingRequestGovernor::new(4, 16)),
         });
 
-        // 标准档（宽度 0）：走 `page_bytes`，落在历史目录。
-        reader.get_page(0).unwrap();
+        let standard = reader.get_page_prefetch(0).unwrap();
+        assert_eq!(&**standard, &[0; 4]);
         assert_eq!(widths.lock().unwrap().as_slice(), &[None]);
-        assert!(disk_dir.join("0.bin").exists(), "标准档沿用历史布局");
-
-        // 省流档：走 `page_bytes_for_display(1080)`，落进 w1080 子目录。
-        reader.set_display_width(1080);
-        reader.get_page(1).unwrap();
-        assert_eq!(widths.lock().unwrap().as_slice(), &[None, Some(1080)]);
-        assert!(disk_dir.join("w1080").join("1.bin").exists());
-        assert!(!disk_dir.join("1.bin").exists(), "不得与标准档混用同一目录");
-
-        // 换宽度必须清空 L1：否则会拿旧尺寸的页当新尺寸用。
-        reader.set_display_width(1600);
-        assert!(!reader.cache.lock().unwrap().contains(&1));
-        reader.get_page(1).unwrap();
-        assert!(disk_dir.join("w1600").join("1.bin").exists());
         assert!(
-            disk_dir.join("w1080").join("1.bin").exists(),
-            "旧宽度缓存保留，互不干扰"
+            disk_dir.join("0.bin").exists(),
+            "None keeps the legacy cache path"
         );
 
+        let narrow = reader.get_page_prefetch_with_width(0, Some(1080)).unwrap();
+        assert_eq!(&**narrow, &[56; 8]);
+        assert!(disk_dir.join("w1080").join("0.bin").exists());
+
+        let wide = reader.get_page_prefetch_with_width(0, Some(1600)).unwrap();
+        assert_eq!(&**wide, &[64; 8]);
+        assert!(disk_dir.join("w1600").join("0.bin").exists());
+        assert_eq!(
+            widths.lock().unwrap().as_slice(),
+            &[None, Some(1080), Some(1600)],
+            "the same source page must be rendered independently at each width"
+        );
+
+        *reader.cache.lock().unwrap() = Lru::new(CACHE_CAP);
+        assert_eq!(
+            &**reader.get_page_prefetch_with_width(0, Some(1080)).unwrap(),
+            &[56; 8]
+        );
+        assert_eq!(
+            &**reader.get_page_prefetch_with_width(0, Some(1600)).unwrap(),
+            &[64; 8]
+        );
+        assert_eq!(
+            widths.lock().unwrap().as_slice(),
+            &[None, Some(1080), Some(1600)]
+        );
+
+        std::fs::write(disk_dir.join("1.bin"), [99]).unwrap();
+        assert_eq!(&**reader.get_page_prefetch(1).unwrap(), &[99]);
+        assert_eq!(
+            widths.lock().unwrap().as_slice(),
+            &[None, Some(1080), Some(1600)]
+        );
+
+        let _ = std::fs::remove_dir_all(disk_dir);
+    }
+
+    #[test]
+    fn foreground_prefetch_keeps_the_requested_render_width() {
+        let widths = Arc::new(Mutex::new(Vec::new()));
+        let disk_dir = std::env::temp_dir().join(format!(
+            "rch_reader_width_prefetch_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        let reader = Arc::new(Reader {
+            book: Box::new(WidthDoc {
+                widths: Arc::clone(&widths),
+            }),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+            governor: Arc::new(BlockingRequestGovernor::new(3, 8)),
+        });
+
+        assert_eq!(
+            &**reader.get_page_with_width(0, Some(1080)).unwrap(),
+            &[56; 8]
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let requested_widths = widths.lock().unwrap();
+            if requested_widths
+                .iter()
+                .filter(|width| **width == Some(1080))
+                .count()
+                == 2
+            {
+                break;
+            }
+            drop(requested_widths);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "neighbor prefetch should use the foreground request width"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert_eq!(
+            &**reader.get_page_prefetch_with_width(1, Some(1080)).unwrap(),
+            &[56; 8]
+        );
+        assert_eq!(
+            &**reader.get_page_prefetch_with_width(1, Some(1600)).unwrap(),
+            &[64; 8]
+        );
+        assert_eq!(
+            widths.lock().unwrap().as_slice(),
+            &[Some(1080), Some(1080), Some(1600)]
+        );
+        let _ = std::fs::remove_dir_all(disk_dir);
+    }
+
+    struct BlockingWidthDoc {
+        first_width_started: mpsc::Sender<()>,
+        release_first_width: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl Document for BlockingWidthDoc {
+        fn page_count(&self) -> u32 {
+            1
+        }
+
+        fn metadata(&self) -> DocumentMeta {
+            DocumentMeta::default()
+        }
+
+        fn page_bytes(&self, _index: u32) -> Result<Vec<u8>> {
+            Ok(vec![0])
+        }
+
+        fn page_bytes_for_display(&self, _index: u32, width: u32) -> Result<Vec<u8>> {
+            if width == 1080 {
+                let _ = self.first_width_started.send(());
+                let (lock, cv) = &*self.release_first_width;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = cv.wait(released).unwrap();
+                }
+            }
+            Ok(vec![width as u8])
+        }
+    }
+
+    #[test]
+    fn concurrent_prefetches_for_same_page_at_different_widths_do_not_coalesce() {
+        let (started_tx, started_rx) = mpsc::channel();
+        let release_first_width = Arc::new((Mutex::new(false), Condvar::new()));
+        let disk_dir = std::env::temp_dir().join(format!(
+            "rch_reader_width_inflight_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        let reader = Arc::new(Reader {
+            book: Box::new(BlockingWidthDoc {
+                first_width_started: started_tx,
+                release_first_width: Arc::clone(&release_first_width),
+            }),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+            governor: Arc::new(BlockingRequestGovernor::new(3, 8)),
+        });
+
+        let first = {
+            let reader = Arc::clone(&reader);
+            std::thread::spawn(move || reader.get_page_prefetch_with_width(0, Some(1080)))
+        };
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("1080px render should start and block");
+
+        let (second_tx, second_rx) = mpsc::channel();
+        let second = {
+            let reader = Arc::clone(&reader);
+            std::thread::spawn(move || {
+                let _ = second_tx.send(reader.get_page_prefetch_with_width(0, Some(1600)));
+            })
+        };
+        let second_finished_before_release = second_rx.recv_timeout(Duration::from_millis(300));
+
+        {
+            let (lock, cv) = &*release_first_width;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+        let first_bytes = first.join().unwrap().unwrap();
+        second.join().unwrap();
+        let second_bytes = second_finished_before_release
+            .expect("1600px request must not wait for the same page at 1080px")
+            .unwrap();
+        assert_eq!(&*first_bytes, &[56]);
+        assert_eq!(&*second_bytes, &[64]);
+        let _ = std::fs::remove_dir_all(disk_dir);
+    }
+
+    #[test]
+    fn document_without_dimensions_reports_none() {
+        assert_eq!(
+            BlockingWidthDoc {
+                first_width_started: mpsc::channel().0,
+                release_first_width: Arc::new((Mutex::new(true), Condvar::new())),
+            }
+            .page_dimensions(0)
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn reader_exposes_document_page_dimensions() {
+        struct DimensionsDoc;
+
+        impl Document for DimensionsDoc {
+            fn page_count(&self) -> u32 {
+                1
+            }
+            fn metadata(&self) -> DocumentMeta {
+                DocumentMeta::default()
+            }
+            fn page_bytes(&self, _index: u32) -> Result<Vec<u8>> {
+                Ok(vec![])
+            }
+            fn page_dimensions(&self, _index: u32) -> Result<Option<(u32, u32)>> {
+                Ok(Some((2400, 1600)))
+            }
+        }
+
+        let disk_dir = std::env::temp_dir().join(format!(
+            "rch_reader_dimensions_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&disk_dir).unwrap();
+        let reader = Reader {
+            book: Box::new(DimensionsDoc),
+            cache: Mutex::new(Lru::new(CACHE_CAP)),
+            inflight: Mutex::new(HashSet::new()),
+            prefetch_scheduled: Mutex::new(HashSet::new()),
+            inflight_done: Condvar::new(),
+            disk_dir: disk_dir.clone(),
+            governor: Arc::new(BlockingRequestGovernor::new(3, 8)),
+        };
+
+        assert_eq!(reader.page_dimensions(0).unwrap(), Some((2400, 1600)));
         let _ = std::fs::remove_dir_all(disk_dir);
     }
 
@@ -740,12 +954,11 @@ mod tests {
             prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
-            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::clone(&governor),
         });
         let (tx, rx) = mpsc::channel();
         let handle = std::thread::spawn(move || {
-            tx.send(reader.load_or_wait(0, RequestPriority::Foreground))
+            tx.send(reader.load_or_wait(0, None, RequestPriority::Foreground))
                 .unwrap()
         });
         let cached = rx.recv_timeout(Duration::from_secs(2));
@@ -809,7 +1022,6 @@ mod tests {
             prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
-            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::new(BlockingRequestGovernor::new(3, 8)),
         });
 
@@ -820,7 +1032,7 @@ mod tests {
 
         let foreground = {
             let reader = Arc::clone(&reader);
-            std::thread::spawn(move || reader.get_page(1))
+            std::thread::spawn(move || reader.get_page_with_width(1, None))
         };
 
         let duplicate_started = started_rx.recv_timeout(Duration::from_millis(150)).is_ok();
@@ -878,10 +1090,9 @@ mod tests {
             prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
-            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::clone(&governor),
         });
-        let worker = std::thread::spawn(move || reader.get_page(0));
+        let worker = std::thread::spawn(move || reader.get_page_with_width(0, None));
         assert!(started_rx.recv_timeout(Duration::from_millis(100)).is_err());
         drop(held);
         started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -910,7 +1121,6 @@ mod tests {
             prefetch_scheduled: Mutex::new(HashSet::new()),
             inflight_done: Condvar::new(),
             disk_dir: disk_dir.clone(),
-            display_width: std::sync::atomic::AtomicU32::new(0),
             governor: Arc::clone(&governor),
         });
         reader.warm_up();

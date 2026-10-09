@@ -27,6 +27,74 @@ Backend code must make concurrency and native-library safety contracts explicit 
 
 ---
 
+## Scenario: Width-Scoped Comic Page Reads
+
+### 1. Scope / Trigger
+
+Use this contract when the same source page can be rendered at multiple display widths, including split-wide-page views and PDF rasterization. A session-global width can make a foreground page, neighbor prefetch, or in-flight request reuse bytes rendered for a different viewport.
+
+### 2. Signatures
+
+```rust
+Reader::get_page(index: u32) -> Result<Arc<Vec<u8>>>;
+Reader::get_page_with_width(index: u32, target_width: Option<u32>)
+    -> Result<Arc<Vec<u8>>>;
+book_page(handle: u64, index: u32, target_width: Option<u32>) -> Result<Vec<u8>>;
+book_page_dimensions(handle: u64, index: u32)
+    -> Result<Option<BookPageDimensions>>;
+```
+
+`reader_page_split_overrides(book_key, page_index, split)` stores device-local corrections. `split = None` deletes the correction.
+
+### 3. Contracts
+
+- Normalize `None` and non-positive widths to the default request profile. The default disk path remains `page/<namespace>/<index>.bin`; a width `w` uses `page/<namespace>/w<w>/<index>.bin`.
+- Key memory cache, in-flight coalescing, scheduled prefetch, and disk lookup by the same `(page_index, normalized_width)` pair. Prefetch inherits the originating request width but stays low priority.
+- Preserve `get_page(index)` as the default-width convenience API. Width-aware callers use `get_page_with_width`; do not reintroduce mutable session-wide display state.
+- PDF dimension queries and rasterization use the same Pdfium synchronization gate. Formats without cheap dimensions return `None`; the caller may use a bounded preview to learn image geometry.
+- Split overrides live only in the local SQLite table. They are not `BookMeta`, app settings, or sync entities.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Width omitted or zero | Read/render with the default profile and legacy disk location. |
+| Two requests ask for different widths | Keep independent cache and in-flight entries; neither waits on or receives the other's render. |
+| Neighbor prefetch starts from a width-specific foreground read | Use that same width under prefetch priority. |
+| Document cannot report dimensions | Return `None` without rasterizing; let the reader request a bounded preview if needed. |
+| Split correction is cleared | Delete only the matching `(book_key, page_index)` row. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a page read at 1080px and 3200px has two cache entries; returning to 1080px hits the prior 1080px entry.
+- Base: a default-width request still reads an existing legacy `<index>.bin` cache file.
+- Bad: mutate `Reader.display_width`, clear one global L1, then allow asynchronous requests to observe the width at different times.
+
+### 6. Tests Required
+
+- Assert different widths produce distinct bytes and `w<width>` files, then prove each is independently served after L1 eviction.
+- Block one width while requesting another for the same page; assert the second request completes without joining the first.
+- Assert prefetch carries the originating width and a legacy cache file remains readable.
+- Assert split overrides are page- and book-scoped, delete cleanly, and do not appear in sync metadata.
+- Keep Pdfium dimension/render tests behind the existing native gate and use a multi-page fixture when available.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```rust
+reader.set_display_width(3200);
+reader.get_page(index);
+```
+
+Correct:
+
+```rust
+reader.get_page_with_width(index, Some(3200));
+```
+
+The request-scoped form keeps cache identity and the actual render dimensions aligned even when neighboring reads overlap.
+
 ## Testing Requirements
 
 - Concurrency fixes must include a regression that fails before the fix and proves the serialization or lock-lifetime contract after the fix.

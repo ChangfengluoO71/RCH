@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/ai.dart';
@@ -14,6 +16,7 @@ import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:app/ui/opener.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/reader_display.dart';
 import 'package:app/store/remote_cache_cleanup.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/ui/quark_qr_scan.dart';
@@ -23,6 +26,9 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:photo_view/photo_view.dart';
+
+export 'package:app/store/reader_display.dart'
+    show DisplayPage, DisplayPageRegion, ReaderPaging;
 
 class ReaderPage extends StatefulWidget {
   final String path;
@@ -85,6 +91,7 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _endPrompted = false;
   BookInfo? _book;
   int _page = 0;
+  int _viewIndex = 0;
   String? _error;
   BookOpenStage _openStage = BookOpenStage.openingBook;
   BookOpenStage? _failedAtStage;
@@ -103,6 +110,16 @@ class _ReaderPageState extends State<ReaderPage> {
   /// 下载进度: 0.0~1.0, null=非下载中或已完成。
   double? _downloadProgress;
   final Map<int, Uint8List> _bytes = {};
+  final Map<int, double> _splitSeams = {};
+  final Map<int, int> _splitQuarterTurns = {};
+  final Map<int, bool> _splitOverrides = {};
+  final Set<int> _resolvedWidePages = {};
+  final Set<int> _loadedSplitOverrides = {};
+  final Set<int> _resolvingSplitPages = {};
+  final Map<int, int?> _loadedSourceWidths = {};
+  final Map<int, Future<ui.Image>> _decodedImageFutures = {};
+  final Map<int, ui.Image> _decodedImages = {};
+  final Map<int, Uint8List> _decodedImageSources = {};
   final Map<int, _PageLoadState> _pageLoads = {};
   final Map<int, int> _pageRequestGenerations = {};
   final Map<int, _QueuedPageLoad> _queuedPageLoads = {};
@@ -119,6 +136,7 @@ class _ReaderPageState extends State<ReaderPage> {
   final Map<int, PhotoViewScaleStateController> _scaleStateCtrls = {};
   final TransformationController _dualZoomCtrl = TransformationController();
   final TransformationController _webtoonZoomCtrl = TransformationController();
+  bool _webtoonRightToLeft = true;
   PageController? _pageCtrl;
   bool _dualZoomed = false; // 双页模式已放大(>1)时接管拖拽,否则让给 PageView 翻页
   final FocusNode _focus = FocusNode();
@@ -147,6 +165,7 @@ class _ReaderPageState extends State<ReaderPage> {
   late ReadMode _mode;
   late bool _invert;
   late DualPageMode _dual;
+  late WidePageMode _widePageMode;
   late int _gap;
   late bool _skipCover;
   late KeyBinds _keys;
@@ -159,16 +178,38 @@ class _ReaderPageState extends State<ReaderPage> {
   );
   RemoteBookUseLease? _cleanupLease;
   int _controllerCleanupGeneration = 0;
+  bool? _widePortraitViewport;
+  bool _wideViewportRecheckScheduled = false;
+  int _wideDisplayGeneration = 0;
 
   // ---- 视口页 ↔ 真实页映射(双页模式一视口对应两页) ----
   ReaderPaging get _paging => ReaderPaging(
-    dual: _dual != DualPageMode.off,
+    dual: _mode != ReadMode.webtoon && _dual != DualPageMode.off,
     skipCover: _skipCover,
     pageCount: _book?.pageCount ?? 1,
+    splitSeams: _mode == ReadMode.webtoon ? const {} : _splitSeams,
+    splitQuarterTurns: _mode == ReadMode.webtoon
+        ? const {}
+        : _splitQuarterTurns,
+    rightToLeft: _mode == ReadMode.manga,
   );
   int _viewCount() => _paging.viewCount;
   int _viewOfPage(int p) => _paging.viewOfPage(p);
   int _pageOfView(int v) => _paging.pageOfView(v);
+  DisplayPage _displayPageOfView(int view) => _paging.displayPageOfView(view);
+  DisplayPage get _currentDisplayPage => _displayPageOfView(_viewIndex);
+
+  void _observeCurrentCompletion() {
+    final book = _book;
+    if (book == null) return;
+    if (_mode == ReadMode.webtoon) {
+      _completion.observeStablePage(_page);
+    } else if (_paging.dual && _viewIndex >= _viewCount() - 1) {
+      _completion.observeStablePage(book.pageCount - 1);
+    } else {
+      _completion.observeStableDisplayPage(_currentDisplayPage);
+    }
+  }
 
   /// 重建 PageController(书打开后、阅读设置变更后调用),保证初始视口与 _page 一致。
   void _recreatePageCtrl() {
@@ -182,9 +223,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final old = _pageCtrl;
     final vc = _viewCount();
     _pageCtrl = PageController(
-      initialPage: _book == null || vc <= 0
-          ? 0
-          : _viewOfPage(_page).clamp(0, vc - 1),
+      initialPage: _book == null || vc <= 0 ? 0 : _viewIndex.clamp(0, vc - 1),
     );
     if (old != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -221,6 +260,9 @@ class _ReaderPageState extends State<ReaderPage> {
         _scaleStateCtrls.remove(entry.key);
         entry.value.dispose();
       }
+      for (final page in _decodedImageFutures.keys.toList()) {
+        if (!keep.contains(page)) _clearDecodedImage(page);
+      }
     });
   }
 
@@ -240,10 +282,37 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final size = MediaQuery.sizeOf(context);
+    final portrait = size.width < size.height;
+    final previousPortrait = _widePortraitViewport;
+    _widePortraitViewport = portrait;
     if (!_orientationCaptured) {
       _orientationCaptured = true;
       _compactAtOpen = isCompact(context);
     }
+    if (previousPortrait != null && previousPortrait != portrait) {
+      _wideDisplayGeneration++;
+      _scheduleWideViewportRecheck();
+    }
+  }
+
+  void _scheduleWideViewportRecheck() {
+    if (_wideViewportRecheckScheduled) return;
+    _wideViewportRecheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _wideViewportRecheckScheduled = false;
+      if (!mounted || _book == null || !_canResolveWidePages) return;
+      setState(() {
+        _resolvedWidePages.clear();
+        _splitSeams.clear();
+        _splitQuarterTurns.clear();
+        _viewIndex = _viewOfPage(_page);
+      });
+      _recreatePageCtrl();
+      _observeCurrentCompletion();
+      _scheduleEndPrompt();
+      _ensureVisiblePagedPages(_page);
+    });
   }
 
   @override
@@ -256,8 +325,10 @@ class _ReaderPageState extends State<ReaderPage> {
     }
     final g = LibraryStore.instance.settings;
     _mode = g.readMode;
+    _webtoonRightToLeft = g.readMode != ReadMode.comic;
     _invert = g.invertTap;
     _dual = g.dualPageMode;
+    _widePageMode = g.widePageMode;
     _gap = g.dualPageGap;
     _skipCover = g.skipFrontCover;
     _keys = g.keys;
@@ -318,6 +389,8 @@ class _ReaderPageState extends State<ReaderPage> {
       for (var i = _page - 1; i <= _page + 2; i++) {
         if (i >= 0) {
           _bytes.remove(i);
+          _loadedSourceWidths.remove(i);
+          _clearDecodedImage(i);
           _pageLoads.remove(i);
           _pageRequestGenerations[i] = (_pageRequestGenerations[i] ?? 0) + 1;
         }
@@ -356,7 +429,23 @@ class _ReaderPageState extends State<ReaderPage> {
       } else {
         _rotations[page] = next;
       }
+      if (_canResolveWidePages) {
+        _resolvedWidePages.remove(page);
+        _splitSeams.remove(page);
+        _splitQuarterTurns.remove(page);
+        _bytes.remove(page);
+        _loadedSourceWidths.remove(page);
+        _pageLoads.remove(page);
+        _pageRequestGenerations[page] =
+            (_pageRequestGenerations[page] ?? 0) + 1;
+        _clearDecodedImage(page);
+        if (page == _page) _viewIndex = _viewOfPage(page);
+      }
     });
+    if (_canResolveWidePages && page == _page) {
+      _recreatePageCtrl();
+      _ensure(page);
+    }
     final s = widget.source;
     if (s == null) return;
     final m = LibraryStore.instance.metaOf(s, widget.path);
@@ -390,6 +479,19 @@ class _ReaderPageState extends State<ReaderPage> {
           ? BookOpenStage.connecting
           : BookOpenStage.openingBook;
       _bytes.clear();
+      _splitSeams.clear();
+      _splitQuarterTurns.clear();
+      _splitOverrides.clear();
+      _resolvedWidePages.clear();
+      _loadedSplitOverrides.clear();
+      _resolvingSplitPages.clear();
+      _loadedSourceWidths.clear();
+      for (final image in _decodedImages.values) {
+        image.dispose();
+      }
+      _decodedImages.clear();
+      _decodedImageFutures.clear();
+      _decodedImageSources.clear();
       _pageLoads.clear();
       _pageRequestGenerations.clear();
       _queuedPageLoads.clear();
@@ -461,6 +563,7 @@ class _ReaderPageState extends State<ReaderPage> {
         _remoteImageFolder = result.remoteImageFolder;
         _providerPath = result.providerPath;
         _page = widget.initialPage.clamp(0, result.book.pageCount - 1);
+        _viewIndex = _viewOfPage(_page);
         _openStage = BookOpenStage.loadingFirstPage;
         _downloadProgress = null;
       });
@@ -676,19 +779,342 @@ class _ReaderPageState extends State<ReaderPage> {
   ///
   /// `null` = 沿用 Rust 侧默认（1600，页缓存路径与历史一致）；
   /// 省流档给 1080；跟随屏幕按"逻辑宽 × DPR"算（Rust 侧按宽度分目录，互不污染）。
-  int? _renderWidthPixelsForDisplay() {
+  int? _renderWidthPixelsForDisplay({bool split = false}) {
     final media = MediaQuery.of(context);
-    return renderWidthPixels(
+    return readerSourceTargetWidth(
       LibraryStore.instance.settings.renderWidth,
       screenWidth: media.size.width,
       devicePixelRatio: media.devicePixelRatio,
+      split: split,
     );
+  }
+
+  bool get _canResolveWidePages =>
+      widePageSplittingAllowed(dualPageMode: _dual);
+  bool _isSplitSourcePage(int page) =>
+      _canResolveWidePages && _splitSeams.containsKey(page);
+
+  List<DisplayPage> _webtoonDisplayPages(int page) {
+    final seam = _splitSeams[page];
+    if (!_isSplitSourcePage(page) || seam == null) {
+      return [DisplayPage.whole(page)];
+    }
+    final first = _webtoonRightToLeft
+        ? DisplayPageRegion.right
+        : DisplayPageRegion.left;
+    final second = _webtoonRightToLeft
+        ? DisplayPageRegion.left
+        : DisplayPageRegion.right;
+    final turns = _splitQuarterTurns[page] ?? 0;
+    return [
+      DisplayPage(
+        sourcePageIndex: page,
+        region: first,
+        partNumber: 1,
+        partCount: 2,
+        seamX: seam,
+        quarterTurns: turns,
+      ),
+      DisplayPage(
+        sourcePageIndex: page,
+        region: second,
+        partNumber: 2,
+        partCount: 2,
+        seamX: seam,
+        quarterTurns: turns,
+      ),
+    ];
+  }
+
+  String get _splitOverrideBookKey {
+    final source = widget.source;
+    return source == null
+        ? bookKeyOf('local', 'local', widget.path)
+        : bookKeyOf(source.type, source.id, widget.path);
+  }
+
+  Future<({int width, int height, Uint8List rgba})?> _decodeWidePreview(
+    Uint8List bytes,
+  ) async {
+    ui.Codec? codec;
+    ui.Image? image;
+    try {
+      codec = await ui.instantiateImageCodec(bytes, targetWidth: 512);
+      final frame = await codec.getNextFrame();
+      image = frame.image;
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (data == null) return null;
+      return (
+        width: image.width,
+        height: image.height,
+        rgba: data.buffer.asUint8List(),
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+    }
+  }
+
+  void _clearDecodedImage(int page) {
+    _decodedImageFutures.remove(page);
+    _decodedImageSources.remove(page);
+    _decodedImages.remove(page)?.dispose();
+  }
+
+  Future<ui.Image> _decodedImageForPage(
+    int page,
+    Uint8List bytes, {
+    required int targetWidth,
+  }) {
+    final existing = _decodedImageFutures[page];
+    if (existing != null && identical(_decodedImageSources[page], bytes)) {
+      return existing;
+    }
+    _clearDecodedImage(page);
+    _decodedImageSources[page] = bytes;
+    late final Future<ui.Image> future;
+    future = () async {
+      final codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: targetWidth,
+      );
+      try {
+        final image = (await codec.getNextFrame()).image;
+        if (mounted &&
+            identical(_decodedImageFutures[page], future) &&
+            identical(_bytes[page], bytes)) {
+          _decodedImages[page] = image;
+        } else {
+          image.dispose();
+        }
+        return image;
+      } finally {
+        codec.dispose();
+      }
+    }();
+    _decodedImageFutures[page] = future;
+    return future;
+  }
+
+  Future<void> _resolveWidePage(int page) async {
+    final book = _book;
+    if (book == null ||
+        page < 0 ||
+        page >= book.pageCount ||
+        !_canResolveWidePages ||
+        _resolvedWidePages.contains(page) ||
+        !_resolvingSplitPages.add(page)) {
+      return;
+    }
+    final openGeneration = _openGeneration;
+    final displayGeneration = _wideDisplayGeneration;
+    final pageRequestGeneration = _pageRequestGenerations[page] ?? 0;
+    final requestedMode = _widePageMode;
+    final requestedRotation = _rotationOf(page);
+    final viewportSize = MediaQuery.sizeOf(context);
+    final portraitViewport = viewportSize.width < viewportSize.height;
+    bool isCurrent() =>
+        mounted &&
+        _openGeneration == openGeneration &&
+        identical(_book, book) &&
+        _canResolveWidePages &&
+        _wideDisplayGeneration == displayGeneration &&
+        _widePageMode == requestedMode &&
+        _rotationOf(page) == requestedRotation &&
+        (_pageRequestGenerations[page] ?? 0) == pageRequestGeneration;
+    var override = _splitOverrides[page];
+    try {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!isCurrent()) return;
+      if (!_loadedSplitOverrides.contains(page)) {
+        try {
+          override = await LibraryStore.instance.readerPageSplitOverride(
+            _splitOverrideBookKey,
+            page,
+          );
+        } catch (_) {
+          override = null;
+        }
+        if (!isCurrent()) return;
+        _loadedSplitOverrides.add(page);
+        if (override == null) {
+          _splitOverrides.remove(page);
+        } else {
+          _splitOverrides[page] = override;
+        }
+      }
+
+      final mode = requestedMode;
+      if (override == false ||
+          (override == null && mode == WidePageMode.keepWhole)) {
+        _resolvedWidePages.add(page);
+        _applyWideSplitDecision(page, null, 0);
+        _ensure(page);
+        return;
+      }
+
+      final dimensions = await bookPageDimensions(
+        handle: book.handle,
+        index: page,
+      ).catchError((Object _) => null);
+      if (!isCurrent()) return;
+
+      var width = dimensions?.width ?? 0;
+      var height = dimensions?.height ?? 0;
+      Uint8List? previewBytes;
+      ({int width, int height, Uint8List rgba})? preview;
+      final turns = (_rotationOf(page) ~/ 90) % 4;
+      if (width > 0 && height > 0) {
+        if (!maySplitWidePage(
+          mode: mode,
+          pageOverride: override,
+          width: width,
+          height: height,
+          quarterTurns: turns,
+          portraitViewport: portraitViewport,
+        )) {
+          _resolvedWidePages.add(page);
+          _applyWideSplitDecision(page, null, turns);
+          _ensure(page);
+          return;
+        }
+      }
+
+      previewBytes = await bookPage(
+        handle: book.handle,
+        index: page,
+        targetWidth: 512,
+      );
+      if (!isCurrent()) return;
+      preview = await _decodeWidePreview(previewBytes);
+      if (!isCurrent()) return;
+      if (preview == null) {
+        final canCenterSplit =
+            override == true ||
+            (width > 0 &&
+                height > 0 &&
+                mode == WidePageMode.split &&
+                maySplitWidePage(
+                  mode: mode,
+                  pageOverride: override,
+                  width: width,
+                  height: height,
+                  quarterTurns: turns,
+                  portraitViewport: portraitViewport,
+                ));
+        _resolvedWidePages.add(page);
+        _applyWideSplitDecision(page, canCenterSplit ? 0.5 : null, turns);
+        _ensure(page);
+        return;
+      }
+      width = preview.width;
+      height = preview.height;
+      if (!maySplitWidePage(
+        mode: mode,
+        pageOverride: override,
+        width: width,
+        height: height,
+        quarterTurns: turns,
+        portraitViewport: portraitViewport,
+      )) {
+        _resolvedWidePages.add(page);
+        _applyWideSplitDecision(page, null, turns);
+        _ensure(page);
+        return;
+      }
+      final rotated = rotateRgbaQuarterTurns(
+        rgba: preview.rgba,
+        width: preview.width,
+        height: preview.height,
+        quarterTurns: turns,
+      );
+      final detected = WidePageDetector.detect(
+        rgba: rotated.rgba,
+        width: rotated.width,
+        height: rotated.height,
+      );
+      final shouldSplit = shouldSplitWidePage(
+        mode: mode,
+        pageOverride: override,
+        width: width,
+        height: height,
+        quarterTurns: turns,
+        portraitViewport: portraitViewport,
+        hasCenterSeam: detected != null,
+      );
+      final seam = shouldSplit ? (detected ?? 0.5) : null;
+      _resolvedWidePages.add(page);
+      _applyWideSplitDecision(page, seam, turns);
+      _ensure(page);
+    } catch (_) {
+      if (!isCurrent()) return;
+      _resolvedWidePages.add(page);
+      _applyWideSplitDecision(page, null, 0);
+      _ensure(page);
+    } finally {
+      if (_openGeneration == openGeneration) {
+        _resolvingSplitPages.remove(page);
+        if (mounted &&
+            identical(_book, book) &&
+            _canResolveWidePages &&
+            !_resolvedWidePages.contains(page)) {
+          scheduleMicrotask(() => _ensure(page));
+        }
+      }
+    }
+  }
+
+  void _applyWideSplitDecision(int page, double? seam, int quarterTurns) {
+    final oldSeam = _splitSeams[page];
+    final oldTurns = _splitQuarterTurns[page] ?? 0;
+    if (oldSeam == seam && (seam == null || oldTurns == quarterTurns)) return;
+    final priorDisplayPage = _currentDisplayPage;
+    setState(() {
+      if (seam == null) {
+        _splitSeams.remove(page);
+        _splitQuarterTurns.remove(page);
+      } else {
+        _splitSeams[page] = seam;
+        _splitQuarterTurns[page] = quarterTurns;
+      }
+      if (priorDisplayPage.sourcePageIndex == page &&
+          priorDisplayPage.region == DisplayPageRegion.whole &&
+          seam != null) {
+        _viewIndex = _viewOfPage(page);
+      } else {
+        _viewIndex = _paging.viewOfDisplayPage(priorDisplayPage);
+      }
+      _page = _pageOfView(_viewIndex);
+    });
+    _completion.observeStableDisplayPage(_currentDisplayPage);
+    _recreatePageCtrl();
+    _scheduleEndPrompt();
   }
 
   void _ensure(int page) {
     final book = _book;
     if (book == null || page < 0 || page >= book.pageCount) return;
-    if (_bytes.containsKey(page)) return;
+    if (_canResolveWidePages && !_resolvedWidePages.contains(page)) {
+      unawaited(_resolveWidePage(page));
+      return;
+    }
+    final targetWidth = _renderWidthPixelsForDisplay(
+      split: _isSplitSourcePage(page),
+    );
+    if (_bytes.containsKey(page) &&
+        _loadedSourceWidths.containsKey(page) &&
+        _loadedSourceWidths[page] == targetWidth) {
+      return;
+    }
+    if (_bytes.containsKey(page)) {
+      _bytes.remove(page);
+      _loadedSourceWidths.remove(page);
+      _clearDecodedImage(page);
+      _pageLoads.remove(page);
+      _pageRequestGenerations[page] = (_pageRequestGenerations[page] ?? 0) + 1;
+    }
     final existing = _pageLoads[page];
     if (existing?.status == _PageLoadStatus.loading) {
       if (_isFocusedPageLoad(page)) _promotePrefetchPage(page, book, existing!);
@@ -784,7 +1210,7 @@ class _ReaderPageState extends State<ReaderPage> {
           _page;
       return (page - center).abs() <= webtoonPageLoadRadius;
     }
-    return _viewOfPage(page) == _viewOfPage(_page);
+    return _isPageVisibleInCurrentView(page);
   }
 
   int _pageLoadFocusPage() => _mode == ReadMode.webtoon
@@ -796,8 +1222,12 @@ class _ReaderPageState extends State<ReaderPage> {
 
   bool _isFocusedPageLoad(int page) {
     if (_mode == ReadMode.webtoon) return page == _pageLoadFocusPage();
-    return _viewOfPage(page) == _viewOfPage(_page);
+    return _isPageVisibleInCurrentView(page);
   }
+
+  bool _isPageVisibleInCurrentView(int page) => _dual == DualPageMode.off
+      ? page == _page
+      : _viewOfPage(page) == _viewIndex;
 
   int _pageLoadQueuePriority(int page) {
     if (page == _pageLoadFocusPage()) return 0;
@@ -944,7 +1374,8 @@ class _ReaderPageState extends State<ReaderPage> {
     }
 
     try {
-      final targetWidth = _renderWidthPixelsForDisplay();
+      final split = _isSplitSourcePage(page);
+      final targetWidth = _renderWidthPixelsForDisplay(split: split);
       final original = prefetch
           ? await bookPagePrefetch(
               handle: handle,
@@ -958,7 +1389,9 @@ class _ReaderPageState extends State<ReaderPage> {
             );
       if (!prefetch) _logPageLoadTiming('success', watch.elapsedMilliseconds);
       if (!isCurrent()) return;
-      if (page == _page) _completion.observeStablePage(page);
+      if (page == _page) {
+        _observeCurrentCompletion();
+      }
       final previousHeight = page < _webtoonHeights.length
           ? _webtoonHeights[page]
           : 0.0;
@@ -970,6 +1403,7 @@ class _ReaderPageState extends State<ReaderPage> {
       );
       setState(() {
         _bytes[page] = original;
+        _loadedSourceWidths[page] = targetWidth;
         _pageLoads[page] = _PageLoadState(
           status: _PageLoadStatus.success,
           attempts: attempt,
@@ -1083,6 +1517,7 @@ class _ReaderPageState extends State<ReaderPage> {
           state?.bookHandle != book.handle) {
         return;
       }
+      _clearDecodedImage(page);
       setState(() => _bytes[page] = ai);
     } catch (_) {
       // The original image is already visible; cache lookup is best-effort.
@@ -1097,6 +1532,8 @@ class _ReaderPageState extends State<ReaderPage> {
     final requestGeneration = (_pageRequestGenerations[page] ?? 0) + 1;
     setState(() {
       _bytes.remove(page);
+      _loadedSourceWidths.remove(page);
+      _clearDecodedImage(page);
       _pageLoads[page] = _PageLoadState(
         status: _PageLoadStatus.loading,
         attempts: 1,
@@ -1164,7 +1601,9 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // ---- 双页配对 ----
   (int, int?) pairOf(int page) {
-    if (_dual == DualPageMode.off) return (page, null);
+    if (_mode == ReadMode.webtoon || _dual == DualPageMode.off) {
+      return (page, null);
+    }
     final b = _book;
     if (b == null) return (page, null);
     final isManga = _mode == ReadMode.manga;
@@ -1296,7 +1735,7 @@ class _ReaderPageState extends State<ReaderPage> {
       if (n == _page) return;
       setState(() => _page = n);
       _disposeDistantPhotoCtrls();
-      _completion.observeStablePage(n);
+      _observeCurrentCompletion();
       _webtoonNavigation.freezeUnknownHeight();
       final generation = ++_webtoonScrollGeneration;
       _webtoonProgrammaticScroll = false;
@@ -1339,18 +1778,21 @@ class _ReaderPageState extends State<ReaderPage> {
     //   · 双页模式下 1 个视口 = 2 页，按页号 +2 可能落到"配对越界"的页
     //     （实测：200 页的书出现 200-201/200 → 请求不存在的第 201 页 → 永远加载中）；
     //   · 视口推进先做越界判断，越界即"翻过最后一页"，直接提示，不再请求坏页。
-    final curView = _viewOfPage(_page);
+    final curView = _viewIndex;
     final targetView = curView + (d >= 0 ? 1 : -1);
     if (targetView < 0 || targetView >= _viewCount()) return; // 视口边界：原地不动
     final n = _pageOfView(targetView);
-    if (n == _page) return;
-    setState(() => _page = n);
-    _completion.observeStablePage(n);
+    if (targetView == _viewIndex) return;
+    setState(() {
+      _page = n;
+      _viewIndex = targetView;
+    });
+    _observeCurrentCompletion();
     _photoCtrlOf(n).reset();
     _scaleStateCtrlOf(n).reset();
     _dualZoomCtrl.value = Matrix4.identity();
     _pageCtrl?.animateToPage(
-      _viewOfPage(n),
+      targetView,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
     );
@@ -1441,13 +1883,14 @@ class _ReaderPageState extends State<ReaderPage> {
       final waitingForFirstPage = _openStage == BookOpenStage.loadingFirstPage;
       setState(() {
         _page = page;
+        _viewIndex = _viewOfPage(page);
         if (waitingForFirstPage) _initialPageIndex = page;
       });
       if (waitingForFirstPage) {
         _firstPageLogged = false;
         _firstPageWatch = Stopwatch()..start();
       }
-      _completion.observeStablePage(page);
+      _observeCurrentCompletion();
       if (_mode == ReadMode.webtoon) {
         _scrollWebtoonToPage(page);
         _disposeDistantPhotoCtrls();
@@ -1455,7 +1898,7 @@ class _ReaderPageState extends State<ReaderPage> {
         _photoCtrlOf(page).reset();
         _scaleStateCtrlOf(page).reset();
         _dualZoomCtrl.value = Matrix4.identity();
-        _pageCtrl?.jumpToPage(_viewOfPage(page));
+        _pageCtrl?.jumpToPage(_viewIndex);
         _disposeDistantPhotoCtrls();
         _ensureVisiblePagedPages(page);
       }
@@ -1527,10 +1970,11 @@ class _ReaderPageState extends State<ReaderPage> {
   /// 为什么不判断"翻过末页"：实测各模式（双页/条漫）下落点与方向判断难以覆盖，
   /// 且末页配对容易越界导致不触发；改为"到达末屏即计时"最稳且不打断阅读。
   void _scheduleEndPrompt() {
-    final total = _viewCount();
     final b = _book;
+    final total = _mode == ReadMode.webtoon ? b?.pageCount ?? 0 : _viewCount();
     if (b == null || total <= 0) return;
-    final atEnd = _viewOfPage(_page) >= total - 1;
+    final current = _mode == ReadMode.webtoon ? _page : _viewIndex;
+    final atEnd = current >= total - 1;
     if (!atEnd) {
       // 离开末屏：取消计时并重置，下次再到末屏仍会提示
       _endTimer?.cancel();
@@ -1666,6 +2110,9 @@ class _ReaderPageState extends State<ReaderPage> {
     }
     for (final c in _scaleStateCtrls.values) {
       c.dispose();
+    }
+    for (final image in _decodedImages.values) {
+      image.dispose();
     }
     _dualZoomCtrl.removeListener(_onDualZoomChanged);
     _dualZoomCtrl.dispose();
@@ -1813,11 +2260,15 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 
-  Widget _buildImage(Uint8List bytes, int page) {
+  Widget _buildImage(Uint8List bytes, int page, [DisplayPage? displayPage]) {
+    if (displayPage != null && displayPage.region != DisplayPageRegion.whole) {
+      return _buildSplitImage(bytes, page, displayPage);
+    }
+    final targetWidth = _renderWidthPixelsForDisplay() ?? 1600;
     final viewer = PhotoView(
       controller: _photoCtrlOf(page),
       scaleStateController: _scaleStateCtrlOf(page),
-      imageProvider: ResizeImage(MemoryImage(bytes), width: 2000),
+      imageProvider: ResizeImage(MemoryImage(bytes), width: targetWidth),
       backgroundDecoration: const BoxDecoration(color: Colors.black),
       initialScale: PhotoViewComputedScale.contained,
       minScale: PhotoViewComputedScale.contained,
@@ -1828,6 +2279,109 @@ class _ReaderPageState extends State<ReaderPage> {
     return PhotoViewGestureDetectorScope(
       axis: Axis.horizontal,
       child: q == 0 ? viewer : RotatedBox(quarterTurns: q, child: viewer),
+    );
+  }
+
+  Widget _buildSplitImage(Uint8List bytes, int page, DisplayPage displayPage) {
+    final targetWidth = _renderWidthPixelsForDisplay(split: true) ?? 3200;
+    return FutureBuilder<ui.Image>(
+      future: _decodedImageForPage(page, bytes, targetWidth: targetWidth),
+      builder: (context, snapshot) {
+        final image = snapshot.data;
+        if (image == null) return _pagePlaceholder(page);
+        final turns = displayPage.quarterTurns % 4;
+        final orientedWidth = turns.isOdd ? image.height : image.width;
+        final orientedHeight = turns.isOdd ? image.width : image.height;
+        final cropWidth =
+            orientedWidth * (displayPage.cropRight - displayPage.cropLeft);
+        final childSize = Size(cropWidth, orientedHeight.toDouble());
+        final viewer = PhotoView.customChild(
+          controller: _photoCtrlOf(page),
+          scaleStateController: _scaleStateCtrlOf(page),
+          childSize: childSize,
+          backgroundDecoration: const BoxDecoration(color: Colors.black),
+          initialScale: PhotoViewComputedScale.contained,
+          minScale: PhotoViewComputedScale.contained,
+          maxScale: PhotoViewComputedScale.covered * 8,
+          // PhotoView uses non-none filterQuality as a signal to skip its
+          // computed scale for custom children. Keep scaling enabled here;
+          // the painter itself still uses high-quality image sampling.
+          filterQuality: FilterQuality.none,
+          child: SizedBox.fromSize(
+            size: childSize,
+            child: CustomPaint(
+              painter: _SplitPagePainter(image, displayPage),
+              size: childSize,
+            ),
+          ),
+        );
+        return PhotoViewGestureDetectorScope(
+          axis: Axis.horizontal,
+          child: viewer,
+        );
+      },
+    );
+  }
+
+  Widget _buildWebtoonPageImage(
+    Uint8List bytes,
+    int page, {
+    required double displayWidth,
+    required int fallbackDecodeWidth,
+  }) {
+    final split = _isSplitSourcePage(page);
+    final targetWidth =
+        _renderWidthPixelsForDisplay(split: split) ?? fallbackDecodeWidth;
+    if (!split) {
+      return Image(
+        image: ResizeImage(MemoryImage(bytes), width: targetWidth),
+        fit: BoxFit.fitWidth,
+      );
+    }
+
+    return FutureBuilder<ui.Image>(
+      future: _decodedImageForPage(page, bytes, targetWidth: targetWidth),
+      builder: (context, snapshot) {
+        final image = snapshot.data;
+        if (image == null) {
+          return SizedBox(
+            width: displayWidth,
+            height: _webtoonNavigation.heightFor(page),
+            child: _pagePlaceholder(page),
+          );
+        }
+        final pages = _webtoonDisplayPages(page);
+        final turns = pages.first.quarterTurns % 4;
+        final orientedWidth = turns.isOdd ? image.height : image.width;
+        final orientedHeight = turns.isOdd ? image.width : image.height;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final displayPage in pages)
+              Builder(
+                builder: (context) {
+                  final cropWidth =
+                      orientedWidth *
+                      (displayPage.cropRight - displayPage.cropLeft);
+                  final height = displayWidth * orientedHeight / cropWidth;
+                  return SizedBox(
+                    width: displayWidth,
+                    height: height,
+                    child: CustomPaint(
+                      painter: _SplitPagePainter(
+                        image,
+                        displayPage,
+                        scale: displayWidth / cropWidth,
+                      ),
+                      size: Size(displayWidth, height),
+                    ),
+                  );
+                },
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -1864,14 +2418,15 @@ class _ReaderPageState extends State<ReaderPage> {
       itemCount: _viewCount(),
       onPageChanged: (v) {
         final p = _pageOfView(v);
-        if (p == _page) return;
+        if (v == _viewIndex) return;
         setState(() {
           _page = p;
+          _viewIndex = v;
           _photoCtrlOf(p).reset();
           _scaleStateCtrlOf(p).reset();
           _dualZoomCtrl.value = Matrix4.identity();
         });
-        _completion.observeStablePage(p);
+        _observeCurrentCompletion();
         _disposeDistantPhotoCtrls();
         _ensureVisiblePagedPages(p);
         final s = widget.source;
@@ -1885,11 +2440,13 @@ class _ReaderPageState extends State<ReaderPage> {
         }
         _scheduleEndPrompt();
       },
-      itemBuilder: (context, v) => _buildMangaOrComicPage(_pageOfView(v)),
+      itemBuilder: (context, v) =>
+          _buildMangaOrComicPage(_displayPageOfView(v)),
     );
   }
 
-  Widget _buildMangaOrComicPage(int page) {
+  Widget _buildMangaOrComicPage(DisplayPage displayPage) {
+    final page = displayPage.sourcePageIndex;
     final bytes = _bytes[page];
     final isManga = _mode == ReadMode.manga;
     final leftAction = isManga
@@ -1899,7 +2456,7 @@ class _ReaderPageState extends State<ReaderPage> {
         ? (_invert ? _forward : _back)
         : (_invert ? _back : _forward);
     final (leftPage, rightPage) = pairOf(page);
-    final isCurrentView = _viewOfPage(page) == _viewOfPage(_page);
+    final isCurrentView = _paging.viewOfDisplayPage(displayPage) == _viewIndex;
     late final Widget pageView;
     if (bytes == null) {
       if (isCurrentView) _ensure(page);
@@ -1920,7 +2477,7 @@ class _ReaderPageState extends State<ReaderPage> {
             )
           : _pagePlaceholder(leftPage);
     } else {
-      pageView = _buildImage(bytes, page);
+      pageView = _buildImage(bytes, page, displayPage);
     }
     final visiblePages = <int>{page, leftPage, ?rightPage};
     final loading =
@@ -2151,12 +2708,11 @@ class _ReaderPageState extends State<ReaderPage> {
                           );
                         }
                       },
-                      child: Image(
-                        image: ResizeImage(
-                          MemoryImage(bytes),
-                          width: decodeWidth,
-                        ),
-                        fit: BoxFit.fitWidth,
+                      child: _buildWebtoonPageImage(
+                        bytes,
+                        page,
+                        displayWidth: constraints.maxWidth,
+                        fallbackDecodeWidth: decodeWidth,
                       ),
                     );
                   }
@@ -2232,6 +2788,46 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   // ---- 右键菜单 ----
+  Future<void> _setPageSplitOverride(bool? split) async {
+    final page = _page;
+    try {
+      await LibraryStore.instance.setReaderPageSplitOverride(
+        _splitOverrideBookKey,
+        page,
+        split,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (split == null) {
+          _splitOverrides.remove(page);
+        } else {
+          _splitOverrides[page] = split;
+        }
+        _loadedSplitOverrides.add(page);
+        _resolvedWidePages.remove(page);
+        _bytes.remove(page);
+        _loadedSourceWidths.remove(page);
+        _pageLoads.remove(page);
+        _pageRequestGenerations[page] =
+            (_pageRequestGenerations[page] ?? 0) + 1;
+        _clearDecodedImage(page);
+      });
+      if (split == false) {
+        _resolvedWidePages.add(page);
+        _applyWideSplitDecision(page, null, 0);
+        _ensure(page);
+      } else {
+        _ensure(page);
+      }
+      _pumpPageLoadQueue();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('本页拆分设置保存失败：$error')));
+    }
+  }
+
   void _onRightClick(TapUpDetails details) {
     showMenu<String>(
       position: RelativeRect.fromLTRB(
@@ -2242,6 +2838,32 @@ class _ReaderPageState extends State<ReaderPage> {
       ),
       context: context,
       items: [
+        if (_canResolveWidePages) ...[
+          const PopupMenuItem(
+            value: 'split_page',
+            child: ListTile(
+              leading: Icon(Icons.call_split),
+              title: Text('拆分本页为两页'),
+              dense: true,
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'whole_page',
+            child: ListTile(
+              leading: Icon(Icons.crop_free),
+              title: Text('本页保持整页'),
+              dense: true,
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'auto_page',
+            child: ListTile(
+              leading: Icon(Icons.auto_awesome),
+              title: Text('恢复本页自动判断'),
+              dense: true,
+            ),
+          ),
+        ],
         if (!isAndroidPlatform)
           PopupMenuItem(
             value: 'ai_version',
@@ -2283,6 +2905,9 @@ class _ReaderPageState extends State<ReaderPage> {
       ],
     ).then((value) {
       if (value == 'ai_version') _toggleAiVersion();
+      if (value == 'split_page') unawaited(_setPageSplitOverride(true));
+      if (value == 'whole_page') unawaited(_setPageSplitOverride(false));
+      if (value == 'auto_page') unawaited(_setPageSplitOverride(null));
       if (value == 'settings') _showSettings();
       if (value == 'ai') _doAiSuperResolve();
       if (value == 'rotate') _toggleRotationMode();
@@ -2322,6 +2947,7 @@ class _ReaderPageState extends State<ReaderPage> {
       try {
         final result = await superResolve(pageBytes: bytes, scale: 2);
         if (!mounted) return;
+        _clearDecodedImage(_page);
         setState(() {
           _bytes[_page] = result;
         });
@@ -2382,11 +3008,67 @@ class _ReaderPageState extends State<ReaderPage> {
                 selected: {_mode},
                 onSelectionChanged: (vs) {
                   ss(() {});
+                  final oldMode = _mode;
+                  final nextMode = vs.first;
+                  if (nextMode == ReadMode.webtoon &&
+                      oldMode != ReadMode.webtoon) {
+                    _webtoonRightToLeft = oldMode == ReadMode.manga;
+                  } else if (nextMode != ReadMode.webtoon) {
+                    _webtoonRightToLeft = nextMode == ReadMode.manga;
+                  }
+                  if ((oldMode == ReadMode.webtoon) !=
+                      (nextMode == ReadMode.webtoon)) {
+                    _wideDisplayGeneration++;
+                  }
                   setState(() {
-                    _mode = vs.first;
+                    _mode = nextMode;
+                    if ((oldMode == ReadMode.webtoon) !=
+                        (_mode == ReadMode.webtoon)) {
+                      _resolvedWidePages.clear();
+                      _splitSeams.clear();
+                      _splitQuarterTurns.clear();
+                    }
+                    _viewIndex = _viewOfPage(_page);
                   });
+                  _observeCurrentCompletion();
                   _recreatePageCtrl();
                   _disposeDistantPhotoCtrls();
+                  if (_mode == ReadMode.webtoon) {
+                    if (oldMode != ReadMode.webtoon) {
+                      _webtoonPendingAttachPage = _page;
+                    }
+                    _ensureWebtoonWindow(_page);
+                  } else {
+                    _ensureVisiblePagedPages(_page);
+                  }
+                  _scheduleEndPrompt();
+                },
+              ),
+              const SizedBox(height: 16),
+              const Text('宽页处理'),
+              const SizedBox(height: 6),
+              SegmentedButton<WidePageMode>(
+                segments: WidePageMode.values
+                    .map(
+                      (mode) =>
+                          ButtonSegment(value: mode, label: Text(mode.label)),
+                    )
+                    .toList(),
+                selected: {_widePageMode},
+                onSelectionChanged: (values) {
+                  ss(() {});
+                  _wideDisplayGeneration++;
+                  setState(() {
+                    _widePageMode = values.first;
+                    _resolvedWidePages.clear();
+                    _splitSeams.clear();
+                    _splitQuarterTurns.clear();
+                    _viewIndex = _viewOfPage(_page);
+                  });
+                  _observeCurrentCompletion();
+                  _recreatePageCtrl();
+                  if (_canResolveWidePages) _ensureVisiblePagedPages(_page);
+                  _scheduleEndPrompt();
                 },
               ),
               const SizedBox(height: 16),
@@ -2401,9 +3083,22 @@ class _ReaderPageState extends State<ReaderPage> {
                   ss(() {});
                   setState(() {
                     _dual = vs.first;
+                    if (_dual == DualPageMode.off &&
+                        _mode != ReadMode.webtoon) {
+                      _wideDisplayGeneration++;
+                      _resolvedWidePages.clear();
+                      _splitSeams.clear();
+                      _splitQuarterTurns.clear();
+                    }
+                    _viewIndex = _viewOfPage(_page);
                   });
+                  _observeCurrentCompletion();
                   _recreatePageCtrl();
                   _disposeDistantPhotoCtrls();
+                  if (_mode != ReadMode.webtoon) {
+                    _ensureVisiblePagedPages(_page);
+                  }
+                  _scheduleEndPrompt();
                 },
               ),
               const SizedBox(height: 8),
@@ -2506,6 +3201,11 @@ class _ReaderPageState extends State<ReaderPage> {
     } else if (rightPg != null) {
       final l = leftPg + 1, r = rightPg + 1;
       pageLabel = isManga ? '$r-$l / ${b.pageCount}' : '$l-$r / ${b.pageCount}';
+    } else if (_mode != ReadMode.webtoon &&
+        _dual == DualPageMode.off &&
+        _currentDisplayPage.partCount > 1) {
+      pageLabel =
+          '${_page + 1} · ${_currentDisplayPage.partNumber}/${_currentDisplayPage.partCount} / ${b.pageCount}';
     } else {
       pageLabel = '${_page + 1} / ${b.pageCount}';
     }
@@ -2589,35 +3289,50 @@ class _ReaderPageState extends State<ReaderPage> {
 }
 
 /// 阅读器「视口 ↔ 真实页」映射。
-/// 双页模式下一页视口对应两页;「首页单独显示」时首页再独占一个视口。
-class ReaderPaging {
-  const ReaderPaging({
-    required this.dual,
-    required this.skipCover,
-    required this.pageCount,
-  });
+class _SplitPagePainter extends CustomPainter {
+  const _SplitPagePainter(this.image, this.page, {this.scale = 1});
 
-  final bool dual;
-  final bool skipCover;
-  final int pageCount;
+  final ui.Image image;
+  final DisplayPage page;
+  final double scale;
 
-  int get viewCount {
-    if (!dual) return pageCount;
-    if (pageCount <= 1) return 1;
-    return skipCover ? 1 + (pageCount ~/ 2) : (pageCount + 1) ~/ 2;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final turns = page.quarterTurns % 4;
+    final orientedWidth = turns.isOdd ? image.height : image.width;
+    final orientedHeight = turns.isOdd ? image.width : image.height;
+    final cropWidth = orientedWidth * (page.cropRight - page.cropLeft);
+    canvas.save();
+    canvas.scale(scale, scale);
+    canvas.clipRect(Rect.fromLTWH(0, 0, cropWidth, orientedHeight.toDouble()));
+    canvas.translate(-page.cropLeft * orientedWidth, 0);
+    canvas.save();
+    switch (turns) {
+      case 1:
+        canvas.translate(image.height.toDouble(), 0);
+        canvas.rotate(math.pi / 2);
+        break;
+      case 2:
+        canvas.translate(image.width.toDouble(), image.height.toDouble());
+        canvas.rotate(math.pi);
+        break;
+      case 3:
+        canvas.translate(0, image.width.toDouble());
+        canvas.rotate(-math.pi / 2);
+        break;
+    }
+    canvas.drawImage(
+      image,
+      Offset.zero,
+      Paint()..filterQuality = FilterQuality.high,
+    );
+    canvas.restore();
+    canvas.restore();
   }
 
-  /// 真实页(双页模式下为拼接组基准页) → 视口序号。
-  int viewOfPage(int page) {
-    if (!dual) return page;
-    if (skipCover) return page == 0 ? 0 : 1 + ((page - 1) ~/ 2);
-    return page ~/ 2;
-  }
-
-  /// 视口序号 → 真实基准页。
-  int pageOfView(int view) {
-    if (!dual) return view;
-    if (skipCover) return view == 0 ? 0 : 1 + (view - 1) * 2;
-    return view * 2;
-  }
+  @override
+  bool shouldRepaint(covariant _SplitPagePainter oldDelegate) =>
+      oldDelegate.image != image ||
+      oldDelegate.page != page ||
+      oldDelegate.scale != scale;
 }

@@ -9,6 +9,7 @@ import '../repository/book_repository.dart';
 import '../repository/record_repository.dart';
 import '../repository/tag_repository.dart';
 import '../src/rust/api/cache.dart';
+import '../src/rust/api/book.dart' as rust_book;
 import '../src/rust/api/db.dart';
 import 'library_catalog.dart';
 import 'library_index_service.dart';
@@ -1029,6 +1030,23 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
     saveToDisk();
   }
+
+  /// Per-page wide-page decisions stay local and never enter BookMeta sync.
+  Future<bool?> readerPageSplitOverride(String bookKey, int pageIndex) =>
+      rust_book.getReaderPageSplitOverride(
+        bookKey: bookKey,
+        pageIndex: pageIndex,
+      );
+
+  Future<void> setReaderPageSplitOverride(
+    String bookKey,
+    int pageIndex,
+    bool? split,
+  ) => rust_book.setReaderPageSplitOverride(
+    bookKey: bookKey,
+    pageIndex: pageIndex,
+    split: split,
+  );
 
   /// Persist the recent random-reading history without changing read progress.
   void recordRandomSelection(String bookKey) {

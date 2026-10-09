@@ -21,8 +21,8 @@
 
 - 卡片封面 L1：`ComicCover` 进程内 LRU（`CACHE_CAP`）；切换数据源/尺寸档时显式失效
   （`ComicCover.clear()`），不要依赖 GC；
-- 阅读器页缓存按**渲染宽度**分目录（`page/<ns>/w<width>/`），标准档（width 0）与历史路径一致；
-  切换宽度必须清 L1，避免新旧尺寸混用。
+- 阅读器的源页缓存键是 `(pageIndex, normalizedTargetWidth)`：Rust L1、并发去重和预取都使用同一键；磁盘缓存 `None` 沿用历史 `page/<ns>/<index>.bin`，显式宽度使用 `page/<ns>/w<width>/<index>.bin`。同一页面不同宽度可并存，因此按请求传宽度，不依赖会话级全局宽度或在切换时清空全部 L1。
+- 宽页拆分只改变 `DisplayPage` 虚拟显示位置；书签、阅读进度和远程接口仍使用源页索引。逐页拆分纠错单独存入本机 SQLite 表，不写入 `BookMeta`、设置同步或同步快照。
 
 ## 可测性（硬要求）
 

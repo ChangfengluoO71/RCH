@@ -215,6 +215,14 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
         );
 
         -- 标签实体
+        -- Device-local reader corrections are deliberately not sync entities.
+        CREATE TABLE IF NOT EXISTS reader_page_split_overrides (
+            book_key TEXT NOT NULL,
+            page_index INTEGER NOT NULL CHECK (page_index >= 0),
+            split INTEGER NOT NULL CHECK (split IN (0, 1)),
+            PRIMARY KEY (book_key, page_index)
+        );
+
         CREATE TABLE IF NOT EXISTS tags (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
@@ -4211,6 +4219,59 @@ pub fn is_syncable_setting(key: &str) -> bool {
     )
 }
 
+pub(crate) fn get_reader_page_split_override_on(
+    conn: &Connection,
+    book_key: &str,
+    page_index: u32,
+) -> Result<Option<bool>> {
+    let split = conn
+        .query_row(
+            "SELECT split FROM reader_page_split_overrides
+             WHERE book_key = ?1 AND page_index = ?2",
+            params![book_key, page_index],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    Ok(split.map(|value| value != 0))
+}
+
+pub(crate) fn set_reader_page_split_override_on(
+    conn: &Connection,
+    book_key: &str,
+    page_index: u32,
+    split: Option<bool>,
+) -> Result<()> {
+    if let Some(split) = split {
+        conn.execute(
+            "INSERT INTO reader_page_split_overrides (book_key, page_index, split)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(book_key, page_index) DO UPDATE SET split = excluded.split",
+            params![book_key, page_index, split],
+        )?;
+    } else {
+        conn.execute(
+            "DELETE FROM reader_page_split_overrides
+             WHERE book_key = ?1 AND page_index = ?2",
+            params![book_key, page_index],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn get_reader_page_split_override(book_key: &str, page_index: u32) -> Result<Option<bool>> {
+    let conn = get().lock().unwrap();
+    get_reader_page_split_override_on(&conn, book_key, page_index)
+}
+
+pub fn set_reader_page_split_override(
+    book_key: &str,
+    page_index: u32,
+    split: Option<bool>,
+) -> Result<()> {
+    let conn = get().lock().unwrap();
+    set_reader_page_split_override_on(&conn, book_key, page_index, split)
+}
+
 pub(crate) fn load_setting_on(conn: &Connection, key: &str) -> Option<String> {
     conn.query_row(
         "SELECT value FROM app_settings WHERE key = ?1 AND deleted = 0",
@@ -5345,6 +5406,60 @@ mod tests {
 
     /// 导出侧契约：`load_metas_for_sync_on`（同步增量 + `.rchpkg` metas 分块的共同数据源）
     /// 必须把卷/话带出来，否则另一台设备/恢复后的库永远看不到号码。
+    #[test]
+    fn reader_page_split_overrides_are_book_page_scoped_and_excluded_from_sync_metas() {
+        let conn = schema_conn();
+        let first_book = "local|s1|/books/a.cbz";
+        let second_book = "local|s1|/books/b.cbz";
+
+        assert_eq!(
+            get_reader_page_split_override_on(&conn, first_book, 7).unwrap(),
+            None
+        );
+        set_reader_page_split_override_on(&conn, first_book, 7, Some(true)).unwrap();
+        set_reader_page_split_override_on(&conn, first_book, 8, Some(false)).unwrap();
+        assert_eq!(
+            get_reader_page_split_override_on(&conn, first_book, 7).unwrap(),
+            Some(true)
+        );
+        set_reader_page_split_override_on(&conn, first_book, 7, Some(false)).unwrap();
+        assert_eq!(
+            get_reader_page_split_override_on(&conn, first_book, 7).unwrap(),
+            Some(false)
+        );
+        set_reader_page_split_override_on(&conn, first_book, 7, Some(true)).unwrap();
+        assert_eq!(
+            get_reader_page_split_override_on(&conn, first_book, 8).unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            get_reader_page_split_override_on(&conn, second_book, 7).unwrap(),
+            None
+        );
+
+        conn.execute(
+            "INSERT INTO book_metas (key, title, updated_at) VALUES (?1, 'A', 100)",
+            params![first_book],
+        )
+        .unwrap();
+        let synced = load_metas_for_sync_on(&conn, 0);
+        assert_eq!(synced.len(), 1);
+        let payload = serde_json::to_value(&synced[0]).unwrap();
+        assert_eq!(payload["title"], "A");
+        assert!(payload.get("readerPageSplitOverride").is_none());
+        assert!(payload.get("reader_page_split_overrides").is_none());
+
+        set_reader_page_split_override_on(&conn, first_book, 7, None).unwrap();
+        assert_eq!(
+            get_reader_page_split_override_on(&conn, first_book, 7).unwrap(),
+            None
+        );
+        assert_eq!(
+            get_reader_page_split_override_on(&conn, first_book, 8).unwrap(),
+            Some(false)
+        );
+    }
+
     #[test]
     fn metas_for_sync_export_carries_sequence() {
         let conn = schema_conn();

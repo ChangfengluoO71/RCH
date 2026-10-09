@@ -33,6 +33,12 @@ pub trait Document: Send + Sync {
         DocumentMeta::default()
     }
     /// 读取第 `index` 页的原始图片字节(流式,按需,无内部可变状态)。
+    /// Return the source page's dimensions when the format can provide them
+    /// without rendering the page. Values use the document's native units.
+    fn page_dimensions(&self, _index: u32) -> Result<Option<(u32, u32)>> {
+        Ok(None)
+    }
+
     fn page_bytes(&self, index: u32) -> Result<Vec<u8>>;
 
     /// 按**显示尺寸**渲染一页（封面等"只看小图"的场景）。

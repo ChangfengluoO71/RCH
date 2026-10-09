@@ -18,6 +18,8 @@ Future<BookInfo> openLocalBook({required String path}) =>
 /// 返回 ZIP 内该页的原始字节(JPEG/PNG 等);像素解码由 Flutter 侧完成(自带 image cache)。
 /// `target_width`（D7）：`None` = 沿用文档默认渲染宽度（PDF 为 1600，页缓存路径不变）；
 /// `Some(w)` = 按该像素宽渲染（省流 1080 / 跟随屏幕的像素值由 Dart 计算后传入）。
+/// Read one source page. The optional target width is scoped to this request
+/// and included in all reader cache identities.
 Future<Uint8List> bookPage({
   required BigInt handle,
   required int index,
@@ -28,7 +30,7 @@ Future<Uint8List> bookPage({
   targetWidth: targetWidth,
 );
 
-/// 低优先级读取邻页，不触发下一轮预取；跳转目标页仍由 `book_page` 前台读取。
+/// Low-priority neighbor read; width identity matches the originating page.
 Future<Uint8List> bookPagePrefetch({
   required BigInt handle,
   required int index,
@@ -39,10 +41,35 @@ Future<Uint8List> bookPagePrefetch({
   targetWidth: targetWidth,
 );
 
-/// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
-/// 若 path 为目录,走 Folder 格式。
-/// 生成本地书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
-/// 封面结果写入磁盘缓存（cover/）供后续秒开。
+/// Query dimensions without rasterizing the page when the format supports it.
+Future<BookPageDimensions?> bookPageDimensions({
+  required BigInt handle,
+  required int index,
+}) => RustLib.instance.api.crateApiBookBookPageDimensions(
+  handle: handle,
+  index: index,
+);
+
+/// Get the device-local split correction for a physical source page.
+Future<bool?> getReaderPageSplitOverride({
+  required String bookKey,
+  required int pageIndex,
+}) => RustLib.instance.api.crateApiBookGetReaderPageSplitOverride(
+  bookKey: bookKey,
+  pageIndex: pageIndex,
+);
+
+/// Set a device-local split correction, or clear it with `None`.
+Future<void> setReaderPageSplitOverride({
+  required String bookKey,
+  required int pageIndex,
+  bool? split,
+}) => RustLib.instance.api.crateApiBookSetReaderPageSplitOverride(
+  bookKey: bookKey,
+  pageIndex: pageIndex,
+  split: split,
+);
+
 Future<PageImage> bookCover({
   required String path,
   required int page,
@@ -98,6 +125,25 @@ class BookInfo {
           handle == other.handle &&
           title == other.title &&
           pageCount == other.pageCount;
+}
+
+/// Source page dimensions when the document format can provide them cheaply.
+class BookPageDimensions {
+  final int width;
+  final int height;
+
+  const BookPageDimensions({required this.width, required this.height});
+
+  @override
+  int get hashCode => width.hashCode ^ height.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BookPageDimensions &&
+          runtimeType == other.runtimeType &&
+          width == other.width &&
+          height == other.height;
 }
 
 /// 封面裁剪区域(相对坐标 0-1)。

@@ -64,6 +64,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookMetaDto dco_decode_book_meta_dto(dynamic raw);
 
   @protected
+  BookPageDimensions dco_decode_book_page_dimensions(dynamic raw);
+
+  @protected
   BookSearchDto dco_decode_book_search_dto(dynamic raw);
 
   @protected
@@ -85,7 +88,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookMetaDto dco_decode_box_autoadd_book_meta_dto(dynamic raw);
 
   @protected
+  BookPageDimensions dco_decode_box_autoadd_book_page_dimensions(dynamic raw);
+
+  @protected
   BookSourceDto dco_decode_box_autoadd_book_source_dto(dynamic raw);
+
+  @protected
+  bool dco_decode_box_autoadd_bool(dynamic raw);
 
   @protected
   CatalogRevisionDto dco_decode_box_autoadd_catalog_revision_dto(dynamic raw);
@@ -308,6 +317,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookInfo? dco_decode_opt_box_autoadd_book_info(dynamic raw);
 
   @protected
+  BookPageDimensions? dco_decode_opt_box_autoadd_book_page_dimensions(
+    dynamic raw,
+  );
+
+  @protected
+  bool? dco_decode_opt_box_autoadd_bool(dynamic raw);
+
+  @protected
   CatalogRevisionDto? dco_decode_opt_box_autoadd_catalog_revision_dto(
     dynamic raw,
   );
@@ -500,6 +517,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookMetaDto sse_decode_book_meta_dto(SseDeserializer deserializer);
 
   @protected
+  BookPageDimensions sse_decode_book_page_dimensions(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BookSearchDto sse_decode_book_search_dto(SseDeserializer deserializer);
 
   @protected
@@ -523,9 +545,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  BookPageDimensions sse_decode_box_autoadd_book_page_dimensions(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   BookSourceDto sse_decode_box_autoadd_book_source_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
   CatalogRevisionDto sse_decode_box_autoadd_catalog_revision_dto(
@@ -806,6 +836,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BookInfo? sse_decode_opt_box_autoadd_book_info(SseDeserializer deserializer);
 
   @protected
+  BookPageDimensions? sse_decode_opt_box_autoadd_book_page_dimensions(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
+
+  @protected
   CatalogRevisionDto? sse_decode_opt_box_autoadd_catalog_revision_dto(
     SseDeserializer deserializer,
   );
@@ -1040,6 +1078,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_book_meta_dto(BookMetaDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_book_page_dimensions(
+    BookPageDimensions self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_book_search_dto(BookSearchDto self, SseSerializer serializer);
 
   @protected
@@ -1070,10 +1114,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_book_page_dimensions(
+    BookPageDimensions self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_book_source_dto(
     BookSourceDto self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_catalog_revision_dto(
@@ -1434,6 +1487,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     BookInfo? self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_opt_box_autoadd_book_page_dimensions(
+    BookPageDimensions? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_catalog_revision_dto(

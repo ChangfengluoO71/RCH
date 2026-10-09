@@ -304,6 +304,21 @@ enum DualPageMode {
   final String label;
 }
 
+/// How wide images are represented by the reader on phones.
+enum WidePageMode {
+  /// Split only when a clear page gutter is found in a portrait viewport.
+  smart('智能'),
+
+  /// Always expose a wide image as two virtual pages.
+  split('强制拆分'),
+
+  /// Keep a wide image as one spread.
+  keepWhole('保持整页');
+
+  const WidePageMode(this.label);
+  final String label;
+}
+
 extension CoverQualitySize on CoverQuality {
   /// 封面缩略图的目标 (宽,高) 像素。
   (int, int) get size => switch (this) {
@@ -375,6 +390,7 @@ class AppSettings {
   ReadMode readMode; // 阅读模式:日漫/美漫/条漫
   bool invertTap; // 日漫模式下点击区是否反向
   DualPageMode dualPageMode; // 双页拼接模式
+  WidePageMode widePageMode; // 宽页处理
   int dualPageGap; // 双页拼接中间缝隙像素
   bool skipFrontCover; // 首页不拼
   KeyBinds keys; // 自定义按键
@@ -409,6 +425,7 @@ class AppSettings {
     this.readMode = ReadMode.manga,
     this.invertTap = false,
     this.dualPageMode = DualPageMode.off,
+    this.widePageMode = WidePageMode.smart,
     this.dualPageGap = 0,
     this.skipFrontCover = true,
     KeyBinds? keys,
@@ -443,6 +460,7 @@ class AppSettings {
     'readMode': readMode.name,
     'invertTap': invertTap,
     'dualPageMode': dualPageMode.name,
+    'widePageMode': widePageMode.name,
     'dualPageGap': dualPageGap,
     'skipFrontCover': skipFrontCover,
     'keys': keys.toJson(),
@@ -496,6 +514,10 @@ class AppSettings {
       (d) => d.name == j['dualPageMode'],
       orElse: () => DualPageMode.off,
     ),
+    widePageMode: WidePageMode.values.firstWhere(
+      (m) => m.name == j['widePageMode'],
+      orElse: () => WidePageMode.smart,
+    ),
     dualPageGap: (j['dualPageGap'] as int?) ?? 0,
     skipFrontCover: (j['skipFrontCover'] as bool?) ?? true,
     keys: KeyBinds.fromJson(_asStringMap(j['keys'])),
@@ -505,8 +527,8 @@ class AppSettings {
       (s) => s.name == j['bookOpenStrategy'],
       orElse: () => BookOpenStrategy.auto,
     ),
-      deletePackageAfterReading:
-          (j['deletePackageAfterReading'] as bool?) ?? false,
+    deletePackageAfterReading:
+        (j['deletePackageAfterReading'] as bool?) ?? false,
     tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
     updateMirror: (j['updateMirror'] as String?) ?? '',
     updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),
@@ -594,6 +616,7 @@ class BookMeta {
   String series; // 系列
   /// 卷（M8 解析产物 `semantic.volume`，物化落库）。
   String volume;
+
   /// 话/章（M8 解析产物 `semantic.chapter`，物化落库）。
   String chapter;
   String summary; // 简介

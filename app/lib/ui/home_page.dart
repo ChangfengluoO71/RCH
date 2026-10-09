@@ -370,7 +370,9 @@ class _HomePageState extends State<HomePage> {
                         : null,
                     isDense: true,
                     filled: true,
-                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    fillColor: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
                       borderSide: BorderSide.none,
@@ -483,7 +485,10 @@ class _HomePageState extends State<HomePage> {
             children: [
               Text(
                 '书源',
-                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
               ),
               const Spacer(),
               Tooltip(
@@ -504,7 +509,9 @@ class _HomePageState extends State<HomePage> {
                         : Icon(
                             Icons.refresh,
                             size: 18,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                   ),
                 ),
@@ -529,7 +536,11 @@ class _HomePageState extends State<HomePage> {
                 borderRadius: BorderRadius.circular(4),
                 child: Padding(
                   padding: EdgeInsets.all(2),
-                  child: Icon(Icons.add, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  child: Icon(
+                    Icons.add,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -593,9 +604,9 @@ class _HomePageState extends State<HomePage> {
         context,
       ).showSnackBar(SnackBar(content: Text('刷新失败：$failure')));
     } else if (showFeedback) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('书源列表与本机索引视图已重载')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('书源列表与本机索引视图已重载')));
     }
   }
 
@@ -771,9 +782,9 @@ class _HomePageState extends State<HomePage> {
       );
       if (!mounted) return;
       if (pick == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('索引中没有可随机阅读的漫画')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('索引中没有可随机阅读的漫画')));
         return;
       }
       await openBook(context, pick.source, pick.path, pick.title);
@@ -810,7 +821,10 @@ class _HomePageState extends State<HomePage> {
             children: [
               Text(
                 title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const Spacer(),
               TextButton.icon(
@@ -1003,7 +1017,9 @@ class _HomePageState extends State<HomePage> {
                   child: Text(
                     '暂无统计\n去书源里打开一些漫画吧',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 )
               : ListView.separated(
@@ -1100,7 +1116,10 @@ class _HomePageState extends State<HomePage> {
             const Spacer(),
             Text(
               '$count 本',
-              style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 13,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -1246,9 +1265,9 @@ class _HomePageState extends State<HomePage> {
                         ctx,
                         onError: (message) {
                           if (ctx.mounted) {
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              SnackBar(content: Text(message)),
-                            );
+                            ScaffoldMessenger.of(
+                              ctx,
+                            ).showSnackBar(SnackBar(content: Text(message)));
                           }
                         },
                       );
@@ -1465,9 +1484,9 @@ class _HomePageState extends State<HomePage> {
         debugPrint('[HomePage] delete source failed: $error');
         await appendScanDiag('source_delete_failed id=${src.id} error=$error');
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('删除失败：$error（书源可能未被删除）')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('删除失败：$error（书源可能未被删除）')));
         }
       }
       await _refreshSources();
@@ -1631,7 +1650,9 @@ class _HomePageState extends State<HomePage> {
                 ? Center(
                     child: Text(
                       '暂无标签',
-                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   )
                 : ListView(
@@ -1787,15 +1808,14 @@ class _HomePageState extends State<HomePage> {
     required IconData icon,
     required List<Widget> children,
     bool initiallyExpanded = false,
-  }) =>
-      ExpansionTile(
-        initiallyExpanded: initiallyExpanded,
-        leading: Icon(icon, size: 20),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-        childrenPadding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
-        children: children,
-      );
+  }) => ExpansionTile(
+    initiallyExpanded: initiallyExpanded,
+    leading: Icon(icon, size: 20),
+    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+    tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+    childrenPadding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
+    children: children,
+  );
 
   Widget _buildSettings() {
     final s = LibraryStore.instance.settings;
@@ -1841,7 +1861,10 @@ class _HomePageState extends State<HomePage> {
           _settingsCategory(
             title: '缓存与存储',
             icon: Icons.storage_outlined,
-            children: [const CacheManagerPanel(), const _StoragePermissionTile()],
+            children: [
+              const CacheManagerPanel(),
+              const _StoragePermissionTile(),
+            ],
           ),
           _settingsCategory(
             title: '同步与备份',
@@ -2065,6 +2088,24 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+      const Text('宽页处理默认为:'),
+      const SizedBox(height: 6),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SegmentedButton<WidePageMode>(
+          segments: WidePageMode.values
+              .map(
+                (mode) => ButtonSegment(value: mode, label: Text(mode.label)),
+              )
+              .toList(),
+          selected: {s.widePageMode},
+          onSelectionChanged: (modes) {
+            s.widePageMode = modes.first;
+            LibraryStore.instance.updateSettings(s);
+            setState(() {});
+          },
+        ),
+      ),
       const SizedBox(height: 8),
       const Text('双页拼接默认为:'),
       const SizedBox(height: 6),
@@ -2184,7 +2225,9 @@ class _HomePageState extends State<HomePage> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text(
@@ -2261,7 +2304,8 @@ class _HomePageState extends State<HomePage> {
             // 状态，只有清掉重排队才有机会。重置幂等、只动封面数据（不碰书架索引）；
             // 重新入队的任务由既有封面 worker / 卡片请求唤醒继续抓取。
             try {
-              final result = await rust_cover.remoteCoverResetToCurrentProfile();
+              final result = await rust_cover
+                  .remoteCoverResetToCurrentProfile();
               if (!mounted) return;
               ScaffoldMessenger.maybeOf(context)?.showSnackBar(
                 SnackBar(
@@ -2274,9 +2318,9 @@ class _HomePageState extends State<HomePage> {
               );
             } catch (error) {
               if (!mounted) return;
-              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                SnackBar(content: Text('封面缓存重置失败：$error')),
-              );
+              ScaffoldMessenger.maybeOf(
+                context,
+              )?.showSnackBar(SnackBar(content: Text('封面缓存重置失败：$error')));
             }
           },
         ),
@@ -2420,7 +2464,10 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
           const SizedBox(height: 8),
           Text(
             '按下任意键绑定',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -3354,7 +3401,10 @@ class _AddDialogState extends State<AddSourceDialog> {
                 const SizedBox(height: 4),
                 Text(
                   '提示：选不常用设备可避免挤掉网页端/App 旧登录；Windows/Mac/Linux 客户端已下架不可用。',
-                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
                 const Divider(height: 16),
                 OutlinedButton.icon(
@@ -3553,17 +3603,26 @@ class _StoragePermissionTileState extends State<_StoragePermissionTile>
         if (granted == null)
           Text(
             '检查中…',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           )
         else if (granted)
           Text(
             '已授予"所有文件访问"，本地书源可直接读取 /sdcard 等外部目录',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           )
         else ...[
           Text(
             '未授予"所有文件访问"。如需直接读取外部目录（如 /sdcard/Download），请点击下方按钮授权。',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 6),
           FilledButton.tonal(

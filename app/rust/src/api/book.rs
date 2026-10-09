@@ -42,6 +42,12 @@ pub struct PageImage {
     pub height: u32,
 }
 
+/// Source page dimensions when the document format can provide them cheaply.
+pub struct BookPageDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
 /// 封面裁剪区域(相对坐标 0-1)。
 pub struct CropRect {
     pub x: f64,
@@ -97,47 +103,75 @@ pub async fn open_local_book(path: String) -> Result<BookInfo> {
 /// 返回 ZIP 内该页的原始字节(JPEG/PNG 等);像素解码由 Flutter 侧完成(自带 image cache)。
 /// `target_width`（D7）：`None` = 沿用文档默认渲染宽度（PDF 为 1600，页缓存路径不变）；
 /// `Some(w)` = 按该像素宽渲染（省流 1080 / 跟随屏幕的像素值由 Dart 计算后传入）。
+/// Read one source page. The optional target width is scoped to this request
+/// and included in all reader cache identities.
 pub async fn book_page(handle: u64, index: u32, target_width: Option<u32>) -> Result<Vec<u8>> {
     let reader = {
-        let g = sessions().lock().unwrap();
-        g.get(&handle).map(|s| Arc::clone(&s.reader))
+        let guard = sessions().lock().unwrap();
+        guard
+            .get(&handle)
+            .map(|session| Arc::clone(&session.reader))
     };
-    let reader = reader.ok_or_else(|| anyhow::anyhow!("无效的书句柄: {handle}"))?;
-    let bytes = tokio::task::spawn_blocking(move || {
-        if let Some(width) = target_width {
-            reader.set_display_width(width);
-        }
-        reader.get_page(index)
-    })
-    .await??;
+    let reader = reader.ok_or_else(|| {
+        anyhow::anyhow!("\u{65e0}\u{6548}\u{7684}\u{4e66}\u{53e5}\u{67c4}: {handle}")
+    })?;
+    let bytes =
+        tokio::task::spawn_blocking(move || reader.get_page_with_width(index, target_width))
+            .await??;
     Ok((*bytes).clone())
 }
 
-/// 低优先级读取邻页，不触发下一轮预取；跳转目标页仍由 `book_page` 前台读取。
+/// Low-priority neighbor read; width identity matches the originating page.
 pub async fn book_page_prefetch(
     handle: u64,
     index: u32,
     target_width: Option<u32>,
 ) -> Result<Vec<u8>> {
     let reader = {
-        let g = sessions().lock().unwrap();
-        g.get(&handle).map(|s| Arc::clone(&s.reader))
+        let guard = sessions().lock().unwrap();
+        guard
+            .get(&handle)
+            .map(|session| Arc::clone(&session.reader))
     };
-    let reader = reader.ok_or_else(|| anyhow::anyhow!("无效的书句柄: {handle}"))?;
+    let reader = reader.ok_or_else(|| {
+        anyhow::anyhow!("\u{65e0}\u{6548}\u{7684}\u{4e66}\u{53e5}\u{67c4}: {handle}")
+    })?;
     let bytes = tokio::task::spawn_blocking(move || {
-        if let Some(width) = target_width {
-            reader.set_display_width(width);
-        }
-        reader.get_page_prefetch(index)
+        reader.get_page_prefetch_with_width(index, target_width)
     })
     .await??;
     Ok((*bytes).clone())
 }
 
-/// 生成书籍封面缩略图:取第 `page` 页,可按 `crop` 裁剪后缩放填充到 `w×h`。
-/// 若 path 为目录,走 Folder 格式。
-/// 生成本地书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
-/// 封面结果写入磁盘缓存（cover/）供后续秒开。
+/// Query dimensions without rasterizing the page when the format supports it.
+pub async fn book_page_dimensions(handle: u64, index: u32) -> Result<Option<BookPageDimensions>> {
+    let reader = {
+        let guard = sessions().lock().unwrap();
+        guard
+            .get(&handle)
+            .map(|session| Arc::clone(&session.reader))
+    };
+    let reader = reader.ok_or_else(|| {
+        anyhow::anyhow!("\u{65e0}\u{6548}\u{7684}\u{4e66}\u{53e5}\u{67c4}: {handle}")
+    })?;
+    let dimensions = tokio::task::spawn_blocking(move || reader.page_dimensions(index)).await??;
+    Ok(dimensions.map(|(width, height)| BookPageDimensions { width, height }))
+}
+
+/// Get the device-local split correction for a physical source page.
+pub fn get_reader_page_split_override(book_key: String, page_index: u32) -> Result<Option<bool>> {
+    crate::db::get_reader_page_split_override(&book_key, page_index)
+}
+
+/// Set a device-local split correction, or clear it with `None`.
+pub fn set_reader_page_split_override(
+    book_key: String,
+    page_index: u32,
+    split: Option<bool>,
+) -> Result<()> {
+    crate::db::set_reader_page_split_override(&book_key, page_index, split)
+}
+
 pub async fn book_cover(
     path: String,
     page: u32,

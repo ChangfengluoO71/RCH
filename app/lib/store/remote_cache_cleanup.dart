@@ -6,6 +6,7 @@ import 'dart:async';
 
 import '../src/rust/api/cache.dart';
 import 'models.dart';
+import 'reader_display.dart';
 
 /// Completion is intentionally separate from the currently visible list item.
 /// A transient layout estimate must not mark a book complete, and navigating
@@ -36,6 +37,13 @@ class ReadingCompletionState {
     } else if (_stablePage < _pageCount - 1) {
       _candidate = false;
     }
+  }
+
+  void observeStableDisplayPage(DisplayPage page) {
+    if (_pageCount <= 0) return;
+    _stablePage = page.sourcePageIndex.clamp(0, _pageCount - 1);
+    _candidate =
+        _stablePage == _pageCount - 1 && page.partNumber >= page.partCount;
   }
 }
 

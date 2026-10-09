@@ -349,6 +349,23 @@ impl Document for PdfBook {
         with_pdfium_lock(|| self.doc().pages().len() as u32)
     }
 
+    fn page_dimensions(&self, index: u32) -> Result<Option<(u32, u32)>> {
+        with_pdfium_lock(|| {
+            let page = self
+                .doc()
+                .pages()
+                .get(index as i32)
+                .with_context(|| format!("读取 PDF 第 {index} 页尺寸失败"))?;
+            let width = page.width().value as f64;
+            let height = page.height().value as f64;
+            if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+                anyhow::bail!("PDF 第 {index} 页尺寸无效");
+            }
+            let to_u32 = |value: f64| value.round().clamp(1.0, u32::MAX as f64) as u32;
+            Ok(Some((to_u32(width), to_u32(height))))
+        })
+    }
+
     fn metadata(&self) -> DocumentMeta {
         DocumentMeta {
             title: self.title.clone(),
@@ -465,5 +482,28 @@ mod tests {
         if let Err(e) = Pdfium::bind_to_library(&name) {
             panic!("pdfium.dll 应可加载: {e}");
         }
+    }
+
+    #[test]
+    fn page_dimensions_reads_pdf_geometry_from_fixture() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../build_artifacts/test_comic.pdf");
+        let source = crate::source::local::LocalFile::open(&path).unwrap();
+        let pdf = match PdfBook::open(source, path.to_str().unwrap()) {
+            Ok(pdf) => pdf,
+            Err(error) if error.to_string().contains(PDFIUM_LOAD_FAILURE_MARKER) => {
+                eprintln!("skipping PDF geometry assertion: Pdfium is unavailable");
+                return;
+            }
+            Err(error) => panic!("open PDF fixture: {error:#}"),
+        };
+
+        let dimensions = pdf
+            .page_dimensions(0)
+            .unwrap()
+            .expect("PDF pages expose source dimensions");
+        assert!(dimensions.0 > 0);
+        assert!(dimensions.1 > 0);
+        assert_eq!(pdf.page_dimensions(0).unwrap(), Some(dimensions));
     }
 }

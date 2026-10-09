@@ -8,6 +8,8 @@ import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/ui/book_detail_page.dart';
+import 'package:app/ui/book_navigation.dart';
+import 'package:app/ui/common.dart';
 import 'package:app/ui/opener.dart';
 import 'package:flutter/material.dart';
 
@@ -86,24 +88,50 @@ class _GlobalSearchResultsState extends State<GlobalSearchResults> {
 
   void _open(BuildContext context, frb.BookSearchDto b) {
     final local = LibraryStore.instance.sourceById(b.sourceId);
+    final canRead =
+        b.status != 'index_only' && local != null && !local.remoteOnly;
+    void details() => _openDetails(context, b);
+    comicTapHandler(
+      context,
+      canRead: canRead,
+      onRead: canRead
+          ? () => openBook(context, local, b.path, b.title)
+          : details,
+      onDetails: details,
+      onDesktopTap: () => _openAsBefore(context, b, local),
+    )();
+  }
+
+  void _openAsBefore(
+    BuildContext context,
+    frb.BookSearchDto b,
+    BookSource? local,
+  ) {
     if (b.status == 'index_only' || local == null) {
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => BookDetailPage(
-          source: BookSource(
+      _openDetails(context, b);
+      return;
+    }
+    openBook(context, local, b.path, b.title);
+  }
+
+  void _openDetails(BuildContext context, frb.BookSearchDto b) {
+    final local = LibraryStore.instance.sourceById(b.sourceId);
+    final source = b.status != 'index_only' && local != null
+        ? local
+        : BookSource(
             id: b.sourceId,
             type: b.sourceType,
             name: b.sourceName,
             path: b.path,
             remoteOnly: b.isRemote,
             originDeviceId: b.deviceId,
-          ),
-          path: b.path,
-          title: b.title,
-        ),
-      ));
-      return;
-    }
-    openBook(context, local, b.path, b.title);
+          );
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            BookDetailPage(source: source, path: b.path, title: b.title),
+      ),
+    );
   }
 
   @override
@@ -112,7 +140,13 @@ class _GlobalSearchResultsState extends State<GlobalSearchResults> {
       return _loading
           ? const Center(child: CircularProgressIndicator())
           : Center(
-              child: Text('没有匹配的漫画', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)));
+              child: Text(
+                '没有匹配的漫画',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            );
     }
     return ListView.builder(
       padding: const EdgeInsets.all(12),
@@ -155,9 +189,18 @@ class _GlobalSearchResultsState extends State<GlobalSearchResults> {
             '${b.tags.isNotEmpty ? ' · #${b.tags.replaceAll(',', ' #')}' : ''}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           onTap: () => _open(context, b),
+          onLongPress: isCompact(context)
+              ? () => showComicDetailPrompt(
+                  context,
+                  onDetails: () => _openDetails(context, b),
+                )
+              : null,
         );
       },
     );

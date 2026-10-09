@@ -11,6 +11,8 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/ui/book_detail_page.dart';
+import 'package:app/ui/book_navigation.dart';
+import 'package:app/ui/common.dart';
 import 'package:app/ui/opener.dart';
 import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/ui/source_browser.dart';
@@ -64,7 +66,12 @@ class SourceTreePanel extends StatelessWidget {
         }
         if (store.devices.isEmpty) {
           return Center(
-            child: Text('暂无书源', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            child: Text(
+              '暂无书源',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
           );
         }
         // 同名源消歧：树里只用 `name` 做标题时，直连 115 与它的同步镜像
@@ -101,6 +108,7 @@ class SourceTreePanel extends StatelessWidget {
 class _DeviceTile extends StatelessWidget {
   final frb.SourceTreeNodeDto device;
   final bool initiallyExpanded;
+
   /// 显示名重复的书源集合（树里标题只显示名字，重名会让"删了一个"看起来没反应）。
   final Set<String> duplicatedNames;
   final SourceAction? onEditSource;
@@ -146,6 +154,7 @@ class _DeviceTile extends StatelessWidget {
 
 class _SourceTile extends StatefulWidget {
   final frb.SourceAvailabilityDto source;
+
   /// 是否与其它书源同名（同名时标题补短 id 以区分）。
   final bool duplicatedName;
   final SourceAction? onEditSource;
@@ -188,7 +197,10 @@ class _SourceTileState extends State<_SourceTile> {
           subtitle: Text(
             '${LibraryCatalogStore.statusLabel(source.status)} · ${source.offlineIndexCount} 本'
             '${source.isRemote ? ' · 远端' : ''}',
-            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           // 点开书源 = 打开浏览器（在线浏览或离线索引），恢复"点开书源看漫画"。
           onTap: () => _openBrowser(context),
@@ -321,7 +333,10 @@ class _SourceBooksListState extends State<_SourceBooksList> {
         padding: const EdgeInsets.all(12),
         child: Text(
           _loading ? '加载中…' : '暂无漫画索引',
-          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       );
     }
@@ -361,9 +376,18 @@ class _SourceBooksListState extends State<_SourceBooksList> {
             b.path,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 10,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           onTap: () => _openBook(context, b),
+          onLongPress: isCompact(context)
+              ? () => showComicDetailPrompt(
+                  context,
+                  onDetails: () => _openBookDetails(context, b),
+                )
+              : null,
         );
       },
     );
@@ -371,27 +395,50 @@ class _SourceBooksListState extends State<_SourceBooksList> {
 
   void _openBook(BuildContext context, frb.BookSearchDto b) {
     final local = LibraryStore.instance.sourceById(b.sourceId);
+    final canRead =
+        b.status != 'index_only' && local != null && !local.remoteOnly;
+    void details() => _openBookDetails(context, b);
+    comicTapHandler(
+      context,
+      canRead: canRead,
+      onRead: canRead
+          ? () => openBook(context, local, b.path, b.title)
+          : details,
+      onDetails: details,
+      onDesktopTap: () => _openBookAsBefore(context, b, local),
+    )();
+  }
+
+  void _openBookAsBefore(
+    BuildContext context,
+    frb.BookSearchDto b,
+    BookSource? local,
+  ) {
     if (b.status == 'index_only' || local == null) {
-      // ⚪ 仅索引：详情页可编辑元数据，不尝试读取（远端源置 remoteOnly 显示只读横幅）
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => BookDetailPage(
-            source: BookSource(
-              id: b.sourceId,
-              type: b.sourceType,
-              name: b.sourceName,
-              path: b.path,
-              remoteOnly: b.isRemote,
-              originDeviceId: b.deviceId,
-            ),
-            path: b.path,
-            title: b.title,
-          ),
-        ),
-      );
+      _openBookDetails(context, b);
       return;
     }
     openBook(context, local, b.path, b.title);
+  }
+
+  void _openBookDetails(BuildContext context, frb.BookSearchDto b) {
+    final local = LibraryStore.instance.sourceById(b.sourceId);
+    final source = b.status != 'index_only' && local != null
+        ? local
+        : BookSource(
+            id: b.sourceId,
+            type: b.sourceType,
+            name: b.sourceName,
+            path: b.path,
+            remoteOnly: b.isRemote,
+            originDeviceId: b.deviceId,
+          );
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            BookDetailPage(source: source, path: b.path, title: b.title),
+      ),
+    );
   }
 }
 

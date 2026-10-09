@@ -23,7 +23,8 @@ class EhSubscriptionPanel extends StatefulWidget {
 class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
   final _rulesKey = GlobalKey<_RulesEditorState>();
 
-  EhSubscriptionStore get store => widget.storeOverride ?? EhSubscriptionStore.instance;
+  EhSubscriptionStore get store =>
+      widget.storeOverride ?? EhSubscriptionStore.instance;
 
   @override
   void initState() {
@@ -61,7 +62,10 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
     await store.run();
     if (!mounted) return;
     final p = store.progress;
-    _snack(p.error ?? (p.message.isEmpty ? '扫描结束' : p.message), error: p.error != null);
+    _snack(
+      p.error ?? (p.message.isEmpty ? '扫描结束' : p.message),
+      error: p.error != null,
+    );
   }
 
   void _snack(String msg, {bool error = false}) {
@@ -81,8 +85,14 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
         title: Text(title),
         content: Text(body),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确定')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('确定'),
+          ),
         ],
       ),
     );
@@ -128,7 +138,8 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
         }
         return _Section(
           title: 'EH 订阅',
-          subtitle: '按规则筛选 E-Hentai 画廊种子并保存到指定文件夹。可选插件：只写该文件夹，'
+          subtitle:
+              '按规则筛选 E-Hentai 画廊种子并保存到指定文件夹。可选插件：只写该文件夹，'
               '不改动书源、目录与阅读数据；需手动点击运行。',
           trailing: _StatusPill(progress: store.progress),
           children: [
@@ -136,7 +147,11 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
               margin: EdgeInsets.zero,
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: _RulesEditor(key: _rulesKey, store: store, onPickDir: _pickDir),
+                child: _RulesEditor(
+                  key: _rulesKey,
+                  store: store,
+                  onPickDir: _pickDir,
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -202,7 +217,10 @@ class _Section extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Text('EH 订阅', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const Text(
+              'EH 订阅',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
             const Spacer(),
             ?trailing,
           ],
@@ -253,7 +271,14 @@ class _StatusPill extends StatelessWidget {
             Icon(Icons.circle, size: 8, color: color),
             const SizedBox(width: 6),
           ],
-          Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );
@@ -296,7 +321,6 @@ class _RulesEditorState extends State<_RulesEditor> {
   late final TextEditingController _exclude;
   late final TextEditingController _interval;
   late final TextEditingController _pagesCtrl;
-  late final TextEditingController _hostCtrl;
   List<_TierRow> _tiers = [];
 
   double _minRating = 4;
@@ -318,7 +342,6 @@ class _RulesEditorState extends State<_RulesEditor> {
     _exclude = TextEditingController(text: s.excludeMarkers.join(', '));
     _interval = TextEditingController(text: '${s.intervalSecs}');
     _pagesCtrl = TextEditingController(text: '${s.pages}');
-    _hostCtrl = TextEditingController(text: s.host.isEmpty ? 'e-hentai.org' : s.host);
     _minRating = s.minRating;
     _pages = s.pages;
     for (final t in _tiers) {
@@ -359,9 +382,10 @@ class _RulesEditorState extends State<_RulesEditor> {
       _pages = custom.clamp(1, 500);
     }
     store.patch('pages', _pages);
-    final hostText = _hostCtrl.text.trim();
-    store.patch('host', hostText.isEmpty ? 'e-hentai.org' : hostText);
-    store.patch('request_interval_secs', double.tryParse(_interval.text.trim()) ?? 2.5);
+    store.patch(
+      'request_interval_secs',
+      double.tryParse(_interval.text.trim()) ?? 2.5,
+    );
     store.patch('age_tiers', _collectTiers());
   }
 
@@ -375,7 +399,9 @@ class _RulesEditorState extends State<_RulesEditor> {
         )
         .toList();
     rows.sort(
-      (a, b) => (b['min_age_years'] as double).compareTo(a['min_age_years'] as double),
+      (a, b) => (b['min_age_years'] as double).compareTo(
+        a['min_age_years'] as double,
+      ),
     );
     return rows;
   }
@@ -394,7 +420,6 @@ class _RulesEditorState extends State<_RulesEditor> {
     _exclude.dispose();
     _interval.dispose();
     _pagesCtrl.dispose();
-    _hostCtrl.dispose();
     for (final t in _tiers) {
       t.dispose();
     }
@@ -420,7 +445,10 @@ class _RulesEditorState extends State<_RulesEditor> {
           ),
         ),
         const SizedBox(height: 16),
-        _FieldLabel('评分下限：${_minRating.toStringAsFixed(1)}', '0 票的画廊评分为 0.00，会被自动排除'),
+        _FieldLabel(
+          '评分下限：${_minRating.toStringAsFixed(1)}',
+          '0 票的画廊评分为 0.00，会被自动排除',
+        ),
         Slider(
           value: _minRating.clamp(0, 5),
           min: 0,
@@ -431,7 +459,10 @@ class _RulesEditorState extends State<_RulesEditor> {
           onChangeEnd: (_) => flush(),
         ),
         const SizedBox(height: 8),
-        _FieldLabel('标题标记（白名单）', '用 | 分隔；实测 [Digital]/[DL版] 出现在标题而非标签里。填 any 表示不筛'),
+        _FieldLabel(
+          '标题标记（白名单）',
+          '用 | 分隔；实测 [Digital]/[DL版] 出现在标题而非标签里。填 any 表示不筛',
+        ),
         TextField(
           controller: _markers,
           onChanged: (_) => _debouncedFlush(),
@@ -453,11 +484,9 @@ class _RulesEditorState extends State<_RulesEditor> {
           ),
         ),
         const SizedBox(height: 20),
-        Row(
-          children: [
-            _FieldLabel('分时间段下载数要求', '画龄越久要求越高；新发不设门槛，靠重复扫描累积达标'),
-            const Spacer(),
-            TextButton.icon(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final addTierButton = TextButton.icon(
               onPressed: () {
                 setState(() {
                   _tiers.insert(0, _TierRow(5, 800));
@@ -466,8 +495,19 @@ class _RulesEditorState extends State<_RulesEditor> {
               },
               icon: const Icon(Icons.add, size: 18),
               label: const Text('添加档位'),
-            ),
-          ],
+            );
+            const label = _FieldLabel('分时间段下载数要求', '画龄越久要求越高；新发不设门槛，靠重复扫描累积达标');
+            if (constraints.maxWidth < 500) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  label,
+                  Align(alignment: Alignment.centerRight, child: addTierButton),
+                ],
+              );
+            }
+            return Row(children: [label, const Spacer(), addTierButton]);
+          },
         ),
         const SizedBox(height: 4),
         Container(
@@ -481,8 +521,14 @@ class _RulesEditorState extends State<_RulesEditor> {
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                 child: Row(
                   children: [
-                    Expanded(flex: 4, child: Text('画龄 ≥（年）', style: theme.textTheme.bodySmall)),
-                    Expanded(flex: 4, child: Text('下载数 ≥', style: theme.textTheme.bodySmall)),
+                    Expanded(
+                      flex: 4,
+                      child: Text('画龄 ≥（年）', style: theme.textTheme.bodySmall),
+                    ),
+                    Expanded(
+                      flex: 4,
+                      child: Text('下载数 ≥', style: theme.textTheme.bodySmall),
+                    ),
                     const SizedBox(width: 40),
                   ],
                 ),
@@ -497,8 +543,13 @@ class _RulesEditorState extends State<_RulesEditor> {
                         child: TextField(
                           controller: _tiers[i].yearsCtrl,
                           onChanged: (_) => _debouncedFlush(),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -508,7 +559,10 @@ class _RulesEditorState extends State<_RulesEditor> {
                           controller: _tiers[i].downloadsCtrl,
                           onChanged: (_) => _debouncedFlush(),
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
                       IconButton(
@@ -530,111 +584,121 @@ class _RulesEditorState extends State<_RulesEditor> {
           ),
         ),
         const SizedBox(height: 20),
+        _subscriptionFields(theme, store),
+      ],
+    );
+  }
+
+  Widget _subscriptionFields(ThemeData theme, EhSubscriptionStore store) {
+    final directory = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _FieldLabel('保存目录', '种子与 manifest.json 落在这里'),
         Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _FieldLabel('保存目录', '种子与 manifest.json 落在这里'),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          store.hasOutDir ? store.outDir : '（未选择）',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: store.hasOutDir ? null : theme.colorScheme.error,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: widget.onPickDir,
-                        icon: const Icon(Icons.folder_open, size: 18),
-                        label: const Text('选择'),
-                      ),
-                    ],
-                  ),
-                ],
+              child: Text(
+                store.hasOutDir ? store.outDir : '（未选择）',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: store.hasOutDir ? null : theme.colorScheme.error,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _FieldLabel('每轮页数', '每页 25 条（约 40~60 秒/页）；上限 500。覆盖越广耗时越长'),
-                  SizedBox(
-                    width: 140,
-                    child: TextField(
-                      controller: _pagesCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: OutlineInputBorder(),
-                        suffixText: '页',
-                      ),
-                      onChanged: (_) => _debouncedFlush(),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              flex: 2,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _FieldLabel('请求间隔（秒）', '过小会触发 EH 限流，建议 ≥2'),
-                  TextField(
-                    controller: _interval,
-                    onChanged: (_) => _debouncedFlush(),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _FieldLabel('主站域名', '默认 e-hentai.org。国内需代理；也可填可访问的镜像域名'),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _hostCtrl,
-                          onChanged: (_) => _debouncedFlush(),
-                          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      OutlinedButton(
-                        onPressed: widget.store.probing ? null : _checkConnectivity,
-                        child: widget.store.probing
-                            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Text('检查'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: widget.onPickDir,
+              icon: const Icon(Icons.folder_open, size: 18),
+              label: const Text('选择'),
             ),
           ],
         ),
-        if (widget.store.probe != null) ...[
-          const SizedBox(height: 12),
-          _ProbeBlock(probe: widget.store.probe!),
-        ],
       ],
+    );
+    final pageCount = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _FieldLabel('每轮页数', '每页 25 条（约 40~60 秒/页）；上限 500。覆盖越广耗时越长'),
+        SizedBox(
+          width: 140,
+          child: TextField(
+            controller: _pagesCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              isDense: true,
+              border: OutlineInputBorder(),
+              suffixText: '页',
+            ),
+            onChanged: (_) => _debouncedFlush(),
+          ),
+        ),
+      ],
+    );
+    final requestInterval = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _FieldLabel('请求间隔（秒）', '过小会触发 EH 限流，建议 ≥2'),
+        TextField(
+          controller: _interval,
+          onChanged: (_) => _debouncedFlush(),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            isDense: true,
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 680;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            compact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      directory,
+                      const SizedBox(height: 12),
+                      pageCount,
+                      const SizedBox(height: 12),
+                      requestInterval,
+                    ],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 3, child: directory),
+                      const SizedBox(width: 16),
+                      Expanded(flex: 2, child: pageCount),
+                      const SizedBox(width: 16),
+                      Expanded(flex: 2, child: requestInterval),
+                    ],
+                  ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: compact ? Alignment.centerLeft : Alignment.centerRight,
+              child: OutlinedButton.icon(
+                onPressed: store.probing ? null : _checkConnectivity,
+                icon: store.probing
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.wifi_tethering_outlined, size: 18),
+                label: const Text('检查连接'),
+              ),
+            ),
+            if (store.probe != null) ...[
+              const SizedBox(height: 12),
+              _ProbeBlock(probe: store.probe!),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -645,8 +709,10 @@ class _RulesEditorState extends State<_RulesEditor> {
     final ok = p.hostOk && p.trackerOk;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('主站 ${p.host}: ${p.hostOk ? "可达" : "不可达（${p.hostDetail}）"} ｜ '
-            '${p.tracker}: ${p.trackerOk ? "可达" : "不可达（${p.trackerDetail}）"}'),
+        content: Text(
+          '主站 ${p.host}: ${p.hostOk ? "可达" : "不可达（${p.hostDetail}）"} ｜ '
+          '${p.tracker}: ${p.trackerOk ? "可达" : "不可达（${p.trackerDetail}）"}',
+        ),
         backgroundColor: ok ? null : Theme.of(context).colorScheme.error,
         duration: const Duration(seconds: 6),
       ),
@@ -669,14 +735,23 @@ class _ProbeBlock extends StatelessWidget {
         padding: const EdgeInsets.only(top: 4),
         child: Row(
           children: [
-            Icon(ok ? Icons.check_circle_outline : Icons.error_outline, size: 14, color: color),
+            Icon(
+              ok ? Icons.check_circle_outline : Icons.error_outline,
+              size: 14,
+              color: color,
+            ),
             const SizedBox(width: 6),
-            Text('$label：${ok ? "可达" : "不可达"}', style: TextStyle(fontSize: 12, color: color)),
+            Text(
+              '$label：${ok ? "可达" : "不可达"}',
+              style: TextStyle(fontSize: 12, color: color),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 detail,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(fontSize: 11),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -695,15 +770,24 @@ class _ProbeBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('连通性检查', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.outline)),
+          Text(
+            '连通性检查',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: scheme.outline,
+            ),
+          ),
           row(probe.hostOk, probe.host, probe.hostDetail),
           row(probe.trackerOk, probe.tracker, probe.trackerDetail),
           if (!probe.hostOk)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
-                '主站不可达时：① 用系统代理访问；② 或把「主站域名」改成你能访问的镜像域名再点「检查」。',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11),
+                '主站不可达时，请检查网络连接或系统代理后重试。',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(fontSize: 11),
               ),
             ),
         ],
@@ -726,7 +810,10 @@ class _FieldLabel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          ),
           Text(hint, style: theme.textTheme.bodySmall?.copyWith(fontSize: 11)),
         ],
       ),
@@ -739,7 +826,11 @@ class _FieldLabel extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _RunBar extends StatelessWidget {
-  const _RunBar({required this.store, required this.onRun, required this.onOpenDir});
+  const _RunBar({
+    required this.store,
+    required this.onRun,
+    required this.onOpenDir,
+  });
 
   final EhSubscriptionStore store;
   final Future<void> Function() onRun;
@@ -811,18 +902,50 @@ class _ProgressBlock extends StatelessWidget {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _Metric(icon: Icons.travel_explore, label: '候选', value: '${p.candidates}'),
-            _Metric(icon: Icons.download_done, label: '本轮新增', value: '${p.saved}', highlight: true),
-            _Metric(icon: Icons.star_border, label: '评分不足', value: '${p.noRating}'),
-            _Metric(icon: Icons.label_off_outlined, label: '标记排除', value: '${p.noMarker}'),
-            _Metric(icon: Icons.cloud_off, label: '无种子', value: '${p.noTorrent}'),
-            _Metric(icon: Icons.trending_down, label: '下载数不达标', value: '${p.noDownloads}'),
-            _Metric(icon: Icons.help_outline, label: '映射未确认', value: '${p.unmapped}'),
+            _Metric(
+              icon: Icons.travel_explore,
+              label: '候选',
+              value: '${p.candidates}',
+            ),
+            _Metric(
+              icon: Icons.download_done,
+              label: '本轮新增',
+              value: '${p.saved}',
+              highlight: true,
+            ),
+            _Metric(
+              icon: Icons.star_border,
+              label: '评分不足',
+              value: '${p.noRating}',
+            ),
+            _Metric(
+              icon: Icons.label_off_outlined,
+              label: '标记排除',
+              value: '${p.noMarker}',
+            ),
+            _Metric(
+              icon: Icons.cloud_off,
+              label: '无种子',
+              value: '${p.noTorrent}',
+            ),
+            _Metric(
+              icon: Icons.trending_down,
+              label: '下载数不达标',
+              value: '${p.noDownloads}',
+            ),
+            _Metric(
+              icon: Icons.help_outline,
+              label: '映射未确认',
+              value: '${p.unmapped}',
+            ),
           ],
         ),
         const SizedBox(height: 8),
         if (p.error != null)
-          Text('失败：${p.error}', style: TextStyle(color: theme.colorScheme.error, fontSize: 12))
+          Text(
+            '失败：${p.error}',
+            style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+          )
         else if (p.message.isNotEmpty)
           Text(p.message, style: theme.textTheme.bodySmall),
       ],
@@ -889,7 +1012,10 @@ class _ManifestBlockState extends State<_ManifestBlock> {
       children: [
         Row(
           children: [
-            const Text('已保存种子', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+            const Text(
+              '已保存种子',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
             const SizedBox(width: 8),
             Text('共 ${items.length} 个', style: theme.textTheme.bodySmall),
             const Spacer(),
@@ -926,7 +1052,9 @@ class _ManifestTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final size = item.filesize == null ? null : fmtSize(BigInt.from(item.filesize!));
+    final size = item.filesize == null
+        ? null
+        : fmtSize(BigInt.from(item.filesize!));
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -937,28 +1065,61 @@ class _ManifestTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(item.titleJpn, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          Text(
+            item.titleJpn,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
           const SizedBox(height: 6),
           Wrap(
             spacing: 10,
             runSpacing: 4,
             children: [
-              _Chip(icon: Icons.star, text: item.rating.toStringAsFixed(2), color: scheme.tertiary),
+              _Chip(
+                icon: Icons.star,
+                text: item.rating.toStringAsFixed(2),
+                color: scheme.tertiary,
+              ),
               _Chip(
                 icon: Icons.download,
-                text: '${item.downloads}'
+                text:
+                    '${item.downloads}'
                     '${item.requiredDl > 0 ? ' / ≥${item.requiredDl}' : ''}',
                 color: scheme.primary,
               ),
-              _Chip(icon: Icons.event, text: item.postedUtc, color: scheme.outline),
+              _Chip(
+                icon: Icons.event,
+                text: item.postedUtc,
+                color: scheme.outline,
+              ),
               if (item.ageYears != null)
-                _Chip(icon: Icons.hourglass_bottom, text: '${item.ageYears} 年', color: scheme.outline),
-              _Chip(icon: Icons.category_outlined, text: item.category, color: scheme.outline),
+                _Chip(
+                  icon: Icons.hourglass_bottom,
+                  text: '${item.ageYears} 年',
+                  color: scheme.outline,
+                ),
+              _Chip(
+                icon: Icons.category_outlined,
+                text: item.category,
+                color: scheme.outline,
+              ),
               if (item.filecount != null)
-                _Chip(icon: Icons.menu_book_outlined, text: '${item.filecount} 页', color: scheme.outline),
-              if (size != null) _Chip(icon: Icons.sd_storage_outlined, text: size, color: scheme.outline),
+                _Chip(
+                  icon: Icons.menu_book_outlined,
+                  text: '${item.filecount} 页',
+                  color: scheme.outline,
+                ),
+              if (size != null)
+                _Chip(
+                  icon: Icons.sd_storage_outlined,
+                  text: size,
+                  color: scheme.outline,
+                ),
               if (item.tags.isNotEmpty)
-                _Chip(icon: Icons.sell_outlined, text: '${item.tags.length} 标签', color: scheme.outline),
+                _Chip(
+                  icon: Icons.sell_outlined,
+                  text: '${item.tags.length} 标签',
+                  color: scheme.outline,
+                ),
             ],
           ),
           const SizedBox(height: 4),

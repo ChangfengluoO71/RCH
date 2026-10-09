@@ -150,6 +150,8 @@ class EhProgress {
 class EhSubscriptionStore extends ChangeNotifier {
   EhSubscriptionStore._();
 
+  static const officialHost = 'e-hentai.org';
+
   static final EhSubscriptionStore instance = EhSubscriptionStore._();
 
   /// 仅测试使用：构造一个不触碰磁盘/FFI 的实例，用给定规则与清单预置状态，
@@ -163,7 +165,8 @@ class EhSubscriptionStore extends ChangeNotifier {
     final store = EhSubscriptionStore._();
     if (rules.isNotEmpty) {
       store._rules = Map<String, dynamic>.from(rules);
-      store._rulesJson = const JsonEncoder.withIndent('  ').convert(rules);
+      store._normalizeHost();
+      store._encodeRules();
     }
     store.manifest = manifest;
     store.progress = progress;
@@ -192,17 +195,31 @@ class EhSubscriptionStore extends ChangeNotifier {
   double get minRating => _num('min_rating', 4.0).toDouble();
   String get titleMarkers => _str('title_markers');
   List<String> get excludeMarkers =>
-      (_rules['exclude_markers'] as List?)?.map((e) => e.toString()).toList() ?? const [];
+      (_rules['exclude_markers'] as List?)?.map((e) => e.toString()).toList() ??
+      const [];
   List<Map<String, dynamic>> get ageTiers =>
-      (_rules['age_tiers'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ??
+      (_rules['age_tiers'] as List?)
+          ?.map((e) => Map<String, dynamic>.from(e as Map))
+          .toList() ??
       const [];
   String get outDir => _str('out_dir');
   int get pages => _num('pages', 2).toInt();
-  String get host => _str('host');
+  String get host => officialHost;
   double get intervalSecs => _num('request_interval_secs', 2.5).toDouble();
 
   String _str(String k) => _rules[k] as String? ?? '';
   num _num(String k, num fallback) => (_rules[k] as num?) ?? fallback;
+
+  bool _normalizeHost() {
+    if (_rules['host'] == officialHost) return false;
+    _rules = {..._rules, 'host': officialHost};
+    _encodeRules();
+    return true;
+  }
+
+  void _encodeRules() {
+    _rulesJson = const JsonEncoder.withIndent('  ').convert(_rules);
+  }
 
   bool get hasOutDir => outDir.trim().isNotEmpty;
 
@@ -216,6 +233,7 @@ class EhSubscriptionStore extends ChangeNotifier {
     try {
       _rulesJson = await eh_api.ehLoadRules(path: path);
       _rules = Map<String, dynamic>.from(jsonDecode(_rulesJson) as Map);
+      if (_normalizeHost()) await saveRules();
       loadError = null;
     } catch (e) {
       loadError = '$e';
@@ -226,12 +244,15 @@ class EhSubscriptionStore extends ChangeNotifier {
 
   /// 局部更新规则字段（保持其余字段不变，符合"字段即用户可编辑键"的设计）。
   void patch(String key, Object? value) {
-    _rules = {..._rules, key: value};
-    _rulesJson = const JsonEncoder.withIndent('  ').convert(_rules);
+    _rules = {..._rules, key: key == 'host' ? officialHost : value};
+    _normalizeHost();
+    _encodeRules();
     notifyListeners();
   }
 
   Future<void> saveRules() async {
+    _normalizeHost();
+    _encodeRules();
     final path = _rulesPath;
     if (path == null) return;
     await eh_api.ehSaveRules(path: path, rulesJson: _rulesJson);
@@ -240,12 +261,13 @@ class EhSubscriptionStore extends ChangeNotifier {
   Future<void> resetToDefaults() async {
     _rulesJson = await eh_api.ehDefaultRules();
     _rules = Map<String, dynamic>.from(jsonDecode(_rulesJson) as Map);
+    _normalizeHost();
+    _encodeRules();
     await saveRules();
     notifyListeners();
   }
 
   // ---- 运行 ----
-
 
   /// 影子模式：规划一次"从 manifest 导入"（**不写库**），返回计划 JSON 解码后的 Map。
   ///
@@ -267,7 +289,6 @@ class EhSubscriptionStore extends ChangeNotifier {
     return Map<String, dynamic>.from(jsonDecode(raw) as Map);
   }
 
-
   /// **实时搜索**规划一本书的导入（影子模式，不写库）。
   ///
   /// 与 [planImport]（读 manifest、离线）不同：候选来自实时搜索 E 站，
@@ -279,6 +300,8 @@ class EhSubscriptionStore extends ChangeNotifier {
     String number = '',
   }) async {
     if (!rulesLoaded) await init();
+    _normalizeHost();
+    _encodeRules();
     final raw = await eh_api.ehPlanBookLive(
       rulesJson: _rulesJson,
       workTitle: workTitle,
@@ -312,11 +335,16 @@ class EhSubscriptionStore extends ChangeNotifier {
   /// 连通性预检（主站 / tracker 分别判定，便于定位"到底是哪一段不通"）。
   Future<EhProbe?> runProbe() async {
     if (probing) return probe;
+    if (!rulesLoaded) await init();
+    _normalizeHost();
+    _encodeRules();
     probing = true;
     notifyListeners();
     try {
       final raw = await eh_api.ehProbe(rulesJson: _rulesJson);
-      probe = EhProbe.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+      probe = EhProbe.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
     } catch (e) {
       probe = EhProbe(
         host: host,
@@ -335,14 +363,22 @@ class EhSubscriptionStore extends ChangeNotifier {
 
   Future<void> run() async {
     if (busy || !hasOutDir) return;
+    _normalizeHost();
+    _encodeRules();
     busy = true;
-    progress = const EhProgress(running: true, stage: 'searching', message: '准备中…');
+    progress = const EhProgress(
+      running: true,
+      stage: 'searching',
+      message: '准备中…',
+    );
     notifyListeners();
     await saveRules();
     _startPolling();
     try {
       final raw = await eh_api.ehCollect(rulesJson: _rulesJson);
-      progress = EhProgress.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+      progress = EhProgress.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
     } catch (e) {
       progress = EhProgress(stage: 'failed', message: '$e', error: '$e');
     } finally {
@@ -362,7 +398,9 @@ class EhSubscriptionStore extends ChangeNotifier {
     _poll = Timer.periodic(_pollInterval, (_) async {
       try {
         final raw = await eh_api.ehProgress();
-        progress = EhProgress.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+        progress = EhProgress.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map),
+        );
         notifyListeners();
       } catch (_) {
         // 轮询失败不打断主流程

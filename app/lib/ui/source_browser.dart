@@ -21,8 +21,11 @@ import 'package:app/store/remote_scan_models.dart';
 import 'package:app/store/remote_cover_repository.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/book_detail_page.dart';
+import 'package:app/ui/book_navigation.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
+import 'package:app/ui/opener.dart';
+import 'package:app/ui/poster_grid.dart';
 import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:flutter/foundation.dart';
@@ -677,9 +680,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     if (!mounted) return;
     final error = _error;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(error == null ? '当前书源目录已刷新' : '刷新失败：$error'),
-      ),
+      SnackBar(content: Text(error == null ? '当前书源目录已刷新' : '刷新失败：$error')),
     );
     // 2026-09-21（真机："墙上大片获取失败，可图其实抓得到" + "反复刷新也没用"）：
     // 刷新时顺带把该源**当前档**的终态失败封面重新排队 —— 失败是粘性的（只有 6h 补偿/重置
@@ -1450,7 +1451,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
     if (entries.isEmpty) return const Center(child: Text('(此目录无漫画)'));
     return GridView.builder(
       padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+      gridDelegate: comicPosterGridDelegate(
+        context,
         maxCrossAxisExtent: 180,
         childAspectRatio: 0.66,
         crossAxisSpacing: 12,
@@ -1497,10 +1499,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
                     decoration: BoxDecoration(
                       color: sel ? Colors.blue : Colors.black45,
                       shape: BoxShape.circle,
-                      border: Border.all(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                     child: sel
-                        ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.onSurface)
+                        ? Icon(
+                            Icons.check,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          )
                         : null,
                   ),
                 ),
@@ -1523,6 +1531,18 @@ class _SourceBrowserState extends State<SourceBrowser> {
         }
         // 普通漫画文件
         final sel = _selectedPaths.contains(e.path);
+        void details() {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => BookDetailPage(
+                source: widget.source,
+                path: e.path,
+                title: e.name,
+              ),
+            ),
+          );
+        }
+
         final card = ComicCard(
           key: ValueKey(
             '${widget.source.id}|${remoteEntry?.assetId ?? _logicalPathOf(e)}',
@@ -1536,15 +1556,17 @@ class _SourceBrowserState extends State<SourceBrowser> {
           preferUnifiedRemote: !widget.source.isLocalFs,
           onTap: _selectMode
               ? () {}
-              : () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => BookDetailPage(
-                      source: widget.source,
-                      path: e.path,
-                      title: e.name,
-                    ),
-                  ),
+              : comicTapHandler(
+                  context,
+                  canRead: !widget.source.remoteOnly,
+                  onRead: () =>
+                      openBook(context, widget.source, e.path, e.name),
+                  onDetails: details,
+                  onDesktopTap: details,
                 ),
+          onLongPress: !_selectMode && isCompact(context)
+              ? () => showComicDetailPrompt(context, onDetails: details)
+              : null,
         );
         if (!_selectMode) return card;
         return Stack(
@@ -1560,10 +1582,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   decoration: BoxDecoration(
                     color: sel ? Colors.blue : Colors.black45,
                     shape: BoxShape.circle,
-                    border: Border.all(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   child: sel
-                      ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.onSurface)
+                      ? Icon(
+                          Icons.check,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        )
                       : null,
                 ),
               ),
@@ -1594,6 +1622,18 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }) {
     final sel = _selectMode && _selectedPaths.contains(e.path);
     final bookPath = kind == _FolderCoverKind.book ? _logicalPathOf(e) : e.path;
+    void details() {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => BookDetailPage(
+            source: widget.source,
+            path: bookPath,
+            title: e.name,
+          ),
+        ),
+      );
+    }
+
     final card = _ComicFolderCoverCard(
       key: ValueKey(
         '${widget.source.id}|${remoteEntry?.assetId ?? _logicalPathOf(e)}',
@@ -1610,17 +1650,19 @@ class _SourceBrowserState extends State<SourceBrowser> {
           ? remoteEntry?.assetId
           : remoteEntry?.representativeAssetId,
       remoteSession: _session,
+      onLongPress:
+          !_selectMode && kind == _FolderCoverKind.book && isCompact(context)
+          ? () => showComicDetailPrompt(context, onDetails: details)
+          : null,
       onTap: _selectMode
           ? () {}
           : kind == _FolderCoverKind.book
-          ? () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => BookDetailPage(
-                  source: widget.source,
-                  path: bookPath,
-                  title: e.name,
-                ),
-              ),
+          ? comicTapHandler(
+              context,
+              canRead: !widget.source.remoteOnly,
+              onRead: () => openBook(context, widget.source, bookPath, e.name),
+              onDetails: details,
+              onDesktopTap: details,
             )
           : () => _openDir(e.path, e.name),
     );
@@ -1638,10 +1680,16 @@ class _SourceBrowserState extends State<SourceBrowser> {
               decoration: BoxDecoration(
                 color: sel ? Colors.blue : Colors.black45,
                 shape: BoxShape.circle,
-                border: Border.all(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
               child: sel
-                  ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.onSurface)
+                  ? Icon(
+                      Icons.check,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    )
                   : null,
             ),
           ),
@@ -1700,6 +1748,18 @@ class _SourceBrowserState extends State<SourceBrowser> {
             ),
           );
         }
+        void details() {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => BookDetailPage(
+                source: widget.source,
+                path: e.path,
+                title: e.name,
+              ),
+            ),
+          );
+        }
+
         return ListTile(
           leading: _selectMode
               ? Checkbox(
@@ -1719,15 +1779,17 @@ class _SourceBrowserState extends State<SourceBrowser> {
                       ? _selectedPaths.remove(e.path)
                       : _selectedPaths.add(e.path),
                 )
-              : () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => BookDetailPage(
-                      source: widget.source,
-                      path: e.path,
-                      title: e.name,
-                    ),
-                  ),
+              : comicTapHandler(
+                  context,
+                  canRead: !widget.source.remoteOnly,
+                  onRead: () =>
+                      openBook(context, widget.source, e.path, e.name),
+                  onDetails: details,
+                  onDesktopTap: details,
                 ),
+          onLongPress: !_selectMode && isCompact(context)
+              ? () => showComicDetailPrompt(context, onDetails: details)
+              : null,
         );
       },
     );
@@ -1782,6 +1844,7 @@ class _ComicFolderCoverCard extends StatefulWidget {
   final String? remoteAssetId;
   final BigInt? remoteSession;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   const _ComicFolderCoverCard({
     super.key,
@@ -1793,6 +1856,7 @@ class _ComicFolderCoverCard extends StatefulWidget {
     this.remoteAssetId,
     this.remoteSession,
     required this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -1841,6 +1905,7 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: InkWell(
         onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

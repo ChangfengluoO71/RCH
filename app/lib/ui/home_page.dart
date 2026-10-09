@@ -18,6 +18,7 @@ import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/store/update_manager.dart';
 import 'package:app/ui/book_detail_page.dart';
+import 'package:app/ui/book_navigation.dart';
 import 'package:app/ui/backup_panel.dart';
 import 'package:app/ui/cache_manager.dart';
 import 'package:app/ui/cloud115_folder_picker.dart';
@@ -29,6 +30,7 @@ import 'package:app/ui/eh_auto_scrape_panel.dart';
 import 'package:app/ui/eh_subscription_panel.dart';
 import 'package:app/ui/global_search.dart';
 import 'package:app/ui/opener.dart';
+import 'package:app/ui/poster_grid.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:app/ui/source_tree.dart';
 import 'package:app/ui/sync_panel.dart';
@@ -828,12 +830,15 @@ class _HomePageState extends State<HomePage> {
                   child: Text(
                     '当前列表暂无记录\n可点“随机一本”从已索引书库阅读',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 )
               : GridView.builder(
                   padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  gridDelegate: comicPosterGridDelegate(
+                    context,
                     maxCrossAxisExtent: 180,
                     childAspectRatio: 0.66,
                     crossAxisSpacing: 12,
@@ -844,12 +849,8 @@ class _HomePageState extends State<HomePage> {
                     final r = list[i];
                     final s = store.sourceById(r.sourceId);
                     if (s == null) return const SizedBox();
-                    return ComicCard(
-                      source: s,
-                      path: r.path,
-                      title: r.title,
-                      subtitle: '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
-                      onTap: () => Navigator.of(context).push(
+                    void details() {
+                      Navigator.of(c).push(
                         MaterialPageRoute(
                           builder: (_) => BookDetailPage(
                             source: s,
@@ -857,7 +858,24 @@ class _HomePageState extends State<HomePage> {
                             title: r.title,
                           ),
                         ),
+                      );
+                    }
+
+                    return ComicCard(
+                      source: s,
+                      path: r.path,
+                      title: r.title,
+                      subtitle: '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
+                      onTap: comicTapHandler(
+                        c,
+                        canRead: !s.remoteOnly,
+                        onRead: () => openBook(c, s, r.path, r.title),
+                        onDetails: details,
+                        onDesktopTap: details,
                       ),
+                      onLongPress: isCompact(c)
+                          ? () => showComicDetailPrompt(c, onDetails: details)
+                          : null,
                     );
                   },
                 ),
@@ -992,6 +1010,36 @@ class _HomePageState extends State<HomePage> {
                   itemBuilder: (c, i) {
                     final (name, count, rec) = rows[i];
                     final medal = i < 3 ? ['🥇', '🥈', '🥉'][i] : '${i + 1}.';
+                    final comicRecord = _statsDim == '漫画' ? rec : null;
+                    final isComic = comicRecord != null;
+                    final source = comicRecord == null
+                        ? null
+                        : store.sourceById(comicRecord.sourceId);
+                    void details() {
+                      final record = comicRecord;
+                      final bookSource = source;
+                      if (record == null || bookSource == null) return;
+                      Navigator.of(c).push(
+                        MaterialPageRoute(
+                          builder: (_) => BookDetailPage(
+                            source: bookSource,
+                            path: record.path,
+                            title: record.title,
+                          ),
+                        ),
+                      );
+                    }
+
+                    void readComic() {
+                      final record = comicRecord;
+                      final bookSource = source;
+                      if (record == null || bookSource == null) {
+                        details();
+                        return;
+                      }
+                      openBook(c, bookSource, record.path, record.title);
+                    }
+
                     return ListTile(
                       dense: true,
                       leading: SizedBox(
@@ -1011,23 +1059,18 @@ class _HomePageState extends State<HomePage> {
                         style: const TextStyle(fontSize: 12),
                       ),
                       trailing: const Icon(Icons.chevron_right, size: 18),
-                      onTap: () {
-                        if (_statsDim == '漫画' && rec != null) {
-                          final s = store.sourceById(rec.sourceId);
-                          if (s == null) return;
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => BookDetailPage(
-                                source: s,
-                                path: rec.path,
-                                title: rec.title,
-                              ),
-                            ),
-                          );
-                        } else {
-                          _gotoTag(name);
-                        }
-                      },
+                      onTap: isComic
+                          ? comicTapHandler(
+                              c,
+                              canRead: source != null && !source.remoteOnly,
+                              onRead: readComic,
+                              onDetails: details,
+                              onDesktopTap: details,
+                            )
+                          : () => _gotoTag(name),
+                      onLongPress: isComic && isCompact(c)
+                          ? () => showComicDetailPrompt(c, onDetails: details)
+                          : null,
                     );
                   },
                 ),
@@ -1668,30 +1711,27 @@ class _HomePageState extends State<HomePage> {
                   ? Center(
                       child: Text(
                         '没有匹配的漫画',
-                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     )
                   : GridView.builder(
                       padding: const EdgeInsets.all(16),
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 180,
-                            childAspectRatio: 0.66,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                          ),
+                      gridDelegate: comicPosterGridDelegate(
+                        context,
+                        maxCrossAxisExtent: 180,
+                        childAspectRatio: 0.66,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                      ),
                       itemCount: list.length,
                       itemBuilder: (c, i) {
                         final r = list[i];
                         final s = LibraryStore.instance.sourceById(r.sourceId);
                         if (s == null) return const SizedBox();
-                        return ComicCard(
-                          source: s,
-                          path: r.path,
-                          title: r.title,
-                          subtitle:
-                              '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
-                          onTap: () => Navigator.of(context).push(
+                        void details() {
+                          Navigator.of(c).push(
                             MaterialPageRoute(
                               builder: (_) => BookDetailPage(
                                 source: s,
@@ -1699,7 +1739,26 @@ class _HomePageState extends State<HomePage> {
                                 title: r.title,
                               ),
                             ),
+                          );
+                        }
+
+                        return ComicCard(
+                          source: s,
+                          path: r.path,
+                          title: r.title,
+                          subtitle:
+                              '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
+                          onTap: comicTapHandler(
+                            c,
+                            canRead: !s.remoteOnly,
+                            onRead: () => openBook(c, s, r.path, r.title),
+                            onDetails: details,
+                            onDesktopTap: details,
                           ),
+                          onLongPress: isCompact(c)
+                              ? () =>
+                                    showComicDetailPrompt(c, onDetails: details)
+                              : null,
                         );
                       },
                     );
@@ -1786,7 +1845,7 @@ class _HomePageState extends State<HomePage> {
           _settingsCategory(
             title: '外观与布局',
             icon: Icons.palette_outlined,
-            children: [_theme(s), _tabletLayout(s)],
+            children: [_theme(s), _mobilePosterColumns(s), _tabletLayout(s)],
           ),
           // 2026-09-22（用户要求）：「关于与更新」独立成一栏 —— 它属于"版本与更新"，
           // 与"同步与备份"不是一类；放在最后符合"关于"类入口的习惯。
@@ -1830,6 +1889,33 @@ class _HomePageState extends State<HomePage> {
           },
         ),
       ),
+    ],
+  );
+
+  Widget _mobilePosterColumns(AppSettings s) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        '手机海报墙列数',
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      ),
+      const SizedBox(height: 4),
+      Text('只影响手机布局，桌面端保持原有排列。', style: Theme.of(context).textTheme.bodySmall),
+      const SizedBox(height: 10),
+      SegmentedButton<int>(
+        segments: const [
+          ButtonSegment(value: 2, label: Text('2 栏')),
+          ButtonSegment(value: 3, label: Text('3 栏')),
+          ButtonSegment(value: 4, label: Text('4 栏')),
+        ],
+        selected: {s.mobilePosterColumns.clamp(2, 4).toInt()},
+        onSelectionChanged: (columns) {
+          s.mobilePosterColumns = columns.first;
+          LibraryStore.instance.updateSettings(s);
+          setState(() {});
+        },
+      ),
+      const SizedBox(height: 12),
     ],
   );
 
@@ -1939,6 +2025,19 @@ class _HomePageState extends State<HomePage> {
       const SizedBox(height: 4),
       Text('新打开的漫画默认使用以下设置', style: Theme.of(context).textTheme.bodySmall),
       const SizedBox(height: 10),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        value: s.tapComicFileWithoutDetails,
+        onChanged: (enabled) {
+          s.tapComicFileWithoutDetails = enabled;
+          LibraryStore.instance.updateSettings(s);
+          setState(() {});
+        },
+        title: const Text('点击漫画文件不进入详细页'),
+        subtitle: const Text('开启后手机端点击漫画直接阅读；长按漫画会跳出是否进入漫画详细页选项。'),
+      ),
+      const SizedBox(height: 8),
       Wrap(
         spacing: 8,
         runSpacing: 4,

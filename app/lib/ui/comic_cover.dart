@@ -382,6 +382,7 @@ class _ComicCoverState extends State<ComicCover> {
   ValueListenable<int>? _coverRevision;
   int _lastCoverRevision = 0;
   String? _coverState;
+
   /// P1-E：本卡片是否**已经发出过** requestCover。
   /// 首次 miss 只 request 一次；此后 wake 驱动的刷新只重读 durable state。
   bool _coverRequestIssued = false;
@@ -484,7 +485,7 @@ class _ComicCoverState extends State<ComicCover> {
       _lease = null;
       _future = null;
       _loadFailed = false;
-        _remoteRetryTimer?.cancel();
+      _remoteRetryTimer?.cancel();
       _remoteRetryTimer = null;
       _lastCacheKey = newKey;
       _maybeLoad();
@@ -531,7 +532,7 @@ class _ComicCoverState extends State<ComicCover> {
       _lease = null;
       _future = null;
       _loadFailed = false;
-        _remoteRetryTimer?.cancel();
+      _remoteRetryTimer?.cancel();
       _remoteRetryTimer = null;
       _lastCacheKey = newKey;
       _maybeLoad();
@@ -622,7 +623,7 @@ class _ComicCoverState extends State<ComicCover> {
     _future!
         .then((img) {
           ComicCover._cache[key] = img;
-                _remoteRetryTimer?.cancel();
+          _remoteRetryTimer?.cancel();
           _remoteRetryTimer = null;
         })
         .catchError((Object error) {
@@ -692,7 +693,12 @@ class _ComicCoverState extends State<ComicCover> {
     // P1-D-2：**需要 session 的 legacy 源**才做 local-only 查找；
     // 纯本地源（kind == null，最终走 bookCover）没有网络能力，直接放行不受开关阻止。
     if (legacyCoverKindOf(widget.source) != null) {
-      final legacyLocalCover = await _readLegacyCoverLocal(meta.coverPage, w, h, crop);
+      final legacyLocalCover = await _readLegacyCoverLocal(
+        meta.coverPage,
+        w,
+        h,
+        crop,
+      );
       if (legacyLocalCover != null) return legacyLocalCover;
 
       // 本地未命中：offline 时**直接停止**，不去 session helper 里换一个异常
@@ -725,7 +731,8 @@ class _ComicCoverState extends State<ComicCover> {
     if (lookup == null) return null;
     final reader =
         widget.legacyLocalCoverReader ??
-        (LegacyCoverLocalLookupDto value) => readLegacyCoverLocal(lookup: value);
+        (LegacyCoverLocalLookupDto value) =>
+            readLegacyCoverLocal(lookup: value);
     final image = await reader(lookup);
     if (image == null) return null;
     return rgbaToImage(image.rgba, image.width, image.height);
@@ -742,7 +749,9 @@ class _ComicCoverState extends State<ComicCover> {
     final kind = legacyCoverKindOf(widget.source);
     if (kind == null) return null;
     // host/port 复用**同一个** Dart parser（薄包装），不复制解析逻辑。
-    final (host, port) = kind == 'sftp' ? sftpHostPortOf(widget.source) : ('', 22);
+    final (host, port) = kind == 'sftp'
+        ? sftpHostPortOf(widget.source)
+        : ('', 22);
     final String root;
     switch (kind) {
       case 'baidu':
@@ -784,9 +793,7 @@ class _ComicCoverState extends State<ComicCover> {
       path: path,
     );
     if (source.isWebDav) {
-      final session = await _guardRemoteCoverIo(
-        () => webdavSessionFor(source),
-      );
+      final session = await _guardRemoteCoverIo(() => webdavSessionFor(source));
       final p = await _guardRemoteCoverIo(
         () => webdavCover(
           session: session,
@@ -799,9 +806,7 @@ class _ComicCoverState extends State<ComicCover> {
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (source.isSftp) {
-      final session = await _guardRemoteCoverIo(
-        () => sftpSessionFor(source),
-      );
+      final session = await _guardRemoteCoverIo(() => sftpSessionFor(source));
       final p = await _guardRemoteCoverIo(
         () => sftpCover(
           session: session,
@@ -814,9 +819,7 @@ class _ComicCoverState extends State<ComicCover> {
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (source.isBaidu) {
-      final session = await _guardRemoteCoverIo(
-        () => baiduSessionFor(source),
-      );
+      final session = await _guardRemoteCoverIo(() => baiduSessionFor(source));
       final p = await _guardRemoteCoverIo(
         () => baiduCover(
           session: session,
@@ -836,7 +839,7 @@ class _ComicCoverState extends State<ComicCover> {
         () => cloud115CoverFor(
           source,
           session: session,
-            path: providerPath,
+          path: providerPath,
           page: page,
           width: width,
           height: height,
@@ -845,9 +848,7 @@ class _ComicCoverState extends State<ComicCover> {
       );
       return await rgbaToImage(p.rgba, p.width, p.height);
     } else if (source.isQuark) {
-      final session = await _guardRemoteCoverIo(
-        () => quarkSessionFor(source),
-      );
+      final session = await _guardRemoteCoverIo(() => quarkSessionFor(source));
       final p = await _guardRemoteCoverIo(
         () => quarkCover(
           session: session,
@@ -999,7 +1000,12 @@ class _ComicCoverState extends State<ComicCover> {
         // 详情页（不传 `remoteAssetId`）走的正是 legacy 路径 ⇒ 同一本书它能出图，
         // 而墙上卡片走 unified 路径却停在"获取失败"。
         // ⇒ 抛之前补一次 legacy 纯本地回退：零网络成本，命中即出图。
-        final legacy = await _readLegacyCoverFallback(page, width, height, crop);
+        final legacy = await _readLegacyCoverFallback(
+          page,
+          width,
+          height,
+          crop,
+        );
         if (legacy != null) return legacy;
         throw _RemoteCoverStateException(
           current?.state ?? '',
@@ -1124,7 +1130,10 @@ class _ComicCoverState extends State<ComicCover> {
       child: Text(
         label,
         textAlign: TextAlign.center,
-        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          fontSize: 12,
+        ),
       ),
     );
   }
@@ -1151,6 +1160,7 @@ class ComicCard extends StatelessWidget {
   final String title;
   final String? subtitle;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final String? remoteAssetId;
   final BigInt? remoteSession;
   final bool preferUnifiedRemote;
@@ -1162,6 +1172,7 @@ class ComicCard extends StatelessWidget {
     required this.title,
     this.subtitle,
     required this.onTap,
+    this.onLongPress,
     this.remoteAssetId,
     this.remoteSession,
     this.preferUnifiedRemote = false,
@@ -1175,6 +1186,7 @@ class ComicCard extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/ui/common.dart';
+import 'package:app/ui/poster_grid.dart';
 import 'package:app/ui/reader_page.dart';
 import 'package:app/ui/webdav_page.dart';
 import 'package:flutter/material.dart';
@@ -38,10 +39,12 @@ class _LibraryPageState extends State<LibraryPage> {
       final list = await listLocalDir(path: _dirCtrl.text.trim());
       setState(() {
         _entries = list
-            .where((e) =>
-                e.isDir ||
-                e.name.toLowerCase().endsWith('.cbz') ||
-                e.name.toLowerCase().endsWith('.zip'))
+            .where(
+              (e) =>
+                  e.isDir ||
+                  e.name.toLowerCase().endsWith('.cbz') ||
+                  e.name.toLowerCase().endsWith('.zip'),
+            )
             .toList();
       });
     } catch (e) {
@@ -52,13 +55,10 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   Future<ui.Image> _cover(String path) {
-    return _covers.putIfAbsent(
-      path,
-      () async {
-        final p = await bookCover(path: path, page: 0, width: 340, height: 480);
-        return rgbaToImage(p.rgba, p.width, p.height);
-      },
-    );
+    return _covers.putIfAbsent(path, () async {
+      final p = await bookCover(path: path, page: 0, width: 340, height: 480);
+      return rgbaToImage(p.rgba, p.width, p.height);
+    });
   }
 
   void _open(DirEntry e) {
@@ -67,7 +67,9 @@ class _LibraryPageState extends State<LibraryPage> {
       _refresh();
     } else {
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => ReaderPage(path: e.path, title: e.name)),
+        MaterialPageRoute(
+          builder: (_) => ReaderPage(path: e.path, title: e.name),
+        ),
       );
     }
   }
@@ -81,9 +83,9 @@ class _LibraryPageState extends State<LibraryPage> {
           IconButton(
             icon: const Icon(Icons.cloud),
             tooltip: 'WebDAV 书源',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const WebDavPage()),
-            ),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const WebDavPage())),
           ),
         ],
       ),
@@ -112,14 +114,18 @@ class _LibraryPageState extends State<LibraryPage> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.all(8),
-              child: Text('错误: $_error', style: const TextStyle(color: Colors.redAccent)),
+              child: Text(
+                '错误: $_error',
+                style: const TextStyle(color: Colors.redAccent),
+              ),
             ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : GridView.builder(
                     padding: const EdgeInsets.all(12),
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    gridDelegate: comicPosterGridDelegate(
+                      context,
                       maxCrossAxisExtent: 180,
                       childAspectRatio: 0.66,
                       crossAxisSpacing: 12,
@@ -148,7 +154,11 @@ class _EntryCard extends StatelessWidget {
   final Future<ui.Image>? coverFuture;
   final VoidCallback onTap;
 
-  const _EntryCard({required this.entry, this.coverFuture, required this.onTap});
+  const _EntryCard({
+    required this.entry,
+    this.coverFuture,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -171,7 +181,12 @@ class _EntryCard extends StatelessWidget {
         const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Text(entry.name, maxLines: 2, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+          child: Text(
+            entry.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
         ),
       ],
     );
@@ -197,9 +212,13 @@ class _EntryCard extends StatelessWidget {
                 color: Colors.black26,
                 child: Center(
                   child: snap.hasError
-                      ? Icon(Icons.broken_image, color: Theme.of(context).colorScheme.onSurfaceVariant)
+                      ? Icon(
+                          Icons.broken_image,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        )
                       : const SizedBox(
-                          width: 22, height: 22,
+                          width: 22,
+                          height: 22,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                 ),
@@ -220,8 +239,13 @@ class _EntryCard extends StatelessWidget {
                 style: const TextStyle(fontSize: 12, height: 1.2),
               ),
               const SizedBox(height: 2),
-              Text(fmtSize(entry.size),
-                  style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              Text(
+                fmtSize(entry.size),
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ),
         ),

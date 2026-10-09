@@ -169,3 +169,22 @@ every intermediate child and filling the Rust blocking-request queue.
 - `reader_diag.log` may record foreground page-load stage, source type, result,
   and elapsed milliseconds. Do not record a book path, title, page number, or
   provider credentials.
+
+### 11. Compact Comic Display and Entry Settings
+
+- Persist compact-layout poster density and comic-tap behavior in `AppSettings`
+  through the existing settings JSON path. Missing values must default to two
+  columns and detail-page taps; clamp the column count to `2..4` when loading.
+- Use `comicPosterGridDelegate` for comic poster walls. It applies the saved
+  fixed column count only when `isCompact(context)` is true and preserves each
+  desktop grid's existing max-extent delegate.
+- Route comic-item taps through `comicTapHandler`: compact layout opens the
+  reader only when the preference is enabled and the item is readable; otherwise
+  it opens details. Always provide the original desktop callback. Index-only and
+  ghost entries remain detail-only, and folder navigation or selection actions
+  stay outside this policy.
+- Long-press detail prompts are compact-only and use
+  `showComicDetailPrompt`; do not attach them to folders or selection-mode cards.
+- `EhSubscriptionStore` canonicalizes the rule `host` to `e-hentai.org` after
+  load and before save, probe, live import, or collection. Persist a legacy-host
+  correction and keep the editable host field out of the settings UI.

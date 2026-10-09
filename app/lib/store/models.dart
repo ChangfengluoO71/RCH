@@ -388,6 +388,13 @@ class AppSettings {
   int updateMirrorFetchedAt; // 镜像列表最后成功拉取时间（ms epoch，0=从未）
   bool remoteBackgroundScanEnabled;
   bool remoteCoverFetchEnabled;
+
+  /// Phone-layout comic poster density. Desktop keeps its adaptive grid.
+  int mobilePosterColumns;
+
+  /// When enabled, tapping a readable comic on compact layouts opens the reader.
+  bool tapComicFileWithoutDetails;
+
   /// Canonical keys for the most recently selected random-reading comics.
   List<String> recentRandomBookKeys;
 
@@ -417,6 +424,8 @@ class AppSettings {
     this.updateMirrorFetchedAt = 0,
     this.remoteBackgroundScanEnabled = true,
     this.remoteCoverFetchEnabled = true,
+    this.mobilePosterColumns = 2,
+    this.tapComicFileWithoutDetails = false,
     List<String>? recentRandomBookKeys,
   }) : keys = keys ?? KeyBinds(),
        recentRandomBookKeys = recentRandomBookKeys ?? [];
@@ -441,6 +450,8 @@ class AppSettings {
     'updateMirrorFetchedAt': updateMirrorFetchedAt,
     'remoteBackgroundScanEnabled': remoteBackgroundScanEnabled,
     'remoteCoverFetchEnabled': remoteCoverFetchEnabled,
+    'mobilePosterColumns': mobilePosterColumns,
+    'tapComicFileWithoutDetails': tapComicFileWithoutDetails,
     'recentRandomBookKeys': recentRandomBookKeys,
   };
 
@@ -481,6 +492,11 @@ class AppSettings {
     remoteBackgroundScanEnabled:
         (j['remoteBackgroundScanEnabled'] as bool?) ?? true,
     remoteCoverFetchEnabled: (j['remoteCoverFetchEnabled'] as bool?) ?? true,
+    mobilePosterColumns: ((j['mobilePosterColumns'] as num?)?.toInt() ?? 2)
+        .clamp(2, 4)
+        .toInt(),
+    tapComicFileWithoutDetails:
+        (j['tapComicFileWithoutDetails'] as bool?) ?? false,
     recentRandomBookKeys: _stringListFromJson(j['recentRandomBookKeys']),
   );
 }

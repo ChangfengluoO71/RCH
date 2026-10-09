@@ -486,8 +486,8 @@ mod tests {
 
     #[test]
     fn page_dimensions_reads_pdf_geometry_from_fixture() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/test_comic.pdf");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test_comic.pdf");
         let source = crate::source::local::LocalFile::open(&path).unwrap();
         let pdf = match PdfBook::open(source, path.to_str().unwrap()) {
             Ok(pdf) => pdf,

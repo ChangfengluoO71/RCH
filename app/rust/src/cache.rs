@@ -526,9 +526,13 @@ pub const RAW_CACHE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// 包内最新的修改时间（递归）。目录自身的 mtime 在 Windows 上不可靠，
 /// 所以用"包里最新那个文件"代表这个包最后一次被动过。
 fn newest_mtime(path: &Path) -> std::time::SystemTime {
-    let mut newest = std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .unwrap_or(std::time::UNIX_EPOCH);
+    let metadata = std::fs::metadata(path);
+    let mut newest = match metadata {
+        // Directory mtimes vary by filesystem and can be newer than every file
+        // inside the package. Only file timestamps define package age.
+        Ok(meta) if !meta.is_dir() => meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+        _ => std::time::UNIX_EPOCH,
+    };
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
             let child = entry.path();

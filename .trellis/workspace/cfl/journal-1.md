@@ -637,3 +637,24 @@ Committed the production catalog-rules-v3 offline proposal parser and archived i
 ### Next Steps
 
 - 继续完成 Windows 安装器 UAC 桌面 smoke 与阅读器远跳、连续翻页和随机分布的用户侧复验。
+
+
+## Session 18: Mobile comic browsing settings
+
+**Date**: 2026-10-09
+**Task**: Mobile comic browsing settings
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+Committed and archived mobile poster wall, direct-read setting, and EH host UI update. Flutter analyze passed; prior wide-page work remains separate and uncommitted.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08d0e04` | (see git log) |
+
+### Status
+
+[OK] **Completed**

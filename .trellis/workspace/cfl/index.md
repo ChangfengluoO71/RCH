@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
-- **Last Active**: 2026-10-05
+- **Total Sessions**: 18
+- **Last Active**: 2026-10-09
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~639 | Active |
+| `journal-1.md` | ~660 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-10-09 | Mobile comic browsing settings | `08d0e04` | `local-ai/cover-quark-debug` |
 | 17 | 2026-10-05 | v0.6.3 发布与状态文档收敛 | `106816f`, `0123afb`, `ff80c9e` | `local-ai/cover-quark-debug` |
 | 16 | 2026-10-01 | v0.6.2 文档与 Trellis 状态收敛 | - | `local-ai/cover-quark-debug` |
 | 15 | 2026-09-23 | 卷/话显示与跨设备传播 + 墓碑语义 + 条漫滚动锚点（第131–133轮） | `937e9cf`, `2e7b81d`, `5f7edd3` | `local-ai/cover-quark-debug` |

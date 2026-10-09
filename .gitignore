@@ -24,6 +24,7 @@ app/rust/target/
 *.ipr
 *.iws
 .vscode/
+.worktrees/
 
 # OS
 .DS_Store

@@ -25,6 +25,53 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  window_material_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "rch/window_material",
+          &flutter::StandardMethodCodec::GetInstance());
+  window_material_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "getCapabilities") {
+          flutter::EncodableMap capabilities;
+          capabilities[flutter::EncodableValue("mica")] =
+              flutter::EncodableValue(IsMicaSupported());
+          result->Success(flutter::EncodableValue(capabilities));
+          return;
+        }
+
+        if (call.method_name() == "setMaterial") {
+          const auto* arguments =
+              std::get_if<flutter::EncodableMap>(call.arguments());
+          if (!arguments) {
+            result->Success(flutter::EncodableValue(false));
+            return;
+          }
+
+          const auto material_entry =
+              arguments->find(flutter::EncodableValue("material"));
+          if (material_entry == arguments->end()) {
+            result->Success(flutter::EncodableValue(false));
+            return;
+          }
+
+          const auto* material =
+              std::get_if<std::string>(&material_entry->second);
+          if (!material || (*material != "standard" && *material != "mica")) {
+            result->Success(flutter::EncodableValue(false));
+            return;
+          }
+
+          const bool applied = SetMicaBackdrop(*material == "mica");
+          result->Success(flutter::EncodableValue(applied));
+          return;
+        }
+
+        result->NotImplemented();
+      });
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +87,10 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (window_material_channel_) {
+    window_material_channel_->SetMethodCallHandler(nullptr);
+    window_material_channel_.reset();
+  }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

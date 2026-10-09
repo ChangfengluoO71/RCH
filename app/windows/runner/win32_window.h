@@ -55,6 +55,12 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Returns whether this HWND can use the Windows 11 Mica backdrop.
+  bool IsMicaSupported() const;
+
+  // Applies or clears the system backdrop. Returns whether DWM accepted it.
+  bool SetMicaBackdrop(bool enabled);
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that

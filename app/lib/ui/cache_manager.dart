@@ -9,6 +9,7 @@ import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -39,7 +40,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
   Future<void> _clear(String label, Future<BigInt> Function() fn,
       {bool clearCoverMemory = false}) async {
     if (!mounted) return;
-    final ok = await showDialog<bool>(
+    final ok = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('确认清理'),
@@ -64,7 +65,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     if (!mounted) return;
     var clearRecent = false;
     var clearStats = false;
-    final ok = await showDialog<bool>(
+    final ok = await showRchDialog<bool>(
       context: context,
       builder: (c) => StatefulBuilder(builder: (c, setDlgState) => AlertDialog(
         title: const Text('确认清理'),
@@ -144,7 +145,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     }
 
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('迁移根目录'),
@@ -202,7 +203,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       return;
     }
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('恢复默认缓存目录'),
@@ -259,7 +260,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     final supportDir = (await getApplicationSupportDirectory()).path;
     if (!mounted) return false;
     final notifier = ValueNotifier<double>(0);
-    unawaited(showDialog<void>(
+    unawaited(showRchDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(

@@ -18,6 +18,8 @@ import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/store/update_manager.dart';
 import 'package:app/theme/app_theme.dart';
+import 'package:app/theme/system_dynamic_color_scope.dart';
+import 'package:app/theme/window_material_scope.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/book_navigation.dart';
 import 'package:app/ui/backup_panel.dart';
@@ -38,6 +40,7 @@ import 'package:app/ui/sync_panel.dart';
 import 'package:app/ui/scrape_panel.dart';
 import 'package:app/ui/update_panel.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -529,7 +532,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               InkWell(
-                onTap: () => showDialog(
+                onTap: () => showRchDialog(
                   context: context,
                   builder: (c) => const AddSourceDialog(),
                 ),
@@ -858,8 +861,10 @@ class _HomePageState extends State<HomePage> {
                     context,
                     maxCrossAxisExtent: 180,
                     childAspectRatio: 0.66,
+                    mobileCoverAspectRatio: 0.66,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
+                    mobileHorizontalPadding: 32,
                   ),
                   itemCount: list.length,
                   itemBuilder: (c, i) {
@@ -1193,7 +1198,7 @@ class _HomePageState extends State<HomePage> {
         secretCtrl = TextEditingController(text: src.clientSecret ?? ''),
         rootIdCtrl = TextEditingController(text: src.rootId ?? ''),
         cookieCtrl = TextEditingController(text: src.cookie ?? '');
-    showDialog(
+    showRchDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('编辑书源: ${src.name}'),
@@ -1393,7 +1398,7 @@ class _HomePageState extends State<HomePage> {
 
   void _showSourceDetail(BookSource src) {
     final ctrl = TextEditingController(text: src.note);
-    showDialog(
+    showRchDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('书源详情: ${src.name}'),
@@ -1457,7 +1462,7 @@ class _HomePageState extends State<HomePage> {
   };
 
   void _deleteSource(BookSource src) {
-    showDialog<bool>(
+    showRchDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('删除书源"${src.name}"?'),
@@ -1573,7 +1578,7 @@ class _HomePageState extends State<HomePage> {
           onSelected: (act) async {
             if (act == 'rename') {
               final ctrl = TextEditingController(text: t.$1);
-              final n = await showDialog<String>(
+              final n = await showRchDialog<String>(
                 context: context,
                 builder: (c) => AlertDialog(
                   title: const Text('重命名标签'),
@@ -1600,7 +1605,7 @@ class _HomePageState extends State<HomePage> {
                 LibraryStore.instance.renameTag(t.$1, n);
               }
             } else if (act == 'delete') {
-              final ok = await showDialog<bool>(
+              final ok = await showRchDialog<bool>(
                 context: context,
                 builder: (c) => AlertDialog(
                   title: Text('删除标签"${t.$1}"?'),
@@ -1749,8 +1754,10 @@ class _HomePageState extends State<HomePage> {
                         context,
                         maxCrossAxisExtent: 180,
                         childAspectRatio: 0.66,
+                        mobileCoverAspectRatio: 0.66,
                         crossAxisSpacing: 12,
                         mainAxisSpacing: 12,
+                        mobileHorizontalPadding: 32,
                       ),
                       itemCount: list.length,
                       itemBuilder: (c, i) {
@@ -2216,7 +2223,7 @@ class _HomePageState extends State<HomePage> {
         const Spacer(),
         GestureDetector(
           onTap: () async {
-            final k = await showDialog<LogicalKeyboardKey>(
+            final k = await showRchDialog<LogicalKeyboardKey>(
               context: context,
               builder: (c) => _KeyCaptureDialog(current: current),
             );
@@ -2330,11 +2337,19 @@ class _HomePageState extends State<HomePage> {
 
   Widget _theme(AppSettings s) {
     final theme = Theme.of(context);
-    final paletteOptions = <(String, String, Color)>[
-      (AppTheme.classic, '经典', const Color(0xFF6750A4)),
-      (AppTheme.seaGlass, '海雾', const Color(0xFF3A7773)),
-      (AppTheme.warmPaper, '暖纸', const Color(0xFF876044)),
-      (AppTheme.inkNight, '墨夜', const Color(0xFF617187)),
+    final micaSupported =
+        WindowMaterialScope.maybeOf(context)?.micaSupported ?? false;
+    final dynamicColorsAvailable =
+        defaultTargetPlatform == TargetPlatform.android &&
+        SystemDynamicColorScope.maybeOf(context)?.dynamicColorsAvailable ==
+            true;
+    final showRchPalettes =
+        !dynamicColorsAvailable || !s.useSystemDynamicColors;
+    final paletteOptions = <(String, String)>[
+      (AppTheme.classic, '经典'),
+      (AppTheme.seaGlass, '海雾'),
+      (AppTheme.warmPaper, '暖纸'),
+      (AppTheme.inkNight, '墨夜'),
     ];
     final fontOptions = <(String, String)>[
       (AppTheme.systemDefault, '系统默认'),
@@ -2343,89 +2358,382 @@ class _HomePageState extends State<HomePage> {
       (AppTheme.zhiMangXing, '钟齐志莽行书'),
     ];
 
+    Widget section(String title, List<Widget> children) => Padding(
+      padding: const EdgeInsets.only(bottom: 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: theme.textTheme.titleSmall),
+          const SizedBox(height: 10),
+          ...children,
+        ],
+      ),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('亮度', style: theme.textTheme.titleSmall),
-        const SizedBox(height: 8),
-        SegmentedButton<String>(
-          segments: const [
-            ButtonSegment(
-              value: 'dark',
-              label: Text('夜间'),
-              icon: Icon(Icons.dark_mode),
-            ),
-            ButtonSegment(
-              value: 'light',
-              label: Text('白天'),
-              icon: Icon(Icons.light_mode),
-            ),
-          ],
-          selected: {s.themeMode},
-          onSelectionChanged: (modes) {
-            s.themeMode = modes.first;
-            LibraryStore.instance.updateSettings(s);
-          },
-        ),
-        const SizedBox(height: 18),
-        Text('配色', style: theme.textTheme.titleSmall),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final option in paletteOptions)
-              ChoiceChip(
-                avatar: CircleAvatar(radius: 8, backgroundColor: option.$3),
-                label: Text(option.$2),
-                selected: s.themePalette == option.$1,
-                onSelected: (_) {
-                  s.themePalette = option.$1;
-                  LibraryStore.instance.updateSettings(s);
-                },
-              ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Text('应用字体', style: theme.textTheme.titleSmall),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          initialValue: s.appFont,
-          isExpanded: true,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        section('外观', [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final option in const [
+                ('dark', '深色', Icons.dark_mode_outlined),
+                ('light', '浅色', Icons.light_mode_outlined),
+                ('system', '跟随系统', Icons.brightness_auto_outlined),
+              ])
+                ChoiceChip(
+                  avatar: Icon(option.$3, size: 18),
+                  label: Text(option.$2),
+                  selected: s.themeMode == option.$1,
+                  onSelected: (_) {
+                    s.themeMode = option.$1;
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+            ],
           ),
-          items: [
-            for (final option in fontOptions)
-              DropdownMenuItem<String>(
-                value: option.$1,
-                child: Text(
-                  option.$2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: AppTheme.fontFamilyFor(option.$1),
+        ]),
+        section('显示', [
+          if (dynamicColorsAvailable) ...[
+            Text('配色来源', style: theme.textTheme.bodyMedium),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('RCH 配色'),
+                  selected: !s.useSystemDynamicColors,
+                  onSelected: (_) {
+                    s.useSystemDynamicColors = false;
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+                ChoiceChip(
+                  avatar: const Icon(Icons.wallpaper_outlined, size: 18),
+                  label: const Text('系统动态'),
+                  selected: s.useSystemDynamicColors,
+                  onSelected: (_) {
+                    s.useSystemDynamicColors = true;
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (defaultTargetPlatform == TargetPlatform.android) ...[
+            Text(
+              'Android 12 及以上支持系统动态配色；其他情况使用保存的 RCH 配色。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (showRchPalettes) ...[
+            Text('配色方案', style: theme.textTheme.bodyMedium),
+            const SizedBox(height: 8),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final availableWidth = constraints.maxWidth.isFinite
+                    ? constraints.maxWidth
+                    : 720.0;
+                final columns = availableWidth >= 720
+                    ? 4
+                    : availableWidth >= 320
+                    ? 2
+                    : 1;
+                const gap = 12.0;
+                final cardWidth =
+                    (availableWidth - gap * (columns - 1)) / columns;
+                return Wrap(
+                  spacing: gap,
+                  runSpacing: gap,
+                  children: [
+                    for (final option in paletteOptions)
+                      SizedBox(
+                        width: cardWidth,
+                        child: _PalettePreviewCard(
+                          label: option.$2,
+                          scheme: AppTheme.build(
+                            brightness: theme.brightness,
+                            palette: option.$1,
+                            font: s.appFont,
+                          ).colorScheme,
+                          selected: s.themePalette == option.$1,
+                          onTap: () {
+                            s.themePalette = option.$1;
+                            LibraryStore.instance.updateSettings(s);
+                          },
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+          const SizedBox(height: 18),
+          Text('应用字体', style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: s.appFont,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+            ),
+            items: [
+              for (final option in fontOptions)
+                DropdownMenuItem<String>(
+                  value: option.$1,
+                  child: Text(
+                    option.$2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontFamilyFor(option.$1),
+                    ),
                   ),
                 ),
+            ],
+            onChanged: (font) {
+              if (font == null) return;
+              s.appFont = font;
+              LibraryStore.instance.updateSettings(s);
+            },
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('字体预览', style: theme.textTheme.labelMedium),
+                const SizedBox(height: 5),
+                Text(
+                  '最近阅读 · 漫画统计 123',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontFamily: AppTheme.fontFamilyFor(s.appFont),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  s.appFont == AppTheme.zhiMangXing
+                      ? '行书较有个性，小字号信息的辨认度会降低。字体只影响应用界面。'
+                      : '字体只影响应用界面，不影响漫画图片。',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontFamily: AppTheme.fontFamilyFor(s.appFont),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ]),
+        if (defaultTargetPlatform == TargetPlatform.windows)
+          section('窗口', [
+            Text('窗口材质', style: theme.textTheme.bodyMedium),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  avatar: const Icon(Icons.window_outlined, size: 18),
+                  label: const Text('标准'),
+                  selected: !micaSupported || s.windowMaterial == 'standard',
+                  onSelected: (_) {
+                    s.windowMaterial = 'standard';
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+                ChoiceChip(
+                  avatar: const Icon(Icons.blur_on_outlined, size: 18),
+                  label: const Text('云母'),
+                  selected: micaSupported && s.windowMaterial == 'mica',
+                  onSelected: micaSupported
+                      ? (_) {
+                          s.windowMaterial = 'mica';
+                          LibraryStore.instance.updateSettings(s);
+                        }
+                      : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              micaSupported
+                  ? '云母用于主窗口背景；卡片和输入控件仍保持清晰的主题表面。'
+                  : '云母需要 Windows 11 22H2（build 22621）或更高版本。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
-          ],
-          onChanged: (font) {
-            if (font == null) return;
-            s.appFont = font;
-            LibraryStore.instance.updateSettings(s);
-          },
-        ),
-        const SizedBox(height: 6),
-        Text(
-          s.appFont == AppTheme.zhiMangXing
-              ? '示例：最近阅读 · 统计 123。行书较有个性，小字号信息的辨认度会降低。'
-              : '示例：最近阅读 · 统计 123。字体只影响应用界面，不影响漫画图片。',
-          style: theme.textTheme.bodySmall?.copyWith(
-            fontFamily: AppTheme.fontFamilyFor(s.appFont),
-            color: theme.colorScheme.onSurfaceVariant,
+            ),
+            if (micaSupported) ...[
+              const SizedBox(height: 16),
+              Text('弹窗材质', style: theme.textTheme.bodyMedium),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('标准'),
+                    selected: s.overlayMaterial == 'standard',
+                    onSelected: (_) {
+                      s.overlayMaterial = 'standard';
+                      LibraryStore.instance.updateSettings(s);
+                    },
+                  ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.blur_on_outlined, size: 18),
+                    label: const Text('亚克力'),
+                    selected: s.overlayMaterial == 'acrylic',
+                    onSelected: (_) {
+                      s.overlayMaterial = 'acrylic';
+                      LibraryStore.instance.updateSettings(s);
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '仅影响应用对话框和模态底部面板。',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ]),
+      ],
+    );
+  }
+}
+
+class _PalettePreviewCard extends StatelessWidget {
+  const _PalettePreviewCard({
+    required this.label,
+    required this.scheme,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final ColorScheme scheme;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = selected ? scheme.primary : scheme.outlineVariant;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label 配色',
+      child: Material(
+        color: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: borderColor,
+            width: selected ? 2 : 1,
           ),
         ),
-      ],
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    if (selected)
+                      Icon(Icons.check_circle, size: 18, color: scheme.primary),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  height: 68,
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(9),
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: scheme.outlineVariant),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 26,
+                            height: 22,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              'Aa',
+                              style: TextStyle(
+                                color: scheme.onPrimary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              '阅读示例',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: scheme.onSurface,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        height: 7,
+                        width: 54,
+                        decoration: BoxDecoration(
+                          color: scheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2506,7 +2814,7 @@ Future<Cloud115FolderChoice?> _pickQuarkRootFolder({
   );
   try {
     if (!context.mounted) return null;
-    return await showDialog<Cloud115FolderChoice>(
+    return await showRchDialog<Cloud115FolderChoice>(
       context: context,
       builder: (c) => Cloud115FolderPickerDialog(
         listDirectory: (path) => quarkList(session: session.id, path: path),
@@ -2545,7 +2853,7 @@ Future<Cloud115FolderChoice?> _pick115RootFolder({
   try {
     // 会话建立期间用户可能已关掉对话框：跨 await 使用 context 前必须确认仍挂载。
     if (!context.mounted) return null;
-    return await showDialog<Cloud115FolderChoice>(
+    return await showRchDialog<Cloud115FolderChoice>(
       context: context,
       builder: (c) => Cloud115FolderPickerDialog(
         listDirectory: (path) =>
@@ -2867,7 +3175,7 @@ class _AddDialogState extends State<AddSourceDialog> {
     } catch (_) {}
     if (!mounted) return;
     final codeCtrl = TextEditingController();
-    final ok = await showDialog<bool>(
+    final ok = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('百度授权'),
@@ -2934,7 +3242,7 @@ class _AddDialogState extends State<AddSourceDialog> {
         appId: _appId,
       ).timeout(const Duration(seconds: 20));
       if (!mounted) return;
-      await showDialog<void>(
+      await showRchDialog<void>(
         context: context,
         builder: (c) => _QrScanDialog(
           payload: qr,

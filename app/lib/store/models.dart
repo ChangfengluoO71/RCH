@@ -384,9 +384,12 @@ class AppSettings {
 
   /// 阅读页渲染宽度（默认标准 1600，与历史行为一致）。
   RenderWidth renderWidth;
-  String themeMode; // 'light' | 'dark'
+  String themeMode; // 'dark' | 'light' | 'system'
   String themePalette; // classic | seaGlass | warmPaper | inkNight
   String appFont; // systemDefault | systemSerif | wenKaiGbLite | zhiMangXing
+  bool useSystemDynamicColors;
+  String windowMaterial; // standard | mica
+  String overlayMaterial; // standard | acrylic
   ReadMode readMode; // 阅读模式:日漫/美漫/条漫
   bool invertTap; // 日漫模式下点击区是否反向
   DualPageMode dualPageMode; // 双页拼接模式
@@ -422,6 +425,9 @@ class AppSettings {
     this.themeMode = 'dark',
     this.themePalette = 'classic',
     this.appFont = 'systemDefault',
+    this.useSystemDynamicColors = false,
+    this.windowMaterial = 'standard',
+    this.overlayMaterial = 'standard',
     this.readMode = ReadMode.manga,
     this.invertTap = false,
     this.dualPageMode = DualPageMode.off,
@@ -457,6 +463,9 @@ class AppSettings {
     'themeMode': themeMode,
     'themePalette': themePalette,
     'appFont': appFont,
+    'useSystemDynamicColors': useSystemDynamicColors,
+    'windowMaterial': windowMaterial,
+    'overlayMaterial': overlayMaterial,
     'readMode': readMode.name,
     'invertTap': invertTap,
     'dualPageMode': dualPageMode.name,
@@ -488,7 +497,9 @@ class AppSettings {
       (q) => q.name == j['coverQuality'],
       orElse: () => CoverQuality.low,
     ),
-    themeMode: (j['themeMode'] as String?) ?? 'dark',
+    themeMode: const {'dark', 'light', 'system'}.contains(j['themeMode'])
+        ? j['themeMode'] as String
+        : 'dark',
     themePalette: const {
       'classic',
       'seaGlass',
@@ -505,6 +516,14 @@ class AppSettings {
     }.contains(j['appFont'])
         ? j['appFont'] as String
         : 'systemDefault',
+    useSystemDynamicColors: j['useSystemDynamicColors'] == true,
+    windowMaterial: const {'standard', 'mica'}.contains(j['windowMaterial'])
+        ? j['windowMaterial'] as String
+        : 'standard',
+    overlayMaterial:
+        const {'standard', 'acrylic'}.contains(j['overlayMaterial'])
+        ? j['overlayMaterial'] as String
+        : 'standard',
     readMode: ReadMode.values.firstWhere(
       (r) => r.name == j['readMode'],
       orElse: () => ReadMode.manga,

@@ -28,6 +28,7 @@ import 'package:app/ui/opener.dart';
 import 'package:app/ui/poster_grid.dart';
 import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/store/webdav_session.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -821,7 +822,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     } catch (_) {}
     if (!mounted) return;
     final codeCtrl = TextEditingController();
-    final ok = await showDialog<bool>(
+    final ok = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('百度网盘授权已失效'),
@@ -1146,7 +1147,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
     final all = store.allTags();
     final ctrl = TextEditingController();
     if (!mounted) return;
-    final tag = await showDialog<String>(
+    final tag = await showRchDialog<String>(
       context: context,
       builder: (c) => StatefulBuilder(
         builder: (c, ss) => AlertDialog(
@@ -1464,8 +1465,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
         context,
         maxCrossAxisExtent: 180,
         childAspectRatio: 0.66,
+        mobileCoverAspectRatio: 0.66,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
+        mobileHorizontalPadding: 24,
       ),
       itemCount: entries.length,
       itemBuilder: (context, i) {
@@ -1914,9 +1917,12 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final compact = isCompact(context);
     return Card(
       clipBehavior: Clip.antiAlias,
       elevation: 3,
+      margin: compact ? EdgeInsets.zero : null,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: InkWell(
         onTap: widget.onTap,
@@ -1926,8 +1932,9 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
           children: [
             Expanded(child: _buildCover()),
             Container(
-              // Dark caption keeps text readable over covers in every palette.
-              color: Colors.black.withValues(alpha: 0.72),
+              color: compact
+                  ? colorScheme.surfaceContainerHighest
+                  : Colors.black.withValues(alpha: 0.72),
               padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1941,10 +1948,12 @@ class _ComicFolderCoverCardState extends State<_ComicFolderCoverCard> {
                           widget.name,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
                             height: 1.2,
-                            color: Colors.white,
+                            color: compact
+                                ? colorScheme.onSurface
+                                : Colors.white,
                           ),
                         ),
                       ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -398,7 +399,7 @@ class AiUpscaleManager extends ChangeNotifier {
       _showCompletedNotice(task.title);
       return;
     }
-    final go = await showDialog<bool>(
+    final go = await showRchDialog<bool>(
       context: ctx,
       builder: (c) => AlertDialog(
         title: const Text('AI 超分完成'),

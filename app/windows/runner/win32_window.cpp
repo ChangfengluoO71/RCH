@@ -2,6 +2,7 @@
 
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <winternl.h>
 
 #include "resource.h"
 
@@ -17,6 +18,12 @@ namespace {
 #endif
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
+
+// DWMWA_SYSTEMBACKDROP_TYPE was added after some supported Windows SDKs.
+constexpr auto kDwmSystemBackdropAttribute =
+    static_cast<DWMWINDOWATTRIBUTE>(38);
+constexpr int kDwmSystemBackdropNone = 1;
+constexpr int kDwmSystemBackdropMainWindow = 2;
 
 /// Registry key for app theme preference.
 ///
@@ -35,6 +42,25 @@ using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 // scale factor
 int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
+}
+
+bool IsWindowsBuildAtLeast(DWORD minimum_build) {
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (!ntdll) {
+    return false;
+  }
+
+  using RtlGetVersionFunction = LONG(WINAPI*)(PRTL_OSVERSIONINFOW);
+  auto rtl_get_version = reinterpret_cast<RtlGetVersionFunction>(
+      GetProcAddress(ntdll, "RtlGetVersion"));
+  if (!rtl_get_version) {
+    return false;
+  }
+
+  RTL_OSVERSIONINFOW version{};
+  version.dwOSVersionInfoSize = sizeof(version);
+  return rtl_get_version(&version) == 0 && version.dwMajorVersion >= 10 &&
+         version.dwBuildNumber >= minimum_build;
 }
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
@@ -253,6 +279,35 @@ RECT Win32Window::GetClientArea() {
   RECT frame;
   GetClientRect(window_handle_, &frame);
   return frame;
+}
+
+bool Win32Window::IsMicaSupported() const {
+  return window_handle_ != nullptr && IsWindow(window_handle_) &&
+         IsWindowsBuildAtLeast(22621);
+}
+
+bool Win32Window::SetMicaBackdrop(bool enabled) {
+  if (window_handle_ == nullptr || !IsWindow(window_handle_)) {
+    return false;
+  }
+
+  if (enabled && !IsMicaSupported()) {
+    const int backdrop = kDwmSystemBackdropNone;
+    DwmSetWindowAttribute(window_handle_, kDwmSystemBackdropAttribute,
+                          &backdrop, sizeof(backdrop));
+    return false;
+  }
+
+  const int backdrop =
+      enabled ? kDwmSystemBackdropMainWindow : kDwmSystemBackdropNone;
+  const HRESULT result = DwmSetWindowAttribute(
+      window_handle_, kDwmSystemBackdropAttribute, &backdrop, sizeof(backdrop));
+  if (FAILED(result) && enabled) {
+    const int standard_backdrop = kDwmSystemBackdropNone;
+    DwmSetWindowAttribute(window_handle_, kDwmSystemBackdropAttribute,
+                          &standard_backdrop, sizeof(standard_backdrop));
+  }
+  return SUCCEEDED(result);
 }
 
 HWND Win32Window::GetHandle() {

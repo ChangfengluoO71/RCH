@@ -128,8 +128,10 @@ class _LibraryPageState extends State<LibraryPage> {
                       context,
                       maxCrossAxisExtent: 180,
                       childAspectRatio: 0.66,
+                      mobileCoverAspectRatio: 0.66,
                       crossAxisSpacing: 12,
                       mainAxisSpacing: 12,
+                      mobileHorizontalPadding: 24,
                     ),
                     itemCount: _entries.length,
                     itemBuilder: (context, i) {
@@ -162,9 +164,11 @@ class _EntryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = isCompact(context);
     return Card(
       clipBehavior: Clip.antiAlias,
       elevation: 3,
+      margin: compact ? EdgeInsets.zero : null,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: InkWell(
         onTap: onTap,
@@ -193,6 +197,8 @@ class _EntryCard extends StatelessWidget {
   }
 
   Widget _book(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final compact = isCompact(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -227,8 +233,9 @@ class _EntryCard extends StatelessWidget {
           ),
         ),
         Container(
-          // Dark caption keeps text readable over covers in every palette.
-          color: Colors.black.withValues(alpha: 0.72),
+          color: compact
+              ? colorScheme.surfaceContainerHighest
+              : Colors.black.withValues(alpha: 0.72),
           padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,13 +247,21 @@ class _EntryCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   height: 1.2,
-                  color: Colors.white,
+                  color: compact ? colorScheme.onSurface : Colors.white,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 fmtSize(entry.size),
-                style: TextStyle(fontSize: 10, color: Colors.white70),
+                maxLines: compact ? 1 : null,
+                overflow: compact ? TextOverflow.ellipsis : null,
+                style: TextStyle(
+                  fontSize: 10,
+                  height: compact ? 1.2 : null,
+                  color: compact
+                      ? colorScheme.onSurfaceVariant
+                      : Colors.white70,
+                ),
               ),
             ],
           ),

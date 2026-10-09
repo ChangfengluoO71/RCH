@@ -1,5 +1,6 @@
 import 'package:app/store/library_store.dart';
 import 'package:app/store/update_manager.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -377,7 +378,7 @@ Future<void> showUpdateDialog(
   if (i == null) return;
   final sizeMb = i.asset.size / (1024 * 1024);
   var startUpdate = false;
-  await showDialog<void>(
+  await showRchDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
       title: Text('发现新版本 v${i.version}'),
@@ -442,7 +443,7 @@ Future<void> showUpdateFlow(
 }) async {
   final m = manager ?? UpdateManager.instance;
   if (m.info == null) return;
-  await showDialog<void>(
+  await showRchDialog<void>(
     context: context,
     barrierDismissible: false,
     builder: (_) => _UpdateProgressDialog(manager: m),

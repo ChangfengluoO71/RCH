@@ -1,5 +1,6 @@
 import 'package:app/store/library_store.dart';
 import 'package:app/ui/common.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 
 /// Applies the phone tap preference while letting each desktop surface retain
@@ -24,7 +25,7 @@ Future<void> showComicDetailPrompt(
   required VoidCallback onDetails,
 }) async {
   if (!isCompact(context)) return;
-  final enterDetails = await showDialog<bool>(
+  final enterDetails = await showRchDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
       title: const Text('是否进入漫画详细页？'),

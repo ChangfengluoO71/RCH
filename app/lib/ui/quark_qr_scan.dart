@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/qr_image_saver.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -19,7 +20,7 @@ Future<String?> scanQuarkCookie(
   try {
     final payload = await quarkQrStart().timeout(const Duration(seconds: 20));
     if (!context.mounted) return null;
-    return await showDialog<String>(
+    return await showRchDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (c) => QuarkQrScanDialog(payload: payload),

@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/qr_image_saver.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -21,7 +22,7 @@ Future<String?> scanCloud115Cookie(
   try {
     final qr = await cloud115CookieQrStart().timeout(const Duration(seconds: 20));
     if (!context.mounted) return null;
-    final cookie = await showDialog<String>(
+    final cookie = await showRchDialog<String>(
       context: context,
       builder: (c) => Cloud115CookieQrScanDialog(
         uid: qr.uid,

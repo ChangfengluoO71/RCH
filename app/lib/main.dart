@@ -15,11 +15,17 @@ import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/store/library_catalog.dart';
+import 'package:app/store/window_material_controller.dart';
 import 'package:app/theme/app_theme.dart';
 import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
+import 'package:app/theme/system_dynamic_color_scope.dart';
+import 'package:app/theme/window_material_scope.dart';
+import 'package:app/theme/overlay_material_scope.dart';
 import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
+import 'package:dynamic_color/dynamic_color.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -203,9 +209,89 @@ Future<void> _healDatabaseLocation() async {
   }
 }
 
-class RchApp extends StatelessWidget {
+class RchApp extends StatefulWidget {
   const RchApp({super.key, this.startupPending});
   final (String, String)? startupPending;
+
+  @override
+  State<RchApp> createState() => _RchAppState();
+}
+
+class _RchAppState extends State<RchApp> {
+  bool _micaSupported = false;
+  bool _micaCapabilityLoaded = false;
+  bool _micaApplied = false;
+  int _materialRequestGeneration = 0;
+  String? _lastWindowMaterialSetting;
+  late final AppLifecycleListener _windowLifecycleListener;
+
+  bool get _isWindows => defaultTargetPlatform == TargetPlatform.windows;
+
+  @override
+  void initState() {
+    super.initState();
+    _windowLifecycleListener = AppLifecycleListener(onResume: _onWindowResume);
+    if (_isWindows) {
+      _lastWindowMaterialSetting =
+          LibraryStore.instance.settings.windowMaterial;
+      LibraryStore.instance.addListener(_onSettingsChanged);
+      unawaited(_loadWindowMaterialCapability());
+    }
+  }
+
+  Future<void> _loadWindowMaterialCapability() async {
+    final supported = await WindowMaterialController.isMicaSupported();
+    if (!mounted) return;
+    setState(() {
+      _micaSupported = supported;
+      _micaCapabilityLoaded = true;
+    });
+    await _applyWindowMaterial();
+  }
+
+  void _onSettingsChanged() {
+    if (!_isWindows) return;
+    final material = LibraryStore.instance.settings.windowMaterial;
+    if (material == _lastWindowMaterialSetting) return;
+    _lastWindowMaterialSetting = material;
+    if (_micaCapabilityLoaded) unawaited(_applyWindowMaterial());
+  }
+
+  void _onWindowResume() {
+    if (_isWindows && _micaCapabilityLoaded) {
+      unawaited(_applyWindowMaterial());
+    }
+  }
+
+  Future<void> _applyWindowMaterial() async {
+    if (!_isWindows || !_micaCapabilityLoaded) return;
+    final generation = ++_materialRequestGeneration;
+    final useMica =
+        _micaSupported &&
+        LibraryStore.instance.settings.windowMaterial == 'mica';
+    final applied = await WindowMaterialController.setMaterial(
+      useMica ? 'mica' : 'standard',
+    );
+    if (!mounted || generation != _materialRequestGeneration) return;
+
+    final micaApplied = useMica && applied;
+    final micaSupported = useMica && !applied ? false : _micaSupported;
+    if (_micaApplied != micaApplied || _micaSupported != micaSupported) {
+      setState(() {
+        _micaApplied = micaApplied;
+        _micaSupported = micaSupported;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_isWindows) {
+      LibraryStore.instance.removeListener(_onSettingsChanged);
+    }
+    _windowLifecycleListener.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -214,38 +300,83 @@ class RchApp extends StatelessWidget {
       animation: LibraryStore.instance,
       builder: (context, _) {
         final settings = LibraryStore.instance.settings;
-        final dark = settings.themeMode != 'light';
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: 'RCH',
-          navigatorKey: AiUpscaleManager.navigatorKey,
-          builder: (context, child) => MediaQuery(
-            // 安卓触屏：降低手势判定阈值（touchSlop 18→13.5,panSlop 36→27），
-            // 双指缩放/滑动更容易触发（指甲长、小幅捏合也能识别）。
-            data: MediaQuery.of(context).copyWith(
-              gestureSettings: defaultTargetPlatform == TargetPlatform.android
-                  ? const DeviceGestureSettings(touchSlop: 13.5)
-                  : null,
-            ),
-            child: Stack(
-              children: [
-                ?child,
-                const Align(alignment: Alignment.topRight, child: AiFloatingProgress()),
-              ],
-            ),
-          ),
-          theme: AppTheme.build(
-            brightness: Brightness.light,
-            palette: settings.themePalette,
-            font: settings.appFont,
-          ),
-          darkTheme: AppTheme.build(
-            brightness: Brightness.dark,
-            palette: settings.themePalette,
-            font: settings.appFont,
-          ),
-          themeMode: dark ? ThemeMode.dark : ThemeMode.light,
-          home: _LifecycleFlush(startupPending: startupPending, child: const HomePage()),
+        final themeMode = switch (settings.themeMode) {
+          'light' => ThemeMode.light,
+          'system' => ThemeMode.system,
+          _ => ThemeMode.dark,
+        };
+        return DynamicColorBuilder(
+          builder: (lightDynamic, darkDynamic) {
+            final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+            final useDynamicColors =
+                isAndroid && settings.useSystemDynamicColors;
+            final lightScheme = useDynamicColors && lightDynamic != null
+                ? AppTheme.fromSystemDynamicColor(
+                    lightDynamic,
+                    brightness: Brightness.light,
+                  )
+                : null;
+            final darkScheme = useDynamicColors && darkDynamic != null
+                ? AppTheme.fromSystemDynamicColor(
+                    darkDynamic,
+                    brightness: Brightness.dark,
+                  )
+                : null;
+            return SystemDynamicColorScope(
+              dynamicColorsAvailable:
+                  isAndroid && (lightDynamic != null || darkDynamic != null),
+              child: WindowMaterialScope(
+                micaSupported: _micaSupported,
+                child: OverlayMaterialScope(
+                  acrylicSelected: settings.overlayMaterial == 'acrylic',
+                  child: MaterialApp(
+                    debugShowCheckedModeBanner: false,
+                    title: 'RCH',
+                    color: _micaApplied ? Colors.transparent : null,
+                    navigatorKey: AiUpscaleManager.navigatorKey,
+                    builder: (context, child) => MediaQuery(
+                      // 安卓触屏：降低手势判定阈值（touchSlop 18→13.5,panSlop 36→27），
+                      // 双指缩放/滑动更容易触发（指甲长、小幅捏合也能识别）。
+                      data: MediaQuery.of(context).copyWith(
+                        gestureSettings:
+                            defaultTargetPlatform == TargetPlatform.android
+                            ? const DeviceGestureSettings(touchSlop: 13.5)
+                            : null,
+                      ),
+                      child: Stack(
+                        children: [
+                          ?child,
+                          const Align(
+                            alignment: Alignment.topRight,
+                            child: AiFloatingProgress(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    theme: AppTheme.build(
+                      brightness: Brightness.light,
+                      palette: settings.themePalette,
+                      font: settings.appFont,
+                      dynamicColorScheme: lightScheme,
+                      transparentWindowBackdrop: _micaApplied,
+                    ),
+                    darkTheme: AppTheme.build(
+                      brightness: Brightness.dark,
+                      palette: settings.themePalette,
+                      font: settings.appFont,
+                      dynamicColorScheme: darkScheme,
+                      transparentWindowBackdrop: _micaApplied,
+                    ),
+                    themeMode: themeMode,
+                    home: _LifecycleFlush(
+                      startupPending: widget.startupPending,
+                      child: const HomePage(),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -269,14 +400,12 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
   @override
   void initState() {
     super.initState();
-    _listener = AppLifecycleListener(
-      onHide: _flush,
-      onDetach: _flush,
-    );
+    _listener = AppLifecycleListener(onHide: _flush, onDetach: _flush);
     final pending = widget.startupPending;
     if (pending != null) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _offerResumeMigration(pending));
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _offerResumeMigration(pending),
+      );
     }
   }
 
@@ -289,14 +418,20 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
   Future<void> _offerResumeMigration((String, String) pending) async {
     final (from, to) = pending;
     final messenger = ScaffoldMessenger.of(context);
-    final resume = await showDialog<bool>(
+    final resume = await showRchDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('检测到未完成的缓存迁移'),
         content: Text('上次迁移根目录时应用被中断：\n$from\n → \n$to\n\n数据未受影响，是否继续迁移？'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('稍后')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('继续迁移')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('稍后'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('继续迁移'),
+          ),
         ],
       ),
     );

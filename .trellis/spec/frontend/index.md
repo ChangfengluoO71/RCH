@@ -20,6 +20,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [State Management](./state-management.md) | Local state, global state, server state | Filled (2026-09-21) |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Filled (2026-09-21) |
 | [Type Safety](./type-safety.md) | Type patterns, validation | Filled (2026-09-21) |
+| [Platform Materials](./platform-materials.md) | Android dynamic colors, Windows Mica, and modal surface contracts | Filled (2026-10-09) |
 
 ---
 

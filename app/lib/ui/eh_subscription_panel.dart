@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:app/store/eh_subscription_store.dart';
 import 'package:app/ui/common.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 
 /// 设置页「EH 订阅」面板（可选插件）。
@@ -79,7 +80,7 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
   }
 
   Future<bool> _confirm(String title, String body) async {
-    final ok = await showDialog<bool>(
+    final ok = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: Text(title),

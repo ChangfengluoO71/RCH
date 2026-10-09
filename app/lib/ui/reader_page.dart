@@ -21,6 +21,7 @@ import 'package:app/store/remote_cache_cleanup.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/ui/quark_qr_scan.dart';
 import 'package:app/ui/webtoon_navigation.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -1846,7 +1847,7 @@ class _ReaderPageState extends State<ReaderPage> {
     final book = _book;
     if (book == null) return;
     final ctrl = TextEditingController();
-    showDialog(
+    showRchDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('跳转到页码'),
@@ -1992,7 +1993,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _showEndPrompt() async {
-    final again = await showDialog<bool>(
+    final again = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('已经读到最后一页'),
@@ -2973,7 +2974,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // ---- 设置 ----
   void _showSettings() {
-    showModalBottomSheet(
+    showRchModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
@@ -3071,6 +3072,11 @@ class _ReaderPageState extends State<ReaderPage> {
                   _scheduleEndPrompt();
                 },
               ),
+              const SizedBox(height: 6),
+              Text(
+                '适合手机竖屏单页阅读双页扫描图；智能模式只在检测到清晰中缝时拆分。使用拆页时，请将「双页拼接」设为「关」。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
               const SizedBox(height: 16),
               const Text('双页拼接'),
               const SizedBox(height: 6),
@@ -3100,6 +3106,11 @@ class _ReaderPageState extends State<ReaderPage> {
                   }
                   _scheduleEndPrompt();
                 },
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '适合电脑或平板大屏，将相邻原始页并排显示。启用时请将「宽页处理」设为「保持整页」；不要同时使用拆页和拼接。',
+                style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 8),
               Row(

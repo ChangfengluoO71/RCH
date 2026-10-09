@@ -6,6 +6,7 @@ import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/ui/common.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 
 class BackupPanel extends StatelessWidget {
@@ -13,7 +14,7 @@ class BackupPanel extends StatelessWidget {
 
   Future<String?> _askPassphrase(BuildContext context, {required bool export}) async {
     final ctrl = TextEditingController();
-    return showDialog<String>(
+    return showRchDialog<String>(
       context: context,
       builder: (c) => AlertDialog(
         title: Text(export ? '导出备份' : '导入备份'),

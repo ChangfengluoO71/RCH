@@ -1,3 +1,4 @@
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:app/ui/common.dart';
@@ -28,7 +29,7 @@ Future<bool> ensureAllFilesAccess(BuildContext context) async {
   if (!isAndroidPlatform) return true;
   if (await isAllFilesAccessGranted()) return true;
   if (!context.mounted) return false;
-  final go = await showDialog<bool>(
+  final go = await showRchDialog<bool>(
     context: context,
     builder: (c) => AlertDialog(
       title: const Text('需要存储权限'),

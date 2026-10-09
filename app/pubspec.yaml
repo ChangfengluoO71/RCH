@@ -43,6 +43,8 @@ dependencies:
   qr_flutter: ^4.1.0
   package_info_plus: ^10.2.1
   gal: ^2.3.3
+  dynamic_color: ^2.1.0
+  material_ui: ^1.2.0
 
 dev_dependencies:
   flutter_test:

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart' as dynamic_ui;
 
 /// Global app palette and UI font factory.
 ///
@@ -29,8 +30,12 @@ abstract final class AppTheme {
     required Brightness brightness,
     required String palette,
     required String font,
+    ColorScheme? dynamicColorScheme,
+    bool transparentWindowBackdrop = false,
   }) {
-    final scheme = _readableScheme(_colorScheme(palette, brightness));
+    final scheme = _readableScheme(
+      dynamicColorScheme ?? _colorScheme(palette, brightness),
+    );
     final base = palette == classic
         ? (brightness == Brightness.dark
               ? ThemeData.dark(useMaterial3: true)
@@ -42,8 +47,54 @@ abstract final class AppTheme {
       colorScheme: scheme,
       textTheme: base.textTheme.apply(fontFamily: fontFamily),
       primaryTextTheme: base.primaryTextTheme.apply(fontFamily: fontFamily),
-      scaffoldBackgroundColor: scheme.surface,
-      canvasColor: scheme.surface,
+      scaffoldBackgroundColor: transparentWindowBackdrop
+          ? Colors.transparent
+          : scheme.surface,
+      canvasColor: transparentWindowBackdrop
+          ? Colors.transparent
+          : scheme.surface,
+    );
+  }
+
+  /// Converts the ColorScheme type exposed by dynamic_color 2.x into Flutter's
+  /// ColorScheme. The package currently uses material_ui's parallel type.
+  static ColorScheme fromSystemDynamicColor(
+    dynamic_ui.ColorScheme systemScheme, {
+    required Brightness brightness,
+  }) {
+    final primary = systemScheme.primary;
+    final seeded = ColorScheme.fromSeed(
+      seedColor: primary,
+      brightness: brightness,
+    );
+    return seeded.copyWith(
+      primary: primary,
+      onPrimary: systemScheme.onPrimary,
+      primaryContainer: systemScheme.primaryContainer,
+      onPrimaryContainer: systemScheme.onPrimaryContainer,
+      secondary: systemScheme.secondary,
+      onSecondary: systemScheme.onSecondary,
+      secondaryContainer: systemScheme.secondaryContainer,
+      onSecondaryContainer: systemScheme.onSecondaryContainer,
+      tertiary: systemScheme.tertiary,
+      onTertiary: systemScheme.onTertiary,
+      tertiaryContainer: systemScheme.tertiaryContainer,
+      onTertiaryContainer: systemScheme.onTertiaryContainer,
+      error: systemScheme.error,
+      onError: systemScheme.onError,
+      errorContainer: systemScheme.errorContainer,
+      onErrorContainer: systemScheme.onErrorContainer,
+      outline: systemScheme.outline,
+      outlineVariant: systemScheme.outlineVariant,
+      surface: systemScheme.surface,
+      onSurface: systemScheme.onSurface,
+      onSurfaceVariant: systemScheme.onSurfaceVariant,
+      inverseSurface: systemScheme.inverseSurface,
+      onInverseSurface: systemScheme.onInverseSurface,
+      inversePrimary: systemScheme.inversePrimary,
+      shadow: systemScheme.shadow,
+      surfaceTint: systemScheme.surfaceTint,
+      scrim: systemScheme.scrim,
     );
   }
 

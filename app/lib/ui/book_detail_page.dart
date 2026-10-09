@@ -21,6 +21,7 @@ import 'package:app/ui/cover_editor_page.dart';
 import 'package:app/ui/opener.dart';
 import 'dart:convert';
 
+import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -132,7 +133,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   // ---- 取消 AI 超分并删除缓存 ----
 
   void _cancelAiSuperResolve() {
-    showDialog(
+    showRchDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('取消 AI 超分'),
@@ -246,7 +247,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
   }
 
   void _showAiConfirm() {
-    showDialog(
+    showRchDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('整本 AI 超分'),
@@ -479,7 +480,7 @@ class _BookDetailPageState extends State<BookDetailPage> {
       _ => '未匹配到画廊（不猜，本次不导入）',
     };
 
-    final ok = await showDialog<bool>(
+    final ok = await showRchDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('E 站导入预览（未写入）'),

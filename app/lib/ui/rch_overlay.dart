@@ -20,10 +20,14 @@ Future<T?> showRchDialog<T>({
     );
   }
 
+  final barrierColor = Theme.of(context).colorScheme.scrim.withValues(
+    alpha: 0.18,
+  );
   return showDialog<T>(
     context: context,
     barrierDismissible: barrierDismissible,
     useRootNavigator: useRootNavigator,
+    barrierColor: barrierColor,
     builder: (dialogContext) {
       final theme = Theme.of(dialogContext);
       return Theme(
@@ -73,6 +77,7 @@ Future<T?> showRchModalBottomSheet<T>({
     useRootNavigator: useRootNavigator,
     useSafeArea: useSafeArea,
     backgroundColor: Colors.transparent,
+    barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.18),
     elevation: 0,
     shape: const RoundedRectangleBorder(borderRadius: borderRadius),
     clipBehavior: Clip.antiAlias,
@@ -110,7 +115,7 @@ class _AcrylicSurface extends StatelessWidget {
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: 0.96),
+            color: scheme.surface.withValues(alpha: 0.78),
             borderRadius: borderRadius,
             border: Border.all(
               color: scheme.outlineVariant.withValues(alpha: 0.55),

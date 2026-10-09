@@ -883,21 +883,26 @@ class _HomePageState extends State<HomePage> {
                       );
                     }
 
-                    return ComicCard(
-                      source: s,
-                      path: r.path,
-                      title: r.title,
-                      subtitle: '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
-                      onTap: comicTapHandler(
-                        c,
-                        canRead: !s.remoteOnly,
-                        onRead: () => openBook(c, s, r.path, r.title),
-                        onDetails: details,
-                        onDesktopTap: details,
+                    return comicDetailContextMenu(
+                      c,
+                      onDetails: details,
+                      child: ComicCard(
+                        source: s,
+                        path: r.path,
+                        title: r.title,
+                        subtitle:
+                            '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
+                        onTap: comicTapHandler(
+                          c,
+                          canRead: !s.remoteOnly,
+                          onRead: () => openBook(c, s, r.path, r.title),
+                          onDetails: details,
+                          onDesktopTap: details,
+                        ),
+                        onLongPress: isCompact(c)
+                            ? () => showComicDetailPrompt(c, onDetails: details)
+                            : null,
                       ),
-                      onLongPress: isCompact(c)
-                          ? () => showComicDetailPrompt(c, onDetails: details)
-                          : null,
                     );
                   },
                 ),
@@ -1064,7 +1069,7 @@ class _HomePageState extends State<HomePage> {
                       openBook(c, bookSource, record.path, record.title);
                     }
 
-                    return ListTile(
+                    final tile = ListTile(
                       dense: true,
                       leading: SizedBox(
                         width: 34,
@@ -1096,6 +1101,13 @@ class _HomePageState extends State<HomePage> {
                           ? () => showComicDetailPrompt(c, onDetails: details)
                           : null,
                     );
+                    return isComic
+                        ? comicDetailContextMenu(
+                            c,
+                            onDetails: details,
+                            child: tile,
+                          )
+                        : tile;
                   },
                 ),
         ),
@@ -1776,23 +1788,29 @@ class _HomePageState extends State<HomePage> {
                           );
                         }
 
-                        return ComicCard(
-                          source: s,
-                          path: r.path,
-                          title: r.title,
-                          subtitle:
-                              '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
-                          onTap: comicTapHandler(
-                            c,
-                            canRead: !s.remoteOnly,
-                            onRead: () => openBook(c, s, r.path, r.title),
-                            onDetails: details,
-                            onDesktopTap: details,
+                        return comicDetailContextMenu(
+                          c,
+                          onDetails: details,
+                          child: ComicCard(
+                            source: s,
+                            path: r.path,
+                            title: r.title,
+                            subtitle:
+                                '读到 ${r.lastPage + 1} 页 · 看过 ${r.readCount} 次',
+                            onTap: comicTapHandler(
+                              c,
+                              canRead: !s.remoteOnly,
+                              onRead: () => openBook(c, s, r.path, r.title),
+                              onDetails: details,
+                              onDesktopTap: details,
+                            ),
+                            onLongPress: isCompact(c)
+                                ? () => showComicDetailPrompt(
+                                    c,
+                                    onDetails: details,
+                                  )
+                                : null,
                           ),
-                          onLongPress: isCompact(c)
-                              ? () =>
-                                    showComicDetailPrompt(c, onDetails: details)
-                              : null,
                         );
                       },
                     );
@@ -2071,7 +2089,9 @@ class _HomePageState extends State<HomePage> {
           setState(() {});
         },
         title: const Text('点击漫画文件不进入详细页'),
-        subtitle: const Text('开启后手机端点击漫画直接阅读；长按漫画会跳出是否进入漫画详细页选项。'),
+        subtitle: const Text(
+          '开启后点击可阅读的漫画直接阅读；手机长按可选择进入详情，电脑右键菜单提供“进入漫画详细页”选项。',
+        ),
       ),
       const SizedBox(height: 8),
       Wrap(
@@ -2483,10 +2503,7 @@ class _HomePageState extends State<HomePage> {
             isExpanded: true,
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 8,
-              ),
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
             items: [
               for (final option in fontOptions)
@@ -2645,10 +2662,7 @@ class _PalettePreviewCard extends StatelessWidget {
         color: scheme.surfaceContainerLow,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(
-            color: borderColor,
-            width: selected ? 2 : 1,
-          ),
+          side: BorderSide(color: borderColor, width: selected ? 2 : 1),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(

@@ -365,29 +365,33 @@ class _SourceBooksListState extends State<_SourceBooksList> {
           );
         }
         final b = _books[i];
-        return ListTile(
-          dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-          title: Text(
-            '${LibraryCatalogStore.statusEmoji(b.status)} ${b.title}',
-            style: const TextStyle(fontSize: 13),
-          ),
-          subtitle: Text(
-            b.path,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 10,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+        return comicDetailContextMenu(
+          context,
+          onDetails: () => _openBookDetails(context, b),
+          child: ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: Text(
+              '${LibraryCatalogStore.statusEmoji(b.status)} ${b.title}',
+              style: const TextStyle(fontSize: 13),
             ),
+            subtitle: Text(
+              b.path,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            onTap: () => _openBook(context, b),
+            onLongPress: isCompact(context)
+                ? () => showComicDetailPrompt(
+                    context,
+                    onDetails: () => _openBookDetails(context, b),
+                  )
+                : null,
           ),
-          onTap: () => _openBook(context, b),
-          onLongPress: isCompact(context)
-              ? () => showComicDetailPrompt(
-                  context,
-                  onDetails: () => _openBookDetails(context, b),
-                )
-              : null,
         );
       },
     );

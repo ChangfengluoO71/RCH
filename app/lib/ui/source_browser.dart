@@ -1250,7 +1250,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
               Column(
                 children: [
                   Material(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     child: ListTile(
                       dense: true,
                       leading: Row(
@@ -1400,7 +1402,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
                           '离线索引浏览（不连服务器）· 阅读时按本机资源/凭据判断',
                           style: TextStyle(
                             fontSize: 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -1511,7 +1515,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
                     decoration: BoxDecoration(
                       color: sel
                           ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.surfaceContainerHighest,
+                          : Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1582,7 +1588,13 @@ class _SourceBrowserState extends State<SourceBrowser> {
               ? () => showComicDetailPrompt(context, onDetails: details)
               : null,
         );
-        if (!_selectMode) return card;
+        if (!_selectMode) {
+          return comicDetailContextMenu(
+            context,
+            onDetails: details,
+            child: card,
+          );
+        }
         return Stack(
           children: [
             card,
@@ -1682,7 +1694,10 @@ class _SourceBrowserState extends State<SourceBrowser> {
             )
           : () => _openDir(e.path, e.name),
     );
-    if (!_selectMode) return card;
+    if (!_selectMode) {
+      if (kind != _FolderCoverKind.book) return card;
+      return comicDetailContextMenu(context, onDetails: details, child: card);
+    }
     return Stack(
       children: [
         card,
@@ -1778,7 +1793,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
           );
         }
 
-        return ListTile(
+        final tile = ListTile(
           leading: _selectMode
               ? Checkbox(
                   value: sel,
@@ -1809,6 +1824,9 @@ class _SourceBrowserState extends State<SourceBrowser> {
               ? () => showComicDetailPrompt(context, onDetails: details)
               : null,
         );
+        return _selectMode
+            ? tile
+            : comicDetailContextMenu(context, onDetails: details, child: tile);
       },
     );
   }

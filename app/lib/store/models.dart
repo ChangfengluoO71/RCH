@@ -413,7 +413,7 @@ class AppSettings {
   /// Phone-layout comic poster density. Desktop keeps its adaptive grid.
   int mobilePosterColumns;
 
-  /// When enabled, tapping a readable comic on compact layouts opens the reader.
+  /// When enabled, tapping a readable comic on any platform opens the reader.
   bool tapComicFileWithoutDetails;
 
   /// Canonical keys for the most recently selected random-reading comics.

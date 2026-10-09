@@ -172,35 +172,39 @@ class _GlobalSearchResultsState extends State<GlobalSearchResults> {
           );
         }
         final b = _results[i];
-        return ListTile(
-          dense: true,
-          leading: Text(
-            LibraryCatalogStore.statusEmoji(b.status),
-            style: const TextStyle(fontSize: 16),
-          ),
-          title: Text(
-            b.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 14),
-          ),
-          subtitle: Text(
-            '${b.deviceName} / ${b.sourceName} / ${b.path}'
-            '${b.tags.isNotEmpty ? ' · #${b.tags.replaceAll(',', ' #')}' : ''}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+        return comicDetailContextMenu(
+          context,
+          onDetails: () => _openDetails(context, b),
+          child: ListTile(
+            dense: true,
+            leading: Text(
+              LibraryCatalogStore.statusEmoji(b.status),
+              style: const TextStyle(fontSize: 16),
             ),
+            title: Text(
+              b.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14),
+            ),
+            subtitle: Text(
+              '${b.deviceName} / ${b.sourceName} / ${b.path}'
+              '${b.tags.isNotEmpty ? ' · #${b.tags.replaceAll(',', ' #')}' : ''}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            onTap: () => _open(context, b),
+            onLongPress: isCompact(context)
+                ? () => showComicDetailPrompt(
+                    context,
+                    onDetails: () => _openDetails(context, b),
+                  )
+                : null,
           ),
-          onTap: () => _open(context, b),
-          onLongPress: isCompact(context)
-              ? () => showComicDetailPrompt(
-                  context,
-                  onDetails: () => _openDetails(context, b),
-                )
-              : null,
         );
       },
     );

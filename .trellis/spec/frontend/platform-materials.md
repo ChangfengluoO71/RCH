@@ -51,6 +51,7 @@ Local `AppSettings` fields and defaults:
 - Android dynamic schemes are applied only on Android and only when enabled. A missing scheme leaves the saved RCH palette untouched and active.
 - `dynamic_color` 2.x exposes `material_ui.ColorScheme`; import that type with a namespace and keep the conversion helper typed. Its inverse foreground field is `onInverseSurface`, matching Flutter's role name. Avoid `dynamic` here so misspelled role names fail analysis instead of crashing when the option is selected.
 - The Acrylic presenter uses a clipped backdrop filter only on Windows when Mica capability is available, Acrylic is selected, and high-contrast mode is off. Standard mode delegates to Flutter's normal dialog or sheet API.
+- Acrylic dialog and sheet routes use a light scrim so the backdrop filter samples the app content instead of an opaque modal barrier. Keep the tinted surface translucent enough for the blur to show while preserving text contrast; avoid near-opaque fills such as 96%.
 - App-owned dialog and modal-sheet entrypoints use the shared presenters. Keep the reader canvas, comic images, covers, anchored menus, dropdowns, and system pickers outside the blur.
 
 ## 4. Validation & Error Matrix

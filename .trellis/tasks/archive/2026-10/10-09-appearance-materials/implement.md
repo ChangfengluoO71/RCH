@@ -17,6 +17,7 @@ The existing dirty files in the workspace predate this task and must be preserve
 
 ## Execution status
 
-- `flutter analyze --no-pub`, `flutter build windows --debug`, and `flutter build apk --debug` pass.
+- `flutter test` passes (247 tests); `flutter build windows --debug` passes.
 - The Android compact appearance settings were inspected on the API 36 emulator; the selector, palette cards, font sample, and mobile layout fit without horizontal clipping.
-- Windows Mica/Acrylic runtime appearance and the desktop-width settings layout still need visual inspection. The current workspace changes remain uncommitted, so the Trellis task stays active.
+- The desktop-width appearance settings and Windows material controls were visually inspected. After the light-theme/Mica regression fix, Windows shows the translucent light RCH surface over Mica instead of exposing a black backdrop when Windows itself is dark.
+- Android dynamic color, Windows Mica/Acrylic, theme/font settings, and the light-theme Mica regression are implemented and verified; this task is ready to archive.

@@ -701,3 +701,24 @@ Committed and archived mobile wide-page splitting, prepared v0.6.4 version metad
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: 修复 Windows 云母浅色背景并归档外观任务
+
+**Date**: 2026-10-11
+**Task**: 修复 Windows 云母浅色背景并归档外观任务
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+同步 Windows DWM 云母明暗状态与 RCH 主题，为云母下的浅色 Scaffold 保留半透明主题表面，补充回归测试并更新平台材质规格及变更记录。flutter test 247 项通过，flutter build windows --debug 通过。已提交修复并归档 appearance-materials 任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5f91441` | (see git log) |
+
+### Status
+
+[OK] **Completed**

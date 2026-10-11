@@ -42,14 +42,20 @@ abstract final class AppTheme {
               : ThemeData.light(useMaterial3: true))
         : ThemeData.from(colorScheme: scheme, useMaterial3: true);
     final fontFamily = fontFamilyFor(font);
+    final scaffoldBackgroundColor = transparentWindowBackdrop
+        ? Color.fromARGB(
+            224,
+            scheme.surface.red,
+            scheme.surface.green,
+            scheme.surface.blue,
+          )
+        : scheme.surface;
 
     return base.copyWith(
       colorScheme: scheme,
       textTheme: base.textTheme.apply(fontFamily: fontFamily),
       primaryTextTheme: base.primaryTextTheme.apply(fontFamily: fontFamily),
-      scaffoldBackgroundColor: transparentWindowBackdrop
-          ? Colors.transparent
-          : scheme.surface,
+      scaffoldBackgroundColor: scaffoldBackgroundColor,
       canvasColor: transparentWindowBackdrop
           ? Colors.transparent
           : scheme.surface,

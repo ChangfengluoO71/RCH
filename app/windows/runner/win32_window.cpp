@@ -33,6 +33,12 @@ constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
   L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
 
+bool SetImmersiveDarkMode(HWND const window, bool dark_mode) {
+  const BOOL enabled = dark_mode ? TRUE : FALSE;
+  return SUCCEEDED(DwmSetWindowAttribute(
+      window, DWMWA_USE_IMMERSIVE_DARK_MODE, &enabled, sizeof(enabled)));
+}
+
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
@@ -240,8 +246,20 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
 
     case WM_DWMCOLORIZATIONCOLORCHANGED:
-      UpdateTheme(hwnd);
+      if (mica_dark_mode_override_.has_value()) {
+        SetImmersiveDarkMode(hwnd, *mica_dark_mode_override_);
+      } else {
+        UpdateTheme(hwnd);
+      }
       return 0;
+
+    case WM_SETTINGCHANGE:
+      if (mica_dark_mode_override_.has_value()) {
+        SetImmersiveDarkMode(hwnd, *mica_dark_mode_override_);
+      } else {
+        UpdateTheme(hwnd);
+      }
+      break;
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);
@@ -286,28 +304,58 @@ bool Win32Window::IsMicaSupported() const {
          IsWindowsBuildAtLeast(22621);
 }
 
-bool Win32Window::SetMicaBackdrop(bool enabled) {
+bool Win32Window::SetMicaBackdrop(
+    bool enabled, std::optional<bool> dark_mode_override) {
   if (window_handle_ == nullptr || !IsWindow(window_handle_)) {
     return false;
   }
 
-  if (enabled && !IsMicaSupported()) {
+  if (!enabled) {
+    const int backdrop = kDwmSystemBackdropNone;
+    const HRESULT result = DwmSetWindowAttribute(
+        window_handle_, kDwmSystemBackdropAttribute, &backdrop,
+        sizeof(backdrop));
+    mica_dark_mode_override_.reset();
+    UpdateTheme(window_handle_);
+    return SUCCEEDED(result);
+  }
+
+  if (!IsMicaSupported()) {
     const int backdrop = kDwmSystemBackdropNone;
     DwmSetWindowAttribute(window_handle_, kDwmSystemBackdropAttribute,
                           &backdrop, sizeof(backdrop));
+    mica_dark_mode_override_.reset();
+    UpdateTheme(window_handle_);
     return false;
   }
 
-  const int backdrop =
-      enabled ? kDwmSystemBackdropMainWindow : kDwmSystemBackdropNone;
+  if (dark_mode_override.has_value()) {
+    if (!SetImmersiveDarkMode(window_handle_, *dark_mode_override)) {
+      const int backdrop = kDwmSystemBackdropNone;
+      DwmSetWindowAttribute(window_handle_, kDwmSystemBackdropAttribute,
+                            &backdrop, sizeof(backdrop));
+      mica_dark_mode_override_.reset();
+      UpdateTheme(window_handle_);
+      return false;
+    }
+  } else {
+    UpdateTheme(window_handle_);
+  }
+
+  const int backdrop = kDwmSystemBackdropMainWindow;
   const HRESULT result = DwmSetWindowAttribute(
       window_handle_, kDwmSystemBackdropAttribute, &backdrop, sizeof(backdrop));
-  if (FAILED(result) && enabled) {
+  if (FAILED(result)) {
     const int standard_backdrop = kDwmSystemBackdropNone;
     DwmSetWindowAttribute(window_handle_, kDwmSystemBackdropAttribute,
                           &standard_backdrop, sizeof(standard_backdrop));
+    mica_dark_mode_override_.reset();
+    UpdateTheme(window_handle_);
+    return false;
   }
-  return SUCCEEDED(result);
+
+  mica_dark_mode_override_ = dark_mode_override;
+  return true;
 }
 
 HWND Win32Window::GetHandle() {
@@ -336,8 +384,6 @@ void Win32Window::UpdateTheme(HWND const window) {
                                &light_mode_size);
 
   if (result == ERROR_SUCCESS) {
-    BOOL enable_dark_mode = light_mode == 0;
-    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                          &enable_dark_mode, sizeof(enable_dark_mode));
+    SetImmersiveDarkMode(window, light_mode == 0);
   }
 }

@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
@@ -59,7 +60,8 @@ class Win32Window {
   bool IsMicaSupported() const;
 
   // Applies or clears the system backdrop. Returns whether DWM accepted it.
-  bool SetMicaBackdrop(bool enabled);
+  bool SetMicaBackdrop(bool enabled,
+                       std::optional<bool> dark_mode_override);
 
  protected:
   // Processes and route salient window messages for mouse handling,
@@ -97,6 +99,7 @@ class Win32Window {
   static void UpdateTheme(HWND const window);
 
   bool quit_on_close_ = false;
+  std::optional<bool> mica_dark_mode_override_;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;

@@ -59,12 +59,29 @@ bool FlutterWindow::OnCreate() {
 
           const auto* material =
               std::get_if<std::string>(&material_entry->second);
-          if (!material || (*material != "standard" && *material != "mica")) {
+          const auto theme_mode_entry =
+              arguments->find(flutter::EncodableValue("themeMode"));
+          if (!material || (*material != "standard" && *material != "mica") ||
+              theme_mode_entry == arguments->end()) {
             result->Success(flutter::EncodableValue(false));
             return;
           }
 
-          const bool applied = SetMicaBackdrop(*material == "mica");
+          const auto* theme_mode =
+              std::get_if<std::string>(&theme_mode_entry->second);
+          if (!theme_mode || (*theme_mode != "light" &&
+                              *theme_mode != "dark" &&
+                              *theme_mode != "system")) {
+            result->Success(flutter::EncodableValue(false));
+            return;
+          }
+
+          std::optional<bool> dark_mode_override;
+          if (*theme_mode != "system") {
+            dark_mode_override = *theme_mode == "dark";
+          }
+          const bool applied =
+              SetMicaBackdrop(*material == "mica", dark_mode_override);
           result->Success(flutter::EncodableValue(applied));
           return;
         }

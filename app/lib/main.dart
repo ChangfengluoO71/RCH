@@ -223,6 +223,7 @@ class _RchAppState extends State<RchApp> {
   bool _micaApplied = false;
   int _materialRequestGeneration = 0;
   String? _lastWindowMaterialSetting;
+  String? _lastWindowThemeModeSetting;
   late final AppLifecycleListener _windowLifecycleListener;
 
   bool get _isWindows => defaultTargetPlatform == TargetPlatform.windows;
@@ -232,8 +233,9 @@ class _RchAppState extends State<RchApp> {
     super.initState();
     _windowLifecycleListener = AppLifecycleListener(onResume: _onWindowResume);
     if (_isWindows) {
-      _lastWindowMaterialSetting =
-          LibraryStore.instance.settings.windowMaterial;
+      final settings = LibraryStore.instance.settings;
+      _lastWindowMaterialSetting = settings.windowMaterial;
+      _lastWindowThemeModeSetting = settings.themeMode;
       LibraryStore.instance.addListener(_onSettingsChanged);
       unawaited(_loadWindowMaterialCapability());
     }
@@ -251,9 +253,15 @@ class _RchAppState extends State<RchApp> {
 
   void _onSettingsChanged() {
     if (!_isWindows) return;
-    final material = LibraryStore.instance.settings.windowMaterial;
-    if (material == _lastWindowMaterialSetting) return;
+    final settings = LibraryStore.instance.settings;
+    final material = settings.windowMaterial;
+    final themeMode = settings.themeMode;
+    if (material == _lastWindowMaterialSetting &&
+        themeMode == _lastWindowThemeModeSetting) {
+      return;
+    }
     _lastWindowMaterialSetting = material;
+    _lastWindowThemeModeSetting = themeMode;
     if (_micaCapabilityLoaded) unawaited(_applyWindowMaterial());
   }
 
@@ -266,11 +274,11 @@ class _RchAppState extends State<RchApp> {
   Future<void> _applyWindowMaterial() async {
     if (!_isWindows || !_micaCapabilityLoaded) return;
     final generation = ++_materialRequestGeneration;
-    final useMica =
-        _micaSupported &&
-        LibraryStore.instance.settings.windowMaterial == 'mica';
+    final settings = LibraryStore.instance.settings;
+    final useMica = _micaSupported && settings.windowMaterial == 'mica';
     final applied = await WindowMaterialController.setMaterial(
       useMica ? 'mica' : 'standard',
+      themeMode: settings.themeMode,
     );
     if (!mounted || generation != _materialRequestGeneration) return;
 

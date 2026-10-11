@@ -21,13 +21,17 @@ abstract final class WindowMaterialController {
     }
   }
 
-  static Future<bool> setMaterial(String material) async {
+  static Future<bool> setMaterial(
+    String material, {
+    required String themeMode,
+  }) async {
     if (!_isWindows || (material != 'standard' && material != 'mica')) {
       return false;
     }
     try {
       return await _channel.invokeMethod<bool>('setMaterial', {
             'material': material,
+            'themeMode': themeMode,
           }) ??
           false;
     } on PlatformException {

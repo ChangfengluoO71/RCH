@@ -10,6 +10,10 @@ All notable changes to RCH will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows 云母材质跟随 RCH 当前浅色/深色主题，避免系统处于深色时选择浅色云母却透出黑色背景。
+
 ## [0.6.5] — 2026-10-10
 
 ### Added

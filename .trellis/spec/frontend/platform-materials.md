@@ -9,7 +9,10 @@ This contract applies when changing appearance preferences, Android wallpaper-de
 ```dart
 abstract final class WindowMaterialController {
   static Future<bool> isMicaSupported();
-  static Future<bool> setMaterial(String material); // standard | mica
+  static Future<bool> setMaterial(
+    String material, {
+    required String themeMode,
+  }); // standard | mica
 }
 
 Future<T?> showRchDialog<T>({
@@ -33,7 +36,7 @@ Future<T?> showRchModalBottomSheet<T>({
 Native MethodChannel: `rch/window_material`.
 
 - `getCapabilities()` returns `{ "mica": bool }`.
-- `setMaterial({ "material": "standard" | "mica" })` returns `bool`.
+- `setMaterial({ "material": "standard" | "mica", "themeMode": "light" | "dark" | "system" })` returns `bool`.
 
 Local `AppSettings` fields and defaults:
 
@@ -47,6 +50,8 @@ Local `AppSettings` fields and defaults:
 - Settings are stored in local `AppSettings`; do not add these fields to book metadata or sync rows.
 - `WindowMaterialController` returns `false` without a platform call off Windows. A missing plugin or `PlatformException` also resolves to `false`.
 - The Windows runner reports Mica support only for a valid window handle on Windows build 22621 or later. It applies `DWMWA_SYSTEMBACKDROP_TYPE` attribute 38 with `DWMSBT_MAINWINDOW` value 2 for Mica and `DWMSBT_NONE` value 1 for standard.
+- While Mica is active, the runner sets `DWMWA_USE_IMMERSIVE_DARK_MODE` to an explicit RCH light/dark selection so a light RCH theme does not expose a dark Windows backdrop. `system` clears the app override and uses Windows' current preference. Selecting standard also clears the override and restores the Windows preference.
+- Windows colorization/theme messages preserve an explicit RCH brightness override while Mica is active; system mode follows the Windows preference.
 - `RchApp` owns capability loading and material application outside `build`. Flutter's root scaffold/canvas become transparent only after the native Mica request succeeds.
 - Android dynamic schemes are applied only on Android and only when enabled. A missing scheme leaves the saved RCH palette untouched and active.
 - `dynamic_color` 2.x exposes `material_ui.ColorScheme`; import that type with a namespace and keep the conversion helper typed. Its inverse foreground field is `onInverseSurface`, matching Flutter's role name. Avoid `dynamic` here so misspelled role names fail analysis instead of crashing when the option is selected.
@@ -61,6 +66,7 @@ Local `AppSettings` fields and defaults:
 | Missing or unknown persisted material value | Normalize to `standard`; do not throw during settings load. |
 | Windows build below 22621 or invalid HWND | Report Mica unavailable and render standard Flutter surfaces. |
 | DWM rejects Mica | Clear the native backdrop, return `false`, and keep the Flutter root opaque. |
+| RCH light theme while Windows is dark | Apply the light DWM mode while Mica is active; the transparent Flutter root must not reveal a dark/black backdrop. |
 | Standard material selected | Clear the DWM backdrop and do not create a Flutter backdrop filter. |
 | Android dynamic color scheme is absent | Keep using the selected RCH palette; do not rewrite the preference. |
 | Dynamic-color preference is enabled off Android | Ignore the preference for rendering and use the fixed RCH theme. |
@@ -104,7 +110,12 @@ Correct:
 ```dart
 // Load/apply native capability from the app lifecycle coordinator, not build.
 final supported = await WindowMaterialController.isMicaSupported();
-final applied = supported && await WindowMaterialController.setMaterial('mica');
+final settings = LibraryStore.instance.settings;
+final applied = supported &&
+    await WindowMaterialController.setMaterial(
+      'mica',
+      themeMode: settings.themeMode,
+    );
 
 showRchDialog(context: context, builder: buildDialog);
 ```

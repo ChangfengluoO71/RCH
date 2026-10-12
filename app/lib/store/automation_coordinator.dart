@@ -6,6 +6,7 @@ import 'package:app/src/rust/api/scraper.dart' as scraperapi;
 import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/sync_engine.dart';
+import 'package:app/store/foreground_work_coordinator.dart';
 import 'package:flutter/foundation.dart';
 
 /// Owns the automatic sync -> catalog scrape pipeline.
@@ -34,6 +35,11 @@ class AutomationCoordinator {
   bool _started = false;
   bool _running = false;
   bool _enabled = true;
+  int _dirtyGeneration = 0;
+  bool _pendingSyncPush = false;
+  String? _pendingCycleTrigger;
+  bool _pendingManualScrape = false;
+  Completer<scraperapi.ScrapeRunDto?>? _pendingScrapeCompleter;
 
   scraperapi.ScrapeRunDto? lastRun;
   int lastAutoApplied = 0;
@@ -60,7 +66,7 @@ class AutomationCoordinator {
     _started = true;
     await SyncEngine.instance.init(managedByCoordinator: true);
     _enabled = SyncEngine.instance.autoSync;
-    LibraryStore.instance.addListener(markDirty);
+    LibraryStore.instance.addCommittedMutationListener(markDirty);
     _poll?.cancel();
     _poll = Timer.periodic(_pollInterval, (_) {
       if (_enabled) unawaited(runCycle(trigger: 'timer', quickPoll: true));
@@ -75,10 +81,38 @@ class AutomationCoordinator {
   }
 
   void markDirty() {
-    if (!_enabled || _running) return;
+    if (!_enabled) return;
+    _dirtyGeneration++;
+    if (_running) return;
     _debounce?.cancel();
     _debounce = Timer(_debounceDelay, () {
       unawaited(runCycle(trigger: 'local-change'));
+    });
+  }
+
+  void _finishActiveWork(int startingGeneration) {
+    _running = false;
+    final pendingScrape = _pendingScrapeCompleter;
+    if (_pendingManualScrape && pendingScrape != null) {
+      _pendingManualScrape = false;
+      _pendingScrapeCompleter = null;
+      scheduleMicrotask(() async {
+        try {
+          pendingScrape.complete(await runScrapeNow());
+        } catch (error, stackTrace) {
+          pendingScrape.completeError(error, stackTrace);
+        }
+      });
+      return;
+    }
+
+    final trigger = _pendingCycleTrigger;
+    final dirtyDuringRun = _dirtyGeneration > startingGeneration;
+    if (trigger == null && !dirtyDuringRun) return;
+    _pendingCycleTrigger = null;
+    _debounce?.cancel();
+    _debounce = Timer(_debounceDelay, () {
+      unawaited(runCycle(trigger: trigger ?? 'local-change'));
     });
   }
 
@@ -88,43 +122,62 @@ class AutomationCoordinator {
     required String trigger,
     bool quickPoll = false,
   }) async {
-    if (_running) return lastRun;
+    if (_running) {
+      if (trigger != 'timer') _pendingCycleTrigger = trigger;
+      return lastRun;
+    }
     _running = true;
+    final startingGeneration = _dirtyGeneration;
     try {
+      final quickPollOutcome = quickPoll
+          ? await SyncEngine.instance.probeQuickPoll(background: true)
+          : null;
       final preSyncCatalog = await LibraryIndexService.instance
           .refreshCatalogSnapshots(
             sources: LibraryStore.instance.sources,
             trigger: trigger,
+            background: true,
           );
-      late final String syncMessage;
-      if (quickPoll) {
-        await SyncEngine.instance.triggerAutomatic(
-          quickPoll: true,
-          refreshCatalog: false,
-        );
-        syncMessage = SyncEngine.instance.lastStatus;
-      } else {
-        syncMessage = await SyncEngine.instance.syncNow(refreshCatalog: false);
+      final syncOutcome =
+          quickPollOutcome ??
+          await SyncEngine.instance.syncNowWithOutcome(
+            refreshCatalog: false,
+            background: true,
+          );
+      final syncMessage = syncOutcome.message;
+      if (!syncOutcome.changesKnown) {
+        // Failure or an overlapping sync leaves the local projection unknown;
+        // reload conservatively before catalog processing.
+        await LibraryStore.instance.load(force: true, persist: false);
       }
-      // Sync may have added/removed a source or applied source aliases in Rust;
-      // refresh the Dart source list before rebuilding the post-sync catalog.
-      await LibraryStore.instance.load(force: true, persist: false);
-      // A sync pull may have changed library_index. Rebuild only from the
-      // resulting local/persisted snapshot before parsing proposals.
-      final postSyncCatalog = await LibraryIndexService.instance
-          .refreshCatalogSnapshots(
-            sources: LibraryStore.instance.sources,
-            trigger: '$trigger-post-sync',
-          );
+      var postSyncChanged = 0;
+      if (!syncOutcome.changesKnown || syncOutcome.hasChanges) {
+        // Local paths are refreshed after a sync that may have applied catalog
+        // data. A confirmed no-op quick poll is probed before the local scan,
+        // so it needs only that one scan and does not imply local paths are
+        // unchanged.
+        final postSyncCatalog = await LibraryIndexService.instance
+            .refreshCatalogSnapshots(
+              sources: LibraryStore.instance.sources,
+              trigger: '$trigger-post-sync',
+              background: true,
+            );
+        postSyncChanged = postSyncCatalog.changed;
+      }
       // Catalog replacement marks deleted assets and clears their local
       // proposal/metadata/tag state in Rust. The Dart pass removes stale
       // records/caches from memory as well. M8 automation deliberately stays
       // offline against remote book sources; remote changes enter through a
       // persisted snapshot or the existing sync/discovery lane.
+      await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
       final purge = await LibraryStore.instance.purgeStaleData(
         alignRemote: false,
+        background: true,
       );
-      await LibraryStore.instance.load(force: true, persist: false);
+      if (purge.$1 > 0 || purge.$2 > 0) {
+        await LibraryStore.instance.load(force: true, persist: false);
+      }
+      await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
       final run = await scraperapi.dbRunCatalogScrape(
         trigger: trigger,
         ancestorDepth: ancestorDepth,
@@ -132,18 +185,39 @@ class AutomationCoordinator {
       );
       lastRun = run;
       final materialization = automaticMaterializationEnabled
-          ? await _materializeReadyProposals()
+          ? await _materializeReadyProposals(background: true)
           : _MaterializationSummary.held();
       var pushMessage = syncMessage;
-      final catalogDirty =
-          preSyncCatalog.changed > 0 ||
-          postSyncCatalog.changed > 0 ||
+      final initialSyncCommitted =
+          syncOutcome.status == SyncRunStatus.completed ||
+          (syncOutcome.status == SyncRunStatus.remoteUnchanged &&
+              syncOutcome.revision != null);
+      if (initialSyncCommitted) _pendingSyncPush = false;
+      if (syncOutcome.status == SyncRunStatus.failed ||
+          !syncOutcome.changesKnown) {
+        _pendingSyncPush = true;
+      }
+      if (materialization.syncDirty ||
+          postSyncChanged > 0 ||
           purge.$1 > 0 ||
-          purge.$2 > 0;
-      if (materialization.syncDirty || catalogDirty) {
+          purge.$2 > 0 ||
+          (preSyncCatalog.changed > 0 && !initialSyncCommitted)) {
+        _pendingSyncPush = true;
+      }
+      if (_pendingSyncPush &&
+          syncOutcome.status != SyncRunStatus.failed &&
+          syncOutcome.changesKnown) {
         // The projection transaction has already committed. Sync is deliberately
         // scheduled from this coordinator boundary, never from Rust/SQLite.
-        pushMessage = await SyncEngine.instance.syncNow(refreshCatalog: false);
+        final pushOutcome = await SyncEngine.instance.syncNowWithOutcome(
+          refreshCatalog: false,
+          background: true,
+        );
+        pushMessage = pushOutcome.message;
+        _pendingSyncPush =
+            pushOutcome.status != SyncRunStatus.completed &&
+            !(pushOutcome.status == SyncRunStatus.remoteUnchanged &&
+                pushOutcome.revision != null);
       }
       lastStatus = automaticMaterializationEnabled
           ? '刮削完成 ${run.processed}/${run.total}，可确认 ${run.ready}，自动写入 ${materialization.applied}，需复核 ${run.ambiguous + materialization.reviewRequired}（同步：$pushMessage）'
@@ -154,13 +228,28 @@ class AutomationCoordinator {
       debugPrint('[AutomationCoordinator] $error');
       return null;
     } finally {
-      _running = false;
+      _finishActiveWork(startingGeneration);
     }
   }
 
   Future<scraperapi.ScrapeRunDto?> runScrapeNow() async {
-    if (_running) return lastRun;
+    if (_running) {
+      _pendingManualScrape = true;
+      return (_pendingScrapeCompleter ??= Completer<scraperapi.ScrapeRunDto?>())
+          .future;
+    }
     _running = true;
+    final startingGeneration = _dirtyGeneration;
+    try {
+      return await ForegroundWorkCoordinator.instance.runForeground(
+        _runManualScrape,
+      );
+    } finally {
+      _finishActiveWork(startingGeneration);
+    }
+  }
+
+  Future<scraperapi.ScrapeRunDto?> _runManualScrape() async {
     try {
       final catalog = await LibraryIndexService.instance
           .refreshCatalogSnapshots(
@@ -172,7 +261,9 @@ class AutomationCoordinator {
       final purge = await LibraryStore.instance.purgeStaleData(
         alignRemote: false,
       );
-      await LibraryStore.instance.load(force: true, persist: false);
+      if (purge.$1 > 0 || purge.$2 > 0) {
+        await LibraryStore.instance.load(force: true, persist: false);
+      }
       final run = await scraperapi.dbRunCatalogScrape(
         trigger: 'manual-scrape',
         ancestorDepth: ancestorDepth,
@@ -182,11 +273,18 @@ class AutomationCoordinator {
       final materialization = automaticMaterializationEnabled
           ? await _materializeReadyProposals()
           : _MaterializationSummary.held();
-      if (materialization.syncDirty ||
+      if (_pendingSyncPush ||
+          materialization.syncDirty ||
           catalog.changed > 0 ||
           purge.$1 > 0 ||
           purge.$2 > 0) {
-        await SyncEngine.instance.syncNow(refreshCatalog: false);
+        final syncOutcome = await SyncEngine.instance.syncNowWithOutcome(
+          refreshCatalog: false,
+        );
+        _pendingSyncPush =
+            syncOutcome.status != SyncRunStatus.completed &&
+            !(syncOutcome.status == SyncRunStatus.remoteUnchanged &&
+                syncOutcome.revision != null);
       }
       lastStatus = automaticMaterializationEnabled
           ? '刮削完成 ${run.processed}/${run.total}，可确认 ${run.ready}，自动写入 ${materialization.applied}，需复核 ${run.ambiguous + materialization.reviewRequired}'
@@ -196,16 +294,19 @@ class AutomationCoordinator {
       lastStatus = '刮削失败：$error';
       debugPrint('[AutomationCoordinator] scrape $error');
       return null;
-    } finally {
-      _running = false;
     }
   }
 
   /// Materialize only proposals that satisfy the production safe-auto policy.
   /// Rust owns the projection transaction; Dart only drains typed results and
   /// reloads its in-memory repositories after a committed batch.
-  Future<_MaterializationSummary> _materializeReadyProposals() async {
+  Future<_MaterializationSummary> _materializeReadyProposals({
+    bool background = false,
+  }) async {
     final summary = _MaterializationSummary();
+    if (background) {
+      await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+    }
     final projectionMigration = needsGeneratedTagProjectionMigration(
       await dbapi.dbLoadAllSettings(),
     );
@@ -214,6 +315,9 @@ class AutomationCoordinator {
       state: 'ready',
     );
     for (final proposal in proposals) {
+      if (background) {
+        await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+      }
       // Do not use the persisted materialization status as a skip gate.
       // Re-scraping can update semantic_json while retaining the same catalog
       // input revision, and Rust's transaction is responsible for returning

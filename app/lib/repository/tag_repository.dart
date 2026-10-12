@@ -390,15 +390,28 @@ class TagRepository extends ChangeNotifier {
 
   /// 将标签关联到一本书。
   void link(String bookKey, String tagName) {
-    if (tagName.isEmpty) return;
-    bookKey = normalizePersistedBookKey(bookKey);
-    final tagId = ensure(tagName);
-    final bt = BookTag(bookKey: bookKey, tagId: tagId);
-    if (!_bookTags.contains(bt)) {
-      _bookTags.add(bt);
-      notifyListeners();
-    }
+    linkMany([(bookKey: bookKey, tagName: tagName)]);
   }
+
+  /// Adds a group of links and notifies once after the whole group is applied.
+  bool linkMany(
+    Iterable<({String bookKey, String tagName})> links, {
+    bool notify = true,
+  }) {
+    var changed = false;
+    for (final link in links) {
+      if (link.tagName.isEmpty) continue;
+      final bookKey = normalizePersistedBookKey(link.bookKey);
+      final tagId = ensure(link.tagName);
+      if (_bookTags.add(BookTag(bookKey: bookKey, tagId: tagId))) {
+        changed = true;
+      }
+    }
+    if (changed && notify) notifyListeners();
+    return changed;
+  }
+
+  void notifyBatchMutation() => notifyListeners();
 
   /// 将标签从一本书移除。
   void unlink(String bookKey, String tagName) {

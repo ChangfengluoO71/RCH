@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -6,6 +7,7 @@ import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/ai.dart';
 import 'package:app/src/rust/api/source.dart' as frbsource;
 import 'package:app/store/book_open_coordinator.dart';
+import 'package:app/store/foreground_work_coordinator.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/src/rust/api/cache.dart';
 import 'package:app/store/library_store.dart';
@@ -38,15 +40,19 @@ class ReaderPage extends StatefulWidget {
   final BookSource? source;
   final int initialPage;
   final bool skipAiCache;
-  const ReaderPage({
+  ReaderPage({
     super.key,
-    required this.path,
+    required String path,
     required this.title,
     this.webdavSession,
     this.source,
     this.initialPage = 0,
     this.skipAiCache = false,
-  });
+  }) : path = normalizeLocalFilesystemPath(
+         path,
+         isLocalFs: source?.isLocalFs ?? (webdavSession == null),
+         isWindows: Platform.isWindows,
+       );
   @override
   State<ReaderPage> createState() => _ReaderPageState();
 }
@@ -84,6 +90,8 @@ class _QueuedPageLoad {
   final int requestGeneration;
   final Stopwatch watch;
 }
+
+enum _EndPromptAction { backToFirstPage, exitToDetails, pickRandomBook }
 
 class _ReaderPageState extends State<ReaderPage> {
   /// 到达最后一屏后**延迟 3 秒**再提示（不打断最后一页的显示）；
@@ -458,6 +466,9 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Future<void> _open() async {
     final generation = ++_openGeneration;
+    _endTimer?.cancel();
+    _endTimer = null;
+    _endPrompted = false;
     _webtoonScrollGeneration++;
     _webtoonProgrammaticScroll = false;
     _webtoonLoadTarget = null;
@@ -507,45 +518,35 @@ class _ReaderPageState extends State<ReaderPage> {
     bool isCurrent() => mounted && generation == _openGeneration;
 
     try {
-      final result = await BookOpenCoordinator.instance.open(
-        source: source,
-        path: widget.path,
-        title: widget.title,
-        strategy: strategy,
-        existingSession: widget.webdavSession,
-        isActive: isCurrent,
-        onStage: (stage) {
-          if (!isCurrent()) return;
-          failureStage = stage;
-          if (stage == BookOpenStage.openingBook &&
-              source != null &&
-              !_readRecordStarted) {
-            _readRecordStarted = true;
-            unawaited(
-              LibraryStore.instance.recordRead(
-                source: source,
-                path: widget.path,
-                title: widget.title,
-              ),
-            );
-          }
-          setState(() {
-            _openStage = stage;
-            if (stage == BookOpenStage.openingBook) {
-              _downloadProgress = null;
-            }
-          });
-        },
-        onProgress: (progress) {
-          if (isCurrent()) setState(() => _downloadProgress = progress);
-        },
-        onRemoteImageFolder: (isImageFolder) {
-          if (!isCurrent()) return;
-          _updateRemoteImageFolderLease(source, isImageFolder);
-        },
-        onProviderPathResolved: (providerPath) {
-          if (isCurrent()) _providerPath = providerPath;
-        },
+      final result = await ForegroundWorkCoordinator.instance.runForeground(
+        () => BookOpenCoordinator.instance.open(
+          source: source,
+          path: widget.path,
+          title: widget.title,
+          strategy: strategy,
+          existingSession: widget.webdavSession,
+          isActive: isCurrent,
+          onStage: (stage) {
+            if (!isCurrent()) return;
+            failureStage = stage;
+            setState(() {
+              _openStage = stage;
+              if (stage == BookOpenStage.openingBook) {
+                _downloadProgress = null;
+              }
+            });
+          },
+          onProgress: (progress) {
+            if (isCurrent()) setState(() => _downloadProgress = progress);
+          },
+          onRemoteImageFolder: (isImageFolder) {
+            if (!isCurrent()) return;
+            _updateRemoteImageFolderLease(source, isImageFolder);
+          },
+          onProviderPathResolved: (providerPath) {
+            if (isCurrent()) _providerPath = providerPath;
+          },
+        ),
       );
       if (!isCurrent()) {
         try {
@@ -558,6 +559,19 @@ class _ReaderPageState extends State<ReaderPage> {
           await closeBook(handle: result.book.handle);
         } catch (_) {}
         throw StateError('这本漫画没有可读取的页面');
+      }
+      if (source != null && !_readRecordStarted) {
+        _readRecordStarted = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!isCurrent()) return;
+          unawaited(
+            LibraryStore.instance.recordRead(
+              source: source,
+              path: widget.path,
+              title: widget.title,
+            ),
+          );
+        });
       }
       setState(() {
         _book = result.book;
@@ -1416,6 +1430,7 @@ class _ReaderPageState extends State<ReaderPage> {
         }
       });
       _markFirstPageReady(page);
+      if (_currentReadingViewHasBytes()) _scheduleEndPrompt();
       if (!widget.skipAiCache && _useAiVersion) {
         unawaited(
           _applyCachedAiPage(
@@ -1602,19 +1617,21 @@ class _ReaderPageState extends State<ReaderPage> {
 
   // ---- 双页配对 ----
   (int, int?) pairOf(int page) {
+    final b = _book;
+    if (b == null || page < 0 || page >= b.pageCount) return (page, null);
     if (_mode == ReadMode.webtoon || _dual == DualPageMode.off) {
       return (page, null);
     }
-    final b = _book;
-    if (b == null) return (page, null);
     final isManga = _mode == ReadMode.manga;
     if (_skipCover && page == 0) return (0, null);
     int base = _skipCover
         ? 1 + ((page - 1) - (page - 1) % 2)
         : page - (page % 2);
     final first = base, second = base + 1;
+    // Validate source-page bounds before swapping for manga reading direction.
+    // Otherwise an incomplete final spread can include a nonexistent page.
+    if (first < 0 || second >= b.pageCount) return (page, null);
     final left = isManga ? second : first, right = isManga ? first : second;
-    if (right >= b.pageCount) return (left, null);
     return (left, right);
   }
 
@@ -1880,36 +1897,53 @@ class _ReaderPageState extends State<ReaderPage> {
     if (book == null) return;
     final requestedPage = int.tryParse(value.trim());
     if (requestedPage != null) {
-      final page = (requestedPage - 1).clamp(0, book.pageCount - 1);
-      final waitingForFirstPage = _openStage == BookOpenStage.loadingFirstPage;
-      setState(() {
-        _page = page;
-        _viewIndex = _viewOfPage(page);
-        if (waitingForFirstPage) _initialPageIndex = page;
-      });
-      if (waitingForFirstPage) {
-        _firstPageLogged = false;
-        _firstPageWatch = Stopwatch()..start();
-      }
-      _observeCurrentCompletion();
-      if (_mode == ReadMode.webtoon) {
-        _scrollWebtoonToPage(page);
-        _disposeDistantPhotoCtrls();
-      } else {
-        _photoCtrlOf(page).reset();
-        _scaleStateCtrlOf(page).reset();
-        _dualZoomCtrl.value = Matrix4.identity();
-        _pageCtrl?.jumpToPage(_viewIndex);
-        _disposeDistantPhotoCtrls();
-        _ensureVisiblePagedPages(page);
-      }
-      if (waitingForFirstPage && _bytes.containsKey(page)) {
-        _markFirstPageReady(page);
-      }
-      _pumpPageLoadQueue();
-      _scheduleEndPrompt();
+      _navigateToPage(requestedPage - 1);
     }
     Navigator.of(ctx).pop();
+  }
+
+  void _navigateToPage(int requestedPage) {
+    final book = _book;
+    if (book == null || book.pageCount <= 0) return;
+    final page = requestedPage.clamp(0, book.pageCount - 1);
+    final waitingForFirstPage = _openStage == BookOpenStage.loadingFirstPage;
+    setState(() {
+      _page = page;
+      _viewIndex = _viewOfPage(page);
+      if (waitingForFirstPage) _initialPageIndex = page;
+    });
+    if (waitingForFirstPage) {
+      _firstPageLogged = false;
+      _firstPageWatch = Stopwatch()..start();
+    }
+    _observeCurrentCompletion();
+    if (_mode == ReadMode.webtoon) {
+      _scrollWebtoonToPage(page);
+      _disposeDistantPhotoCtrls();
+    } else {
+      _photoCtrlOf(page).reset();
+      _scaleStateCtrlOf(page).reset();
+      _dualZoomCtrl.value = Matrix4.identity();
+      _pageCtrl?.jumpToPage(_viewIndex);
+      _disposeDistantPhotoCtrls();
+      _ensureVisiblePagedPages(page);
+    }
+    if (waitingForFirstPage && _bytes.containsKey(page)) {
+      _markFirstPageReady(page);
+    }
+    _pumpPageLoadQueue();
+    final source = widget.source;
+    if (source != null) {
+      unawaited(
+        LibraryStore.instance.recordRead(
+          source: source,
+          path: widget.path,
+          title: widget.title,
+          page: page,
+        ),
+      );
+    }
+    _scheduleEndPrompt();
   }
 
   // ---- 键盘(可自定义的 5 个动作) ----
@@ -1970,6 +2004,15 @@ class _ReaderPageState extends State<ReaderPage> {
   ///
   /// 为什么不判断"翻过末页"：实测各模式（双页/条漫）下落点与方向判断难以覆盖，
   /// 且末页配对容易越界导致不触发；改为"到达末屏即计时"最稳且不打断阅读。
+  bool _currentReadingViewHasBytes() {
+    final book = _book;
+    if (book == null || _page < 0 || _page >= book.pageCount) return false;
+    if (_mode == ReadMode.webtoon) return _bytes.containsKey(_page);
+    final (firstPage, secondPage) = pairOf(_page);
+    return _bytes.containsKey(firstPage) &&
+        (secondPage == null || _bytes.containsKey(secondPage));
+  }
+
   void _scheduleEndPrompt() {
     final b = _book;
     final total = _mode == ReadMode.webtoon ? b?.pageCount ?? 0 : _viewCount();
@@ -1983,6 +2026,13 @@ class _ReaderPageState extends State<ReaderPage> {
       _endPrompted = false;
       return;
     }
+    // A history record can open directly on the final view. Start the prompt
+    // timer only after the visible page or spread has finished loading.
+    if (!_currentReadingViewHasBytes()) {
+      _endTimer?.cancel();
+      _endTimer = null;
+      return;
+    }
     if (_endPrompted || _endTimer != null) return;
     _endTimer = Timer(const Duration(seconds: 3), () {
       _endTimer = null;
@@ -1993,30 +2043,43 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _showEndPrompt() async {
-    final again = await showRchDialog<bool>(
+    final action = await showRchDialog<_EndPromptAction>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('已经读到最后一页'),
         content: const Text('要不要再随机挑一本接着看？'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(c).pop(false),
+            onPressed: () =>
+                Navigator.of(c).pop(_EndPromptAction.exitToDetails),
             child: const Text('退出到漫画详情页'),
           ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(c).pop(_EndPromptAction.backToFirstPage),
+            child: const Text('回到漫画第一页'),
+          ),
           FilledButton(
-            onPressed: () => Navigator.of(c).pop(true),
+            onPressed: () =>
+                Navigator.of(c).pop(_EndPromptAction.pickRandomBook),
             child: const Text('再随机一本'),
           ),
         ],
       ),
     );
     if (!mounted) return;
-    if (again != true) {
-      // 退出到漫画详情页：关闭阅读器
-      Navigator.of(context).pop();
+    if (action == _EndPromptAction.backToFirstPage) {
+      _navigateToPage(0);
       return;
     }
-    await _openRandomBook();
+    if (action == _EndPromptAction.pickRandomBook) {
+      await _openRandomBook();
+      return;
+    }
+    if (action == _EndPromptAction.exitToDetails || action == null) {
+      // 退出到漫画详情页：关闭阅读器
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _openRandomBook() async {

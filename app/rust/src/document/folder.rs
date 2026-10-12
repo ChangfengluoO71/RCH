@@ -9,7 +9,7 @@ use super::comicinfo::read_comicinfo;
 use super::{Document, DocumentMeta};
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"];
 
@@ -88,35 +88,41 @@ pub fn is_comic_folder(dir_path: &str) -> bool {
 }
 
 pub struct FolderBook {
-    files: Vec<String>, // 图片文件绝对路径,自然排序
+    files: Vec<PathBuf>, // 图片文件路径,自然排序
     meta: DocumentMeta,
 }
 
 impl FolderBook {
     pub fn open(dir_path: &str) -> Result<Self> {
         let p = Path::new(dir_path);
-        if !p.is_dir() {
-            anyhow::bail!("不是目录: {dir_path}");
+        let metadata =
+            fs::metadata(p).with_context(|| format!("检查漫画目录失败: {dir_path:?}"))?;
+        if !metadata.is_dir() {
+            anyhow::bail!("漫画路径不是目录: {dir_path:?}");
         }
         let mut files = Vec::new();
-        for entry in fs::read_dir(p).context("读取目录失败")? {
-            let entry = entry.context("读取目录条目失败")?;
+        for entry in fs::read_dir(p).with_context(|| format!("读取漫画目录失败: {dir_path:?}"))?
+        {
+            let entry = entry.with_context(|| format!("读取漫画目录条目失败: {dir_path:?}"))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') || name.starts_with("__MACOSX") {
                 continue;
             }
-            let ft = entry.file_type().context("获取文件类型失败")?;
+            let entry_path = entry.path();
+            let ft = entry
+                .file_type()
+                .with_context(|| format!("读取漫画目录项类型失败: {entry_path:?}"))?;
             if ft.is_dir() {
                 continue;
             }
             if is_image_name(&name) {
-                files.push(entry.path().to_string_lossy().to_string());
+                files.push(entry_path);
             }
         }
         if files.is_empty() {
             anyhow::bail!("目录下没有图片文件: {dir_path}");
         }
-        files.sort_by(|a, b| crate::util::natural_cmp(a, b));
+        files.sort_by(|a, b| crate::util::natural_cmp(&a.to_string_lossy(), &b.to_string_lossy()));
         let title = p
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
@@ -175,7 +181,7 @@ impl Document for FolderBook {
             .files
             .get(index as usize)
             .with_context(|| format!("页索引越界: {index}"))?;
-        fs::read(file_path).context("读取图片文件失败")
+        fs::read(file_path).with_context(|| format!("读取图片文件失败: {file_path:?}"))
     }
 }
 
@@ -215,6 +221,53 @@ mod tests {
         let b2 = book.page_bytes(2).unwrap();
         assert_eq!(b2, b"ten");
         assert!(book.page_bytes(3).is_err());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn folder_book_page_read_error_includes_image_path() {
+        let tmp = std::env::temp_dir().join(format!(
+            "rch_test_folder_missing_page_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&tmp).unwrap();
+        let page = tmp.join("0020.jpg");
+        fs::write(&page, b"image").unwrap();
+
+        let book = FolderBook::open(tmp.to_str().unwrap()).unwrap();
+        fs::remove_file(&page).unwrap();
+
+        let error = book.page_bytes(0).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("0020.jpg"), "unexpected error: {message}");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_book_preserves_native_image_path_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "rch_test_folder_native_path_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&tmp).unwrap();
+        let page = tmp.join(std::ffi::OsStr::from_bytes(b"0020-\xff.jpg"));
+        fs::write(&page, b"image").unwrap();
+
+        let book = FolderBook::open(tmp.to_str().unwrap()).unwrap();
+        assert_eq!(book.page_bytes(0).unwrap(), b"image");
 
         let _ = fs::remove_dir_all(&tmp);
     }

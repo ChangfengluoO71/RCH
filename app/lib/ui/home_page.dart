@@ -12,6 +12,7 @@ import 'package:app/store/library_catalog.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/models.dart';
+import 'package:app/store/profile_timing.dart';
 import 'package:app/store/quark_session.dart';
 import 'package:app/store/random_read_selector.dart';
 import 'package:app/store/storage_access.dart';
@@ -687,7 +688,15 @@ class _HomePageState extends State<HomePage> {
         name: '导入的漫画',
         path: booksPath,
       );
-      await store.addSource(src);
+      try {
+        await store.addSource(src);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('文件已导入，但创建本地书源失败：$e')));
+        return;
+      }
     }
 
     if (!mounted) return;
@@ -2910,6 +2919,8 @@ class _AddDialogState extends State<AddSourceDialog> {
   /// 115 扫码设备（默认 wechatmini 等冷门设备，避免挤掉网页端/App 旧登录）。
   String _qrApp = 'wechatmini';
   bool _t = false;
+  String _busyLabel = '正在添加…';
+  int _busyRequestId = 0;
   String? _e;
 
   @override
@@ -2931,6 +2942,22 @@ class _AddDialogState extends State<AddSourceDialog> {
         curve: Curves.easeOut,
       );
     });
+  }
+
+  int? _startBusy(String label) {
+    if (_t) return null;
+    final requestId = ++_busyRequestId;
+    setState(() {
+      _t = true;
+      _busyLabel = label;
+      _e = null;
+    });
+    return requestId;
+  }
+
+  void _finishBusy(int requestId) {
+    if (!mounted || requestId != _busyRequestId) return;
+    setState(() => _t = false);
   }
 
   String get _baiduKey => _appKey.text.trim();
@@ -3043,15 +3070,25 @@ class _AddDialogState extends State<AddSourceDialog> {
         _setError('请填写目录路径');
         return;
       }
-      await LibraryStore.instance.addSource(
-        BookSource(
-          id: 'local_${DateTime.now().millisecondsSinceEpoch}',
-          type: 'local',
-          name: n.isEmpty ? _b.text.trim() : n,
-          path: _b.text.trim(),
-        ),
-      );
-      if (mounted) Navigator.of(context).pop();
+      setState(() {
+        _t = true;
+        _e = null;
+      });
+      try {
+        await LibraryStore.instance.addSource(
+          BookSource(
+            id: 'local_${DateTime.now().millisecondsSinceEpoch}',
+            type: 'local',
+            name: n.isEmpty ? _b.text.trim() : n,
+            path: _b.text.trim(),
+          ),
+        );
+        if (mounted) Navigator.of(context).pop();
+      } catch (e) {
+        _setError('添加书源失败:$e');
+      } finally {
+        if (mounted) setState(() => _t = false);
+      }
     }
   }
 
@@ -3098,15 +3135,18 @@ class _AddDialogState extends State<AddSourceDialog> {
       _setError('请先「扫码获取 Cookie」（无需 APP ID），或展开高级选项走官方 APP ID 模式授权');
       return;
     }
-    setState(() {
-      _t = true;
-      _e = null;
-    });
+    final busyRequestId = _startBusy(
+      cookie.isNotEmpty ? '正在验证 115 Cookie 并添加书源…' : '正在连接 115 并添加书源…',
+    );
+    if (busyRequestId == null) return;
     try {
       if (cookie.isNotEmpty) {
-        final s = await cloud115CookieConnect(
-          cookie: cookie,
-          rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
+        final s = await withProfileTiming(
+          'cloud_115_cookie_connect',
+          () => cloud115CookieConnect(
+            cookie: cookie,
+            rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
+          ),
         );
         await LibraryStore.instance.addSource(
           BookSource(
@@ -3119,10 +3159,13 @@ class _AddDialogState extends State<AddSourceDialog> {
           ),
         );
       } else {
-        final s = await cloud115Connect(
-          refreshToken: rt,
-          appId: _appId,
-          rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
+        final s = await withProfileTiming(
+          'cloud_115_token_connect',
+          () => cloud115Connect(
+            refreshToken: rt,
+            appId: _appId,
+            rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
+          ),
         );
         await LibraryStore.instance.addSource(
           BookSource(
@@ -3140,7 +3183,7 @@ class _AddDialogState extends State<AddSourceDialog> {
     } catch (e) {
       _setError('连接失败:$e');
     } finally {
-      if (mounted) setState(() => _t = false);
+      _finishBusy(busyRequestId);
     }
   }
 
@@ -3150,14 +3193,15 @@ class _AddDialogState extends State<AddSourceDialog> {
       _setError('请粘贴夸克网盘 Cookie（pan.quark.cn 登录后 F12 复制）');
       return;
     }
-    setState(() {
-      _t = true;
-      _e = null;
-    });
+    final busyRequestId = _startBusy('正在验证夸克 Cookie 并添加书源…');
+    if (busyRequestId == null) return;
     try {
-      final s = await quarkConnect(
-        cookie: cookie,
-        rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
+      final s = await withProfileTiming(
+        'cloud_quark_cookie_connect',
+        () => quarkConnect(
+          cookie: cookie,
+          rootId: _rootId.text.trim().isEmpty ? '0' : _rootId.text.trim(),
+        ),
       );
       await LibraryStore.instance.addSource(
         BookSource(
@@ -3173,7 +3217,7 @@ class _AddDialogState extends State<AddSourceDialog> {
     } catch (e) {
       _setError('连接失败:$e');
     } finally {
-      if (mounted) setState(() => _t = false);
+      _finishBusy(busyRequestId);
     }
   }
 
@@ -3247,13 +3291,12 @@ class _AddDialogState extends State<AddSourceDialog> {
       _setError('未配置 115 APP ID（必填：展开高级选项填写）');
       return;
     }
-    setState(() {
-      _t = true;
-      _e = null;
-    });
+    final busyRequestId = _startBusy('正在获取 115 授权二维码…');
+    if (busyRequestId == null) return;
     try {
-      final qr = await cloud115QrStart(
-        appId: _appId,
+      final qr = await withProfileTiming(
+        'cloud_115_qr_start',
+        () => cloud115QrStart(appId: _appId),
       ).timeout(const Duration(seconds: 20));
       if (!mounted) return;
       await showRchDialog<void>(
@@ -3281,16 +3324,14 @@ class _AddDialogState extends State<AddSourceDialog> {
     } catch (e) {
       if (mounted) _setError('获取 115 二维码失败（请检查网络/代理后重试）:$e');
     } finally {
-      if (mounted) setState(() => _t = false);
+      _finishBusy(busyRequestId);
     }
   }
 
   /// 115 网页扫码获取 Cookie：弹二维码 → 115 App 扫码 → 自动填 Cookie（无需 APP ID）。
   Future<void> _cloud115CookieAuthorize() async {
-    setState(() {
-      _t = true;
-      _e = null;
-    });
+    final busyRequestId = _startBusy('正在获取 115 扫码登录二维码…');
+    if (busyRequestId == null) return;
     try {
       final cookie = await scanCloud115Cookie(
         context,
@@ -3306,16 +3347,14 @@ class _AddDialogState extends State<AddSourceDialog> {
         });
       }
     } finally {
-      if (mounted) setState(() => _t = false);
+      _finishBusy(busyRequestId);
     }
   }
 
   /// 115：浏览网盘目录并选中根文件夹（选中的 `cid` 自动填进「根文件夹 ID」）。
   Future<void> _browse115RootFolder() async {
-    setState(() {
-      _t = true;
-      _e = null;
-    });
+    final busyRequestId = _startBusy('正在连接 115 并读取网盘目录…');
+    if (busyRequestId == null) return;
     try {
       final choice = await _pick115RootFolder(
         context: context,
@@ -3333,16 +3372,14 @@ class _AddDialogState extends State<AddSourceDialog> {
     } catch (error) {
       if (mounted) _setError('浏览 115 文件夹失败：$error');
     } finally {
-      if (mounted) setState(() => _t = false);
+      _finishBusy(busyRequestId);
     }
   }
 
   /// 夸克：扫码获取 Cookie（手机夸克 App），成功后自动填入 Cookie 输入框。
   Future<void> _scanQuarkCookie() async {
-    setState(() {
-      _t = true;
-      _e = null;
-    });
+    final busyRequestId = _startBusy('正在获取夸克扫码登录二维码…');
+    if (busyRequestId == null) return;
     try {
       final cookie = await scanQuarkCookie(
         context,
@@ -3357,16 +3394,14 @@ class _AddDialogState extends State<AddSourceDialog> {
         });
       }
     } finally {
-      if (mounted) setState(() => _t = false);
+      _finishBusy(busyRequestId);
     }
   }
 
   /// 夸克：浏览网盘目录并选中根文件夹（选中的 fid 自动填进「根文件夹 ID」）。
   Future<void> _browseQuarkRootFolder() async {
-    setState(() {
-      _t = true;
-      _e = null;
-    });
+    final busyRequestId = _startBusy('正在连接夸克并读取网盘目录…');
+    if (busyRequestId == null) return;
     try {
       final choice = await _pickQuarkRootFolder(
         context: context,
@@ -3384,7 +3419,7 @@ class _AddDialogState extends State<AddSourceDialog> {
     } catch (error) {
       if (mounted) _setError('浏览夸克文件夹失败：$error');
     } finally {
-      if (mounted) setState(() => _t = false);
+      _finishBusy(busyRequestId);
     }
   }
 
@@ -3777,7 +3812,23 @@ class _AddDialogState extends State<AddSourceDialog> {
       ),
       FilledButton(
         onPressed: _t ? null : _submit,
-        child: Text(_t ? '测试中…' : '添加'),
+        child: _t
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(_busyLabel),
+                ],
+              )
+            : const Text('添加'),
       ),
     ],
   );

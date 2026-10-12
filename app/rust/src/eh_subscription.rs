@@ -3,9 +3,9 @@
 //! 设计边界（与 SPEC §12「不做在线漫画站聚合」并存的插件边界，见
 //! `docs/research/eh-subscription-115-feasibility.md` §5.1）：
 //! * **只读来源**：仅访问 EH 元数据接口与 `.torrent` 文件；绝不读取图片、不解析压缩包内容。
-//! * **写出口唯一**：只写 `<out_dir>/*.torrent` 与 `<out_dir>/manifest.json`；
-//!   不触碰书源、SQLite 目录、canonical metadata 或任何阅读数据。
-//! * **默认不自动运行**：必须由用户在设置页显式点击。
+//! * **资源输出边界**：种子与 manifest 只写入用户指定的 `<out_dir>`；运行设置与可选 Daily
+//!   状态保存在既有应用支持目录 `eh_subscription_rules.json` 配置中，不触碰阅读数据。
+//! * **默认关闭**：手动点击收集；Daily 仅在用户显式启用后、Windows 应用运行期间调度。
 //!
 //! 所有接口契约均来自 2026-09-22 的实测（探针 `examples/eh_subscription_probe.rs`）：
 //! * gdata 必须 **POST JSON**：`{"method":"gdata","gidlist":[[gid,token],...],"namespace":1}`；
@@ -18,12 +18,15 @@
 //! * 种子直链 `https://ehtracker.org/get/<gid>/<infohash>.torrent`，无需 Referer。
 
 use std::collections::HashSet;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use sha2::{Digest as _, Sha256};
 
 use crate::eh_tag_translation;
 
@@ -44,6 +47,113 @@ pub struct AgeTier {
     pub min_age_years: f64,
     /// 该档位要求的种子下载数下限。
     pub min_downloads: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EhProxyMode {
+    System,
+    Direct,
+    Manual,
+}
+
+impl Default for EhProxyMode {
+    fn default() -> Self {
+        Self::System
+    }
+}
+
+impl EhProxyMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Direct => "direct",
+            Self::Manual => "manual",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EhNetworkSettings {
+    pub mode: EhProxyMode,
+    pub proxy_url: String,
+}
+
+impl Default for EhNetworkSettings {
+    fn default() -> Self {
+        Self {
+            mode: EhProxyMode::System,
+            proxy_url: String::new(),
+        }
+    }
+}
+
+impl EhNetworkSettings {
+    fn validate(&self) -> Result<(), String> {
+        if self.mode != EhProxyMode::Manual {
+            return Ok(());
+        }
+
+        let raw = self.proxy_url.trim();
+        let url = reqwest::Url::parse(raw).map_err(|_| "手动代理 URL 无效".to_string())?;
+        if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h")
+            || url.host_str().is_none()
+            || url.port().is_none_or(|port| port == 0)
+            || (url.path() != "" && url.path() != "/")
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err("手动代理 URL 无效：需要 HTTP(S) 或 SOCKS5 代理及有效端口".into());
+        }
+        reqwest::Proxy::all(raw).map_err(|_| "手动代理 URL 无效".to_string())?;
+        Ok(())
+    }
+}
+
+/// EH 插件的可选 Daily 设置与最近一次运行记录，随既有规则配置文件保存。
+/// 旧规则文件缺少此字段时保持关闭，Rust 规则往返序列化也会保留该状态。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EhAutomationSettings {
+    pub daily_enabled: bool,
+    pub last_auto_attempt_date: Option<String>,
+    pub last_run: Option<EhAutomationRun>,
+}
+
+impl Default for EhAutomationSettings {
+    fn default() -> Self {
+        Self {
+            daily_enabled: false,
+            last_auto_attempt_date: None,
+            last_run: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EhAutomationRun {
+    /// Local calendar date captured when this run was claimed.
+    pub date: String,
+    /// `manual` or `daily_auto`.
+    pub source: String,
+    /// `claimed`, `running`, `completed`, `failed`, `cancelled`, or `interrupted_unknown`.
+    pub status: String,
+    pub saved: usize,
+    pub error: Option<String>,
+}
+
+impl Default for EhAutomationRun {
+    fn default() -> Self {
+        Self {
+            date: String::new(),
+            source: "manual".into(),
+            status: "failed".into(),
+            saved: 0,
+            error: None,
+        }
+    }
 }
 
 impl Default for AgeTier {
@@ -86,6 +196,10 @@ pub struct EhRules {
     pub request_interval_secs: f64,
     /// 仅用于验证分档逻辑：把"当前时间"往后偏移 N 天再算画龄。正常使用保持 0。
     pub now_offset_days: i64,
+    /// EH main-site and Tracker requests share this explicit network policy.
+    pub network: EhNetworkSettings,
+    /// Opt-in scheduler state; excluded from EH filtering decisions.
+    pub automation: EhAutomationSettings,
 }
 
 impl Default for EhRules {
@@ -126,13 +240,18 @@ impl Default for EhRules {
             host: DEFAULT_HOST.into(),
             request_interval_secs: 2.5,
             now_offset_days: 0,
+            network: EhNetworkSettings::default(),
+            automation: EhAutomationSettings::default(),
         }
     }
 }
 
 impl EhRules {
     pub fn from_json(text: &str) -> Result<Self, String> {
-        serde_json::from_str(text).map_err(|e| format!("规则 JSON 解析失败：{e}"))
+        let rules: Self =
+            serde_json::from_str(text).map_err(|e| format!("规则 JSON 解析失败：{e}"))?;
+        rules.network.validate()?;
+        Ok(rules)
     }
 
     pub fn to_json(&self) -> String {
@@ -242,12 +361,32 @@ struct Client {
 }
 
 impl Client {
-    fn new(host: &str, interval: Duration) -> Result<Self, String> {
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none())
+    fn new(host: &str, interval: Duration, network: &EhNetworkSettings) -> Result<Self, String> {
+        Self::new_with_timeout(host, interval, network, Duration::from_secs(30))
+    }
+
+    fn new_with_timeout(
+        host: &str,
+        interval: Duration,
+        network: &EhNetworkSettings,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        let mut builder = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none());
+        network.validate()?;
+        builder = match network.mode {
+            EhProxyMode::System => builder,
+            EhProxyMode::Direct => builder.no_proxy(),
+            EhProxyMode::Manual => {
+                let proxy = reqwest::Proxy::all(network.proxy_url.trim())
+                    .map_err(|_| "手动代理配置无效".to_string())?;
+                builder.proxy(proxy)
+            }
+        };
+        let http = builder
             .build()
-            .map_err(|e| format!("创建 HTTP 客户端失败：{e}"))?;
+            .map_err(|_| "创建 EH HTTP 客户端失败".to_string())?;
         Ok(Self {
             http,
             host: host.to_string(),
@@ -261,9 +400,11 @@ impl Client {
             .get(url)
             .header("User-Agent", UA)
             .send()
-            .map_err(|e| format!("请求失败：{e}"))?;
+            .map_err(|e| safe_network_error("EH 请求", &e))?;
         let status = resp.status().as_u16();
-        let body = resp.text().unwrap_or_default();
+        let body = resp
+            .text()
+            .map_err(|e| safe_network_error("EH 响应读取", &e))?;
         if status == 403 || status == 503 || is_challenge(&body) {
             return Err(format!("EH 返回 {status}（可能被限流或需要 Cookie）"));
         }
@@ -279,14 +420,42 @@ impl Client {
             .get(url)
             .header("User-Agent", UA)
             .send()
-            .map_err(|e| format!("下载失败：{e}"))?;
+            .map_err(|e| safe_network_error("Torrent 请求", &e))?;
         let status = resp.status().as_u16();
         if status >= 400 {
             return Err(format!("下载返回 {status}"));
         }
         resp.bytes()
             .map(|b| b.to_vec())
-            .map_err(|e| format!("读取响应失败：{e}"))
+            .map_err(|e| safe_network_error("Torrent 响应读取", &e))
+    }
+
+    fn get_probe_response(&self, url: &str) -> Result<ProbeResponse, String> {
+        use std::io::Read;
+
+        let response = self
+            .http
+            .get(url)
+            .header("User-Agent", UA)
+            .send()
+            .map_err(|e| safe_network_error("诊断请求", &e))?;
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let mut limited = response.take(1024 * 1024);
+        let mut bytes = Vec::new();
+        limited
+            .read_to_end(&mut bytes)
+            .map_err(|_| "诊断响应读取失败".to_string())?;
+        Ok(ProbeResponse {
+            status,
+            content_type,
+            body: String::from_utf8_lossy(&bytes).into_owned(),
+        })
     }
 
     /// 实测契约：POST JSON，`gidlist` 为 `[[gid, token], ...]`，一次最多 25 项。
@@ -311,8 +480,10 @@ impl Client {
             .header("Content-Type", "application/json")
             .body(payload)
             .send()
-            .map_err(|e| format!("gdata 请求失败：{e}"))?;
-        let body = resp.text().unwrap_or_default();
+            .map_err(|e| safe_network_error("gdata 请求", &e))?;
+        let body = resp
+            .text()
+            .map_err(|e| safe_network_error("gdata 响应读取", &e))?;
         let value: serde_json::Value =
             serde_json::from_str(&body).map_err(|e| format!("gdata 非 JSON：{e}"))?;
         if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
@@ -326,10 +497,21 @@ impl Client {
     }
 }
 
+fn safe_network_error(action: &str, error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        format!("{action}超时")
+    } else if error.is_connect() {
+        format!("{action}连接失败（DNS、代理、TCP 或 TLS）")
+    } else {
+        format!("{action}失败")
+    }
+}
+
 fn is_challenge(body: &str) -> bool {
+    let body = body.to_ascii_lowercase();
     body.contains("cf-challenge")
-        || body.contains("Just a moment")
-        || body.contains("<title>Attention Required")
+        || body.contains("just a moment")
+        || body.contains("<title>attention required")
 }
 
 /// 多词标签必须写成 `other:"high resolution"$`；裸词不带 `$` 实测会返回无关结果。
@@ -749,6 +931,1225 @@ pub fn read_manifest(out_dir: &str) -> Vec<EhSavedItem> {
         .unwrap_or_default()
 }
 
+struct ManifestSnapshot {
+    items: Vec<EhSavedItem>,
+    /// Keep unknown fields from older/future compatible records intact on rewrite.
+    rows: Vec<serde_json::Value>,
+}
+
+impl ManifestSnapshot {
+    fn empty() -> Self {
+        Self {
+            items: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ManifestReadError {
+    Unreadable(std::io::Error),
+    Damaged(serde_json::Error),
+}
+
+impl std::fmt::Display for ManifestReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreadable(error) => write!(formatter, "manifest unreadable: {error}"),
+            Self::Damaged(error) => write!(formatter, "manifest damaged: {error}"),
+        }
+    }
+}
+
+fn load_manifest_for_collection(out_dir: &Path) -> Result<ManifestSnapshot, ManifestReadError> {
+    let root = out_dir
+        .canonicalize()
+        .map_err(ManifestReadError::Unreadable)?;
+    let path = out_dir.join("manifest.json");
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ManifestSnapshot::empty())
+        }
+        Err(error) => return Err(ManifestReadError::Unreadable(error)),
+        Ok(_) => {}
+    }
+
+    let canonical = path.canonicalize().map_err(ManifestReadError::Unreadable)?;
+    if !canonical.starts_with(&root) {
+        return Err(ManifestReadError::Unreadable(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "manifest path escapes output directory",
+        )));
+    }
+    match std::fs::metadata(&canonical) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return Err(ManifestReadError::Unreadable(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "manifest is not a regular file",
+            )))
+        }
+        Err(error) => return Err(ManifestReadError::Unreadable(error)),
+    }
+
+    load_manifest_from_reader(&canonical, |path| std::fs::read(path))
+}
+
+fn load_manifest_from_reader<F>(path: &Path, read: F) -> Result<ManifestSnapshot, ManifestReadError>
+where
+    F: FnOnce(&Path) -> std::io::Result<Vec<u8>>,
+{
+    let bytes = match read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ManifestSnapshot::empty())
+        }
+        Err(error) => return Err(ManifestReadError::Unreadable(error)),
+    };
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&bytes).map_err(ManifestReadError::Damaged)?;
+    let items = rows
+        .iter()
+        .cloned()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<EhSavedItem>, _>>()
+        .map_err(ManifestReadError::Damaged)?;
+    Ok(ManifestSnapshot { items, rows })
+}
+
+#[derive(Debug)]
+enum ManifestCommitError {
+    Read(ManifestReadError),
+    Lock(std::io::Error),
+    Conflict,
+    Write(std::io::Error),
+}
+
+impl std::fmt::Display for ManifestCommitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(error) => write!(formatter, "{error}"),
+            Self::Lock(error) => write!(formatter, "manifest write lock failed: {error}"),
+            Self::Conflict => write!(formatter, "manifest concurrent modification conflict"),
+            Self::Write(error) => write!(formatter, "manifest write failed: {error}"),
+        }
+    }
+}
+
+#[cfg(windows)]
+struct ManifestCommitLock {
+    handle: *mut std::ffi::c_void,
+}
+
+#[cfg(unix)]
+struct ManifestCommitLock {
+    _directory: std::fs::File,
+}
+
+#[cfg(not(any(windows, unix)))]
+struct ManifestCommitLock;
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CreateMutexW(
+        attributes: *mut std::ffi::c_void,
+        initial_owner: i32,
+        name: *const u16,
+    ) -> *mut std::ffi::c_void;
+    fn WaitForSingleObject(handle: *mut std::ffi::c_void, milliseconds: u32) -> u32;
+    fn ReleaseMutex(handle: *mut std::ffi::c_void) -> i32;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+}
+
+#[cfg(windows)]
+impl Drop for ManifestCommitLock {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = ReleaseMutex(self.handle);
+            let _ = CloseHandle(self.handle);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn acquire_manifest_commit_lock(out_dir: &Path) -> Result<ManifestCommitLock, ManifestCommitError> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_ABANDONED: u32 = 0x80;
+    const WAIT_TIMEOUT: u32 = 258;
+
+    let canonical = out_dir.canonicalize().map_err(ManifestCommitError::Lock)?;
+    let identity = canonical.to_string_lossy().to_lowercase();
+    let name = format!(
+        "Local\\RCH-EH-Manifest-{:x}",
+        Sha256::digest(identity.as_bytes())
+    );
+    let wide_name: Vec<u16> = std::ffi::OsStr::new(&name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, wide_name.as_ptr()) };
+    if handle.is_null() {
+        return Err(ManifestCommitError::Lock(std::io::Error::last_os_error()));
+    }
+
+    match unsafe { WaitForSingleObject(handle, 2_000) } {
+        WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(ManifestCommitLock { handle }),
+        WAIT_TIMEOUT => {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            Err(ManifestCommitError::Conflict)
+        }
+        _ => {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            Err(ManifestCommitError::Lock(error))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn acquire_manifest_commit_lock(out_dir: &Path) -> Result<ManifestCommitLock, ManifestCommitError> {
+    let directory = std::fs::File::open(out_dir).map_err(ManifestCommitError::Lock)?;
+    for _ in 0..200 {
+        match fs2::FileExt::try_lock_exclusive(&directory) {
+            Ok(()) => {
+                return Ok(ManifestCommitLock {
+                    _directory: directory,
+                })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(ManifestCommitError::Lock(error)),
+        }
+    }
+    Err(ManifestCommitError::Conflict)
+}
+
+#[cfg(not(any(windows, unix)))]
+fn acquire_manifest_commit_lock(
+    _out_dir: &Path,
+) -> Result<ManifestCommitLock, ManifestCommitError> {
+    Err(ManifestCommitError::Lock(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "manifest writer locking is unsupported on this platform",
+    )))
+}
+
+fn commit_manifest_additions(
+    out_dir: &Path,
+    additions: &[EhSavedItem],
+) -> Result<usize, ManifestCommitError> {
+    if additions.is_empty() {
+        return Ok(0);
+    }
+
+    let _lock = acquire_manifest_commit_lock(out_dir)?;
+    let mut latest = load_manifest_for_collection(out_dir).map_err(ManifestCommitError::Read)?;
+    let mut known: HashSet<String> = latest
+        .items
+        .iter()
+        .map(|item| item.infohash.to_ascii_lowercase())
+        .collect();
+    let mut added = 0usize;
+
+    for item in additions {
+        if !known.insert(item.infohash.to_ascii_lowercase()) {
+            continue;
+        }
+        let row = serde_json::to_value(item).map_err(|error| {
+            ManifestCommitError::Write(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+        })?;
+        latest.items.push(item.clone());
+        latest.rows.push(row);
+        added += 1;
+    }
+    if added == 0 {
+        return Ok(0);
+    }
+
+    let path = manifest_path(&out_dir.to_string_lossy());
+    atomic_write_manifest(&path, &latest.rows).map_err(ManifestCommitError::Write)?;
+    let verified = load_manifest_for_collection(out_dir).map_err(ManifestCommitError::Read)?;
+    if verified.rows != latest.rows || verified.items.len() != latest.items.len() {
+        return Err(ManifestCommitError::Write(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "manifest read-back did not match the committed history",
+        )));
+    }
+    Ok(added)
+}
+
+static MANIFEST_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct ManifestTempGuard {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl Drop for ManifestTempGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn create_manifest_temp(target: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let base = target
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("manifest.json"))
+        .to_string_lossy();
+    for _ in 0..128 {
+        let sequence = MANIFEST_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(".{base}.rch-tmp-{}-{sequence}", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "unable to allocate unique manifest temp file",
+    ))
+}
+
+fn atomic_write_manifest(target: &Path, rows: &[serde_json::Value]) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(rows)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    atomic_write_manifest_with(
+        target,
+        rows,
+        &bytes,
+        |file, bytes| {
+            file.write_all(bytes)?;
+            file.flush()?;
+            file.sync_all()
+        },
+        |source, destination| std::fs::rename(source, destination),
+    )
+}
+
+fn atomic_write_manifest_with<W, R>(
+    target: &Path,
+    expected_rows: &[serde_json::Value],
+    bytes: &[u8],
+    write_temp: W,
+    replace: R,
+) -> std::io::Result<()>
+where
+    W: FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
+    R: FnOnce(&Path, &Path) -> std::io::Result<()>,
+{
+    let encoded_rows: Vec<serde_json::Value> = serde_json::from_slice(bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if encoded_rows != expected_rows {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "serialized manifest differs from intended rows",
+        ));
+    }
+
+    let (temp_path, mut temp_file) = create_manifest_temp(target)?;
+    let mut guard = ManifestTempGuard {
+        path: temp_path.clone(),
+        committed: false,
+    };
+    write_temp(&mut temp_file, bytes)?;
+    drop(temp_file);
+
+    let temp_bytes = std::fs::read(&temp_path)?;
+    let written_rows: Vec<serde_json::Value> = serde_json::from_slice(&temp_bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if written_rows != expected_rows {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "temporary manifest validation failed",
+        ));
+    }
+
+    // Both paths are in the same directory. The destination is never removed first.
+    replace(&temp_path, target)?;
+    guard.committed = true;
+
+    let installed_bytes = std::fs::read(target)?;
+    let installed_rows: Vec<serde_json::Value> = serde_json::from_slice(&installed_bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if installed_rows != expected_rows {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "committed manifest validation failed",
+        ));
+    }
+    sync_manifest_parent(target)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_manifest_parent(target: &Path) -> std::io::Result<()> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_manifest_parent(_target: &Path) -> std::io::Result<()> {
+    // Windows has no portable std API for opening and syncing a directory handle.
+    Ok(())
+}
+
+/// Persist EH rules through the existing config path. The temporary file stays
+/// beside the target, and the old config is never removed first.
+pub fn save_rules_atomic(target: &Path, rules: &EhRules) -> Result<(), String> {
+    let _lock = acquire_rules_config_lock(target)?;
+    save_rules_atomic_unlocked(target, rules)
+}
+
+fn save_rules_atomic_unlocked(target: &Path, rules: &EhRules) -> Result<(), String> {
+    rules.network.validate()?;
+    let bytes =
+        serde_json::to_vec_pretty(rules).map_err(|error| format!("序列化 EH 规则失败：{error}"))?;
+    let (temp_path, mut temp_file) =
+        create_manifest_temp(target).map_err(|error| format!("创建规则临时文件失败：{error}"))?;
+    let mut guard = ManifestTempGuard {
+        path: temp_path.clone(),
+        committed: false,
+    };
+
+    let write_result = temp_file
+        .write_all(&bytes)
+        .and_then(|()| temp_file.flush())
+        .and_then(|()| temp_file.sync_all());
+    drop(temp_file);
+    write_result.map_err(|error| format!("写入 EH 规则失败：{error}"))?;
+
+    let validate = |path: &Path| -> Result<(), String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| format!("读取待提交 EH 规则失败：{error}"))?;
+        let saved = EhRules::from_json(&text)?;
+        if saved != *rules {
+            return Err("EH 规则读回校验不一致".into());
+        }
+        Ok(())
+    };
+    validate(&temp_path)?;
+
+    // Windows replacement behavior is covered by the R0 Windows regression;
+    // on Unix, same-directory rename atomically replaces the prior file.
+    std::fs::rename(&temp_path, target).map_err(|error| format!("替换 EH 规则失败：{error}"))?;
+    guard.committed = true;
+    validate(target)?;
+    sync_manifest_parent(target).map_err(|error| format!("同步 EH 规则目录失败：{error}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+struct RulesConfigLock {
+    handle: *mut std::ffi::c_void,
+}
+
+#[cfg(unix)]
+struct RulesConfigLock {
+    _directory: std::fs::File,
+}
+
+#[cfg(not(any(windows, unix)))]
+struct RulesConfigLock;
+
+#[cfg(windows)]
+impl Drop for RulesConfigLock {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = ReleaseMutex(self.handle);
+            let _ = CloseHandle(self.handle);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn rules_mutex_name(target: &Path, purpose: &str) -> Result<Vec<u16>, String> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|error| format!("解析 EH 配置目录失败：{error}"))?;
+    let file_name = target
+        .file_name()
+        .ok_or_else(|| "EH 配置路径缺少文件名".to_string())?;
+    let identity = canonical_parent
+        .join(file_name)
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_lowercase();
+    let name = format!(
+        "Local\\RCH-EH-{purpose}-{:x}",
+        Sha256::digest(identity.as_bytes())
+    );
+    Ok(std::ffi::OsStr::new(&name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect())
+}
+
+#[cfg(windows)]
+fn acquire_named_rules_mutex(
+    target: &Path,
+    purpose: &str,
+    timeout_ms: u32,
+) -> Result<Option<*mut std::ffi::c_void>, String> {
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_ABANDONED: u32 = 0x80;
+    const WAIT_TIMEOUT: u32 = 258;
+
+    let name = rules_mutex_name(target, purpose)?;
+    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
+    if handle.is_null() {
+        return Err(format!(
+            "创建 EH {purpose} 互斥锁失败：{}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    match unsafe { WaitForSingleObject(handle, timeout_ms) } {
+        WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Some(handle)),
+        WAIT_TIMEOUT => {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            Ok(None)
+        }
+        _ => {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            Err(format!("等待 EH {purpose} 互斥锁失败：{error}"))
+        }
+    }
+}
+
+fn acquire_rules_config_lock(target: &Path) -> Result<RulesConfigLock, String> {
+    #[cfg(windows)]
+    {
+        let handle = acquire_named_rules_mutex(target, "Rules", 5_000)?
+            .ok_or_else(|| "EH 规则仍被另一个 RCH 进程修改，已安全取消本次写入".to_string())?;
+        return Ok(RulesConfigLock { handle });
+    }
+
+    #[cfg(unix)]
+    {
+        use fs2::FileExt as _;
+        let parent = target.parent().unwrap_or_else(|| Path::new("."));
+        let directory = std::fs::File::open(parent)
+            .map_err(|error| format!("打开 EH 配置目录互斥锁失败：{error}"))?;
+        for _ in 0..500 {
+            match directory.try_lock_exclusive() {
+                Ok(()) => {
+                    return Ok(RulesConfigLock {
+                        _directory: directory,
+                    })
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(format!("获取 EH 规则互斥锁失败：{error}")),
+            }
+        }
+        return Err("EH 规则仍被另一个进程修改，已安全取消本次写入".into());
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = target;
+        Err("当前平台不支持 EH 规则跨进程互斥".into())
+    }
+}
+
+pub fn with_rules_config_lock<T>(
+    target: &Path,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _lock = acquire_rules_config_lock(target)?;
+    operation()
+}
+
+#[cfg(windows)]
+pub struct EhCollectionLock {
+    handle: *mut std::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl Drop for EhCollectionLock {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = ReleaseMutex(self.handle);
+            let _ = CloseHandle(self.handle);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub struct EhCollectionLock;
+
+/// Try to hold a configuration-scoped Windows lease for the duration of one
+/// EH collection. Settings and reading do not acquire this lease.
+pub fn try_acquire_collection_lock(target: &Path) -> Result<Option<EhCollectionLock>, String> {
+    #[cfg(windows)]
+    {
+        return Ok(acquire_named_rules_mutex(target, "Collection", 0)?
+            .map(|handle| EhCollectionLock { handle }));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        Ok(Some(EhCollectionLock))
+    }
+}
+
+/// Returns whether another process currently owns this config's collection
+/// lease. An abandoned mutex means its former owner exited and is not active.
+pub fn collection_is_active(target: &Path) -> Result<bool, String> {
+    Ok(try_acquire_collection_lock(target)?.is_none())
+}
+
+fn read_rules_for_update(target: &Path) -> Result<EhRules, String> {
+    let text = std::fs::read_to_string(target)
+        .map_err(|error| format!("读取 EH 规则失败，已停止状态更新：{error}"))?;
+    EhRules::from_json(&text)
+}
+
+/// Save changed user rule fields against the latest disk version. Daily state
+/// is owned by the dedicated operations below and can never be overwritten by
+/// a stale whole-file snapshot from another process.
+pub fn save_rules_merged(
+    target: &Path,
+    base_json: &str,
+    desired_json: &str,
+) -> Result<String, String> {
+    let _lock = acquire_rules_config_lock(target)?;
+    let base_value: serde_json::Value = serde_json::from_str(base_json)
+        .map_err(|error| format!("EH 规则基线 JSON 无效：{error}"))?;
+    let desired_value: serde_json::Value = serde_json::from_str(desired_json)
+        .map_err(|error| format!("EH 规则 JSON 无效：{error}"))?;
+    EhRules::from_json(base_json)?;
+    EhRules::from_json(desired_json)?;
+
+    let latest = read_rules_for_update(target)?;
+    let mut merged =
+        serde_json::to_value(latest).map_err(|error| format!("序列化现有 EH 规则失败：{error}"))?;
+    let desired = desired_value
+        .as_object()
+        .ok_or_else(|| "EH 规则必须是 JSON 对象".to_string())?;
+    let base = base_value
+        .as_object()
+        .ok_or_else(|| "EH 规则基线必须是 JSON 对象".to_string())?;
+    let merged_object = merged
+        .as_object_mut()
+        .ok_or_else(|| "现有 EH 规则必须是 JSON 对象".to_string())?;
+
+    for key in base.keys().chain(desired.keys()) {
+        if key == "automation" || base.get(key) == desired.get(key) {
+            continue;
+        }
+        match desired.get(key) {
+            Some(value) => {
+                merged_object.insert(key.clone(), value.clone());
+            }
+            None => {
+                merged_object.remove(key);
+            }
+        }
+    }
+
+    let rules = EhRules::from_json(&merged.to_string())?;
+    save_rules_atomic_unlocked(target, &rules)?;
+    Ok(rules.to_json())
+}
+
+pub fn set_daily_enabled(target: &Path, enabled: bool) -> Result<String, String> {
+    let _lock = acquire_rules_config_lock(target)?;
+    let mut rules = read_rules_for_update(target)?;
+    rules.automation.daily_enabled = enabled;
+    save_rules_atomic_unlocked(target, &rules)?;
+    Ok(rules.to_json())
+}
+
+fn is_valid_local_date_key(value: &str) -> bool {
+    let parts: Vec<_> = value.split('-').collect();
+    if parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return false;
+    }
+    let (Ok(year), Ok(month), Ok(day)) = (
+        parts[0].parse::<u32>(),
+        parts[1].parse::<u32>(),
+        parts[2].parse::<u32>(),
+    ) else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    day >= 1 && day <= days_in_month
+}
+
+pub fn claim_daily(target: &Path, date: &str) -> Result<(bool, String), String> {
+    if !is_valid_local_date_key(date) {
+        return Err("EH Daily 日期格式无效，已停止领取".into());
+    }
+    let _lock = acquire_rules_config_lock(target)?;
+    let mut rules = read_rules_for_update(target)?;
+    let active_run = rules.automation.last_run.as_ref().is_some_and(|run| {
+        matches!(run.status.as_str(), "claimed" | "running")
+    });
+    if active_run || collection_is_active(target)? {
+        return Ok((false, rules.to_json()));
+    }
+    if !rules.automation.daily_enabled {
+        return Ok((false, rules.to_json()));
+    }
+    if let Some(last_attempt) = rules.automation.last_auto_attempt_date.as_deref() {
+        if !is_valid_local_date_key(last_attempt) {
+            return Err("EH Daily 已保存日期损坏，已停止领取".into());
+        }
+        if date <= last_attempt {
+            return Ok((false, rules.to_json()));
+        }
+    }
+
+    rules.automation.last_auto_attempt_date = Some(date.to_string());
+    rules.automation.last_run = Some(EhAutomationRun {
+        date: date.to_string(),
+        source: "daily_auto".into(),
+        status: "claimed".into(),
+        saved: 0,
+        error: None,
+    });
+    save_rules_atomic_unlocked(target, &rules)?;
+    Ok((true, rules.to_json()))
+}
+
+pub fn update_daily_run(target: &Path, requested: EhAutomationRun) -> Result<String, String> {
+    if !is_valid_local_date_key(&requested.date)
+        || !matches!(requested.source.as_str(), "manual" | "daily_auto")
+        || !matches!(
+            requested.status.as_str(),
+            "running" | "completed" | "failed" | "cancelled" | "interrupted_unknown"
+        )
+    {
+        return Err("EH Daily 运行状态无效，已停止写入".into());
+    }
+
+    let _lock = acquire_rules_config_lock(target)?;
+    let mut rules = read_rules_for_update(target)?;
+    let current = rules.automation.last_run.as_ref();
+    let collection_active = collection_is_active(target)?;
+    let allowed = match requested.status.as_str() {
+        "running" if requested.source == "daily_auto" => current.is_some_and(|run| {
+            rules.automation.daily_enabled
+                && !collection_active
+                && run.date == requested.date
+                && run.source == requested.source
+                && run.status == "claimed"
+        }),
+        "running" => {
+            requested.source == "manual"
+                && !collection_active
+                && current.is_none_or(|run| !matches!(run.status.as_str(), "claimed" | "running"))
+        }
+        "completed" | "failed" | "cancelled" | "interrupted_unknown" => {
+            current.is_some_and(|run| {
+                run.date == requested.date
+                    && run.source == requested.source
+                    && matches!(run.status.as_str(), "claimed" | "running")
+            })
+        }
+        _ => false,
+    };
+    if !allowed {
+        return Err("EH Daily 状态迁移不适用、已被更新或重复，已停止覆盖".into());
+    }
+    rules.automation.last_run = Some(requested);
+    save_rules_atomic_unlocked(target, &rules)?;
+    Ok(rules.to_json())
+}
+
+pub fn validate_daily_collection_start(
+    target: &Path,
+    date: &str,
+    source: &str,
+) -> Result<(), String> {
+    if source == "manual" {
+        return Ok(());
+    }
+    if source != "daily_auto" || !is_valid_local_date_key(date) {
+        return Err("EH 自动收集启动参数无效，已停止请求".into());
+    }
+
+    let _lock = acquire_rules_config_lock(target)?;
+    let rules = read_rules_for_update(target)?;
+    let matches_running_claim = rules.automation.last_run.as_ref().is_some_and(|run| {
+        run.date == date && run.source == "daily_auto" && run.status == "running"
+    });
+    if !rules.automation.daily_enabled
+        || rules.automation.last_auto_attempt_date.as_deref() != Some(date)
+        || !matches_running_claim
+    {
+        return Err("EH Daily 已关闭或领取状态已变化，未发起扫描。".into());
+    }
+    Ok(())
+}
+
+/// Recover stale claimed/running state only when no process still owns the
+/// configuration-scoped collection lease.
+pub fn recover_daily_run(target: &Path) -> Result<String, String> {
+    let _lock = acquire_rules_config_lock(target)?;
+    let mut rules = read_rules_for_update(target)?;
+    let Some(current) = rules.automation.last_run.as_ref() else {
+        return Ok(rules.to_json());
+    };
+    if !matches!(current.status.as_str(), "claimed" | "running") || collection_is_active(target)? {
+        return Ok(rules.to_json());
+    }
+
+    let mut recovered = current.clone();
+    recovered.status = "interrupted_unknown".into();
+    recovered.error = Some("上次进程退出时任务尚未结束，远端结果未知；本轮不会自动重试。".into());
+    rules.automation.last_run = Some(recovered);
+    save_rules_atomic_unlocked(target, &rules)?;
+    Ok(rules.to_json())
+}
+
+const MAX_TORRENT_METADATA_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_BENCODE_DEPTH: usize = 128;
+const MAX_BENCODE_VALUES: usize = 1_000_000;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EhManifestReadStatus {
+    Unconfigured,
+    Missing,
+    Empty,
+    Ready,
+    Damaged,
+    Unreadable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EhSavedFileStatus {
+    Present,
+    Missing,
+    UnsafePath,
+    NotRegularFile,
+    Unreadable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EhTorrentValidationStatus {
+    Valid,
+    SizeMismatch,
+    InvalidTorrent,
+    InfohashMismatch,
+    TooLarge,
+    Unreadable,
+    NotChecked,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EhCheckedManifestEntry {
+    pub item: EhSavedItem,
+    pub file_status: EhSavedFileStatus,
+    pub validation_status: EhTorrentValidationStatus,
+    /// Available only for a relative path confirmed to remain inside `out_dir`.
+    pub full_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EhManifestCheck {
+    pub status: EhManifestReadStatus,
+    pub entries: Vec<EhCheckedManifestEntry>,
+    pub invalid_entries: usize,
+    /// Fixed internal category only; never includes paths or filesystem error text.
+    pub error_code: Option<String>,
+}
+
+impl EhManifestCheck {
+    fn new(status: EhManifestReadStatus) -> Self {
+        Self {
+            status,
+            entries: Vec::new(),
+            invalid_entries: 0,
+            error_code: None,
+        }
+    }
+}
+
+/// Read the local manifest without changing the legacy `read_manifest` contract.
+/// Only the configured directory, its `manifest.json`, and files referenced by
+/// that manifest are touched; the directory is never enumerated.
+pub fn read_manifest_checked(out_dir: &Path) -> EhManifestCheck {
+    if out_dir.as_os_str().is_empty() {
+        return EhManifestCheck::new(EhManifestReadStatus::Unconfigured);
+    }
+
+    let root = match out_dir.canonicalize() {
+        Ok(root) if root.is_dir() => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return EhManifestCheck::new(EhManifestReadStatus::Missing);
+        }
+        _ => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("output_directory_unreadable".into());
+            return report;
+        }
+    };
+
+    let manifest = match out_dir.join("manifest.json").canonicalize() {
+        Ok(manifest) if manifest.starts_with(&root) => manifest,
+        Ok(_) => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("manifest_path_escapes_output_directory".into());
+            return report;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return EhManifestCheck::new(EhManifestReadStatus::Missing);
+        }
+        Err(_) => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("manifest_unreadable".into());
+            return report;
+        }
+    };
+
+    match std::fs::metadata(&manifest) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("manifest_not_regular_file".into());
+            return report;
+        }
+        Err(_) => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("manifest_unreadable".into());
+            return report;
+        }
+    }
+
+    let bytes = match std::fs::read(&manifest) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("manifest_unreadable".into());
+            return report;
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Damaged);
+            report.error_code = Some("manifest_json_invalid".into());
+            return report;
+        }
+    };
+    let Some(rows) = value.as_array() else {
+        let mut report = EhManifestCheck::new(EhManifestReadStatus::Damaged);
+        report.error_code = Some("manifest_root_not_array".into());
+        return report;
+    };
+
+    let mut report = EhManifestCheck::new(EhManifestReadStatus::Ready);
+    for row in rows {
+        match serde_json::from_value::<EhSavedItem>(row.clone()) {
+            Ok(item) => report.entries.push(check_saved_item(&root, item)),
+            Err(_) => report.invalid_entries += 1,
+        }
+    }
+
+    if report.invalid_entries > 0 {
+        report.status = EhManifestReadStatus::Damaged;
+        report.error_code = Some("manifest_entries_invalid".into());
+    } else if rows.is_empty() {
+        report.status = EhManifestReadStatus::Empty;
+    }
+    report
+}
+
+fn check_saved_item(root: &Path, item: EhSavedItem) -> EhCheckedManifestEntry {
+    let (file_status, path) = resolve_manifest_file(root, &item.file);
+    let validation_status = if file_status == EhSavedFileStatus::Present {
+        match path.as_deref() {
+            Some(path) => validate_torrent_file(path, &item),
+            None => EhTorrentValidationStatus::NotChecked,
+        }
+    } else {
+        EhTorrentValidationStatus::NotChecked
+    };
+
+    EhCheckedManifestEntry {
+        item,
+        file_status,
+        validation_status,
+        full_path: path.map(|path| path.to_string_lossy().into_owned()),
+    }
+}
+
+fn resolve_manifest_file(root: &Path, relative: &str) -> (EhSavedFileStatus, Option<PathBuf>) {
+    let path = Path::new(relative);
+    let components: Vec<&str> = relative
+        .split(|character| character == '/' || character == '\\')
+        .collect();
+    let has_drive_prefix = components.first().is_some_and(|component| {
+        let bytes = component.as_bytes();
+        bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+    });
+
+    if relative.is_empty()
+        || relative.contains('\0')
+        || path.is_absolute()
+        || relative.starts_with('/')
+        || relative.starts_with('\\')
+        || has_drive_prefix
+        || components
+            .iter()
+            .any(|component| component.is_empty() || *component == "." || *component == "..")
+    {
+        return (EhSavedFileStatus::UnsafePath, None);
+    }
+
+    let mut resolved = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        resolved.push(component);
+        match std::fs::symlink_metadata(&resolved) {
+            Ok(_) => {
+                let canonical = match resolved.canonicalize() {
+                    Ok(canonical) if canonical.starts_with(root) => canonical,
+                    Ok(_) | Err(_) => return (EhSavedFileStatus::UnsafePath, None),
+                };
+                if index + 1 < components.len() {
+                    if !canonical.is_dir() {
+                        return (EhSavedFileStatus::NotRegularFile, Some(canonical));
+                    }
+                } else if !canonical.is_file() {
+                    return (EhSavedFileStatus::NotRegularFile, Some(canonical));
+                }
+                resolved = canonical;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                for remaining in components.iter().skip(index + 1) {
+                    resolved.push(remaining);
+                }
+                return (EhSavedFileStatus::Missing, Some(resolved));
+            }
+            Err(_) => return (EhSavedFileStatus::Unreadable, None),
+        }
+    }
+
+    (EhSavedFileStatus::Present, Some(resolved))
+}
+
+fn validate_torrent_file(path: &Path, item: &EhSavedItem) -> EhTorrentValidationStatus {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return EhTorrentValidationStatus::Unreadable,
+    };
+    let metadata = match file.metadata() {
+        Ok(metadata) if metadata.is_file() => metadata,
+        _ => return EhTorrentValidationStatus::Unreadable,
+    };
+    if item.bytes < 0 || metadata.len() != item.bytes as u64 {
+        return EhTorrentValidationStatus::SizeMismatch;
+    }
+    if metadata.len() > MAX_TORRENT_METADATA_BYTES {
+        return EhTorrentValidationStatus::TooLarge;
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    let mut limited = file.take(MAX_TORRENT_METADATA_BYTES + 1);
+    if limited.read_to_end(&mut bytes).is_err() {
+        return EhTorrentValidationStatus::Unreadable;
+    }
+    if bytes.len() as u64 > MAX_TORRENT_METADATA_BYTES {
+        return EhTorrentValidationStatus::TooLarge;
+    }
+
+    match torrent_v1_infohash(&bytes) {
+        Some(infohash) if infohash.eq_ignore_ascii_case(&item.infohash) => {
+            EhTorrentValidationStatus::Valid
+        }
+        Some(_) => EhTorrentValidationStatus::InfohashMismatch,
+        None => EhTorrentValidationStatus::InvalidTorrent,
+    }
+}
+
+fn torrent_v1_infohash(bytes: &[u8]) -> Option<String> {
+    let mut parser = BencodeParser::new(bytes);
+    if parser.bytes.first().copied()? != b'd' {
+        return None;
+    }
+    parser.position = 1;
+    let mut previous_key: Option<&[u8]> = None;
+    let mut info_range = None;
+
+    loop {
+        if parser.bytes.get(parser.position).copied()? == b'e' {
+            parser.position += 1;
+            break;
+        }
+        let key = parser.parse_bytes()?;
+        if previous_key.is_some_and(|previous| previous >= key) {
+            return None;
+        }
+        previous_key = Some(key);
+        let start = parser.position;
+        let kind = parser.parse_value(1)?;
+        if key == b"info" {
+            if kind != BencodeKind::Dictionary || info_range.is_some() {
+                return None;
+            }
+            info_range = Some((start, parser.position));
+        }
+    }
+
+    if parser.position != bytes.len() {
+        return None;
+    }
+    let (start, end) = info_range?;
+    let digest = ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, &bytes[start..end]);
+    let hex = b"0123456789abcdef";
+    let mut infohash = String::with_capacity(digest.as_ref().len() * 2);
+    for byte in digest.as_ref() {
+        infohash.push(hex[(byte >> 4) as usize] as char);
+        infohash.push(hex[(byte & 0x0f) as usize] as char);
+    }
+    Some(infohash)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BencodeKind {
+    Dictionary,
+    List,
+    Integer,
+    Bytes,
+}
+
+struct BencodeParser<'a> {
+    bytes: &'a [u8],
+    position: usize,
+    values: usize,
+}
+
+impl<'a> BencodeParser<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            position: 0,
+            values: 0,
+        }
+    }
+
+    fn parse_value(&mut self, depth: usize) -> Option<BencodeKind> {
+        if depth > MAX_BENCODE_DEPTH || self.values >= MAX_BENCODE_VALUES {
+            return None;
+        }
+        self.values += 1;
+        match self.bytes.get(self.position).copied()? {
+            b'i' => {
+                self.parse_integer()?;
+                Some(BencodeKind::Integer)
+            }
+            b'l' => {
+                self.position += 1;
+                while self.bytes.get(self.position).copied()? != b'e' {
+                    self.parse_value(depth + 1)?;
+                }
+                self.position += 1;
+                Some(BencodeKind::List)
+            }
+            b'd' => {
+                self.position += 1;
+                let mut previous_key: Option<&[u8]> = None;
+                while self.bytes.get(self.position).copied()? != b'e' {
+                    let key = self.parse_bytes()?;
+                    if previous_key.is_some_and(|previous| previous >= key) {
+                        return None;
+                    }
+                    previous_key = Some(key);
+                    self.parse_value(depth + 1)?;
+                }
+                self.position += 1;
+                Some(BencodeKind::Dictionary)
+            }
+            b'0'..=b'9' => {
+                self.parse_bytes()?;
+                Some(BencodeKind::Bytes)
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_bytes(&mut self) -> Option<&'a [u8]> {
+        let start = self.position;
+        while self
+            .bytes
+            .get(self.position)
+            .is_some_and(u8::is_ascii_digit)
+        {
+            self.position += 1;
+        }
+        if self.position == start || self.bytes.get(self.position).copied()? != b':' {
+            return None;
+        }
+        let digits = &self.bytes[start..self.position];
+        if digits.len() > 1 && digits[0] == b'0' {
+            return None;
+        }
+        let length = std::str::from_utf8(digits).ok()?.parse::<usize>().ok()?;
+        self.position += 1;
+        let end = self.position.checked_add(length)?;
+        let value = self.bytes.get(self.position..end)?;
+        self.position = end;
+        Some(value)
+    }
+
+    fn parse_integer(&mut self) -> Option<()> {
+        self.position += 1;
+        let start = self.position;
+        while self.bytes.get(self.position).copied()? != b'e' {
+            self.position += 1;
+        }
+        let digits = self.bytes.get(start..self.position)?;
+        let number = std::str::from_utf8(digits).ok()?;
+        let unsigned = number.strip_prefix('-').unwrap_or(number);
+        if unsigned.is_empty()
+            || !unsigned.bytes().all(|byte| byte.is_ascii_digit())
+            || (unsigned.len() > 1 && unsigned.starts_with('0'))
+            || number == "-0"
+        {
+            return None;
+        }
+        self.position += 1;
+        Some(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
@@ -782,7 +2183,7 @@ pub fn match_gallery_full(
     } else {
         rules.host.trim()
     };
-    let client = Client::new(host, rules.interval())?;
+    let client = Client::new(host, rules.interval(), &rules.network)?;
     // 放宽策略：先把"作品名 + 卷/话号"作为首个锚点（便于命中对应卷/话），
     // 再退回纯作品名与创作者锚点。
     let anchors = crate::eh_match::search_anchors_with_number(work_title, creators, number);
@@ -872,13 +2273,51 @@ pub fn match_gallery_anchors(work_title: &str, creators: &[String]) -> Vec<Strin
 /// 连通性预检结果（供 UI 显示；不抛错，让调用方决定是否继续）。
 #[derive(Debug, Clone, Serialize)]
 pub struct EhProbe {
+    pub mode: String,
+    pub checked_at_unix_ms: u128,
     pub host: String,
     pub host_ok: bool,
     pub host_detail: String,
+    pub host_elapsed_ms: u128,
+    pub host_challenge_suspected: bool,
     /// 种子直链所在的 tracker 域名（固定 ehtracker.org，与主站分开）
     pub tracker: String,
+    /// Tracker 根路径的 HTTP 可达性；不代表已验证 Torrent 数据。
     pub tracker_ok: bool,
     pub tracker_detail: String,
+    pub tracker_elapsed_ms: u128,
+    pub tracker_challenge_suspected: bool,
+    pub tracker_torrent_validated: bool,
+}
+
+#[derive(Debug)]
+struct ProbeResponse {
+    status: u16,
+    content_type: String,
+    body: String,
+}
+
+fn unix_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or_default()
+}
+
+fn challenge_suspected(status: u16, body: &str) -> bool {
+    status == 403 || is_challenge(body)
+}
+
+fn effective_eh_page(response: &ProbeResponse) -> bool {
+    let body = response.body.to_lowercase();
+    response.status == 200
+        && response
+            .content_type
+            .to_ascii_lowercase()
+            .contains("text/html")
+        && body.contains("<html")
+        && body.len() > 500
+        && !is_challenge(&body)
 }
 
 /// 探测主站与 tracker 是否可达。
@@ -892,36 +2331,87 @@ pub fn probe_connectivity(rules: &EhRules) -> EhProbe {
     } else {
         rules.host.trim().to_string()
     };
-    let client = match Client::new(&host, Duration::from_millis(500)) {
+    let mode = rules.network.mode.as_str().to_string();
+    let checked_at_unix_ms = unix_ms();
+    let mut probe = EhProbe {
+        mode,
+        checked_at_unix_ms,
+        host: host.clone(),
+        host_ok: false,
+        host_detail: "未探测".into(),
+        host_elapsed_ms: 0,
+        host_challenge_suspected: false,
+        tracker: "ehtracker.org".into(),
+        tracker_ok: false,
+        tracker_detail: "未探测".into(),
+        tracker_elapsed_ms: 0,
+        tracker_challenge_suspected: false,
+        tracker_torrent_validated: false,
+    };
+    let client = match Client::new_with_timeout(
+        &host,
+        Duration::from_millis(500),
+        &rules.network,
+        Duration::from_secs(8),
+    ) {
         Ok(c) => c,
         Err(e) => {
-            return EhProbe {
-                host: host.clone(),
-                host_ok: false,
-                host_detail: e,
-                tracker: "ehtracker.org".into(),
-                tracker_ok: false,
-                tracker_detail: "未探测".into(),
-            }
+            probe.host_detail = e;
+            probe.tracker_detail = "网络配置无效，未探测".into();
+            return probe;
         }
     };
-    let (host_ok, host_detail) = match client.get(&format!("https://{host}/")) {
-        Ok(body) if body.len() > 500 => (true, format!("HTTP 200，{} 字节", body.len())),
-        Ok(body) => (false, format!("返回内容异常（{} 字节）", body.len())),
-        Err(e) => (false, e),
-    };
-    let (tracker_ok, tracker_detail) = match client.get("https://ehtracker.org/") {
-        Ok(_) => (true, "可达".into()),
-        Err(e) => (false, e),
-    };
-    EhProbe {
-        host,
-        host_ok,
-        host_detail,
-        tracker: "ehtracker.org".into(),
-        tracker_ok,
-        tracker_detail,
+
+    let started = Instant::now();
+    match client.get_probe_response(&format!("https://{host}/")) {
+        Ok(response) => {
+            probe.host_elapsed_ms = started.elapsed().as_millis();
+            probe.host_challenge_suspected = challenge_suspected(response.status, &response.body);
+            probe.host_ok = effective_eh_page(&response);
+            let page_result = if probe.host_challenge_suspected {
+                "疑似挑战或访问限制"
+            } else if probe.host_ok {
+                "有效 HTML 页面"
+            } else {
+                "HTTP 响应不是有效 EH 页面"
+            };
+            probe.host_detail = format!(
+                "HTTP {}; {}; {} ms；DNS/TCP/TLS 分段由 reqwest blocking 未暴露",
+                response.status, page_result, probe.host_elapsed_ms
+            );
+        }
+        Err(error) => {
+            probe.host_elapsed_ms = started.elapsed().as_millis();
+            probe.host_detail = format!("{error}；{} ms", probe.host_elapsed_ms);
+        }
     }
+
+    let started = Instant::now();
+    match client.get_probe_response("https://ehtracker.org/") {
+        Ok(response) => {
+            probe.tracker_elapsed_ms = started.elapsed().as_millis();
+            probe.tracker_challenge_suspected =
+                challenge_suspected(response.status, &response.body);
+            probe.tracker_ok =
+                (200..400).contains(&response.status) && !probe.tracker_challenge_suspected;
+            probe.tracker_detail = format!(
+                "HTTP {}; {}；{} ms；仅验证域名响应，未验证 Torrent 数据",
+                response.status,
+                if probe.tracker_ok {
+                    "主机有响应"
+                } else {
+                    "不可达或受限"
+                },
+                probe.tracker_elapsed_ms
+            );
+        }
+        Err(error) => {
+            probe.tracker_elapsed_ms = started.elapsed().as_millis();
+            probe.tracker_detail = format!("{error}；{} ms", probe.tracker_elapsed_ms);
+        }
+    }
+    probe.checked_at_unix_ms = unix_ms();
+    probe
 }
 
 /// 执行一轮订阅扫描：搜索 → 元数据 → 本地筛选 → 查下载数 → 映射确认 → 保存。
@@ -961,13 +2451,20 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         return Err("请先选择保存目录".into());
     }
     std::fs::create_dir_all(&rules.out_dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    let initial_manifest = load_manifest_for_collection(Path::new(&rules.out_dir))
+        .map_err(|error| error.to_string())?;
+    let mut known: HashSet<String> = initial_manifest
+        .items
+        .iter()
+        .map(|item| item.infohash.to_ascii_lowercase())
+        .collect();
 
     let host = if rules.host.trim().is_empty() {
         DEFAULT_HOST.to_string()
     } else {
         rules.host.trim().to_string()
     };
-    let client = Client::new(&host, rules.interval())?;
+    let client = Client::new(&host, rules.interval(), &rules.network)?;
     let mut progress = EhProgress {
         running: true,
         stage: "searching".into(),
@@ -1037,8 +2534,7 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
         + rules.now_offset_days * 86400;
-    let mut manifest = read_manifest(&rules.out_dir);
-    let known: HashSet<String> = manifest.iter().map(|m| m.infohash.clone()).collect();
+    let mut new_items = Vec::new();
     let mut saved = 0usize;
 
     for item in items.iter() {
@@ -1096,7 +2592,7 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
                 progress.unmapped += 1;
                 continue;
             }
-            if known.contains(&hash) {
+            if known.contains(&hash.to_ascii_lowercase()) {
                 continue;
             }
             std::thread::sleep(client.interval);
@@ -1110,7 +2606,7 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
             let file_name = format!("{hash}-{}.torrent", sanitize_filename(&title_jpn));
             let path = Path::new(&rules.out_dir).join(&file_name);
             std::fs::write(&path, &bytes).map_err(|e| format!("写入种子失败：{e}"))?;
-            manifest.push(EhSavedItem {
+            new_items.push(EhSavedItem {
                 infohash: hash.clone(),
                 gid: gid.clone(),
                 title: title.clone(),
@@ -1141,6 +2637,7 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
                 saved_at_utc: fmt_utc(now),
                 semantic: derive_semantic(item, true, &rules.out_dir),
             });
+            known.insert(hash.to_ascii_lowercase());
             saved += 1;
             progress.saved = saved;
             emit(
@@ -1152,9 +2649,9 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         }
     }
 
-    let json =
-        serde_json::to_string_pretty(&manifest).map_err(|e| format!("清单序列化失败：{e}"))?;
-    std::fs::write(manifest_path(&rules.out_dir), json).map_err(|e| format!("写清单失败：{e}"))?;
+    saved = commit_manifest_additions(Path::new(&rules.out_dir), &new_items)
+        .map_err(|error| error.to_string())?;
+    progress.saved = saved;
 
     progress.running = false;
     progress.stage = "done".into();
@@ -1182,6 +2679,203 @@ pub fn collect_shared(rules: Arc<EhRules>, terminal: bool) -> Result<EhProgress,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    #[test]
+    fn legacy_rules_round_trip_with_system_proxy_mode() {
+        let rules = EhRules::from_json(r#"{"search":"language:chinese$","pages":3}"#)
+            .expect("legacy rules should remain valid");
+
+        let saved: serde_json::Value = serde_json::from_str(&rules.to_json()).unwrap();
+        assert_eq!(saved["search"], "language:chinese$");
+        assert_eq!(saved["network"]["mode"], "system");
+    }
+
+    #[test]
+    fn daily_automation_state_survives_rust_rules_round_trip() {
+        let rules = EhRules::from_json(
+            r#"{
+                "automation": {
+                    "daily_enabled": true,
+                    "last_auto_attempt_date": "2026-10-11",
+                    "last_run": {
+                        "date": "2026-10-11",
+                        "source": "daily_auto",
+                        "status": "completed",
+                        "saved": 3,
+                        "error": null
+                    }
+                }
+            }"#,
+        )
+        .expect("automation state should be accepted as an optional config section");
+
+        let round_trip: serde_json::Value = serde_json::from_str(&rules.to_json()).unwrap();
+        assert_eq!(round_trip["automation"]["daily_enabled"], true);
+        assert_eq!(
+            round_trip["automation"]["last_auto_attempt_date"],
+            "2026-10-11"
+        );
+        assert_eq!(round_trip["automation"]["last_run"]["saved"], 3);
+    }
+
+    #[test]
+    fn invalid_manual_proxy_is_rejected_without_echoing_credentials() {
+        let result = EhRules::from_json(
+            r#"{"network":{"mode":"manual","proxy_url":"http://user:secret@/"}}"#,
+        );
+
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("manual proxy URLs without a host must be rejected"),
+        };
+        assert!(!error.contains("secret"));
+    }
+
+    #[test]
+    fn challenge_detection_is_case_insensitive() {
+        assert!(is_challenge("<TITLE>Just A Moment</TITLE>"));
+        assert!(is_challenge("<title>Attention Required</title>"));
+        assert!(is_challenge("cf-challenge"));
+        assert!(!is_challenge(
+            "<html><title>EH</title><body>gallery</body></html>"
+        ));
+    }
+
+    #[test]
+    fn manual_socks5h_proxy_with_credentials_is_validated() {
+        let rules = EhRules::from_json(
+            r#"{"network":{"mode":"manual","proxy_url":"socks5h://user:secret@127.0.0.1:7891"}}"#,
+        )
+        .expect("SOCKS5H with a valid endpoint should be accepted");
+
+        assert_eq!(rules.network.mode, EhProxyMode::Manual);
+        assert_eq!(
+            rules.network.proxy_url,
+            "socks5h://user:secret@127.0.0.1:7891"
+        );
+    }
+
+    #[test]
+    fn invalid_manual_proxy_scheme_is_rejected() {
+        let result =
+            EhRules::from_json(r#"{"network":{"mode":"manual","proxy_url":"ftp://127.0.0.1:21"}}"#);
+
+        assert!(result.is_err());
+    }
+
+    fn serve_once(
+        listener: TcpListener,
+        response_body: &'static str,
+    ) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("request should reach listener");
+            let mut request = [0_u8; 2048];
+            let count = stream
+                .read(&mut request)
+                .expect("request should be readable");
+            let request = String::from_utf8_lossy(&request[..count]).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            )
+            .expect("test response should be writable");
+            request
+        })
+    }
+
+    #[test]
+    fn manual_proxy_receives_http_request_for_unresolvable_origin() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = serve_once(listener, "proxy response");
+        let network = EhNetworkSettings {
+            mode: EhProxyMode::Manual,
+            proxy_url: format!("http://{address}"),
+        };
+        let client = Client::new("e-hentai.org", Duration::ZERO, &network).unwrap();
+
+        let body = client
+            .http
+            .get("http://origin-that-does-not-resolve.invalid/check")
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
+        let request = server.join().unwrap();
+
+        assert_eq!(body, "proxy response");
+        assert!(request.starts_with("GET http://origin-that-does-not-resolve.invalid/check "));
+    }
+
+    #[test]
+    fn direct_mode_ignores_a_saved_manual_proxy_url() {
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin_address = origin.local_addr().unwrap();
+        let proxy_reservation = TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_proxy_address = proxy_reservation.local_addr().unwrap();
+        drop(proxy_reservation);
+        let server = serve_once(origin, "origin response");
+        let network = EhNetworkSettings {
+            mode: EhProxyMode::Direct,
+            proxy_url: format!("http://{dead_proxy_address}"),
+        };
+        let client = Client::new("e-hentai.org", Duration::ZERO, &network).unwrap();
+
+        let body = client
+            .http
+            .get(format!("http://{origin_address}/direct"))
+            .send()
+            .unwrap()
+            .text()
+            .unwrap();
+        let request = server.join().unwrap();
+
+        assert_eq!(body, "origin response");
+        assert!(request.starts_with("GET /direct "));
+    }
+
+    #[test]
+    fn manual_proxy_failure_does_not_fall_back_to_direct() {
+        let origin = TcpListener::bind("127.0.0.1:0").unwrap();
+        origin.set_nonblocking(true).unwrap();
+        let origin_address = origin.local_addr().unwrap();
+        let proxy_reservation = TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_proxy_address = proxy_reservation.local_addr().unwrap();
+        drop(proxy_reservation);
+        let origin_monitor = std::thread::spawn(move || {
+            for _ in 0..50 {
+                match origin.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ =
+                            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\norigin");
+                        return true;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("unexpected listener error: {error}"),
+                }
+            }
+            false
+        });
+        let network = EhNetworkSettings {
+            mode: EhProxyMode::Manual,
+            proxy_url: format!("http://{dead_proxy_address}"),
+        };
+        let client = Client::new("e-hentai.org", Duration::ZERO, &network).unwrap();
+
+        let response = client
+            .http
+            .get(format!("http://{origin_address}/must-not-fallback"))
+            .send();
+
+        assert!(response.is_err());
+        assert!(!origin_monitor.join().unwrap());
+    }
 
     #[test]
     fn required_dl_matches_declared_tiers() {
@@ -1274,6 +2968,28 @@ mod tests {
         let partial = EhRules::from_json(r#"{"min_rating":3.5}"#).expect("partial");
         assert_eq!(partial.min_rating, 3.5);
         assert_eq!(partial.pages, EhRules::default().pages);
+    }
+
+    #[test]
+    fn atomic_rule_save_replaces_existing_config_without_losing_daily_state() {
+        let dir = TestDir::new();
+        let path = dir.path().join("eh_subscription_rules.json");
+        std::fs::write(&path, r#"{"search":"old"}"#).unwrap();
+        let mut rules = EhRules::default();
+        rules.automation.daily_enabled = true;
+        rules.automation.last_auto_attempt_date = Some("2026-10-11".into());
+        rules.automation.last_run = Some(EhAutomationRun {
+            date: "2026-10-11".into(),
+            source: "daily_auto".into(),
+            status: "claimed".into(),
+            saved: 0,
+            error: None,
+        });
+
+        save_rules_atomic(&path, &rules).expect("validated atomic config replacement");
+
+        let saved = EhRules::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved, rules);
     }
 
     #[test]
@@ -1376,5 +3092,517 @@ mod tests {
         assert_eq!(a[0], "僕にしか触れないサキュバス三姉妹に搾られる話4");
         assert_eq!(a.len(), 3, "重复创作者名应去重");
         assert!(match_gallery_anchors("", &[]).is_empty());
+    }
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "rch-eh-handoff-{}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const HANDOFF_TORRENT: &[u8] = b"d8:announce23:http://tracker/announce4:infod6:lengthi123e4:name4:test12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaaee";
+    const HANDOFF_INFOHASH: &str = "54ada1b6bfdf4e7792774b033f0026c616dcd0cb";
+
+    fn handoff_item(file: &str, bytes: i64) -> EhSavedItem {
+        EhSavedItem {
+            infohash: HANDOFF_INFOHASH.into(),
+            gid: "1".into(),
+            title: "title".into(),
+            title_jpn: "标题 & 漫画".into(),
+            rating: 4.5,
+            downloads: 10,
+            required_dl: 0,
+            posted: None,
+            posted_utc: "2026-10-11".into(),
+            age_years: None,
+            tags: Vec::new(),
+            category: "Doujinshi".into(),
+            filecount: Some(1),
+            filesize: Some(123),
+            uploader: "uploader".into(),
+            torrent_name: "torrent".into(),
+            file: file.into(),
+            bytes,
+            source_url: "https://example.invalid/".into(),
+            saved_at_utc: "2026-10-11T00:00:00Z".into(),
+            semantic: EhSemantic::default(),
+        }
+    }
+
+    fn write_handoff_manifest(root: &Path, value: &serde_json::Value) {
+        std::fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec(value).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn manifest_item(infohash: &str, file: &str) -> EhSavedItem {
+        let mut item = handoff_item(file, HANDOFF_TORRENT.len() as i64);
+        item.infohash = infohash.into();
+        item
+    }
+
+    fn manifest_temp_files(root: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".rch-tmp-"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn collector_manifest_reader_distinguishes_missing_empty_damaged_and_unreadable() {
+        let root = TestDir::new();
+        assert!(matches!(
+            load_manifest_for_collection(root.path()),
+            Ok(snapshot) if snapshot.items.is_empty()
+        ));
+
+        std::fs::write(root.path().join("manifest.json"), b"[]").unwrap();
+        assert!(matches!(
+            load_manifest_for_collection(root.path()),
+            Ok(snapshot) if snapshot.items.is_empty()
+        ));
+
+        let damaged = b"[{not-json";
+        std::fs::write(root.path().join("manifest.json"), damaged).unwrap();
+        assert!(matches!(
+            load_manifest_for_collection(root.path()),
+            Err(ManifestReadError::Damaged(_))
+        ));
+        assert_eq!(
+            std::fs::read(root.path().join("manifest.json")).unwrap(),
+            damaged
+        );
+
+        assert!(matches!(
+            load_manifest_from_reader(&root.path().join("manifest.json"), |_| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected unreadable manifest",
+                ))
+            }),
+            Err(ManifestReadError::Unreadable(error))
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn damaged_manifest_stops_collection_before_client_creation_or_network_work() {
+        let root = TestDir::new();
+        let manifest = root.path().join("manifest.json");
+        let damaged = b"not-json";
+        std::fs::write(&manifest, damaged).unwrap();
+
+        let mut rules = EhRules::default();
+        rules.out_dir = root.path().to_string_lossy().into_owned();
+        rules.network.mode = EhProxyMode::Manual;
+        rules.network.proxy_url = "not a proxy URL".into();
+
+        let error = collect_inner(&rules, false).unwrap_err();
+        assert!(
+            error.contains("manifest damaged"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(std::fs::read(&manifest).unwrap(), damaged);
+        assert_eq!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "torrent"))
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn atomic_manifest_write_failures_leave_old_history_readable_and_remove_own_temp() {
+        let root = TestDir::new();
+        let target = root.path().join("manifest.json");
+        let old = serde_json::json!([{
+            "infohash": "old-history",
+            "file": "old.torrent",
+            "future_field": "preserved"
+        }]);
+        let rows = serde_json::json!([{
+            "infohash": "new-history",
+            "file": "new.torrent"
+        }]);
+        let old_bytes = serde_json::to_vec_pretty(&old).unwrap();
+        let new_bytes = serde_json::to_vec_pretty(&rows).unwrap();
+        std::fs::write(&target, &old_bytes).unwrap();
+
+        let write_error = atomic_write_manifest_with(
+            &target,
+            rows.as_array().unwrap(),
+            &new_bytes,
+            |file, _| {
+                file.write_all(b"[")?;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "injected temp write failure",
+                ))
+            },
+            |source, destination| std::fs::rename(source, destination),
+        )
+        .unwrap_err();
+        assert_eq!(write_error.kind(), std::io::ErrorKind::WriteZero);
+        assert_eq!(std::fs::read(&target).unwrap(), old_bytes);
+        assert!(manifest_temp_files(root.path()).is_empty());
+
+        let replace_error = atomic_write_manifest_with(
+            &target,
+            rows.as_array().unwrap(),
+            &new_bytes,
+            |file, bytes| {
+                file.write_all(bytes)?;
+                file.flush()?;
+                file.sync_all()
+            },
+            |_, _| {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected replace failure",
+                ))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(replace_error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(std::fs::read(&target).unwrap(), old_bytes);
+        assert!(manifest_temp_files(root.path()).is_empty());
+    }
+
+    #[test]
+    fn manifest_commit_creates_appends_deduplicates_and_preserves_unknown_history() {
+        let root = TestDir::new();
+        let out_dir = root.path().join("EH 订阅 & 测试 [A]");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let target = out_dir.join("manifest.json");
+        let first = manifest_item(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "中文 & one.torrent",
+        );
+
+        assert_eq!(
+            commit_manifest_additions(&out_dir, &[first.clone()]).unwrap(),
+            1
+        );
+        let loaded = load_manifest_for_collection(&out_dir).unwrap();
+        assert_eq!(loaded.items.len(), 1);
+        assert_eq!(loaded.items[0].file, first.file);
+
+        let mut old_row = serde_json::to_value(&first).unwrap();
+        old_row["future_field"] = serde_json::json!({ "keep": true });
+        std::fs::write(&target, serde_json::to_vec_pretty(&vec![old_row]).unwrap()).unwrap();
+        let second = manifest_item("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "第二个.torrent");
+        assert_eq!(
+            commit_manifest_additions(&out_dir, &[second.clone()]).unwrap(),
+            1
+        );
+
+        let after_append = load_manifest_for_collection(&out_dir).unwrap();
+        assert_eq!(after_append.items.len(), 2);
+        assert_eq!(after_append.rows[0]["future_field"]["keep"], true);
+        let committed_bytes = std::fs::read(&target).unwrap();
+        let uppercase_duplicate =
+            manifest_item("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "第二个.torrent");
+        assert_eq!(
+            commit_manifest_additions(&out_dir, &[uppercase_duplicate]).unwrap(),
+            0
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), committed_bytes);
+        assert!(manifest_temp_files(&out_dir).is_empty());
+        let names = std::fs::read_dir(&out_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec![std::ffi::OsString::from("manifest.json")]);
+    }
+
+    #[test]
+    fn abandoned_temp_manifest_is_never_read_as_the_official_manifest() {
+        let root = TestDir::new();
+        let stale = root.path().join(".manifest.json.rch-tmp-stale");
+        std::fs::write(&stale, b"[{\"looks\":\"valid\"}]").unwrap();
+
+        assert!(load_manifest_for_collection(root.path())
+            .unwrap()
+            .items
+            .is_empty());
+        assert_eq!(
+            read_manifest_checked(root.path()).status,
+            EhManifestReadStatus::Missing
+        );
+        assert!(stale.exists());
+    }
+
+    #[test]
+    fn concurrent_manifest_commits_serialize_and_preserve_both_updates() {
+        let root = TestDir::new();
+        let out_dir = root.path().join("并发 & 收藏");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let mut workers = Vec::new();
+
+        for (hash, file) in [
+            ("cccccccccccccccccccccccccccccccccccccccc", "one.torrent"),
+            ("dddddddddddddddddddddddddddddddddddddddd", "two.torrent"),
+        ] {
+            let barrier = Arc::clone(&barrier);
+            let out_dir = out_dir.clone();
+            let item = manifest_item(hash, file);
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                commit_manifest_additions(&out_dir, &[item])
+            }));
+        }
+
+        barrier.wait();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap().unwrap(), 1);
+        }
+        let loaded = load_manifest_for_collection(&out_dir).unwrap();
+        assert_eq!(loaded.items.len(), 2);
+        assert!(loaded.items.iter().any(|item| item.file == "one.torrent"));
+        assert!(loaded.items.iter().any(|item| item.file == "two.torrent"));
+    }
+
+    #[test]
+    fn checked_manifest_reports_missing_empty_and_damaged_without_rewriting() {
+        let root = TestDir::new();
+        assert_eq!(
+            read_manifest_checked(root.path()).status,
+            EhManifestReadStatus::Missing
+        );
+
+        write_handoff_manifest(root.path(), &serde_json::json!([]));
+        assert_eq!(
+            read_manifest_checked(root.path()).status,
+            EhManifestReadStatus::Empty
+        );
+
+        let damaged = b"[{not-json";
+        std::fs::write(root.path().join("manifest.json"), damaged).unwrap();
+        let report = read_manifest_checked(root.path());
+        assert_eq!(report.status, EhManifestReadStatus::Damaged);
+        assert_eq!(
+            std::fs::read(root.path().join("manifest.json")).unwrap(),
+            damaged,
+            "a failed read must never replace or clear the existing manifest"
+        );
+    }
+
+    #[test]
+    fn checked_manifest_keeps_valid_rows_when_one_row_is_malformed() {
+        let root = TestDir::new();
+        std::fs::write(root.path().join("ok.torrent"), HANDOFF_TORRENT).unwrap();
+        let item = handoff_item("ok.torrent", HANDOFF_TORRENT.len() as i64);
+        let mut rows = vec![serde_json::to_value(item).unwrap(), serde_json::json!(7)];
+        write_handoff_manifest(
+            root.path(),
+            &serde_json::Value::Array(std::mem::take(&mut rows)),
+        );
+
+        let report = read_manifest_checked(root.path());
+        assert_eq!(report.status, EhManifestReadStatus::Damaged);
+        assert_eq!(report.invalid_entries, 1);
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(
+            report.entries[0].validation_status,
+            EhTorrentValidationStatus::Valid
+        );
+    }
+
+    #[test]
+    fn checked_manifest_verifies_bencode_infohash_and_file_size() {
+        let root = TestDir::new();
+        std::fs::write(root.path().join("valid.torrent"), HANDOFF_TORRENT).unwrap();
+        let item = handoff_item("valid.torrent", HANDOFF_TORRENT.len() as i64);
+        write_handoff_manifest(
+            root.path(),
+            &serde_json::json!([serde_json::to_value(item).unwrap()]),
+        );
+
+        let report = read_manifest_checked(root.path());
+        assert_eq!(report.status, EhManifestReadStatus::Ready);
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].file_status, EhSavedFileStatus::Present);
+        assert_eq!(
+            report.entries[0].validation_status,
+            EhTorrentValidationStatus::Valid
+        );
+        assert!(report.entries[0].full_path.is_some());
+    }
+
+    #[test]
+    fn checked_manifest_distinguishes_missing_and_invalid_torrents() {
+        let root = TestDir::new();
+        std::fs::write(root.path().join("invalid.torrent"), b"not bencoded").unwrap();
+        let missing = handoff_item("missing.torrent", 1);
+        let invalid = handoff_item("invalid.torrent", 12);
+        write_handoff_manifest(
+            root.path(),
+            &serde_json::json!([
+                serde_json::to_value(missing).unwrap(),
+                serde_json::to_value(invalid).unwrap()
+            ]),
+        );
+
+        let report = read_manifest_checked(root.path());
+        assert_eq!(report.entries[0].file_status, EhSavedFileStatus::Missing);
+        assert_eq!(
+            report.entries[0].validation_status,
+            EhTorrentValidationStatus::NotChecked
+        );
+        assert_eq!(report.entries[1].file_status, EhSavedFileStatus::Present);
+        assert_eq!(
+            report.entries[1].validation_status,
+            EhTorrentValidationStatus::InvalidTorrent
+        );
+    }
+
+    #[test]
+    fn checked_manifest_reports_size_and_infohash_mismatches() {
+        let root = TestDir::new();
+        std::fs::write(root.path().join("hash-mismatch.torrent"), HANDOFF_TORRENT).unwrap();
+        std::fs::write(root.path().join("size-mismatch.torrent"), HANDOFF_TORRENT).unwrap();
+        let mut hash_mismatch = handoff_item("hash-mismatch.torrent", HANDOFF_TORRENT.len() as i64);
+        hash_mismatch.infohash = "0000000000000000000000000000000000000000".into();
+        let size_mismatch = handoff_item("size-mismatch.torrent", HANDOFF_TORRENT.len() as i64 - 1);
+        write_handoff_manifest(
+            root.path(),
+            &serde_json::json!([
+                serde_json::to_value(hash_mismatch).unwrap(),
+                serde_json::to_value(size_mismatch).unwrap()
+            ]),
+        );
+
+        let report = read_manifest_checked(root.path());
+        assert_eq!(
+            report.entries[0].validation_status,
+            EhTorrentValidationStatus::InfohashMismatch
+        );
+        assert_eq!(
+            report.entries[1].validation_status,
+            EhTorrentValidationStatus::SizeMismatch
+        );
+    }
+
+    #[test]
+    fn checked_manifest_rejects_path_traversal_without_resolving_outside_file() {
+        let root = TestDir::new();
+        let outside = root.path().parent().unwrap().join(format!(
+            "{}-outside.torrent",
+            root.path().file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::write(&outside, HANDOFF_TORRENT).unwrap();
+        let item = handoff_item("../outside.torrent", HANDOFF_TORRENT.len() as i64);
+        let windows_item = handoff_item(r"..\outside.torrent", HANDOFF_TORRENT.len() as i64);
+        write_handoff_manifest(
+            root.path(),
+            &serde_json::json!([
+                serde_json::to_value(item).unwrap(),
+                serde_json::to_value(windows_item).unwrap()
+            ]),
+        );
+
+        let report = read_manifest_checked(root.path());
+        for entry in &report.entries {
+            assert_eq!(entry.file_status, EhSavedFileStatus::UnsafePath);
+            assert_eq!(entry.full_path, None);
+        }
+        std::fs::remove_file(outside).unwrap();
+    }
+
+    #[test]
+    fn checked_manifest_rejects_symlink_escape() {
+        let root = TestDir::new();
+        let outside = root.path().parent().unwrap().join(format!(
+            "{}-symlink-target.torrent",
+            root.path().file_name().unwrap().to_string_lossy()
+        ));
+        let link = root.path().join("escaped.torrent");
+        std::fs::write(&outside, HANDOFF_TORRENT).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside, &link).unwrap();
+
+        let item = handoff_item("escaped.torrent", HANDOFF_TORRENT.len() as i64);
+        write_handoff_manifest(
+            root.path(),
+            &serde_json::json!([serde_json::to_value(item).unwrap()]),
+        );
+
+        let report = read_manifest_checked(root.path());
+        assert_eq!(report.entries[0].file_status, EhSavedFileStatus::UnsafePath);
+        assert_eq!(report.entries[0].full_path, None);
+        std::fs::remove_file(outside).unwrap();
+    }
+
+    #[test]
+    fn checked_manifest_accepts_chinese_and_special_character_paths() {
+        let root = TestDir::new();
+        let nested = root.path().join("中文 #1");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("漫画 & [测试].torrent");
+        std::fs::write(&file, HANDOFF_TORRENT).unwrap();
+        let item = handoff_item(
+            "中文 #1/漫画 & [测试].torrent",
+            HANDOFF_TORRENT.len() as i64,
+        );
+        write_handoff_manifest(
+            root.path(),
+            &serde_json::json!([serde_json::to_value(item).unwrap()]),
+        );
+
+        let report = read_manifest_checked(root.path());
+        assert_eq!(report.entries[0].file_status, EhSavedFileStatus::Present);
+        assert_eq!(
+            report.entries[0].validation_status,
+            EhTorrentValidationStatus::Valid
+        );
+    }
+
+    #[test]
+    fn legacy_manifest_reader_keeps_its_missing_or_corrupt_as_empty_behavior() {
+        let root = TestDir::new();
+        assert!(read_manifest(root.path().to_str().unwrap()).is_empty());
+        std::fs::write(root.path().join("manifest.json"), b"bad json").unwrap();
+        assert!(read_manifest(root.path().to_str().unwrap()).is_empty());
+        assert_eq!(
+            read_manifest_checked(root.path()).status,
+            EhManifestReadStatus::Damaged
+        );
     }
 }

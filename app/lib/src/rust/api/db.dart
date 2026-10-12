@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `library_index_to_dto`
+// These functions are ignored because they are not marked as `pub`: `book_meta_row`, `library_index_to_dto`
 
 /// 数据是否已从 library.json 迁移到 SQLite。
 Future<bool> dataIsMigrated() =>
@@ -55,6 +55,10 @@ Future<List<BookMetaDto>> dbLoadAllMetas() =>
 
 Future<void> dbUpsertMeta({required BookMetaDto meta}) =>
     RustLib.instance.api.crateApiDbDbUpsertMeta(meta: meta);
+
+/// Persist a bounded batch of book metadata and one tag link per book.
+Future<void> dbApplyBatchTagWrites({required List<BatchTagWriteDto> writes}) =>
+    RustLib.instance.api.crateApiDbDbApplyBatchTagWrites(writes: writes);
 
 Future<void> dbDeleteMeta({required String key}) =>
     RustLib.instance.api.crateApiDbDbDeleteMeta(key: key);
@@ -309,6 +313,30 @@ class AiTaskDto {
           sortOrder == other.sortOrder &&
           createdAt == other.createdAt &&
           updatedAt == other.updatedAt;
+}
+
+class BatchTagWriteDto {
+  final String bookKey;
+  final String tagName;
+  final BookMetaDto? meta;
+
+  const BatchTagWriteDto({
+    required this.bookKey,
+    required this.tagName,
+    this.meta,
+  });
+
+  @override
+  int get hashCode => bookKey.hashCode ^ tagName.hashCode ^ meta.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BatchTagWriteDto &&
+          runtimeType == other.runtimeType &&
+          bookKey == other.bookKey &&
+          tagName == other.tagName &&
+          meta == other.meta;
 }
 
 /// 漫画元数据 DTO。

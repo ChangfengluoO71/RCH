@@ -13,8 +13,13 @@ anyhow = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "socks"] }
 ring = "0.17"
+aes = "=0.8.4"
+cbc = { version = "=0.1.2", features = ["alloc", "block-padding"] }
+md-5 = "=0.10.6"
+lz4_flex = { version = "=0.11.6", default-features = false, features = ["safe-decode", "safe-encode", "std"] }
+httpdate = "=1.0.3"
 quick-xml = { version = "0.37", features = ["serialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

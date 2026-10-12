@@ -11,6 +11,8 @@ import '../repository/tag_repository.dart';
 import '../src/rust/api/cache.dart';
 import '../src/rust/api/book.dart' as rust_book;
 import '../src/rust/api/db.dart';
+import 'folder_snapshot_store.dart';
+import 'foreground_work_coordinator.dart';
 import 'library_catalog.dart';
 import 'library_index_service.dart';
 import 'models.dart';
@@ -68,6 +70,42 @@ bool _pathWithinDeletedRoot(String path, Iterable<String> roots) {
   });
 }
 
+enum BatchTagPhase { indexing, persisting, complete }
+
+class BatchTagProgress {
+  const BatchTagProgress({
+    required this.phase,
+    required this.processed,
+    required this.total,
+    required this.succeeded,
+    required this.skipped,
+    required this.failed,
+  });
+
+  final BatchTagPhase phase;
+  final int processed;
+  final int total;
+  final int succeeded;
+  final int skipped;
+  final int failed;
+}
+
+class BatchTagResult {
+  const BatchTagResult({
+    required this.total,
+    required this.succeeded,
+    required this.skipped,
+    required this.failed,
+  });
+
+  final int total;
+  final int succeeded;
+  final int skipped;
+  final int failed;
+
+  int get processed => succeeded + skipped + failed;
+}
+
 /// 应用数据存储 facade（ADR-016/018）。
 ///
 /// LibraryStore 是 ChangeNotifier + 跨 Repository 协调层。
@@ -101,10 +139,33 @@ class LibraryStore extends ChangeNotifier {
   AppSettings settings = AppSettings();
   bool _loaded = false;
   int _revision = 0;
+  final Set<VoidCallback> _committedMutationListeners = <VoidCallback>{};
 
   /// Monotonic in-memory projection revision. UI caches use this to refresh
   /// only when library data actually changed.
   int get revision => _revision;
+
+  void addCommittedMutationListener(VoidCallback listener) {
+    _committedMutationListeners.add(listener);
+  }
+
+  void removeCommittedMutationListener(VoidCallback listener) {
+    _committedMutationListeners.remove(listener);
+  }
+
+  void _notifyCommittedMutation() {
+    for (final listener in List<VoidCallback>.of(_committedMutationListeners)) {
+      listener();
+    }
+  }
+
+  void _notifyAfterPersistence(Future<void> persistence) {
+    unawaited(
+      persistence.then<void>((_) {
+        if (_lastSaveError == null) _notifyCommittedMutation();
+      }, onError: (Object _, StackTrace _) {}),
+    );
+  }
 
   @override
   void notifyListeners() {
@@ -121,6 +182,10 @@ class LibraryStore extends ChangeNotifier {
   Future<void> _saveQueue = Future<void>.value();
   bool _saveDirty = false;
   Completer<void>? _saveWaiter;
+  Completer<void>? _batchTagGate;
+  Future<void> _batchTagTail = Future<void>.value();
+  int _activeLoads = 0;
+  Completer<void>? _loadsIdle;
   Object? _lastSaveError;
 
   /// 最近一次持久化失败的原因（无失败为 null）。供 UI 观测。
@@ -134,6 +199,26 @@ class LibraryStore extends ChangeNotifier {
   /// 权威来源，不应在重载中再次排队一个全量保存。重载前会等待已有保存，
   /// 防止清空 repository Map 时保存协程仍在遍历它们。
   Future<void> load({bool force = false, bool persist = true}) async {
+    while (true) {
+      final batchTagGate = _batchTagGate;
+      if (batchTagGate == null) break;
+      await batchTagGate.future;
+    }
+    if (_activeLoads == 0) _loadsIdle = Completer<void>();
+    _activeLoads++;
+    try {
+      await _loadData(force: force, persist: persist);
+    } finally {
+      _activeLoads--;
+      if (_activeLoads == 0) {
+        final loadsIdle = _loadsIdle;
+        _loadsIdle = null;
+        if (loadsIdle != null && !loadsIdle.isCompleted) loadsIdle.complete();
+      }
+    }
+  }
+
+  Future<void> _loadData({required bool force, required bool persist}) async {
     if (_loaded && !force) return;
     await _waitForPendingSave();
     _loaded = false;
@@ -229,7 +314,12 @@ class LibraryStore extends ChangeNotifier {
     // 1) 阅读记录：合并到规范化 key，保留最新进度与累计次数。
     final mergedRecords = <String, ReadRecord>{};
     for (final r in recRepo.records.values.toList()) {
-      final nk = bookKeyOf(r.sourceType, r.sourceId, r.path);
+      final localPath = normalizeLocalFilesystemPath(
+        r.path,
+        isLocalFs: r.sourceType == 'local' || r.sourceType == 'smb',
+        isWindows: Platform.isWindows,
+      );
+      final nk = bookKeyOf(r.sourceType, r.sourceId, localPath);
       final existing = mergedRecords[nk];
       if (nk == r.key) {
         if (existing == null) {
@@ -243,7 +333,7 @@ class LibraryStore extends ChangeNotifier {
             key: nk,
             sourceId: r.sourceId,
             sourceType: r.sourceType,
-            path: r.path,
+            path: localPath,
             title: r.title,
             lastPage: r.lastPage,
             readCount: r.readCount,
@@ -272,7 +362,12 @@ class LibraryStore extends ChangeNotifier {
       final st = m.key.substring(0, sep1);
       final sid = m.key.substring(sep1 + 1, sep2);
       final p = m.key.substring(sep2 + 1);
-      final nk = bookKeyOf(st, sid, p);
+      final localPath = normalizeLocalFilesystemPath(
+        p,
+        isLocalFs: st == 'local' || st == 'smb',
+        isWindows: Platform.isWindows,
+      );
+      final nk = bookKeyOf(st, sid, localPath);
       final existing = mergedMetas[nk];
       if (nk == m.key) {
         if (existing == null) {
@@ -404,15 +499,19 @@ class LibraryStore extends ChangeNotifier {
   ///
   /// 返回的 Future 在该轮保存真正完成后完成。错误不会抛出，
   /// 而是记录到 [lastSaveError]，调用方 await 后自行检查。
-  Future<void> saveToDisk() {
+  Future<void> saveToDisk() async {
+    final batchTagGate = _batchTagGate;
+    if (batchTagGate != null) await batchTagGate.future;
     _saveDirty = true;
     final waiter = _saveWaiter ??= Completer<void>();
     _saveTimer ??= Timer(_saveDebounceDuration, _kickSave);
-    return waiter.future;
+    await waiter.future;
   }
 
   /// 生命周期退出前强制落盘：等待所有排队与执行中的保存完成。
   Future<void> flushPendingSave() async {
+    final batchTagGate = _batchTagGate;
+    if (batchTagGate != null) await batchTagGate.future;
     if (_saveTimer != null) {
       _saveTimer!.cancel();
       _saveTimer = null;
@@ -462,17 +561,7 @@ class LibraryStore extends ChangeNotifier {
     }
     // JSON 仅作导出备份（best-effort）：失败不影响 SQLite 结果，不抛给调用方。
     try {
-      final f = await _file();
-      final data = {
-        ..._books.toJson(
-          includeSensitive:
-              !(!kIsWeb && defaultTargetPlatform == TargetPlatform.android),
-        ),
-        ..._records.toJson(),
-        'settings': settings.toJson(),
-        ...TagRepository.instance.toJson(),
-      };
-      await f.writeAsString(jsonEncode(data));
+      await _writeJsonBackupOnly();
     } catch (e, st) {
       debugPrint('[LibraryStore] JSON export failed: $e');
       debugPrintStack(stackTrace: st);
@@ -480,6 +569,20 @@ class LibraryStore extends ChangeNotifier {
     if (sqliteError != null) {
       throw sqliteError;
     }
+  }
+
+  Future<void> _writeJsonBackupOnly() async {
+    final f = await _file();
+    final data = {
+      ..._books.toJson(
+        includeSensitive:
+            !(!kIsWeb && defaultTargetPlatform == TargetPlatform.android),
+      ),
+      ..._records.toJson(),
+      'settings': settings.toJson(),
+      ...TagRepository.instance.toJson(),
+    };
+    await f.writeAsString(jsonEncode(data));
   }
 
   Future<void> _saveToSqlite() async {
@@ -544,16 +647,82 @@ class LibraryStore extends ChangeNotifier {
     await LibraryCatalogStore.instance.loadTree();
   }
 
-  Future<void> addSource(BookSource s) async {
+  Future<void> addSource(BookSource s) =>
+      ForegroundWorkCoordinator.instance.runForeground(() => _addSource(s));
+
+  Future<void> _addSource(BookSource s) async {
     _books.addSource(s);
     notifyListeners();
-    await _persistSourceMutation();
+    final total = Stopwatch()..start();
+    var persisted = false;
+    try {
+      var sqliteReady = false;
+      final migrationCheck = Stopwatch()..start();
+      Object? migrationCheckError;
+      try {
+        sqliteReady = await dataIsMigrated();
+      } catch (error) {
+        migrationCheckError = error;
+        // Keep the existing full-save path available during database recovery.
+      }
+      if (kDebugMode || kProfileMode) {
+        debugPrint(
+          'source_add stage=migration_check type=${s.type} migrated=$sqliteReady${migrationCheckError == null ? '' : ' error_type=${migrationCheckError.runtimeType}'} elapsed_ms=${migrationCheck.elapsedMilliseconds}',
+        );
+      }
+      if (!sqliteReady) {
+        final fallbackSave = Stopwatch()..start();
+        await _persistSourceMutation();
+        persisted = true;
+        _notifyCommittedMutation();
+        if (kDebugMode || kProfileMode) {
+          debugPrint(
+            'source_add stage=fallback_save type=${s.type} elapsed_ms=${fallbackSave.elapsedMilliseconds}',
+          );
+        }
+        return;
+      }
+
+      final sourceWrite = Stopwatch()..start();
+      try {
+        await _books.saveSourceToSqlite(s);
+      } catch (_) {
+        _books.removeSource(s.id);
+        notifyListeners();
+        rethrow;
+      }
+      if (kDebugMode || kProfileMode) {
+        debugPrint(
+          'source_add stage=source_upsert type=${s.type} elapsed_ms=${sourceWrite.elapsedMilliseconds}',
+        );
+      }
+
+      final treeRefresh = Stopwatch()..start();
+      await LibraryCatalogStore.instance.loadTree();
+      if (kDebugMode || kProfileMode) {
+        debugPrint(
+          'source_add stage=catalog_refresh type=${s.type} loaded=${LibraryCatalogStore.instance.loaded} elapsed_ms=${treeRefresh.elapsedMilliseconds}',
+        );
+      }
+      persisted = true;
+      _notifyCommittedMutation();
+      // SQLite is authoritative after migration. Keep the JSON export current,
+      // but do not make source creation wait for a full-library serialization.
+      unawaited(saveToDisk());
+    } finally {
+      if (kDebugMode || kProfileMode) {
+        debugPrint(
+          'source_add stage=complete type=${s.type} persisted=$persisted elapsed_ms=${total.elapsedMilliseconds}',
+        );
+      }
+    }
   }
 
   Future<void> removeSource(String id) async {
     _books.removeSource(id);
     notifyListeners();
     await _persistSourceMutation();
+    if (_lastSaveError == null) _notifyCommittedMutation();
   }
 
   Future<void> updateSource(
@@ -604,12 +773,13 @@ class LibraryStore extends ChangeNotifier {
     }
     notifyListeners();
     await _persistSourceMutation();
+    if (_lastSaveError == null) _notifyCommittedMutation();
   }
 
   void updateSourceCapability(String id, String label) {
     _books.updateSourceCapability(id, label);
     notifyListeners();
-    saveToDisk();
+    _notifyAfterPersistence(saveToDisk());
   }
 
   BookSource? sourceById(String id) => _books.sourceById(id);
@@ -660,6 +830,7 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
     await saveToDisk();
     await LibraryCatalogStore.instance.loadTree();
+    _notifyCommittedMutation();
   }
 
   // ---- Record（委托给 RecordRepository） ----
@@ -670,21 +841,27 @@ class LibraryStore extends ChangeNotifier {
     required String title,
     int? page,
   }) async {
-    final key = RecordRepository.keyOf(source.type, source.id, path);
+    final localPath = normalizeLocalFilesystemPath(
+      path,
+      isLocalFs: source.isLocalFs,
+      isWindows: Platform.isWindows,
+    );
+    final key = RecordRepository.keyOf(source.type, source.id, localPath);
     final r = _records.upsert(
       source: source,
-      path: path,
+      path: localPath,
       title: title,
       page: page,
     );
     TagRepository.instance.link(key, '已读');
     // ADR-029 触及即补：已读的书自动入离线索引（本地 upsert，零网络）
-    LibraryIndexService.ensureIndexed(source, path, name: title);
+    LibraryIndexService.ensureIndexed(source, localPath, name: title);
     notifyListeners();
     try {
       // 轻量落盘（B 方案）：只写记录 + 标签关联，不写全量 JSON。
       await _records.saveOneToSqlite(r);
       await TagRepository.instance.persistBookLinks(key);
+      _notifyCommittedMutation();
     } catch (e, st) {
       _lastSaveError = e;
       debugPrint('[LibraryStore] recordRead save failed: $e');
@@ -707,7 +884,8 @@ class LibraryStore extends ChangeNotifier {
       await dbDeleteRecord(key: k);
     }
     notifyListeners();
-    saveToDisk();
+    await saveToDisk();
+    _notifyCommittedMutation();
   }
 
   /// 清空阅读统计：所有记录阅读次数归零（保留最近阅读列表与每本书的进度）。
@@ -718,7 +896,8 @@ class LibraryStore extends ChangeNotifier {
     }
     await dbResetReadCounts();
     notifyListeners();
-    saveToDisk();
+    await saveToDisk();
+    _notifyCommittedMutation();
   }
 
   List<ReadRecord> get recent => _records.recent();
@@ -730,8 +909,15 @@ class LibraryStore extends ChangeNotifier {
   /// 返回 (清理的记录数, 清理的元数据数, 释放的缓存字节数, 在线核对失败的远程源数)。
   Future<(int, int, int, int)> purgeStaleData({
     bool alignRemote = true,
+    bool background = false,
     @visibleForTesting PurgeStaleDataBindings? bindings,
   }) async {
+    Future<void> maintenanceBoundary() async {
+      if (background) {
+        await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+      }
+    }
+
     final loadVerifiedTombstones =
         bindings?.loadVerifiedTombstones ??
         (String sourceId) => dbLoadVerifiedRemoteTombstones(sourceId: sourceId);
@@ -755,6 +941,7 @@ class LibraryStore extends ChangeNotifier {
     var alignFailed = 0;
     if (alignRemote) {
       for (final s in sources) {
+        await maintenanceBoundary();
         if (s.isLocalFs || s.isGhost) continue;
         final ok = await _alignRemoteIndex(s);
         if (!ok) alignFailed++;
@@ -767,6 +954,7 @@ class LibraryStore extends ChangeNotifier {
     final verifiedRemoteCandidates = <String, List<VerifiedRemoteTombstone>>{};
     final verifiedRemoteTombstones = <String, List<VerifiedRemoteTombstone>>{};
     for (final s in sources) {
+      await maintenanceBoundary();
       try {
         if (s.needsSession) {
           final verified = await loadVerifiedTombstones(s.id);
@@ -791,6 +979,7 @@ class LibraryStore extends ChangeNotifier {
 
     var verifiedRemoteFreed = BigInt.zero;
     for (final s in sources.where((source) => source.needsSession)) {
+      await maintenanceBoundary();
       final candidates = verifiedRemoteCandidates[s.id];
       if (candidates == null || candidates.isEmpty) continue;
       try {
@@ -829,6 +1018,7 @@ class LibraryStore extends ChangeNotifier {
         if (tombstones[s.id]?.isNotEmpty ?? false) s.id: tombstones[s.id]!,
     };
     for (final s in sources) {
+      await maintenanceBoundary();
       final gone = tombstones[s.id];
       if (gone == null || gone.isEmpty) continue;
       try {
@@ -897,17 +1087,23 @@ class LibraryStore extends ChangeNotifier {
     for (final k in allMetaKeys) {
       _books.metas.remove(k);
     }
+    var cleanupItems = 0;
     for (final k in removedKeys) {
       await TagRepository.instance.removeBookTagsAndPrune(k);
+      cleanupItems++;
+      if (cleanupItems % 50 == 0) await maintenanceBoundary();
     }
 
     // SQLite 清理：记录逐条删；失效记录对应的元数据逐条删；
     // 源已删的元数据按来源前缀批量删（连未进内存的残留行一起清）。
     // 这些调用必须等待完成，否则自动流程紧接着 reload 时可能读到旧行，
     // 让刚删除的阅读记录/元数据在本次运行或重启后短暂复活。
+    cleanupItems = 0;
     for (final r in staleRecords) {
       await dbDeleteRecord(key: r.key);
       await dbDeleteMeta(key: r.key);
+      cleanupItems++;
+      if (cleanupItems % 50 == 0) await maintenanceBoundary();
     }
     final deletedRecordKeys = staleRecords.map((r) => r.key).toSet();
     for (final key in removedKeys.difference(deletedRecordKeys)) {
@@ -916,6 +1112,8 @@ class LibraryStore extends ChangeNotifier {
       // the normal sync tombstone behind.
       await dbDeleteRecord(key: key);
       await dbDeleteMeta(key: key);
+      cleanupItems++;
+      if (cleanupItems % 50 == 0) await maintenanceBoundary();
     }
     final prefixes = <String>{};
     for (final k in staleMetas) {
@@ -943,7 +1141,9 @@ class LibraryStore extends ChangeNotifier {
       if (src != null && !src.needsSession) addCacheTarget(src, r.path);
     }
     var freed = verifiedRemoteFreed;
+    cleanupItems = 0;
     for (final target in cacheTargets) {
+      await maintenanceBoundary();
       final src = target.$1;
       if (src.isGhost) continue; // 幽灵书源无可读缓存；源已删由 removeSource 路径处理
       try {
@@ -962,13 +1162,19 @@ class LibraryStore extends ChangeNotifier {
           '[LibraryStore] purge stale cache failed for ${target.$2}: $e',
         );
       }
+      cleanupItems++;
+      if (cleanupItems % 25 == 0) await maintenanceBoundary();
     }
 
     // AI 超分遗留任务（按 book_key 匹配失效记录）一并清理。
     try {
       final tasks = await dbLoadAllAiTasks();
+      cleanupItems = 0;
       for (final t in tasks.where((t) => removedKeys.contains(t.bookKey))) {
+        await maintenanceBoundary();
         await dbDeleteAiTask(id: t.id);
+        cleanupItems++;
+        if (cleanupItems % 50 == 0) await maintenanceBoundary();
       }
     } catch (_) {}
 
@@ -1019,7 +1225,7 @@ class LibraryStore extends ChangeNotifier {
       if (mt.isNotEmpty) TagRepository.instance.link(m.key, mt);
     }
     notifyListeners();
-    saveToDisk();
+    _notifyAfterPersistence(saveToDisk());
   }
 
   // ---- 设置 ----
@@ -1346,7 +1552,7 @@ class LibraryStore extends ChangeNotifier {
     }
     TagRepository.instance.rename(oldName, newName);
     notifyListeners();
-    saveToDisk();
+    _notifyAfterPersistence(saveToDisk());
   }
 
   void deleteTag(String name) {
@@ -1358,7 +1564,7 @@ class LibraryStore extends ChangeNotifier {
     }
     TagRepository.instance.delete(name);
     notifyListeners();
-    saveToDisk();
+    _notifyAfterPersistence(saveToDisk());
   }
 
   // ---- 跨书源搜索 ----
@@ -1406,80 +1612,333 @@ class LibraryStore extends ChangeNotifier {
 
   List<String> get metaFields => ['author', 'genre', 'series', '已读'];
 
-  void batchTag(BookSource src, Iterable<BatchTagTarget> targets, String tag) {
-    if (tag == '已读') {
-      for (final target in targets) {
-        final p = target.path;
-        final key = bookKeyOf(src.type, src.id, p);
-        TagRepository.instance.link(key, '已读');
-        // ADR-029 触及即补：批量标签的书（含未读）自动入离线索引
-        LibraryIndexService.ensureIndexed(src, p, entryType: target.entryType);
+  Future<BatchTagResult> batchTag(
+    BookSource src,
+    Iterable<BatchTagTarget> targets,
+    String tag, {
+    void Function(BatchTagProgress progress)? onProgress,
+  }) => ForegroundWorkCoordinator.instance.runForeground(
+    () => _batchTag(src, targets, tag, onProgress: onProgress),
+  );
+
+  Future<BatchTagResult> _batchTag(
+    BookSource src,
+    Iterable<BatchTagTarget> targets,
+    String tag, {
+    void Function(BatchTagProgress progress)? onProgress,
+  }) async {
+    final previousBatch = _batchTagTail;
+    final batchSlot = Completer<void>();
+    _batchTagTail = batchSlot.future;
+    Completer<void>? batchGate;
+    final totalStopwatch = Stopwatch()..start();
+    final indexStopwatch = Stopwatch();
+    final persistStopwatch = Stopwatch();
+
+    final supplied = targets.toList(growable: false);
+    final uniqueTargets = <String, BatchTagTarget>{};
+    for (final target in supplied) {
+      final identity =
+          '${target.entryType}\u0000${LibraryIndexService.normalizeIndexPath(target.path)}';
+      uniqueTargets.putIfAbsent(identity, () => target);
+    }
+    final targetList = uniqueTargets.values.toList(growable: false);
+    final duplicateCount = supplied.length - targetList.length;
+    final normalizedTag = tag.trim();
+    var succeeded = 0;
+    var skipped = duplicateCount;
+    var failed = 0;
+    var tagsChanged = false;
+    var indexCommitted = false;
+    var mutationFinalized = false;
+
+    void publish(
+      BatchTagPhase phase, {
+      required int processed,
+      required int total,
+    }) {
+      try {
+        onProgress?.call(
+          BatchTagProgress(
+            phase: phase,
+            processed: processed,
+            total: total,
+            succeeded: succeeded,
+            skipped: skipped,
+            failed: failed,
+          ),
+        );
+      } catch (_) {
+        // Progress observers must not turn a committed chunk into a failure.
       }
-      notifyListeners();
-      saveToDisk();
-      return;
     }
 
-    String? existingField;
-    for (final m in metas.values) {
-      if (m.author == tag) {
-        existingField = 'author';
-        break;
+    Future<void> finalizeCommittedChanges() async {
+      if (mutationFinalized) return;
+      mutationFinalized = true;
+      if (succeeded > 0) {
+        if (tagsChanged) TagRepository.instance.notifyBatchMutation();
+        notifyListeners();
       }
-      if (m.genre == tag) {
-        existingField = 'genre';
-        break;
-      }
-      if (m.series == tag) {
-        existingField = 'series';
-        break;
+      if (indexCommitted || succeeded > 0) _notifyCommittedMutation();
+      if (succeeded == 0) return;
+      try {
+        await _writeJsonBackupOnly();
+      } catch (error) {
+        debugPrint(
+          '[LibraryStore] batch JSON export failed: ${error.runtimeType}',
+        );
       }
     }
-    for (final target in targets) {
-      final p = target.path;
-      final m = metaOf(src, p);
-      final key = bookKeyOf(src.type, src.id, p);
-      LibraryIndexService.ensureIndexed(
-        src,
-        p,
-        name: m.title,
-        entryType: target.entryType,
+
+    try {
+      await previousBatch;
+      while (_activeLoads > 0) {
+        final loadsIdle = _loadsIdle;
+        if (loadsIdle == null) break;
+        await loadsIdle.future;
+      }
+      batchGate = Completer<void>();
+      _batchTagGate = batchGate;
+      // Keep any older full-library save ahead of this targeted write. While
+      // this gate is held, later save/load requests wait until all committed
+      // chunks have also been applied to the in-memory repositories.
+      await _waitForPendingSave();
+      if (normalizedTag.isEmpty) {
+        skipped += targetList.length;
+        publish(
+          BatchTagPhase.complete,
+          processed: supplied.length,
+          total: supplied.length,
+        );
+        return BatchTagResult(
+          total: supplied.length,
+          succeeded: succeeded,
+          skipped: skipped,
+          failed: failed,
+        );
+      }
+
+      const chunkSize = 100;
+      final indexedTargets = <BatchTagTarget>[];
+      publish(BatchTagPhase.indexing, processed: 0, total: targetList.length);
+      indexStopwatch.start();
+      for (var start = 0; start < targetList.length; start += chunkSize) {
+        final end = (start + chunkSize).clamp(0, targetList.length).toInt();
+        final chunk = targetList.sublist(start, end);
+        final entries = <IndexEntryInput>[];
+        for (final target in chunk) {
+          final key = bookKeyOf(src.type, src.id, target.path);
+          final existingMeta = metas[key];
+          final fallbackName = target.path.split(RegExp(r'[\\/]')).last;
+          final name = existingMeta?.title.trim().isNotEmpty == true
+              ? existingMeta!.title
+              : fallbackName;
+          entries.add(
+            IndexEntryInput(
+              path: target.path,
+              entryType: target.entryType,
+              name: name,
+              parentPath: FolderSnapshotStore.instance.parentDirOf(
+                src,
+                target.path,
+              ),
+            ),
+          );
+        }
+        try {
+          await dbEnsureIndexEntries(sourceId: src.id, entries: entries);
+          indexedTargets.addAll(chunk);
+          indexCommitted = true;
+        } catch (error) {
+          failed += chunk.length;
+          debugPrint(
+            '[LibraryStore] batch index chunk failed: ${error.runtimeType}',
+          );
+        }
+        publish(
+          BatchTagPhase.indexing,
+          processed: end,
+          total: targetList.length,
+        );
+      }
+      indexStopwatch.stop();
+
+      String? existingField;
+      if (normalizedTag != '已读') {
+        for (final meta in metas.values) {
+          if (meta.author == normalizedTag) {
+            existingField = 'author';
+            break;
+          }
+          if (meta.genre == normalizedTag) {
+            existingField = 'genre';
+            break;
+          }
+          if (meta.series == normalizedTag) {
+            existingField = 'series';
+            break;
+          }
+        }
+      }
+
+      publish(
+        BatchTagPhase.persisting,
+        processed: 0,
+        total: indexedTargets.length,
       );
-      if (existingField == null) {
-        if (!m.tags.contains(tag)) {
-          m.tags.add(tag);
-          TagRepository.instance.link(key, tag);
+      persistStopwatch.start();
+      for (var start = 0; start < indexedTargets.length; start += chunkSize) {
+        final end = (start + chunkSize).clamp(0, indexedTargets.length).toInt();
+        final chunk = indexedTargets.sublist(start, end);
+        final writes = <BatchTagWriteDto>[];
+        final stagedMetas = <String, BookMeta>{};
+        final links = <({String bookKey, String tagName})>[];
+
+        for (final target in chunk) {
+          final key = bookKeyOf(src.type, src.id, target.path);
+          final current = metas[key];
+          BookMeta? updated;
+          BookMetaDto? metaDto;
+          if (normalizedTag != '已读') {
+            updated = current == null
+                ? BookMeta(key: key)
+                : BookMeta.fromJson(current.toJson());
+            final beforeAuthor = updated.author;
+            final beforeGenre = updated.genre;
+            final beforeSeries = updated.series;
+            final beforeTags = List<String>.of(updated.tags);
+            switch (existingField) {
+              case 'author':
+                if (updated.author.isEmpty) {
+                  updated.author = normalizedTag;
+                } else if (!updated.tags.contains(normalizedTag)) {
+                  updated.tags.add(normalizedTag);
+                }
+              case 'genre':
+                if (updated.genre.isEmpty) {
+                  updated.genre = normalizedTag;
+                } else if (!updated.tags.contains(normalizedTag)) {
+                  updated.tags.add(normalizedTag);
+                }
+              case 'series':
+                if (updated.series.isEmpty) {
+                  updated.series = normalizedTag;
+                } else if (!updated.tags.contains(normalizedTag)) {
+                  updated.tags.add(normalizedTag);
+                }
+              default:
+                if (!updated.tags.contains(normalizedTag)) {
+                  updated.tags.add(normalizedTag);
+                }
+            }
+            final changed =
+                current == null ||
+                beforeAuthor != updated.author ||
+                beforeGenre != updated.genre ||
+                beforeSeries != updated.series ||
+                !listEquals(beforeTags, updated.tags);
+            if (changed) {
+              metaDto = BookMetaDto(
+                key: updated.key,
+                coverPage: updated.coverPage,
+                cropX: updated.cropX,
+                cropY: updated.cropY,
+                cropW: updated.cropW,
+                cropH: updated.cropH,
+                author: updated.author,
+                genre: updated.genre,
+                series: updated.series,
+                title: updated.title,
+                chineseTitle: updated.chineseTitle,
+                summary: updated.summary,
+                comment: updated.comment,
+                rotations: jsonEncode(
+                  updated.rotations.map(
+                    (key, value) => MapEntry('$key', value),
+                  ),
+                ),
+                volume: updated.volume,
+                chapter: updated.chapter,
+              );
+              stagedMetas[key] = updated;
+            }
+          }
+          writes.add(
+            BatchTagWriteDto(
+              bookKey: key,
+              tagName: normalizedTag,
+              meta: metaDto,
+            ),
+          );
+          links.add((bookKey: key, tagName: normalizedTag));
         }
-      } else {
-        switch (existingField) {
-          case 'author':
-            if (m.author.isEmpty) {
-              m.author = tag;
-              TagRepository.instance.link(key, tag);
-            } else if (!m.tags.contains(tag)) {
-              m.tags.add(tag);
-              TagRepository.instance.link(key, tag);
-            }
-          case 'genre':
-            if (m.genre.isEmpty) {
-              m.genre = tag;
-              TagRepository.instance.link(key, tag);
-            } else if (!m.tags.contains(tag)) {
-              m.tags.add(tag);
-              TagRepository.instance.link(key, tag);
-            }
-          case 'series':
-            if (m.series.isEmpty) {
-              m.series = tag;
-              TagRepository.instance.link(key, tag);
-            } else if (!m.tags.contains(tag)) {
-              m.tags.add(tag);
-              TagRepository.instance.link(key, tag);
-            }
+
+        try {
+          await dbApplyBatchTagWrites(writes: writes);
+          for (final entry in stagedMetas.entries) {
+            _books.updateMeta(entry.value);
+          }
+          tagsChanged =
+              TagRepository.instance.linkMany(links, notify: false) ||
+              tagsChanged;
+          succeeded += chunk.length;
+        } catch (error) {
+          failed += chunk.length;
+          debugPrint(
+            '[LibraryStore] batch tag chunk failed: ${error.runtimeType}',
+          );
         }
+        publish(
+          BatchTagPhase.persisting,
+          processed: end,
+          total: indexedTargets.length,
+        );
+      }
+      persistStopwatch.stop();
+
+      await finalizeCommittedChanges();
+      publish(
+        BatchTagPhase.complete,
+        processed: supplied.length,
+        total: supplied.length,
+      );
+      return BatchTagResult(
+        total: supplied.length,
+        succeeded: succeeded,
+        skipped: skipped,
+        failed: failed,
+      );
+    } catch (error) {
+      await finalizeCommittedChanges();
+      final unaccounted = supplied.length - succeeded - skipped - failed;
+      if (unaccounted > 0) failed += unaccounted;
+      debugPrint('[LibraryStore] batch tag failed: ${error.runtimeType}');
+      publish(
+        BatchTagPhase.complete,
+        processed: supplied.length,
+        total: supplied.length,
+      );
+      return BatchTagResult(
+        total: supplied.length,
+        succeeded: succeeded,
+        skipped: skipped,
+        failed: failed,
+      );
+    } finally {
+      if (batchGate != null) {
+        if (identical(_batchTagGate, batchGate)) _batchTagGate = null;
+        if (!batchGate.isCompleted) batchGate.complete();
+      }
+      if (!batchSlot.isCompleted) batchSlot.complete();
+      if (kProfileMode) {
+        debugPrint(
+          '[performance] phase=batch_tag elapsed_ms=${totalStopwatch.elapsedMilliseconds}'
+          ' index_elapsed_ms=${indexStopwatch.elapsedMilliseconds}'
+          ' persist_elapsed_ms=${persistStopwatch.elapsedMilliseconds}'
+          ' entries=${supplied.length} succeeded=$succeeded skipped=$skipped failed=$failed',
+        );
       }
     }
-    notifyListeners();
-    saveToDisk();
   }
 }

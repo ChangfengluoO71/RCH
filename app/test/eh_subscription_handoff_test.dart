@@ -1,0 +1,234 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:app/store/eh_subscription_store.dart';
+import 'package:app/ui/eh_subscription_panel.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+Map<String, dynamic> _checkedManifest({
+  String status = 'ready',
+  String fileStatus = 'present',
+  String validationStatus = 'valid',
+}) => {
+  'status': status,
+  'invalid_entries': 0,
+  'error_code': null,
+  'entries': [
+    {
+      'item': {
+        'infohash': '54ada1b6bfdf4e7792774b033f0026c616dcd0cb',
+        'gid': '1',
+        'title': 'title',
+        'title_jpn': '中文标题 & 特殊字符',
+        'rating': 4.5,
+        'downloads': 10,
+        'required_dl': 0,
+        'posted': null,
+        'posted_utc': '2026-10-11',
+        'age_years': null,
+        'tags': <String>[],
+        'category': 'Doujinshi',
+        'filecount': 1,
+        'filesize': 123,
+        'uploader': 'uploader',
+        'torrent_name': 'torrent',
+        'file': '中文 #1/漫画 & [测试].torrent',
+        'bytes': 122,
+        'source_url': 'https://example.invalid/',
+        'saved_at_utc': '2026-10-11T00:00:00Z',
+        'semantic': <String, dynamic>{},
+      },
+      'file_status': fileStatus,
+      'validation_status': validationStatus,
+      'full_path': r'D:\EhTorrents\中文 #1\漫画 & [测试].torrent',
+    },
+  ],
+};
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('checked manifest decoder keeps local evidence states typed', () {
+    final report = EhManifestReport.fromJson(_checkedManifest());
+    expect(report.status, EhManifestReadStatus.ready);
+    expect(report.entries.single.item.savedAtUtc, '2026-10-11T00:00:00Z');
+    expect(report.entries.single.fileStatus, EhSavedFileStatus.present);
+    expect(
+      report.entries.single.validationStatus,
+      EhTorrentValidationStatus.valid,
+    );
+    expect(report.entries.single.fullPath, contains('漫画 & [测试].torrent'));
+  });
+
+  test(
+    'non-Windows folder open safely declines without launching a process',
+    () async {
+      var processCalls = 0;
+      final opened = await openEhOutputDirectory(
+        r'D:\EhTorrents',
+        isWindows: false,
+        runProcess: (executable, arguments) async {
+          processCalls += 1;
+          throw StateError('must not run off Windows');
+        },
+      );
+      expect(opened, isFalse);
+      expect(processCalls, 0);
+    },
+  );
+
+  test(
+    'Windows folder open launches Explorer only for the configured folder',
+    () async {
+      String? executable;
+      List<String>? arguments;
+      final opened = await openEhOutputDirectory(
+        r'D:\EH output',
+        isWindows: true,
+        runProcess: (value, args) async {
+          executable = value;
+          arguments = args;
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+      expect(opened, isTrue);
+      expect(executable, 'explorer');
+      expect(arguments, [r'D:\EH output']);
+    },
+  );
+
+  testWidgets('refresh reads the local manifest without starting an EH scan', (
+    tester,
+  ) async {
+    var manifestReads = 0;
+    var scanRequests = 0;
+    final store = EhSubscriptionStore.forTest(
+      rules: {'out_dir': r'D:\EhTorrents'},
+      checkedManifestLoader: (outDir) async {
+        manifestReads += 1;
+        expect(outDir, r'D:\EhTorrents');
+        return jsonEncode(_checkedManifest());
+      },
+      onScanRequested: () => scanRequests += 1,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: EhSubscriptionPanel(storeOverride: store),
+          ),
+        ),
+      ),
+    );
+    expect(
+      manifestReads,
+      0,
+      reason: 'building the panel must not read or scan',
+    );
+    expect(scanRequests, 0);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('eh-manifest-refresh')),
+    );
+    await tester.tap(find.byKey(const ValueKey('eh-manifest-refresh')));
+    await tester.pumpAndSettle();
+
+    expect(manifestReads, 1);
+    expect(scanRequests, 0);
+    expect(store.progress.stage, 'idle');
+    expect(find.text('中文标题 & 特殊字符'), findsOneWidget);
+    expect(
+      find.textContaining('54ada1b6bfdf4e7792774b033f0026c616dcd0cb'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('校验通过'), findsOneWidget);
+  });
+
+  testWidgets(
+    'handoff can select one Torrent, copy its path, and show manual instructions',
+    (tester) async {
+      final store = EhSubscriptionStore.forTest(
+        rules: {'out_dir': r'D:\EhTorrents'},
+        manifestReport: EhManifestReport.fromJson(_checkedManifest()),
+      );
+      String? copiedText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedText =
+                (call.arguments as Map<Object?, Object?>)['text'] as String;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: EhSubscriptionPanel(storeOverride: store),
+            ),
+          ),
+        ),
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('eh-handoff-select-0')),
+      );
+      await tester.tap(find.byKey(const ValueKey('eh-handoff-select-0')));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('eh-handoff-copy-path')));
+      await tester.pump();
+      expect(copiedText, contains('漫画 & [测试].torrent'));
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('eh-handoff-instructions')),
+      );
+      await tester.tap(find.byKey(const ValueKey('eh-handoff-instructions')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('RCH 不会自动上传'), findsOneWidget);
+      expect(
+        find.textContaining('\u4e0d\u8bc1\u660e\u5df2\u4e0a\u4f20'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('initializing the handoff panel does not call a 115 client', (
+    tester,
+  ) async {
+    var localManifestReads = 0;
+    final store = EhSubscriptionStore.forTest(
+      rules: {'out_dir': r'D:\EhTorrents'},
+      checkedManifestLoader: (outDir) async {
+        localManifestReads += 1;
+        return jsonEncode({
+          'status': 'missing',
+          'entries': [],
+          'invalid_entries': 0,
+        });
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: EhSubscriptionPanel(storeOverride: store),
+          ),
+        ),
+      ),
+    );
+    expect(localManifestReads, 0);
+    expect(store.progress.stage, 'idle');
+  });
+}

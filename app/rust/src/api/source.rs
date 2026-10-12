@@ -1325,6 +1325,129 @@ pub async fn cloud115_cookie_list(session: u64, path: String) -> Result<Vec<DirE
         .collect())
 }
 
+/// Validate one checked EH Torrent and query the existing Cookie session for
+/// the exact target directory and duplicate-task state. This operation is
+/// read-only and reuses the reader's Cookie client, rate gate, and WAF cooldown.
+pub async fn cloud115_cookie_bt_readonly_preflight(
+    session: u64,
+    output_dir: String,
+    relative_file: String,
+    expected_info_hash: String,
+) -> Result<cloud115_source::Cloud115BtPreflight> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在，请重新连接"))?;
+    tokio::task::spawn_blocking(move || {
+        client.bt_readonly_preflight(&output_dir, &relative_file, &expected_info_hash)
+    })
+    .await?
+}
+
+/// Upload and parse one checked EH Torrent through the existing Cookie source
+/// session. This is called only after the Flutter UI's explicit upload
+/// confirmation; it does not create or refresh a session.
+pub async fn cloud115_cookie_bt_upload_and_parse(
+    session: u64,
+    output_dir: String,
+    relative_file: String,
+    expected_info_hash: String,
+    expected_target_folder_id: String,
+) -> Result<cloud115_source::Cloud115BtUploadParseResult> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
+    tokio::task::spawn_blocking(move || {
+        client.bt_upload_and_parse(
+            &output_dir,
+            &relative_file,
+            &expected_info_hash,
+            &expected_target_folder_id,
+        )
+    })
+    .await?
+}
+
+/// Read-only recovery after an uncertain Torrent upload. This never repeats
+/// the upload POST.
+pub async fn cloud115_cookie_bt_confirm_upload_parse(
+    session: u64,
+    output_dir: String,
+    relative_file: String,
+    expected_info_hash: String,
+    expected_target_folder_id: String,
+    pick_code: Option<String>,
+) -> Result<cloud115_source::Cloud115BtUploadParseResult> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
+    tokio::task::spawn_blocking(move || {
+        client.bt_confirm_upload_parse(
+            &output_dir,
+            &relative_file,
+            &expected_info_hash,
+            &expected_target_folder_id,
+            pick_code,
+        )
+    })
+    .await?
+}
+
+/// Submit exactly one BT task after an explicit UI confirmation. The native
+/// method performs an immediate duplicate check and never retries the POST.
+pub async fn cloud115_cookie_bt_submit_once(
+    session: u64,
+    output_dir: String,
+    relative_file: String,
+    expected_info_hash: String,
+    expected_target_folder_id: String,
+    wanted_indices: Vec<u32>,
+) -> Result<cloud115_source::Cloud115BtSubmitResult> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
+    tokio::task::spawn_blocking(move || {
+        client.bt_submit_once(
+            &output_dir,
+            &relative_file,
+            &expected_info_hash,
+            &expected_target_folder_id,
+            &wanted_indices,
+        )
+    })
+    .await?
+}
+
+/// Read-only lookup of one BT task by the current Cookie account and verified
+/// target folder.
+pub async fn cloud115_cookie_bt_task_status(
+    session: u64,
+    info_hash: String,
+    expected_target_folder_id: String,
+) -> Result<cloud115_source::Cloud115BtTaskStatus> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
+    tokio::task::spawn_blocking(move || {
+        client.bt_task_status(&info_hash, &expected_target_folder_id)
+    })
+    .await?
+}
+
 /// 打开 115 上的书籍（path 为 pickcode，三态策略）。
 pub async fn open_cloud115_cookie_book(
     session: u64,

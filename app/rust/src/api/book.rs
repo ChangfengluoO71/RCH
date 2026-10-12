@@ -6,7 +6,7 @@
 
 use crate::reader::Reader;
 use crate::{cache, decode, document, source::local};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -86,17 +86,24 @@ pub(crate) fn register_book(book: Box<dyn document::Document>, cache_ns: &str) -
 pub async fn open_local_book(path: String) -> Result<BookInfo> {
     let book = tokio::task::spawn_blocking({
         let path = path.clone();
-        move || -> Result<Box<dyn document::Document>> {
-            if std::path::Path::new(&path).is_dir() {
-                return document::open_folder_document(&path);
-            }
-            let src = local::LocalFile::open(&path)?;
-            document::open_document(src, &path)
-        }
+        move || open_local_document(&path)
     })
     .await??;
     let cache_ns = format!("local|{}", path);
     Ok(register_book(book, &cache_ns))
+}
+
+fn open_local_document(path: &str) -> Result<Box<dyn document::Document>> {
+    let metadata =
+        std::fs::metadata(path).with_context(|| format!("检查本地漫画路径失败: {path:?}"))?;
+    if metadata.is_dir() {
+        return document::open_folder_document(path)
+            .with_context(|| format!("打开本地漫画文件夹失败: {path:?}"));
+    }
+
+    let src =
+        local::LocalFile::open(path).with_context(|| format!("打开本地漫画文件失败: {path:?}"))?;
+    document::open_document(src, path).with_context(|| format!("识别本地漫画格式失败: {path:?}"))
 }
 
 /// 读取一页的原始图片字节(优先命中缓存/预取,翻页秒出)。
@@ -190,13 +197,7 @@ pub async fn book_cover(
     }
     let path_for_closure = path.clone();
     let img = tokio::task::spawn_blocking(move || -> Result<decode::DecodedImage> {
-        let book: Box<dyn document::Document> = if std::path::Path::new(&path_for_closure).is_dir()
-        {
-            document::open_folder_document(&path_for_closure)?
-        } else {
-            let src = local::LocalFile::open(&path_for_closure)?;
-            document::open_document(src, &path_for_closure)?
-        };
+        let book = open_local_document(&path_for_closure)?;
         let bytes = book.page_bytes(page)?;
         let crop_f = crop.map(|r| (r.x, r.y, r.w, r.h));
         decode::decode_cover(&bytes, width, height, crop_f)
@@ -251,4 +252,26 @@ pub fn is_comic_folder(dir_path: String) -> bool {
 /// 无显式封面时返回空字符串。
 pub fn folder_cover_path(dir_path: String) -> String {
     crate::document::folder::FolderBook::cover_path(&dir_path).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_local_book_path_reports_path_check_context() {
+        let path = "invalid\0local-book-path";
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let result = runtime.block_on(open_local_book(path.to_owned()));
+        let Err(error) = result else {
+            panic!("an invalid local path must not open");
+        };
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("检查本地漫画路径失败"),
+            "unexpected error: {message}"
+        );
+        assert!(message.contains("invalid\\0local-book-path"));
+    }
 }

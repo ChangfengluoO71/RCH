@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `rules_from_arg`
+// These functions are ignored because they are not marked as `pub`: `existing_rules_text`, `load_rules_text_unlocked`, `rules_from_arg`
 
 /// 默认规则 JSON（首次打开订阅面板时使用）。
 Future<String> ehDefaultRules() =>
@@ -16,12 +16,49 @@ Future<String> ehDefaultRules() =>
 Future<String> ehLoadRules({required String path}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhLoadRules(path: path);
 
-/// 保存规则 JSON（先校验再落盘，避免写出损坏配置）。
-Future<void> ehSaveRules({required String path, required String rulesJson}) =>
-    RustLib.instance.api.crateApiEhSubscriptionEhSaveRules(
+/// Save only fields changed since base_json; current Daily state is merged under
+/// the same config-scoped transaction lock.
+Future<String> ehSaveRules({
+  required String path,
+  required String baseJson,
+  required String rulesJson,
+}) => RustLib.instance.api.crateApiEhSubscriptionEhSaveRules(
+  path: path,
+  baseJson: baseJson,
+  rulesJson: rulesJson,
+);
+
+/// Persist only the explicit Daily switch change against the latest config.
+Future<String> ehSetDailyEnabled({
+  required String path,
+  required bool enabled,
+}) => RustLib.instance.api.crateApiEhSubscriptionEhSetDailyEnabled(
+  path: path,
+  enabled: enabled,
+);
+
+/// Atomically claim one local date. The response contains the durable config
+/// snapshot and whether this process won the claim.
+Future<String> ehClaimDaily({required String path, required String date}) =>
+    RustLib.instance.api.crateApiEhSubscriptionEhClaimDaily(
       path: path,
-      rulesJson: rulesJson,
+      date: date,
     );
+
+/// Persist a checked state transition without replacing the enable flag or
+/// the last claimed date.
+Future<String> ehUpdateDailyRun({
+  required String path,
+  required String runJson,
+}) => RustLib.instance.api.crateApiEhSubscriptionEhUpdateDailyRun(
+  path: path,
+  runJson: runJson,
+);
+
+/// Mark stale work interrupted only after checking the Windows collection
+/// lease; a second live RCH process must not be mistaken for a crash.
+Future<String> ehRecoverDailyRun({required String path}) =>
+    RustLib.instance.api.crateApiEhSubscriptionEhRecoverDailyRun(path: path);
 
 /// 当前扫描进度（UI 轮询；JSON 编码避免为进度单独生成 DTO）。
 Future<String> ehProgress() =>
@@ -36,8 +73,17 @@ Future<String> ehProbe({required String rulesJson}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhProbe(rulesJson: rulesJson);
 
 /// 执行一轮扫描。返回的是结束后的一次进度快照（UI 亦可轮询 `eh_progress`）。
-Future<String> ehCollect({required String rulesJson}) =>
-    RustLib.instance.api.crateApiEhSubscriptionEhCollect(rulesJson: rulesJson);
+Future<String> ehCollect({
+  required String path,
+  required String rulesJson,
+  required String source,
+  required String date,
+}) => RustLib.instance.api.crateApiEhSubscriptionEhCollect(
+  path: path,
+  rulesJson: rulesJson,
+  source: source,
+  date: date,
+);
 
 /// **实时搜索**规划一本书的导入（影子模式，不写库）。
 ///
@@ -79,3 +125,9 @@ Future<String> ehPlanImport({
 /// 读取已保存清单（文件不存在返回空列表）。
 Future<String> ehManifest({required String outDir}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhManifest(outDir: outDir);
+
+/// Local, non-destructive manifest and referenced-Torrent check for the handoff UI.
+Future<String> ehManifestChecked({required String outDir}) => RustLib
+    .instance
+    .api
+    .crateApiEhSubscriptionEhManifestChecked(outDir: outDir);

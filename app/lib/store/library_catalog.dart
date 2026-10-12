@@ -27,7 +27,10 @@ class LibraryCatalogStore extends ChangeNotifier {
     try {
       devices = await frb.dbSourceTree();
       loaded = true;
-    } catch (_) {
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('source_tree_load failed type=${error.runtimeType}');
+      }
       devices = [];
       loaded = false;
     }

@@ -25,6 +25,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [115 网页扫码 Cookie 书源规范](./115-web-source.md) | 非官方 Web API、扫码获取 Cookie、pickcode 路径约定、已知坑 | Filled |
 | [Local-First Scraping Boundary](./local-first-scraping.md) | M8 禁止远程书源 I/O 的资产、Provider、确认与测试合同 | Filled |
 | [Automation Pipeline Contracts](./automation-pipeline.md) | M8 自动刮削与现有 SyncEngine 的任务通道、顺序、去重与失败隔离 | Filled |
+| [Background Work and Foreground Responsiveness](./background-work-coordination.md) | Index single-flight, typed sync outcomes, bounded batch writes, maintenance yields, and async cloud loading | Filled (2026-10-12) |
 
 ---
 

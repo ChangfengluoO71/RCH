@@ -208,6 +208,27 @@ pub struct BookMetaDto {
     pub chapter: String,
 }
 
+fn book_meta_row(meta: BookMetaDto) -> db::BookMetaRow {
+    db::BookMetaRow {
+        key: meta.key,
+        cover_page: meta.cover_page,
+        crop_x: meta.crop_x,
+        crop_y: meta.crop_y,
+        crop_w: meta.crop_w,
+        crop_h: meta.crop_h,
+        author: meta.author,
+        genre: meta.genre,
+        series: meta.series,
+        title: meta.title,
+        chinese_title: meta.chinese_title,
+        summary: meta.summary,
+        comment: meta.comment,
+        rotations: meta.rotations,
+        volume: meta.volume,
+        chapter: meta.chapter,
+    }
+}
+
 pub fn db_load_all_metas() -> Vec<BookMetaDto> {
     db::load_all_metas()
         .into_iter()
@@ -233,25 +254,26 @@ pub fn db_load_all_metas() -> Vec<BookMetaDto> {
 }
 
 pub fn db_upsert_meta(meta: BookMetaDto) -> Result<(), String> {
-    db::upsert_meta(&db::BookMetaRow {
-        key: meta.key,
-        cover_page: meta.cover_page,
-        crop_x: meta.crop_x,
-        crop_y: meta.crop_y,
-        crop_w: meta.crop_w,
-        crop_h: meta.crop_h,
-        author: meta.author,
-        genre: meta.genre,
-        series: meta.series,
-        title: meta.title,
-        chinese_title: meta.chinese_title,
-        summary: meta.summary,
-        comment: meta.comment,
-        rotations: meta.rotations,
-        volume: meta.volume,
-        chapter: meta.chapter,
-    })
-    .map_err(|e| format!("{e}"))
+    db::upsert_meta(&book_meta_row(meta)).map_err(|e| format!("{e}"))
+}
+
+pub struct BatchTagWriteDto {
+    pub book_key: String,
+    pub tag_name: String,
+    pub meta: Option<BookMetaDto>,
+}
+
+/// Persist a bounded batch of book metadata and one tag link per book.
+pub fn db_apply_batch_tag_writes(writes: Vec<BatchTagWriteDto>) -> Result<(), String> {
+    let rows = writes
+        .into_iter()
+        .map(|write| db::BatchTagWriteRow {
+            book_key: write.book_key,
+            tag_name: write.tag_name,
+            meta: write.meta.map(book_meta_row),
+        })
+        .collect::<Vec<_>>();
+    db::apply_batch_tag_writes(&rows).map_err(|e| format!("{e}"))
 }
 
 pub fn db_delete_meta(key: String) -> Result<(), String> {

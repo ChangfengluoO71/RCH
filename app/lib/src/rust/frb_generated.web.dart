@@ -26,6 +26,7 @@ import 'dart:convert';
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_web.dart';
 import 'scrape_projection.dart';
+import 'source/cloud115/offline.dart';
 
 abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustLibApiImplPlatform({
@@ -56,6 +57,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BaiduTokenPair dco_decode_baidu_token_pair(dynamic raw);
+
+  @protected
+  BatchTagWriteDto dco_decode_batch_tag_write_dto(dynamic raw);
 
   @protected
   BookInfo dco_decode_book_info(dynamic raw);
@@ -156,6 +160,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CatalogRevisionDto dco_decode_catalog_revision_dto(dynamic raw);
 
   @protected
+  Cloud115BtFile dco_decode_cloud_115_bt_file(dynamic raw);
+
+  @protected
+  Cloud115BtPreflight dco_decode_cloud_115_bt_preflight(dynamic raw);
+
+  @protected
+  Cloud115BtSubmitResult dco_decode_cloud_115_bt_submit_result(dynamic raw);
+
+  @protected
+  Cloud115BtTaskStatus dco_decode_cloud_115_bt_task_status(dynamic raw);
+
+  @protected
+  Cloud115BtUploadParseResult dco_decode_cloud_115_bt_upload_parse_result(
+    dynamic raw,
+  );
+
+  @protected
   Cloud115CookieQrPayload dco_decode_cloud_115_cookie_qr_payload(dynamic raw);
 
   @protected
@@ -223,6 +244,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<AiTaskDto> dco_decode_list_ai_task_dto(dynamic raw);
 
   @protected
+  List<BatchTagWriteDto> dco_decode_list_batch_tag_write_dto(dynamic raw);
+
+  @protected
   List<BookMetaDto> dco_decode_list_book_meta_dto(dynamic raw);
 
   @protected
@@ -233,6 +257,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BookTagDto> dco_decode_list_book_tag_dto(dynamic raw);
+
+  @protected
+  List<Cloud115BtFile> dco_decode_list_cloud_115_bt_file(dynamic raw);
 
   @protected
   List<DeviceDto> dco_decode_list_device_dto(dynamic raw);
@@ -254,6 +281,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<int> dco_decode_list_prim_u_32_loose(dynamic raw);
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -315,6 +348,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BookInfo? dco_decode_opt_box_autoadd_book_info(dynamic raw);
+
+  @protected
+  BookMetaDto? dco_decode_opt_box_autoadd_book_meta_dto(dynamic raw);
 
   @protected
   BookPageDimensions? dco_decode_opt_box_autoadd_book_page_dimensions(
@@ -511,6 +547,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BaiduTokenPair sse_decode_baidu_token_pair(SseDeserializer deserializer);
 
   @protected
+  BatchTagWriteDto sse_decode_batch_tag_write_dto(SseDeserializer deserializer);
+
+  @protected
   BookInfo sse_decode_book_info(SseDeserializer deserializer);
 
   @protected
@@ -635,6 +674,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  Cloud115BtFile sse_decode_cloud_115_bt_file(SseDeserializer deserializer);
+
+  @protected
+  Cloud115BtPreflight sse_decode_cloud_115_bt_preflight(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtSubmitResult sse_decode_cloud_115_bt_submit_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtTaskStatus sse_decode_cloud_115_bt_task_status(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtUploadParseResult sse_decode_cloud_115_bt_upload_parse_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Cloud115CookieQrPayload sse_decode_cloud_115_cookie_qr_payload(
     SseDeserializer deserializer,
   );
@@ -714,6 +776,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<AiTaskDto> sse_decode_list_ai_task_dto(SseDeserializer deserializer);
 
   @protected
+  List<BatchTagWriteDto> sse_decode_list_batch_tag_write_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<BookMetaDto> sse_decode_list_book_meta_dto(SseDeserializer deserializer);
 
   @protected
@@ -728,6 +795,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<BookTagDto> sse_decode_list_book_tag_dto(SseDeserializer deserializer);
+
+  @protected
+  List<Cloud115BtFile> sse_decode_list_cloud_115_bt_file(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<DeviceDto> sse_decode_list_device_dto(SseDeserializer deserializer);
@@ -757,6 +829,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Uint8List> sse_decode_list_list_prim_u_8_strict(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<int> sse_decode_list_prim_u_32_loose(SseDeserializer deserializer);
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
 
   @protected
   List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
@@ -834,6 +912,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BookInfo? sse_decode_opt_box_autoadd_book_info(SseDeserializer deserializer);
+
+  @protected
+  BookMetaDto? sse_decode_opt_box_autoadd_book_meta_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   BookPageDimensions? sse_decode_opt_box_autoadd_book_page_dimensions(
@@ -1072,6 +1155,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_batch_tag_write_dto(
+    BatchTagWriteDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_book_info(BookInfo self, SseSerializer serializer);
 
   @protected
@@ -1225,6 +1314,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_115_bt_file(
+    Cloud115BtFile self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_preflight(
+    Cloud115BtPreflight self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_submit_result(
+    Cloud115BtSubmitResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_task_status(
+    Cloud115BtTaskStatus self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_upload_parse_result(
+    Cloud115BtUploadParseResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_115_cookie_qr_payload(
     Cloud115CookieQrPayload self,
     SseSerializer serializer,
@@ -1327,6 +1446,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_batch_tag_write_dto(
+    List<BatchTagWriteDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_book_meta_dto(
     List<BookMetaDto> self,
     SseSerializer serializer,
@@ -1347,6 +1472,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_book_tag_dto(
     List<BookTagDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_115_bt_file(
+    List<Cloud115BtFile> self,
     SseSerializer serializer,
   );
 
@@ -1386,6 +1517,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_list_prim_u_8_strict(
     List<Uint8List> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_32_loose(
+    List<int> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
     SseSerializer serializer,
   );
 
@@ -1485,6 +1628,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_book_info(
     BookInfo? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_book_meta_dto(
+    BookMetaDto? self,
     SseSerializer serializer,
   );
 

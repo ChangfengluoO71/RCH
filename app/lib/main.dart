@@ -9,6 +9,8 @@ import 'package:app/src/rust/api/remote_scan.dart';
 import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/automation_coordinator.dart';
+import 'package:app/store/eh_daily_coordinator.dart';
+import 'package:app/store/eh_subscription_store.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
@@ -45,7 +47,8 @@ Future<void> main() async {
   }
 
   // 启动恢复自定义根：标记文件优先，library.json 兜底（在打开数据库之前）。
-  final customRoot = await readCacheRootMarker() ?? await _cacheDirFromLibraryJson();
+  final customRoot =
+      await readCacheRootMarker() ?? await _cacheDirFromLibraryJson();
   if (customRoot != null && customRoot.isNotEmpty) {
     if (_isInvalidRootForPlatform(customRoot)) {
       // 移动端残留 Windows 绝对路径（如 D:\...）：直接忽略并清掉标记，回退默认根，
@@ -76,6 +79,7 @@ Future<void> main() async {
   // 检测未完成的根目录迁移（源根上的 migration.partial 标记）。
   final root = await cacheRootPath();
   final pending = await pendingMigration(root: root);
+  EhDailyCoordinator.initialize(EhSubscriptionStore.instance);
   runApp(RchApp(startupPending: pending));
 
   // 非关键初始化放到首帧之后：保留原有自动同步/刮削与 AI 续跑语义，
@@ -116,9 +120,18 @@ Future<void> _initializeAfterFirstFrame() async {
 
   // P1-E：启动**唯一**的 cover revision stream 订阅（进程级一次）。
   // 事件只是 wake-up，coordinator 收到后会重读 durable revision 并刷新本地聚合。
-  RemoteScanCoordinator.instance.startCoverRevisionWatch();  await SyncManager.instance.init();
+  RemoteScanCoordinator.instance.startCoverRevisionWatch();
+  await SyncManager.instance.init();
   await AiUpscaleManager.instance.init();
   await AutomationCoordinator.instance.init();
+
+  // Daily EH collection is process-local and Windows-only. Loading the existing
+  // rules file is local I/O; the coordinator remains inert unless the user has
+  // explicitly enabled its persisted setting.
+  if (Platform.isWindows) {
+    await EhSubscriptionStore.instance.init();
+    await EhDailyCoordinator.instance.start();
+  }
 }
 
 /// 移动端（Android）拒绝 Windows 风格绝对路径（盘符 / UNC）作为缓存根。
@@ -133,8 +146,12 @@ void _installErrorLog() {
   final prev = FlutterError.onError;
   FlutterError.onError = (details) {
     prev?.call(details);
-    unawaited(_appendErrorLog(
-        details.exceptionAsString(), details.stack?.toString() ?? ''));
+    unawaited(
+      _appendErrorLog(
+        details.exceptionAsString(),
+        details.stack?.toString() ?? '',
+      ),
+    );
   };
   PlatformDispatcher.instance.onError = (error, stack) {
     unawaited(_appendErrorLog(error.toString(), stack.toString()));
@@ -197,7 +214,8 @@ Future<void> _healDatabaseLocation() async {
   try {
     final src = File(best);
     await src.copy(dbFile.path);
-    final ok = await dbFile.exists() && await dbFile.length() == await src.length();
+    final ok =
+        await dbFile.exists() && await dbFile.length() == await src.length();
     if (ok) {
       await src.delete();
       debugPrint('[main] database.db 已搬入当前根目录: $currentRoot');

@@ -21,8 +21,14 @@ class RecordRepository {
 
   // ---- CRUD ----
 
-  ReadRecord? of(BookSource source, String path) =>
-      records[keyOf(source.type, source.id, path)];
+  ReadRecord? of(BookSource source, String path) {
+    final localPath = normalizeLocalFilesystemPath(
+      path,
+      isLocalFs: source.isLocalFs,
+      isWindows: Platform.isWindows,
+    );
+    return records[keyOf(source.type, source.id, localPath)];
+  }
 
   /// 获取或创建一条阅读记录。
   /// page == null → 只加 readCount（"打开"）；page != null → 更新 lastPage。
@@ -32,14 +38,19 @@ class RecordRepository {
     required String title,
     int? page,
   }) {
-    final key = keyOf(source.type, source.id, path);
+    final localPath = normalizeLocalFilesystemPath(
+      path,
+      isLocalFs: source.isLocalFs,
+      isWindows: Platform.isWindows,
+    );
+    final key = keyOf(source.type, source.id, localPath);
     final r =
         records[key] ??
         ReadRecord(
           key: key,
           sourceId: source.id,
           sourceType: source.type,
-          path: path,
+          path: localPath,
           title: title,
         );
     r.lastReadAt = DateTime.now().millisecondsSinceEpoch;
@@ -101,7 +112,14 @@ class RecordRepository {
   }
 
   bool _localAssetExists(String path) {
-    if (File(path).existsSync() || Directory(path).existsSync()) return true;
+    final localPath = normalizeLocalFilesystemPath(
+      path,
+      isLocalFs: true,
+      isWindows: Platform.isWindows,
+    );
+    if (File(localPath).existsSync() || Directory(localPath).existsSync()) {
+      return true;
+    }
     // Archive aliases share a logical key, but the physical extension may be
     // absent from an old read record. Check local candidates only; this path
     // is never used for remote sources.
@@ -118,7 +136,7 @@ class RecordRepository {
       '.epub',
       '.mobi',
     ]) {
-      if (File('$path$ext').existsSync()) return true;
+      if (File('$localPath$ext').existsSync()) return true;
     }
     return false;
   }

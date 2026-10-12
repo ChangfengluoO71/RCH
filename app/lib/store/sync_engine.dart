@@ -12,8 +12,29 @@ import 'package:app/src/rust/api/sync.dart' as syncapi;
 import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/library_catalog.dart';
+import 'package:app/store/foreground_work_coordinator.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:flutter/foundation.dart';
+
+enum SyncRunStatus { completed, remoteUnchanged, skipped, failed }
+
+class SyncRunOutcome {
+  const SyncRunOutcome({
+    required this.status,
+    required this.message,
+    this.revision,
+    this.changedEntities = const <String, int>{},
+    this.changesKnown = true,
+  });
+
+  final SyncRunStatus status;
+  final String message;
+  final int? revision;
+  final Map<String, int> changedEntities;
+  final bool changesKnown;
+
+  bool get hasChanges => changedEntities.values.any((count) => count > 0);
+}
 
 class SyncEngine {
   SyncEngine._();
@@ -24,6 +45,7 @@ class SyncEngine {
   Timer? _debounce;
   Timer? _poll;
   bool _syncing = false;
+  bool _automaticTriggerRunning = false;
   bool _enabled = true;
   bool _managedByCoordinator = false;
   int _retryCount = 0;
@@ -63,7 +85,7 @@ class SyncEngine {
       const Duration(seconds: 60),
       (_) => _autoTrigger(quickPoll: true),
     );
-    if (_enabled) await syncNow();
+    if (_enabled) await syncNow(background: true);
   }
 
   Future<void> setAutoSync(bool v) async {
@@ -88,24 +110,63 @@ class SyncEngine {
     bool refreshCatalog = true,
   }) => _autoTrigger(quickPoll: quickPoll, refreshCatalog: refreshCatalog);
 
+  /// Performs the cheap remote revision check before local catalog scanning.
+  /// A null result means a full sync should follow; a typed result means the
+  /// periodic attempt is safely skipped or the remote revision is unchanged.
+  Future<SyncRunOutcome?> probeQuickPoll({bool background = false}) async {
+    if (background) {
+      await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+    }
+    if (!_enabled || _syncing) {
+      return SyncRunOutcome(
+        status: SyncRunStatus.skipped,
+        message: lastStatus,
+        changesKnown: !_syncing,
+      );
+    }
+    if (_inRateLimitCooldown() || _inBackoffCooldown()) {
+      return SyncRunOutcome(status: SyncRunStatus.skipped, message: lastStatus);
+    }
+    if (_retryCount > 0) {
+      return SyncRunOutcome(status: SyncRunStatus.skipped, message: lastStatus);
+    }
+    final last = _lastAttemptAt;
+    if (last != null && DateTime.now().difference(last) < _minAutoInterval) {
+      return SyncRunOutcome(status: SyncRunStatus.skipped, message: lastStatus);
+    }
+    if (await _remoteUnchanged()) {
+      return const SyncRunOutcome(
+        status: SyncRunStatus.remoteUnchanged,
+        message: '远端 revision 未变化',
+      );
+    }
+    return null;
+  }
+
   Future<void> _autoTrigger({
     bool fromBackoff = false,
     bool quickPoll = false,
     bool refreshCatalog = true,
   }) async {
-    if (!_enabled || _syncing) return;
-    if (_inRateLimitCooldown()) return;
-    // 失败退避期间，定时轮询/变更防抖都不得触发新一轮同步；
-    // 否则每 60 秒盲重试会把服务端打到限流（截图中的每分钟失败循环）。
-    if (_inBackoffCooldown()) return;
-    // 失败后重试节奏完全交给退避定时器（fromBackoff），轮询/防抖让位。
-    if (!fromBackoff && _retryCount > 0) return;
-    final last = _lastAttemptAt;
-    if (last != null && DateTime.now().difference(last) < _minAutoInterval) {
-      return;
+    if (!_enabled || _syncing || _automaticTriggerRunning) return;
+    _automaticTriggerRunning = true;
+    try {
+      await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+      if (!_enabled || _syncing || _inRateLimitCooldown()) return;
+      // 失败退避期间，定时轮询/变更防抖都不得触发新一轮同步；
+      // 否则每 60 秒盲重试会把服务端打到限流（截图中的每分钟失败循环）。
+      if (_inBackoffCooldown()) return;
+      // 失败后重试节奏完全交给退避定时器（fromBackoff），轮询/防抖让位。
+      if (!fromBackoff && _retryCount > 0) return;
+      final last = _lastAttemptAt;
+      if (last != null && DateTime.now().difference(last) < _minAutoInterval) {
+        return;
+      }
+      if (quickPoll && await _remoteUnchanged()) return;
+      await syncNow(refreshCatalog: refreshCatalog, background: true);
+    } finally {
+      _automaticTriggerRunning = false;
     }
-    if (quickPoll && await _remoteUnchanged()) return;
-    await syncNow(refreshCatalog: refreshCatalog);
   }
 
   bool _inRateLimitCooldown() {
@@ -151,8 +212,11 @@ class SyncEngine {
 
   /// Refresh local sources and persisted remote snapshots without opening a
   /// sync transport. Automatic catalog scraping uses this phase separately.
-  Future<void> refreshCatalogIndexes() async {
+  Future<void> refreshCatalogIndexes({bool background = false}) async {
     for (final s in LibraryStore.instance.sources) {
+      if (background) {
+        await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+      }
       try {
         if (s.isLocalFs) {
           await LibraryIndexService.instance.refreshSourceIndex(
@@ -169,19 +233,62 @@ class SyncEngine {
   }
 
   /// 立即同步（手动入口与自动共用）。
-  Future<String> syncNow({bool refreshCatalog = true}) async {
+  Future<String> syncNow({
+    bool refreshCatalog = true,
+    bool background = false,
+  }) async => (await syncNowWithOutcome(
+    refreshCatalog: refreshCatalog,
+    background: background,
+  )).message;
+
+  Future<SyncRunOutcome> syncNowWithOutcome({
+    bool refreshCatalog = true,
+    bool background = false,
+  }) {
+    Future<SyncRunOutcome> run() => _runSyncNowWithOutcome(
+      refreshCatalog: refreshCatalog,
+      background: background,
+    );
+    if (background) return run();
+    return ForegroundWorkCoordinator.instance.runForeground(run);
+  }
+
+  Future<SyncRunOutcome> _runSyncNowWithOutcome({
+    required bool refreshCatalog,
+    required bool background,
+  }) async {
+    if (background) {
+      await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+    }
+    final stopwatch = Stopwatch()..start();
     final mgr = SyncManager.instance;
     final url = mgr.webdavUrl.trim();
-    if (_syncing) return '正在同步…';
-    if (_inRateLimitCooldown()) return '服务器限流中，15 分钟后自动重试';
+    if (_syncing) {
+      return SyncRunOutcome(
+        status: SyncRunStatus.skipped,
+        message: '正在同步…',
+        changesKnown: false,
+      );
+    }
+    if (_inRateLimitCooldown()) {
+      return SyncRunOutcome(
+        status: SyncRunStatus.skipped,
+        message: '服务器限流中，15 分钟后自动重试',
+      );
+    }
     _syncing = true;
     _lastAttemptAt = DateTime.now();
     BigInt? session;
     try {
-      if (refreshCatalog) await refreshCatalogIndexes();
+      if (refreshCatalog) {
+        await refreshCatalogIndexes(background: background);
+      }
       if (url.isEmpty) {
         lastStatus = '未配置 WebDAV 同步';
-        return lastStatus;
+        return SyncRunOutcome(
+          status: SyncRunStatus.skipped,
+          message: lastStatus,
+        );
       }
       session = (await webdavConnect(
         url: url,
@@ -205,16 +312,25 @@ class SyncEngine {
       _retryCount = 0;
       _rateLimitUntil = null;
       _backoffUntil = null;
-      // 刷新 UI 内存态（apply 发生在 Rust 侧；重载会触发 notify，
-      // 但此时 _syncing=true，markDirty 直接忽略，不会造成循环触发）。
-      // ADR-028 §12.5：apply 发生在 Rust 侧，Dart 内存态必须强制重载
-      // （默认 load 有 _loaded 短路，直接调用不会刷新）。
-      // Sync has already committed the authoritative SQLite state. Reload
-      // memory without enqueueing a second full save; the coordinator owns
-      // the subsequent projection/push boundary.
-      await LibraryStore.instance.load(force: true, persist: false);
-      await LibraryCatalogStore.instance.loadTree();
-      return lastStatus;
+      final changedEntities = <String, int>{
+        for (final entity in out.changedEntities)
+          if (entity.count > 0) entity.entity: entity.count,
+      };
+      if (changedEntities.isNotEmpty) {
+        // Rust committed authoritative SQLite changes. Reload only when the
+        // typed result reports changed entities; no-op syncs need no full store
+        // and catalog reload.
+        await LibraryStore.instance.load(force: true, persist: false);
+        await LibraryCatalogStore.instance.loadTree();
+      }
+      return SyncRunOutcome(
+        status: changedEntities.isEmpty
+            ? SyncRunStatus.remoteUnchanged
+            : SyncRunStatus.completed,
+        message: lastStatus,
+        revision: out.revision,
+        changedEntities: changedEntities,
+      );
     } catch (e) {
       lastStatus = '同步失败: $e';
       final msg = '$e';
@@ -230,7 +346,11 @@ class SyncEngine {
       try {
         await syncapi.syncSetLastError(message: '$e');
       } catch (_) {}
-      return lastStatus;
+      return SyncRunOutcome(
+        status: SyncRunStatus.failed,
+        message: lastStatus,
+        changesKnown: false,
+      );
     } finally {
       if (session != null) {
         try {
@@ -238,6 +358,11 @@ class SyncEngine {
         } catch (_) {}
       }
       _syncing = false;
+      if (kProfileMode) {
+        debugPrint(
+          '[performance] phase=sync_attempt elapsed_ms=${stopwatch.elapsedMilliseconds}',
+        );
+      }
     }
   }
 

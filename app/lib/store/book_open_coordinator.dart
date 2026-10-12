@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:app/src/rust/api/book.dart' as frbbook;
 import 'package:app/src/rust/api/source.dart' as frbsource;
@@ -49,6 +50,12 @@ class BookOpenCoordinator {
   }) async {
     final sourceType =
         source?.type ?? (existingSession == null ? 'local' : 'webdav');
+    final isLocalFilesystem = source?.isLocalFs ?? (existingSession == null);
+    final normalizedPath = normalizeLocalFilesystemPath(
+      path,
+      isLocalFs: isLocalFilesystem,
+      isWindows: Platform.isWindows,
+    );
     void stage(BookOpenStage value) {
       if (isActive()) onStage(value);
     }
@@ -97,14 +104,13 @@ class BookOpenCoordinator {
       stage(BookOpenStage.openingBook);
       onRemoteImageFolder?.call(remoteImageFolder);
 
-      final providerPath = source != null &&
-              source.needsSession &&
-              !remoteImageFolder
+      final providerPath =
+          source != null && source.needsSession && !remoteImageFolder
           ? await LibraryCatalogStore.instance.providerPathFor(
               source: source,
               path: path,
             )
-          : path;
+          : normalizedPath;
       if (!isActive()) throw const BookOpenCancelled();
       onProviderPathResolved?.call(providerPath);
 
@@ -112,7 +118,7 @@ class BookOpenCoordinator {
         source: source,
         sourceType: sourceType,
         session: session,
-        path: path,
+        path: normalizedPath,
         providerPath: providerPath,
         title: title,
         strategy: strategy,

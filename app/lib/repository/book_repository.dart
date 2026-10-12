@@ -275,60 +275,71 @@ class BookRepository {
     rotations: parseBookRotations(dto.rotations),
   );
 
+  /// Persist one source without rewriting the full metadata snapshot.
+  ///
+  /// Interactive source creation uses this before refreshing the catalog tree;
+  /// the library-wide JSON backup remains on LibraryStore's debounced path.
+  Future<void> saveSourceToSqlite(BookSource source) =>
+      _saveSourceToSqlite(source);
+
+  Future<void> _saveSourceToSqlite(BookSource s) async {
+    if (_usesCredentialVault) {
+      final key =
+          s.credentialRef ??
+          (_hasSensitive(
+                password: s.password,
+                refreshToken: s.refreshToken,
+                clientSecret: s.clientSecret,
+                cookie: s.cookie,
+              )
+              ? _credentialKey(s)
+              : null);
+      if (key != null &&
+          _hasSensitive(
+            password: s.password,
+            refreshToken: s.refreshToken,
+            clientSecret: s.clientSecret,
+            cookie: s.cookie,
+          )) {
+        final payload = _encodeSourceCredentials(s);
+        await _vault.put(key, payload);
+        if (await _vault.get(key) != payload) {
+          throw StateError('凭据保险库回读校验失败');
+        }
+        s.credentialRef = key;
+      }
+    }
+    await dbUpsertSource(
+      source: BookSourceDto(
+        id: s.id,
+        type: s.type,
+        name: s.name,
+        path: s.path,
+        url: s.url,
+        username: s.username,
+        password: _usesCredentialVault ? null : s.password,
+        port: s.port,
+        refreshToken: _usesCredentialVault ? null : s.refreshToken,
+        clientId: s.clientId,
+        clientSecret: _usesCredentialVault ? null : s.clientSecret,
+        rootId: s.rootId,
+        cookie: _usesCredentialVault ? null : s.cookie,
+        credentialRef: s.credentialRef,
+        note: s.note,
+        capabilityLabel: s.capabilityLabel,
+        remoteOnly: s.remoteOnly,
+        originDeviceId: s.originDeviceId,
+      ),
+    );
+  }
+
   Future<void> saveToSqlite() async {
     // Each DB call yields to the event loop. Work from immutable snapshots so
     // a concurrent catalog reload/source edit cannot mutate the iterables.
     final sourceSnapshot = List<BookSource>.of(sources, growable: false);
     final metaSnapshot = metas.values.toList(growable: false);
     for (final s in sourceSnapshot) {
-      if (_usesCredentialVault) {
-        final key =
-            s.credentialRef ??
-            (_hasSensitive(
-                  password: s.password,
-                  refreshToken: s.refreshToken,
-                  clientSecret: s.clientSecret,
-                  cookie: s.cookie,
-                )
-                ? _credentialKey(s)
-                : null);
-        if (key != null &&
-            _hasSensitive(
-              password: s.password,
-              refreshToken: s.refreshToken,
-              clientSecret: s.clientSecret,
-              cookie: s.cookie,
-            )) {
-          final payload = _encodeSourceCredentials(s);
-          await _vault.put(key, payload);
-          if (await _vault.get(key) != payload) {
-            throw StateError('凭据保险库回读校验失败');
-          }
-          s.credentialRef = key;
-        }
-      }
-      await dbUpsertSource(
-        source: BookSourceDto(
-          id: s.id,
-          type: s.type,
-          name: s.name,
-          path: s.path,
-          url: s.url,
-          username: s.username,
-          password: _usesCredentialVault ? null : s.password,
-          port: s.port,
-          refreshToken: _usesCredentialVault ? null : s.refreshToken,
-          clientId: s.clientId,
-          clientSecret: _usesCredentialVault ? null : s.clientSecret,
-          rootId: s.rootId,
-          cookie: _usesCredentialVault ? null : s.cookie,
-          credentialRef: s.credentialRef,
-          note: s.note,
-          capabilityLabel: s.capabilityLabel,
-          remoteOnly: s.remoteOnly,
-          originDeviceId: s.originDeviceId,
-        ),
-      );
+      await _saveSourceToSqlite(s);
     }
     for (final m in metaSnapshot) {
       await dbUpsertMeta(

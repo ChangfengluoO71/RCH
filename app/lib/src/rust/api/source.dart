@@ -4,6 +4,7 @@
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
 import '../frb_generated.dart';
+import '../source/cloud115/offline.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
@@ -280,6 +281,86 @@ Future<List<DirEntry>> cloud115CookieList({
 }) => RustLib.instance.api.crateApiSourceCloud115CookieList(
   session: session,
   path: path,
+);
+
+/// Validate one checked EH Torrent and query the existing Cookie session for
+/// the exact target directory and duplicate-task state. This operation is
+/// read-only and reuses the reader's Cookie client, rate gate, and WAF cooldown.
+Future<Cloud115BtPreflight> cloud115CookieBtReadonlyPreflight({
+  required BigInt session,
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieBtReadonlyPreflight(
+  session: session,
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+);
+
+/// Upload and parse one checked EH Torrent through the existing Cookie source
+/// session. This is called only after the Flutter UI's explicit upload
+/// confirmation; it does not create or refresh a session.
+Future<Cloud115BtUploadParseResult> cloud115CookieBtUploadAndParse({
+  required BigInt session,
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedTargetFolderId,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieBtUploadAndParse(
+  session: session,
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
+);
+
+/// Read-only recovery after an uncertain Torrent upload. This never repeats
+/// the upload POST.
+Future<Cloud115BtUploadParseResult> cloud115CookieBtConfirmUploadParse({
+  required BigInt session,
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedTargetFolderId,
+  String? pickCode,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieBtConfirmUploadParse(
+  session: session,
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
+  pickCode: pickCode,
+);
+
+/// Submit exactly one BT task after an explicit UI confirmation. The native
+/// method performs an immediate duplicate check and never retries the POST.
+Future<Cloud115BtSubmitResult> cloud115CookieBtSubmitOnce({
+  required BigInt session,
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedTargetFolderId,
+  required List<int> wantedIndices,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieBtSubmitOnce(
+  session: session,
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
+  wantedIndices: wantedIndices,
+);
+
+/// Read-only lookup of one BT task by the current Cookie account and verified
+/// target folder.
+Future<Cloud115BtTaskStatus> cloud115CookieBtTaskStatus({
+  required BigInt session,
+  required String infoHash,
+  required String expectedTargetFolderId,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieBtTaskStatus(
+  session: session,
+  infoHash: infoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
 );
 
 /// 打开 115 上的书籍（path 为 pickcode，三态策略）。

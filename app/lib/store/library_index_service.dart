@@ -6,18 +6,44 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
 // 条目并落 SQLite。只写 path/size/mtime/cover_ref（物理发现层），
 // 绝不触碰 book_metas / read_records（用户认知层）。
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:app/src/rust/api/db.dart' as frb;
 import 'package:app/src/rust/api/library.dart' as frblib;
 import 'package:app/store/folder_snapshot_store.dart';
+import 'package:app/store/foreground_work_coordinator.dart';
 import 'package:app/store/models.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart'
+    show VoidCallback, debugPrint, kProfileMode;
+
+typedef SourceIndexRefreshResult = ({
+  int entries,
+  String message,
+  bool changed,
+  String revision,
+  List<String> bookKeys,
+});
 
 class LibraryIndexService {
   LibraryIndexService._();
   static final LibraryIndexService instance = LibraryIndexService._();
+
+  final Map<String, _SourceRefreshFlight> _sourceRefreshFlights = {};
+
+  static void _logProfileTiming(
+    String phase,
+    Stopwatch stopwatch, {
+    int? entries,
+  }) {
+    if (!kProfileMode) return;
+    debugPrint(
+      '[performance] phase=$phase elapsed_ms=${stopwatch.elapsedMilliseconds}'
+      '${entries == null ? '' : ' entries=$entries'}',
+    );
+  }
 
   /// 与 SourceBrowser 一致的漫画扩展名清单。
   static const List<String> comicExts = [
@@ -63,6 +89,13 @@ class LibraryIndexService {
       s = '$first${s.substring(1)}';
     }
     return s;
+  }
+
+  static String _parentIndexPath(String path) {
+    final separator = path.lastIndexOf('/');
+    if (separator < 0) return '';
+    if (separator == 0) return '/';
+    return path.substring(0, separator);
   }
 
   /// 稳定条目 id：`sha256(fingerprint + "|" + normalizeIndexPath(path))`，
@@ -174,12 +207,17 @@ class LibraryIndexService {
   refreshCatalogSnapshots({
     required List<BookSource> sources,
     required String trigger,
+    bool background = false,
   }) async {
+    final stopwatch = Stopwatch()..start();
     final changedKeys = <String>{};
     final revisions = <String>[];
     var changedSources = 0;
     final sourceList = List<BookSource>.from(sources);
     for (final source in sourceList) {
+      if (background) {
+        await ForegroundWorkCoordinator.instance.waitForMaintenanceTurn();
+      }
       try {
         final result = source.isLocalFs
             ? await refreshSourceIndex(source: source, force: false)
@@ -205,6 +243,11 @@ class LibraryIndexService {
       scope: 'global',
       revision: revision,
       changedBookKeysJson: jsonEncode(allKeys),
+    );
+    _logProfileTiming(
+      'catalog_snapshot_refresh',
+      stopwatch,
+      entries: sourceList.length,
     );
     return (
       sources: sourceList.length,
@@ -273,23 +316,35 @@ class LibraryIndexService {
     List<frb.LibraryIndexDto>? previous,
     bool force = false,
   }) async {
+    final stopwatch = Stopwatch()..start();
     final now = DateTime.now().millisecondsSinceEpoch;
     final entries = <frb.LibraryIndexDto>[];
     final root = Directory(rootPath);
-    if (!await root.exists()) return entries;
+    if (!await root.exists()) {
+      _logProfileTiming('local_index_scan', stopwatch, entries: 0);
+      return entries;
+    }
     final rootId = libraryIndexId(fingerprint, rootPath);
     final unclassifiedSubtrees = <String>{};
+    final previousEntriesByPath = <String, frb.LibraryIndexDto>{};
+    final previousChildrenByParent = <String, List<frb.LibraryIndexDto>>{};
     for (final entry in previous ?? const <frb.LibraryIndexDto>[]) {
+      final indexedPath = normalizeIndexPath(entry.path);
+      previousEntriesByPath[indexedPath] = entry;
+      final parentPath = _parentIndexPath(indexedPath);
+      if (parentPath.isNotEmpty) {
+        previousChildrenByParent
+            .putIfAbsent(parentPath, () => <frb.LibraryIndexDto>[])
+            .add(entry);
+      }
       if (entry.assetKind != null) continue;
-      var path = entry.path;
+      var path = indexedPath;
       while (path.isNotEmpty) {
         unclassifiedSubtrees.add(path);
-        final parentEnd = path.lastIndexOf(Platform.pathSeparator);
-        if (parentEnd < 0) break;
-        final parent = path.substring(0, parentEnd);
+        final parent = _parentIndexPath(path);
         if (parent.isEmpty || parent == path) break;
         // Keep the Windows drive root intact while marking all indexed parents.
-        if (Platform.pathSeparator == '\\' && parent.endsWith(':')) {
+        if (parent.endsWith(':')) {
           unclassifiedSubtrees.add(parent);
           break;
         }
@@ -298,30 +353,38 @@ class LibraryIndexService {
     }
     final prevDirs = <String, int>{
       for (final e in previous ?? const <frb.LibraryIndexDto>[])
-        if (e.entryType == 'dir' &&
-            e.assetKind != null &&
-            e.modifiedAt != null)
-          e.path: e.modifiedAt!,
+        if (e.entryType == 'dir' && e.assetKind != null && e.modifiedAt != null)
+          normalizeIndexPath(e.path): e.modifiedAt!,
     };
+
+    void appendPreviousSubtree(String subtreePath) {
+      final pending = <String>[subtreePath];
+      while (pending.isNotEmpty) {
+        final currentPath = pending.removeLast();
+        final current = previousEntriesByPath[currentPath];
+        if (current != null) entries.add(current);
+        for (final child
+            in previousChildrenByParent[currentPath] ??
+                const <frb.LibraryIndexDto>[]) {
+          pending.add(normalizeIndexPath(child.path));
+        }
+      }
+    }
 
     Future<void> walk(Directory dir, String parentId) async {
       final dirPath = dir.path;
+      final indexedDirPath = normalizeIndexPath(dirPath);
       final isRoot = dirPath == root.path;
       String myId = rootId;
       if (!isRoot) {
         myId = libraryIndexId(fingerprint, dirPath);
         if (!force &&
-            prevDirs.containsKey(dirPath) &&
-            !unclassifiedSubtrees.contains(dirPath)) {
+            prevDirs.containsKey(indexedDirPath) &&
+            !unclassifiedSubtrees.contains(indexedDirPath)) {
           final st = await dir.stat();
-          if (st.modified.millisecondsSinceEpoch == prevDirs[dirPath]) {
+          if (st.modified.millisecondsSinceEpoch == prevDirs[indexedDirPath]) {
             // 子树未变：原样保留旧条目（含 dir 自身与子级），不再遍历
-            for (final e in previous ?? const <frb.LibraryIndexDto>[]) {
-              if (e.path == dirPath ||
-                  e.path.startsWith('$dirPath${Platform.pathSeparator}')) {
-                entries.add(e);
-              }
-            }
+            appendPreviousSubtree(indexedDirPath);
             return;
           }
         }
@@ -408,6 +471,7 @@ class LibraryIndexService {
     }
 
     await walk(root, rootId);
+    _logProfileTiming('local_index_scan', stopwatch, entries: entries.length);
     return entries;
   }
 
@@ -497,18 +561,33 @@ class LibraryIndexService {
   /// - 本地/SMB：直接扫描文件树；
   /// - 云端：`listRemote` 提供目录列表（调用方按书源类型建会话）；
   /// - `force=false` 且 root_hash 未变 → 不写库直接返回"无变化"。
-  Future<
-    ({
-      int entries,
-      String message,
-      bool changed,
-      String revision,
-      List<String> bookKeys,
-    })
-  >
-  refreshSourceIndex({
+  Future<SourceIndexRefreshResult> refreshSourceIndex({
     required BookSource source,
     bool force = false,
+    Future<List<FolderSnapshotEntry>> Function(String path)? listRemote,
+  }) {
+    final flight = _sourceRefreshFlights.putIfAbsent(
+      source.id,
+      _SourceRefreshFlight.new,
+    );
+    return flight.request(
+      force: force,
+      refresh: () => _refreshSourceIndex(
+        source: source,
+        force: force,
+        listRemote: listRemote,
+      ),
+      onIdle: () {
+        if (identical(_sourceRefreshFlights[source.id], flight)) {
+          _sourceRefreshFlights.remove(source.id);
+        }
+      },
+    );
+  }
+
+  Future<SourceIndexRefreshResult> _refreshSourceIndex({
+    required BookSource source,
+    required bool force,
     Future<List<FolderSnapshotEntry>> Function(String path)? listRemote,
   }) async {
     final fp = await frb.dbGetSourceFingerprint(sourceId: source.id);
@@ -574,6 +653,7 @@ class LibraryIndexService {
       }
     }
 
+    final persistStopwatch = Stopwatch()..start();
     await frb.dbReplaceSourceLibraryIndex(
       sourceId: source.id,
       entries: entries,
@@ -583,6 +663,11 @@ class LibraryIndexService {
       lastScanTime: DateTime.now().millisecondsSinceEpoch,
       entryCount: entries.length,
       rootHash: rootHash,
+    );
+    _logProfileTiming(
+      'local_index_persist',
+      persistStopwatch,
+      entries: entries.length,
     );
     final keys = entries
         .where((e) => e.entryType == 'file' && !e.deleted)
@@ -595,5 +680,85 @@ class LibraryIndexService {
       revision: rootHash,
       bookKeys: keys,
     );
+  }
+}
+
+class _SourceRefreshFlight {
+  Future<SourceIndexRefreshResult>? _active;
+  bool _activeIsForced = false;
+  Completer<SourceIndexRefreshResult>? _queuedForce;
+
+  Future<SourceIndexRefreshResult> request({
+    required bool force,
+    required Future<SourceIndexRefreshResult> Function() refresh,
+    required VoidCallback onIdle,
+  }) {
+    final active = _active;
+    if (active == null) {
+      return _start(force: force, refresh: refresh, onIdle: onIdle);
+    }
+
+    final queuedForce = _queuedForce;
+    if (queuedForce != null) return queuedForce.future;
+    if (!force || _activeIsForced) return active;
+
+    final completer = Completer<SourceIndexRefreshResult>();
+    _queuedForce = completer;
+    unawaited(
+      _runQueuedForce(
+        active: active,
+        refresh: refresh,
+        completer: completer,
+        onIdle: onIdle,
+      ),
+    );
+    return completer.future;
+  }
+
+  Future<SourceIndexRefreshResult> _start({
+    required bool force,
+    required Future<SourceIndexRefreshResult> Function() refresh,
+    required VoidCallback onIdle,
+  }) {
+    _activeIsForced = force;
+    final operation = Future<SourceIndexRefreshResult>.sync(refresh);
+    _active = operation;
+    operation.then<void>(
+      (_) => _finish(operation, onIdle),
+      onError: (Object _, StackTrace _) => _finish(operation, onIdle),
+    );
+    return operation;
+  }
+
+  Future<void> _runQueuedForce({
+    required Future<SourceIndexRefreshResult> active,
+    required Future<SourceIndexRefreshResult> Function() refresh,
+    required Completer<SourceIndexRefreshResult> completer,
+    required VoidCallback onIdle,
+  }) async {
+    try {
+      await active;
+    } catch (_) {
+      // A forced refresh remains required even if the incremental pass failed.
+    }
+    if (!identical(_queuedForce, completer)) return;
+    _queuedForce = null;
+    try {
+      completer.complete(
+        await _start(force: true, refresh: refresh, onIdle: onIdle),
+      );
+    } catch (error, stackTrace) {
+      completer.completeError(error, stackTrace);
+    }
+  }
+
+  void _finish(
+    Future<SourceIndexRefreshResult> operation,
+    VoidCallback onIdle,
+  ) {
+    if (!identical(_active, operation) || _queuedForce != null) return;
+    _active = null;
+    _activeIsForced = false;
+    onIdle();
   }
 }

@@ -27,9 +27,12 @@ String BookSource.effectiveRootPath;
 
 ## 3. Contracts
 
-- Source add/edit futures complete only after the debounced `saveToDisk()`
-  boundary and a `LibraryCatalogStore.loadTree()` refresh. UI submit handlers
-  await them before closing or reporting success.
+- Source mutation futures complete only after durable persistence and a
+  `LibraryCatalogStore.loadTree()` refresh. After SQLite migration, adding a
+  source upserts only that source row before refreshing the tree; the full
+  `library.json` export is queued afterward. The JSON fallback and source edits
+  retain the debounced full-save boundary. UI submit handlers await the source
+  row and tree refresh before closing or reporting success.
 - For `115` and `quark`, `rootId` is the effective catalog root. Trim it;
   blank input becomes `'0'`; persist the compatibility `path` field to the
   same normalized value. Browser, crawler, and cleanup alignment use

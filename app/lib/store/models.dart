@@ -500,20 +500,22 @@ class AppSettings {
     themeMode: const {'dark', 'light', 'system'}.contains(j['themeMode'])
         ? j['themeMode'] as String
         : 'dark',
-    themePalette: const {
-      'classic',
-      'seaGlass',
-      'warmPaper',
-      'inkNight',
-    }.contains(j['themePalette'])
+    themePalette:
+        const {
+          'classic',
+          'seaGlass',
+          'warmPaper',
+          'inkNight',
+        }.contains(j['themePalette'])
         ? j['themePalette'] as String
         : 'classic',
-    appFont: const {
-      'systemDefault',
-      'systemSerif',
-      'wenKaiGbLite',
-      'zhiMangXing',
-    }.contains(j['appFont'])
+    appFont:
+        const {
+          'systemDefault',
+          'systemSerif',
+          'wenKaiGbLite',
+          'zhiMangXing',
+        }.contains(j['appFont'])
         ? j['appFont'] as String
         : 'systemDefault',
     useSystemDynamicColors: j['useSystemDynamicColors'] == true,
@@ -745,6 +747,25 @@ Map<int, int> parseBookRotations(dynamic raw) {
 ///   阅读进度、标签、封面无缝延续（呼应"后缀名变更识别"）。
 /// - mobi/azw/azw3 归一到 .mobi。
 /// - 其余格式（epub/pdf 等）保持不变。
+String normalizeLocalFilesystemPath(
+  String path, {
+  required bool isLocalFs,
+  required bool isWindows,
+}) {
+  if (!isLocalFs || !isWindows || path.length < 4) return path;
+  final driveLetter = path.codeUnitAt(1);
+  final isAsciiLetter =
+      (driveLetter >= 0x41 && driveLetter <= 0x5A) ||
+      (driveLetter >= 0x61 && driveLetter <= 0x7A);
+  if (path.codeUnitAt(0) != 0x2F ||
+      !isAsciiLetter ||
+      path.codeUnitAt(2) != 0x3A ||
+      (path.codeUnitAt(3) != 0x2F && path.codeUnitAt(3) != 0x5C)) {
+    return path;
+  }
+  return path.substring(1);
+}
+
 String normalizeComicPath(String path) {
   // Book identity is persisted and shared with Rust.  Normalize path spelling
   // before applying archive aliases so legacy `F:\\...` and catalog `f:/...`

@@ -1,5 +1,6 @@
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/src/rust/source/cloud115/offline.dart' as cloud115_offline;
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
@@ -151,6 +152,96 @@ Future<BigInt> cloud115CookieSessionFor(BookSource source) {
   _cloud115CookieSessionFlights[source.id] = flight;
   return flight;
 }
+
+/// Run the one-item, read-only BT preflight on an already configured Cookie
+/// source. No session is opened until the caller explicitly invokes this.
+Future<cloud115_offline.Cloud115BtPreflight>
+cloud115CookieBtReadonlyPreflightFor(
+  BookSource source, {
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+}) async {
+  if (!source.is115 || (source.cookie ?? '').trim().isEmpty) {
+    throw StateError('请选择已有的 115 Cookie 书源');
+  }
+  final session = _cachedCookieSessionForBt(source);
+  return cloud115CookieBtReadonlyPreflight(
+    session: session,
+    outputDir: outputDir,
+    relativeFile: relativeFile,
+    expectedInfoHash: expectedInfoHash,
+  );
+}
+
+BigInt _cachedCookieSessionForBt(BookSource source) {
+  if (!source.is115 || (source.cookie ?? '').trim().isEmpty) {
+    throw StateError('请选择已有的 115 Cookie 书源');
+  }
+  final session = _cloud115CookieSessions[source.id];
+  if (session == null) {
+    throw StateError('当前没有已连接的 115 Cookie 会话。请先通过现有书源连接；此实验入口不会重新登录或刷新 Cookie。');
+  }
+  return session;
+}
+
+Future<cloud115_offline.Cloud115BtUploadParseResult>
+cloud115CookieBtUploadAndParseFor(
+  BookSource source, {
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedTargetFolderId,
+}) => cloud115CookieBtUploadAndParse(
+  session: _cachedCookieSessionForBt(source),
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
+);
+
+Future<cloud115_offline.Cloud115BtUploadParseResult>
+cloud115CookieBtConfirmUploadParseFor(
+  BookSource source, {
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedTargetFolderId,
+  String? pickCode,
+}) => cloud115CookieBtConfirmUploadParse(
+  session: _cachedCookieSessionForBt(source),
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
+  pickCode: pickCode,
+);
+
+Future<cloud115_offline.Cloud115BtSubmitResult> cloud115CookieBtSubmitOnceFor(
+  BookSource source, {
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedTargetFolderId,
+  required List<int> wantedIndices,
+}) => cloud115CookieBtSubmitOnce(
+  session: _cachedCookieSessionForBt(source),
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
+  wantedIndices: wantedIndices,
+);
+
+Future<cloud115_offline.Cloud115BtTaskStatus> cloud115CookieBtTaskStatusFor(
+  BookSource source, {
+  required String infoHash,
+  required String expectedTargetFolderId,
+}) => cloud115CookieBtTaskStatus(
+  session: _cachedCookieSessionForBt(source),
+  infoHash: infoHash,
+  expectedTargetFolderId: expectedTargetFolderId,
+);
 
 /// 书源被编辑/删除后使会话失效（下次自动重连）。
 void clearCloud115Session(String sourceId) {

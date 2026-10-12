@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:app/src/rust/api/source.dart';
+import 'package:app/store/profile_timing.dart';
 import 'package:app/store/qr_image_saver.dart';
 import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
@@ -18,7 +19,10 @@ Future<String?> scanQuarkCookie(
   void Function(String message)? onError,
 }) async {
   try {
-    final payload = await quarkQrStart().timeout(const Duration(seconds: 20));
+    final payload = await withProfileTiming(
+      'cloud_quark_qr_start',
+      quarkQrStart,
+    ).timeout(const Duration(seconds: 20));
     if (!context.mounted) return null;
     return await showRchDialog<String>(
       context: context,
@@ -73,9 +77,12 @@ class _QuarkQrScanDialogState extends State<QuarkQrScanDialog> {
         _finished = true;
         _timer?.cancel();
         setState(() => _status = '已确认，正在获取登录状态…');
-        final cookie = await quarkQrResult(
-          token: widget.payload.token,
-          requestId: widget.payload.requestId,
+        final cookie = await withProfileTiming(
+          'cloud_quark_qr_exchange',
+          () => quarkQrResult(
+            token: widget.payload.token,
+            requestId: widget.payload.requestId,
+          ),
         );
         if (mounted) Navigator.of(context).pop(cookie);
         return;
@@ -93,7 +100,6 @@ class _QuarkQrScanDialogState extends State<QuarkQrScanDialog> {
     }
   }
 
-
   /// 第 73 轮：把当前二维码保存到手机相册（`gal` 走系统媒体库 ✓）。
   ///
   /// 为什么之前"没有"：`store/qr_image_saver.dart` 早就实现了保存，
@@ -104,8 +110,8 @@ class _QuarkQrScanDialogState extends State<QuarkQrScanDialog> {
       // 第 76 轮修正：`QrPainter.toImageData` 返回的是**原始 RGBA 像素**，
       // 不是 PNG 文件 ⇒ 之前存进相册的图无法识别（看着全黑）。
       // 改为截取屏幕上的二维码边界并导出 **PNG** 字节。
-      final boundary = _qrKey.currentContext?.findRenderObject()
-          as RenderRepaintBoundary?;
+      final boundary =
+          _qrKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       final image = await boundary?.toImage(pixelRatio: 3);
       final data = await image?.toByteData(format: ui.ImageByteFormat.png);
       final bytes = data?.buffer.asUint8List();
@@ -113,11 +119,14 @@ class _QuarkQrScanDialogState extends State<QuarkQrScanDialog> {
         throw StateError('二维码渲染失败');
       }
       await saveQrImageToGallery(bytes);
-      messenger.showSnackBar(const SnackBar(content: Text('二维码已保存到相册（相册 RCH）')));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('二维码已保存到相册（相册 RCH）')),
+      );
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('保存失败：$e')));
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -137,7 +146,7 @@ class _QuarkQrScanDialogState extends State<QuarkQrScanDialog> {
                   size: 220,
                   backgroundColor: Theme.of(context).colorScheme.onSurface,
                 ),
-            ),
+              ),
             ),
             const SizedBox(height: 12),
             Text(_status, textAlign: TextAlign.center),
@@ -145,7 +154,10 @@ class _QuarkQrScanDialogState extends State<QuarkQrScanDialog> {
             Text(
               '用手机夸克 App 扫一扫并确认；确认后本机直接拿到登录 Cookie，'
               '不需要 F12 复制。',
-              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
             ),
           ],

@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:app/store/eh_daily_coordinator.dart';
 import 'package:app/src/rust/api/eh_subscription.dart' as eh_api;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+
+typedef EhRulesWriter = Future<void> Function(String rulesJson);
+typedef EhCollectRunner = Future<String> Function(String rulesJson);
 
 /// 一条已保存的种子（对应 Rust 侧 `EhSavedItem` 的 JSON 形状）。
 class EhSavedItem {
@@ -21,6 +25,8 @@ class EhSavedItem {
     required this.tags,
     required this.file,
     required this.bytes,
+    this.torrentName = '',
+    this.savedAtUtc = '未知',
   });
 
   final String infohash;
@@ -36,6 +42,8 @@ class EhSavedItem {
   final List<String> tags;
   final String file;
   final int bytes;
+  final String torrentName;
+  final String savedAtUtc;
 
   static EhSavedItem fromJson(Map<String, dynamic> j) => EhSavedItem(
     infohash: j['infohash'] as String? ?? '',
@@ -51,34 +59,183 @@ class EhSavedItem {
     tags: (j['tags'] as List?)?.map((e) => e.toString()).toList() ?? const [],
     file: j['file'] as String? ?? '',
     bytes: (j['bytes'] as num?)?.toInt() ?? 0,
+    torrentName: j['torrent_name'] as String? ?? '',
+    savedAtUtc: j['saved_at_utc'] as String? ?? '未知',
   );
 }
+
+enum EhManifestReadStatus {
+  unconfigured,
+  missing,
+  empty,
+  ready,
+  damaged,
+  unreadable,
+}
+
+enum EhSavedFileStatus {
+  present,
+  missing,
+  unsafePath,
+  notRegularFile,
+  unreadable,
+  notChecked,
+}
+
+enum EhTorrentValidationStatus {
+  valid,
+  sizeMismatch,
+  invalidTorrent,
+  infohashMismatch,
+  tooLarge,
+  unreadable,
+  notChecked,
+}
+
+class EhCheckedManifestEntry {
+  const EhCheckedManifestEntry({
+    required this.item,
+    required this.fileStatus,
+    required this.validationStatus,
+    required this.fullPath,
+  });
+
+  final EhSavedItem item;
+  final EhSavedFileStatus fileStatus;
+  final EhTorrentValidationStatus validationStatus;
+  final String? fullPath;
+
+  static EhCheckedManifestEntry fromJson(Map<String, dynamic> json) =>
+      EhCheckedManifestEntry(
+        item: EhSavedItem.fromJson(
+          Map<String, dynamic>.from(json['item'] as Map),
+        ),
+        fileStatus: switch (json['file_status']) {
+          'present' => EhSavedFileStatus.present,
+          'missing' => EhSavedFileStatus.missing,
+          'unsafe_path' => EhSavedFileStatus.unsafePath,
+          'not_regular_file' => EhSavedFileStatus.notRegularFile,
+          'unreadable' => EhSavedFileStatus.unreadable,
+          _ => EhSavedFileStatus.notChecked,
+        },
+        validationStatus: switch (json['validation_status']) {
+          'valid' => EhTorrentValidationStatus.valid,
+          'size_mismatch' => EhTorrentValidationStatus.sizeMismatch,
+          'invalid_torrent' => EhTorrentValidationStatus.invalidTorrent,
+          'infohash_mismatch' => EhTorrentValidationStatus.infohashMismatch,
+          'too_large' => EhTorrentValidationStatus.tooLarge,
+          'unreadable' => EhTorrentValidationStatus.unreadable,
+          _ => EhTorrentValidationStatus.notChecked,
+        },
+        fullPath: json['full_path'] as String?,
+      );
+}
+
+class EhManifestReport {
+  const EhManifestReport({
+    required this.status,
+    this.entries = const [],
+    this.invalidEntries = 0,
+    this.errorCode,
+  });
+
+  final EhManifestReadStatus status;
+  final List<EhCheckedManifestEntry> entries;
+  final int invalidEntries;
+  final String? errorCode;
+
+  factory EhManifestReport.fromJson(Map<String, dynamic> json) {
+    final rawEntries = json['entries'] as List? ?? const [];
+    return EhManifestReport(
+      status: switch (json['status']) {
+        'unconfigured' => EhManifestReadStatus.unconfigured,
+        'missing' => EhManifestReadStatus.missing,
+        'empty' => EhManifestReadStatus.empty,
+        'ready' => EhManifestReadStatus.ready,
+        'damaged' => EhManifestReadStatus.damaged,
+        _ => EhManifestReadStatus.unreadable,
+      },
+      entries: rawEntries
+          .map(
+            (entry) => EhCheckedManifestEntry.fromJson(
+              Map<String, dynamic>.from(entry as Map),
+            ),
+          )
+          .toList(),
+      invalidEntries: (json['invalid_entries'] as num?)?.toInt() ?? 0,
+      errorCode: json['error_code'] as String?,
+    );
+  }
+
+  factory EhManifestReport.fromItems(Iterable<EhSavedItem> items) {
+    final entries = items
+        .map(
+          (item) => EhCheckedManifestEntry(
+            item: item,
+            fileStatus: EhSavedFileStatus.notChecked,
+            validationStatus: EhTorrentValidationStatus.notChecked,
+            fullPath: null,
+          ),
+        )
+        .toList();
+    return EhManifestReport(
+      status: entries.isEmpty
+          ? EhManifestReadStatus.empty
+          : EhManifestReadStatus.ready,
+      entries: entries,
+    );
+  }
+}
+
+typedef EhCheckedManifestLoader = Future<String> Function(String outDir);
 
 /// 连通性预检结果（对应 Rust 侧 `EhProbe`）。
 class EhProbe {
   const EhProbe({
+    this.mode = 'system',
+    this.checkedAtUnixMs = 0,
     required this.host,
     required this.hostOk,
     required this.hostDetail,
+    this.hostElapsedMs = 0,
+    this.hostChallengeSuspected = false,
     required this.tracker,
     required this.trackerOk,
     required this.trackerDetail,
+    this.trackerElapsedMs = 0,
+    this.trackerChallengeSuspected = false,
+    this.trackerTorrentValidated = false,
   });
 
+  final String mode;
+  final int checkedAtUnixMs;
   final String host;
   final bool hostOk;
   final String hostDetail;
+  final int hostElapsedMs;
+  final bool hostChallengeSuspected;
   final String tracker;
   final bool trackerOk;
   final String trackerDetail;
+  final int trackerElapsedMs;
+  final bool trackerChallengeSuspected;
+  final bool trackerTorrentValidated;
 
   static EhProbe fromJson(Map<String, dynamic> j) => EhProbe(
+    mode: j['mode'] as String? ?? 'system',
+    checkedAtUnixMs: (j['checked_at_unix_ms'] as num?)?.toInt() ?? 0,
     host: j['host'] as String? ?? '',
     hostOk: j['host_ok'] as bool? ?? false,
     hostDetail: j['host_detail'] as String? ?? '',
+    hostElapsedMs: (j['host_elapsed_ms'] as num?)?.toInt() ?? 0,
+    hostChallengeSuspected: j['host_challenge_suspected'] as bool? ?? false,
     tracker: j['tracker'] as String? ?? '',
     trackerOk: j['tracker_ok'] as bool? ?? false,
     trackerDetail: j['tracker_detail'] as String? ?? '',
+    trackerElapsedMs: (j['tracker_elapsed_ms'] as num?)?.toInt() ?? 0,
+    trackerChallengeSuspected:
+        j['tracker_challenge_suspected'] as bool? ?? false,
+    trackerTorrentValidated: j['tracker_torrent_validated'] as bool? ?? false,
   );
 }
 
@@ -147,7 +304,7 @@ class EhProgress {
 
 /// EH 订阅面板的状态：
 /// 规则以 **Rust 侧的 JSON** 为准（单一事实来源），这里只做读写与轮询。
-class EhSubscriptionStore extends ChangeNotifier {
+class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   EhSubscriptionStore._();
 
   static const officialHost = 'e-hentai.org';
@@ -160,7 +317,13 @@ class EhSubscriptionStore extends ChangeNotifier {
   factory EhSubscriptionStore.forTest({
     Map<String, dynamic> rules = const {},
     List<EhSavedItem> manifest = const [],
+    EhManifestReport? manifestReport,
+    EhCheckedManifestLoader? checkedManifestLoader,
+    VoidCallback? onScanRequested,
+    EhRulesWriter? rulesWriter,
+    EhCollectRunner? collectRunner,
     EhProgress progress = const EhProgress(),
+    String? rulesPath,
   }) {
     final store = EhSubscriptionStore._();
     if (rules.isNotEmpty) {
@@ -168,8 +331,25 @@ class EhSubscriptionStore extends ChangeNotifier {
       store._normalizeHost();
       store._encodeRules();
     }
-    store.manifest = manifest;
+    store.manifestReport =
+        manifestReport ?? EhManifestReport.fromItems(manifest.reversed);
+    store.manifest = manifestReport == null
+        ? manifest
+        : manifestReport.entries
+              .map((entry) => entry.item)
+              .toList()
+              .reversed
+              .toList();
+    store._checkedManifestLoader = checkedManifestLoader;
+    store._onScanRequested = onScanRequested;
+    store._rulesWriter = rulesWriter;
+    store._collectRunner = collectRunner;
     store.progress = progress;
+    if (rulesPath != null) {
+      store._rulesPath = rulesPath;
+      store._persistedRulesJson = store._rulesJson;
+      store._initialized = store._rules.isNotEmpty;
+    }
     return store;
   }
 
@@ -177,14 +357,28 @@ class EhSubscriptionStore extends ChangeNotifier {
 
   String? _rulesPath;
   String _rulesJson = '';
+  String? _persistedRulesJson;
   Map<String, dynamic> _rules = const {};
+  Future<void> _rulesWriteTail = Future<void>.value();
+  Future<void>? _initTask;
+  bool _initialized = false;
 
   List<EhSavedItem> manifest = const [];
+  EhManifestReport manifestReport = const EhManifestReport(
+    status: EhManifestReadStatus.unconfigured,
+  );
+  bool refreshingManifest = false;
   EhProgress progress = const EhProgress();
   EhProbe? probe;
   bool probing = false;
+  @override
   bool busy = false;
   String? loadError;
+  EhCheckedManifestLoader? _checkedManifestLoader;
+  VoidCallback? _onScanRequested;
+  EhRulesWriter? _rulesWriter;
+  EhCollectRunner? _collectRunner;
+  bool _cancelRequested = false;
 
   Timer? _poll;
 
@@ -206,6 +400,27 @@ class EhSubscriptionStore extends ChangeNotifier {
   int get pages => _num('pages', 2).toInt();
   String get host => officialHost;
   double get intervalSecs => _num('request_interval_secs', 2.5).toDouble();
+  Map<String, dynamic> get networkSettings =>
+      Map<String, dynamic>.from(_rules['network'] as Map? ?? const {});
+  String get proxyMode {
+    final value = networkSettings['mode'] as String? ?? 'system';
+    return const {'system', 'direct', 'manual'}.contains(value)
+        ? value
+        : 'system';
+  }
+
+  String get proxyUrl => networkSettings['proxy_url'] as String? ?? '';
+
+  @override
+  bool get dailyReady => _initialized && loadError == null;
+
+  @override
+  EhDailyAutomationState get dailyAutomation {
+    final raw = _rules['automation'];
+    return raw is Map
+        ? EhDailyAutomationState.fromJson(Map<String, Object?>.from(raw))
+        : const EhDailyAutomationState();
+  }
 
   String _str(String k) => _rules[k] as String? ?? '';
   num _num(String k, num fallback) => (_rules[k] as num?) ?? fallback;
@@ -221,24 +436,43 @@ class EhSubscriptionStore extends ChangeNotifier {
     _rulesJson = const JsonEncoder.withIndent('  ').convert(_rules);
   }
 
+  @override
   bool get hasOutDir => outDir.trim().isNotEmpty;
 
   /// 规则是否已从磁盘/默认值加载完成。
   bool get rulesLoaded => _rules.isNotEmpty;
 
-  Future<void> init() async {
-    final support = await getApplicationSupportDirectory();
-    final path = '${support.path}/RCH/data/eh_subscription_rules.json';
-    _rulesPath = path;
+  Future<void> init() {
+    if (_initialized) return Future<void>.value();
+    final active = _initTask;
+    if (active != null) return active;
+    final task = _initInternal();
+    _initTask = task;
+    return task.whenComplete(() {
+      if (identical(_initTask, task)) _initTask = null;
+    });
+  }
+
+  Future<void> _initInternal() async {
     try {
-      _rulesJson = await eh_api.ehLoadRules(path: path);
-      _rules = Map<String, dynamic>.from(jsonDecode(_rulesJson) as Map);
-      if (_normalizeHost()) await saveRules();
-      loadError = null;
+      final support = await getApplicationSupportDirectory();
+      final path = '${support.path}/RCH/data/eh_subscription_rules.json';
+      _rulesPath = path;
+      try {
+        _rulesJson = await eh_api.ehLoadRules(path: path);
+        _persistedRulesJson = _rulesJson;
+        _rules = Map<String, dynamic>.from(jsonDecode(_rulesJson) as Map);
+        if (_normalizeHost()) await saveRules();
+        loadError = null;
+      } catch (e) {
+        loadError = '$e';
+      }
+      await refreshManifest();
+      _initialized = loadError == null && _rules.isNotEmpty;
     } catch (e) {
       loadError = '$e';
+      _initialized = false;
     }
-    await refreshManifest();
     notifyListeners();
   }
 
@@ -250,12 +484,166 @@ class EhSubscriptionStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void patchNetwork({String? mode, String? proxyUrl, bool notify = true}) {
+    final network = networkSettings;
+    _rules = {
+      ..._rules,
+      'network': {...network, 'mode': ?mode, 'proxy_url': ?proxyUrl},
+    };
+    _encodeRules();
+    if (notify) notifyListeners();
+  }
+
   Future<void> saveRules() async {
     _normalizeHost();
     _encodeRules();
     final path = _rulesPath;
-    if (path == null) return;
-    await eh_api.ehSaveRules(path: path, rulesJson: _rulesJson);
+    final writer = _rulesWriter;
+    if (path == null && writer == null) return;
+
+    final write = _rulesWriteTail.catchError((Object _) {}).then((_) async {
+      final currentJson = _rulesJson;
+      if (writer != null) {
+        await writer(currentJson);
+        _persistedRulesJson = currentJson;
+      } else {
+        final savedJson = await eh_api.ehSaveRules(
+          path: path!,
+          baseJson: _persistedRulesJson ?? currentJson,
+          rulesJson: currentJson,
+        );
+        _applyPersistedRules(savedJson, submittedJson: currentJson);
+      }
+    });
+    _rulesWriteTail = write.catchError((Object _) {});
+    await write;
+  }
+
+  Future<void> saveDailyAutomation(EhDailyAutomationState state) async {
+    if (_rulesPath != null && _rulesWriter == null) {
+      throw StateError('生产 Daily 状态必须通过专用的原子操作写入。');
+    }
+    final previous = _rules;
+    final updated = {..._rules, 'automation': state.toJson()};
+    _rules = updated;
+    _encodeRules();
+    notifyListeners();
+    try {
+      await saveRules();
+    } catch (_) {
+      if (identical(_rules, updated)) {
+        _rules = previous;
+        _encodeRules();
+        notifyListeners();
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> setDailyEnabled(bool enabled) async {
+    final path = _rulesPath;
+    if (path == null || _rulesWriter != null) {
+      await saveDailyAutomation(
+        dailyAutomation.copyWith(dailyEnabled: enabled),
+      );
+      return;
+    }
+    final savedJson = await eh_api.ehSetDailyEnabled(
+      path: path,
+      enabled: enabled,
+    );
+    _applyPersistedRules(savedJson);
+  }
+
+  @override
+  Future<bool> claimDailyRun(String date) async {
+    final path = _rulesPath;
+    if (path == null || _rulesWriter != null) {
+      final current = dailyAutomation;
+      if (!current.dailyEnabled ||
+          (current.lastAutoAttemptDate != null &&
+              date.compareTo(current.lastAutoAttemptDate!) <= 0)) {
+        return false;
+      }
+      await saveDailyAutomation(
+        current.copyWith(
+          lastAutoAttemptDate: date,
+          lastRun: EhDailyRunRecord(
+            date: date,
+            source: EhDailyRunSource.dailyAuto,
+            status: EhDailyRunStatus.claimed,
+          ),
+        ),
+      );
+      return true;
+    }
+
+    final result =
+        jsonDecode(await eh_api.ehClaimDaily(path: path, date: date)) as Map;
+    _applyPersistedRules(result['rules_json'] as String);
+    return result['claimed'] as bool? ?? false;
+  }
+
+  @override
+  Future<void> updateDailyRun(EhDailyRunRecord run) async {
+    final path = _rulesPath;
+    if (path == null || _rulesWriter != null) {
+      await saveDailyAutomation(dailyAutomation.copyWith(lastRun: run));
+      return;
+    }
+    final savedJson = await eh_api.ehUpdateDailyRun(
+      path: path,
+      runJson: jsonEncode(run.toJson()),
+    );
+    _applyPersistedRules(savedJson);
+  }
+
+  @override
+  Future<void> recoverDailyRun() async {
+    final path = _rulesPath;
+    if (path == null || _rulesWriter != null) {
+      final current = dailyAutomation.lastRun;
+      if (current == null ||
+          (current.status != EhDailyRunStatus.claimed &&
+              current.status != EhDailyRunStatus.running)) {
+        return;
+      }
+      await saveDailyAutomation(
+        dailyAutomation.copyWith(
+          lastRun: current.copyWith(
+            status: EhDailyRunStatus.interruptedUnknown,
+            error: '上次进程退出时任务尚未结束，远端结果未知；本轮不会自动重试。',
+          ),
+        ),
+      );
+      return;
+    }
+    final savedJson = await eh_api.ehRecoverDailyRun(path: path);
+    _applyPersistedRules(savedJson);
+  }
+
+  void _applyPersistedRules(String savedJson, {String? submittedJson}) {
+    final persisted = Map<String, dynamic>.from(jsonDecode(savedJson) as Map);
+    final submitted = Map<String, dynamic>.from(
+      jsonDecode(submittedJson ?? _persistedRulesJson ?? savedJson) as Map,
+    );
+    final merged = Map<String, dynamic>.from(_rules);
+    for (final key in {...submitted.keys, ...persisted.keys, ...merged.keys}) {
+      final liveMatchesSubmitted =
+          merged.containsKey(key) == submitted.containsKey(key) &&
+          jsonEncode(merged[key]) == jsonEncode(submitted[key]);
+      if (!liveMatchesSubmitted) continue;
+      if (persisted.containsKey(key)) {
+        merged[key] = persisted[key];
+      } else {
+        merged.remove(key);
+      }
+    }
+    _rules = merged;
+    _persistedRulesJson = savedJson;
+    _encodeRules();
+    notifyListeners();
   }
 
   Future<void> resetToDefaults() async {
@@ -315,19 +703,36 @@ class EhSubscriptionStore extends ChangeNotifier {
   Future<void> refreshManifest() async {
     if (!hasOutDir) {
       manifest = const [];
+      manifestReport = const EhManifestReport(
+        status: EhManifestReadStatus.unconfigured,
+      );
       notifyListeners();
       return;
     }
+    if (refreshingManifest) return;
+    refreshingManifest = true;
+    notifyListeners();
     try {
-      final raw = await eh_api.ehManifest(outDir: outDir);
-      final list = jsonDecode(raw) as List;
-      manifest = list
-          .map((e) => EhSavedItem.fromJson(Map<String, dynamic>.from(e as Map)))
+      final loader = _checkedManifestLoader;
+      final raw = loader == null
+          ? await eh_api.ehManifestChecked(outDir: outDir)
+          : await loader(outDir);
+      manifestReport = EhManifestReport.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
+      manifest = manifestReport.entries
+          .map((entry) => entry.item)
           .toList()
           .reversed
           .toList();
     } catch (_) {
       manifest = const [];
+      manifestReport = const EhManifestReport(
+        status: EhManifestReadStatus.unreadable,
+        errorCode: 'checked_read_failed',
+      );
+    } finally {
+      refreshingManifest = false;
     }
     notifyListeners();
   }
@@ -347,6 +752,7 @@ class EhSubscriptionStore extends ChangeNotifier {
       );
     } catch (e) {
       probe = EhProbe(
+        mode: proxyMode,
         host: host,
         hostOk: false,
         hostDetail: '$e',
@@ -361,8 +767,18 @@ class EhSubscriptionStore extends ChangeNotifier {
     return probe;
   }
 
-  Future<void> run() async {
-    if (busy || !hasOutDir) return;
+  @override
+  Future<EhRunOutcome> run({
+    EhDailyRunSource source = EhDailyRunSource.manual,
+  }) async {
+    if (busy || !hasOutDir) return EhRunOutcome.busy;
+    final initialAutomation = dailyAutomation;
+    if (source == EhDailyRunSource.manual &&
+        initialAutomation.lastRun?.source == EhDailyRunSource.dailyAuto &&
+        initialAutomation.lastRun?.status == EhDailyRunStatus.claimed) {
+      return EhRunOutcome.busy;
+    }
+    _onScanRequested?.call();
     _normalizeHost();
     _encodeRules();
     busy = true;
@@ -372,24 +788,84 @@ class EhSubscriptionStore extends ChangeNotifier {
       message: '准备中…',
     );
     notifyListeners();
-    await saveRules();
-    _startPolling();
+    var started = false;
+    var outcome = EhRunOutcome.busy;
+    EhDailyRunRecord? activeRun;
     try {
-      final raw = await eh_api.ehCollect(rulesJson: _rulesJson);
+      final previous = dailyAutomation;
+      final runDate =
+          source == EhDailyRunSource.dailyAuto &&
+              previous.lastRun?.status == EhDailyRunStatus.claimed
+          ? previous.lastRun!.date
+          : ehLocalDateKey(DateTime.now());
+      activeRun = EhDailyRunRecord(
+        date: runDate,
+        source: source,
+        status: EhDailyRunStatus.running,
+      );
+      await updateDailyRun(activeRun);
+      started = true;
+      _startPolling();
+      final runner = _collectRunner;
+      final raw = runner == null
+          ? await eh_api.ehCollect(
+              path: _rulesPath!,
+              rulesJson: _rulesJson,
+              source: source == EhDailyRunSource.dailyAuto
+                  ? 'daily_auto'
+                  : 'manual',
+              date: activeRun.date,
+            )
+          : await runner(_rulesJson);
       progress = EhProgress.fromJson(
         Map<String, dynamic>.from(jsonDecode(raw) as Map),
       );
+      final status = progress.error == null && progress.stage != 'failed'
+          ? EhDailyRunStatus.completed
+          : EhDailyRunStatus.failed;
+      outcome = EhRunOutcome(
+        started: true,
+        status: status,
+        saved: progress.saved,
+        error: progress.error,
+      );
     } catch (e) {
       progress = EhProgress(stage: 'failed', message: '$e', error: '$e');
+      outcome = EhRunOutcome(
+        started: started,
+        status: _cancelRequested
+            ? EhDailyRunStatus.cancelled
+            : EhDailyRunStatus.failed,
+        saved: progress.saved,
+        error: '$e',
+      );
     } finally {
       _stopPolling();
       busy = false;
       await refreshManifest();
+      if (started) {
+        try {
+          await updateDailyRun(
+            activeRun!.copyWith(
+              status: outcome.status,
+              saved: outcome.saved,
+              error: outcome.error,
+            ),
+          );
+        } catch (e) {
+          // If completion state cannot be persisted, the durable `running`
+          // marker remains and startup will recover it as unknown.
+          loadError ??= '无法保存 EH 自动化运行结果：$e';
+        }
+      }
+      _cancelRequested = false;
       notifyListeners();
     }
+    return outcome;
   }
 
   Future<void> cancel() async {
+    _cancelRequested = true;
     await eh_api.ehCancel();
   }
 

@@ -1,0 +1,29 @@
+{
+  "id": "library-source-tagging-ux",
+  "name": "library-source-tagging-ux",
+  "title": "书源添加与批量标签体验优化",
+  "description": "跟进用户提出的两项移动端/书源交互体验改进：优化添加书源耗时并展示等待反馈；完善批量标签中的相似标签查找、新标签确认创建及继续应用流程。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-10-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-11-source-add-latency-spinner",
+    "10-11-batch-tag-similar-search-create"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -16,6 +16,7 @@
 - **禁止轮询**：封面推进由 source-level revision 唤醒驱动
   （`RemoteScanCoordinator.coverRevisionFor` → `_onCoverRevisionChanged`）；30×350ms 轮询已删除，
   新增逻辑不得再引入定时轮询。
+- 长时间云端扫码、Cookie 校验和连接使用实际异步 Future 驱动 busy 状态；用请求 ID 保护结束回调，避免旧 Future 清除新操作的 spinner。进度只报告真实阶段，不生成估算百分比。完整跨层契约见 `../backend/background-work-coordination.md`。
 
 ## 缓存与失效
 

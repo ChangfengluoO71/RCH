@@ -1,354 +1,424 @@
-//! 115 离线下载可行性探针（调研用，一次性脚本，不进产品代码路径）。
+//! Retired 115 transfer probe.
 //!
-//! 目的：确认"把磁力/种子链接推给 115 离线下载"这条路在**官方开放平台**与
-//! **扫码 Cookie（webapi）** 两条凭据路径上分别是否可用、契约是什么、配额/风控表现如何。
+//! The previous version guessed several write endpoints and issued requests
+//! that could create or clear real cloud tasks. It also used an unrelated
+//! credential supplied through environment variables. That behavior is not a
+//! safe way to verify an official API contract or reuse RCH's existing login
+//! session.
 //!
-//! 安全约定：
-//!   - 默认只做**读操作**与**故意无效参数的写操作探测**（无效磁力不会产生任务）。
-//!   - 只有显式 `--destructive` 才会尝试清理/删除分支；不加就永远不会删你的东西。
-//!   - 凭据只从环境变量读，不写盘、不打印全文（只打印前后 6 位做指纹）。
-//!
-//! 运行（在 app/rust 下）：
-//!   # 官方开放平台（RCH 现有 APP ID 模式）
-//!   setx / set 115_OPEN_TOKEN=xxxxx   （Windows cmd: set 115_OPEN_TOKEN=xxx）
-//!   cargo run --release --example cloud115_offline_probe -- open
-//!   cargo run --release --example cloud115_offline_probe -- open --add "magnet:?xt=urn:btih:..."
-//!
-//!   # 扫码 Cookie（webapi）
-//!   set 115_COOKIE=UID=...;CID=...;SEID=...;KID=...
-//!   cargo run --release --example cloud115_offline_probe -- web
-//!   cargo run --release --example cloud115_offline_probe -- web --add "magnet:?xt=urn:btih:..."
-//!
-//! 说明：接口路径（尤其官方开放平台的离线下载路径）在调研阶段**未经实证**，
-//! 因此本探针用"候选路径逐一探测"的方式跑，用真实响应把契约钉死，
-//! 而不是把模型记忆当成事实。每个候选的 HTTP 状态与响应片段都会打印出来。
-
-use std::time::Duration;
+//! This example intentionally performs no network requests. It cannot borrow an
+//! in-memory session from a running RCH process. A real transfer requires an
+//! official 115 contract and one authorized test Torrent. Never probe candidate
+//! write routes.
 
 fn main() {
-    let args = Args::parse();
-    let http = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("http client");
+    eprintln!("cloud115_offline_probe is disabled: it cannot access RCH's in-memory 115 session.");
+    eprintln!("It accepts no credentials and performs no HTTP requests or cloud writes.");
+}
 
-    println!("== 115 离线下载探针 ==");
-    println!(
-        "mode={} destructive={} add={} '{}'",
-        args.mode,
-        args.destructive,
-        args.add.is_some(),
-        args.add.clone().unwrap_or_else(|| "-".into())
-    );
-
-    let result = match args.mode.as_str() {
-        "open" => probe_open(&http, &args),
-        "web" => probe_web(&http, &args),
-        other => Err(format!("未知模式 {other}（open|web）")),
-    };
-    match result {
-        Ok(()) => println!("\n[probe] 完成"),
-        Err(e) => println!("\n[probe] 失败：{e}"),
+// In-memory contract flow for tests only; this is not an HTTP adapter.
+#[cfg(test)]
+mod contract {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) struct TorrentFile {
+        pub path: String,
+        pub size: u64,
     }
-}
 
-struct Args {
-    mode: String,
-    add: Option<String>,
-    destructive: bool,
-}
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) struct ParsedTorrent {
+        pub info_hash: String,
+        pub files: Vec<TorrentFile>,
+    }
 
-impl Args {
-    fn parse() -> Self {
-        let mut a = Args {
-            mode: "open".into(),
-            add: None,
-            destructive: false,
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) struct AddTaskBtRequest {
+        pub info_hash: String,
+        pub wanted: String,
+        pub save_path: String,
+        pub torrent_sha1: String,
+        pub pick_code: String,
+        pub wp_path_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) struct RemoteTask {
+        pub info_hash: String,
+        pub wp_path_id: String,
+        pub status: i32,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum UploadReply {
+        Uploaded,
+        Unknown,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum MockReply {
+        Accepted,
+        Unknown,
+        Rejected,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) enum MockCall {
+        Upload {
+            bytes: Vec<u8>,
+            torrent_sha1: String,
+            target_folder_id: String,
+            endpoints: Vec<&'static str>,
+        },
+        Parse {
+            torrent_sha1: String,
+            pick_code: String,
+            endpoint: &'static str,
+        },
+        Submit {
+            request: AddTaskBtRequest,
+            endpoint: &'static str,
+        },
+        ListTasks {
+            page: u32,
+            endpoint: &'static str,
+        },
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) enum ContractOutcome {
+        RemoteTaskFound { status: i32 },
+        RemoteStateUnknown,
+        ExplicitlyRejected,
+    }
+
+    pub(super) trait Mock115Api {
+        fn upload_torrent(
+            &mut self,
+            torrent: &[u8],
+            torrent_sha1: &str,
+            target_folder_id: &str,
+        ) -> Result<(UploadReply, String), String>;
+
+        fn parse_torrent(
+            &mut self,
+            torrent_sha1: &str,
+            pick_code: &str,
+        ) -> Result<ParsedTorrent, String>;
+
+        fn add_task_bt(&mut self, request: AddTaskBtRequest) -> MockReply;
+
+        fn get_task_list(&mut self, page: u32) -> Result<Vec<RemoteTask>, String>;
+    }
+
+    pub(super) fn run_single_torrent(
+        api: &mut impl Mock115Api,
+        torrent: &[u8],
+        torrent_sha1: &str,
+        expected_info_hash: &str,
+        target_folder_id: &str,
+        wanted_indexes: &[usize],
+    ) -> Result<ContractOutcome, String> {
+        if torrent.is_empty() {
+            return Err("torrent file is empty".to_string());
+        }
+        if !is_sha1_hex(torrent_sha1) || !is_sha1_hex(expected_info_hash) {
+            return Err("torrent SHA-1 or info hash is invalid".to_string());
+        }
+        if target_folder_id.is_empty() {
+            return Err("target folder ID is empty".to_string());
+        }
+        if wanted_indexes.is_empty() {
+            return Err("no Torrent files were explicitly selected".to_string());
+        }
+
+        let (upload_reply, pick_code) =
+            api.upload_torrent(torrent, torrent_sha1, target_folder_id)?;
+        if upload_reply == UploadReply::Unknown {
+            // The upload result is unknown. This flow has no safe upload lookup
+            // identifier, so it stops without parsing, submitting, or retrying.
+            return Ok(ContractOutcome::RemoteStateUnknown);
+        }
+        if pick_code.is_empty() {
+            return Err("uploaded Torrent has no pick_code".to_string());
+        }
+
+        let parsed = api.parse_torrent(torrent_sha1, &pick_code)?;
+        if !is_sha1_hex(&parsed.info_hash)
+            || !parsed.info_hash.eq_ignore_ascii_case(expected_info_hash)
+        {
+            return Err("115 parsed info_hash does not match the local Torrent".to_string());
+        }
+
+        let mut indexes = wanted_indexes.to_vec();
+        indexes.sort_unstable();
+        indexes.dedup();
+        if indexes.len() != wanted_indexes.len() || indexes.iter().any(|i| *i >= parsed.files.len())
+        {
+            return Err(
+                "wanted indexes must be unique and present in the parsed file list".to_string(),
+            );
+        }
+        if indexes
+            .iter()
+            .any(|index| parsed.files[*index].path.trim().is_empty())
+        {
+            return Err("selected Torrent entry has an empty path".to_string());
+        }
+        let wanted = indexes
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let request = AddTaskBtRequest {
+            info_hash: parsed.info_hash,
+            wanted,
+            save_path: String::new(),
+            torrent_sha1: torrent_sha1.to_string(),
+            pick_code,
+            wp_path_id: target_folder_id.to_string(),
         };
-        let mut it = std::env::args().skip(1);
-        if let Some(first) = it.next() {
-            if !first.starts_with("--") {
-                a.mode = first;
-            }
+        let submission = api.add_task_bt(request);
+        if submission == MockReply::Rejected {
+            return Ok(ContractOutcome::ExplicitlyRejected);
         }
-        while let Some(f) = it.next() {
-            match f.as_str() {
-                "--add" => a.add = it.next(),
-                "--destructive" => a.destructive = true,
-                _ => {}
-            }
+
+        // Even after an accepted response, confirm by info_hash and destination.
+        // An unknown response follows the same read-only reconciliation path and
+        // is never submitted again by this probe flow.
+        let tasks = api.get_task_list(1)?;
+        match tasks.into_iter().find(|task| {
+            task.info_hash.eq_ignore_ascii_case(expected_info_hash)
+                && task.wp_path_id == target_folder_id
+        }) {
+            Some(task) => Ok(ContractOutcome::RemoteTaskFound {
+                status: task.status,
+            }),
+            None => Ok(ContractOutcome::RemoteStateUnknown),
         }
-        a
+    }
+
+    fn is_sha1_hex(value: &str) -> bool {
+        value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     }
 }
 
-fn fingerprint(s: &str) -> String {
-    let n = s.chars().count();
-    if n <= 12 {
-        return "***".into();
-    }
-    let head: String = s.chars().take(6).collect();
-    let tail: String = s.chars().skip(n - 6).collect();
-    format!("{head}…{tail} (len={n})")
-}
-
-/// 一次探测：打印状态 + 响应片段，并对"端点是否存在"给出判定。
-fn probe(
-    http: &reqwest::blocking::Client,
-    label: &str,
-    method: &str,
-    url: &str,
-    headers: &[(&str, String)],
-    form: Option<&[(&str, String)]>,
-    note: &str,
-) {
-    let mut req = if method == "GET" {
-        http.get(url)
-    } else {
-        http.post(url)
+#[cfg(test)]
+mod contract_tests {
+    use super::contract::{
+        run_single_torrent, AddTaskBtRequest, ContractOutcome, Mock115Api, MockCall, MockReply,
+        ParsedTorrent, RemoteTask, TorrentFile, UploadReply,
     };
-    for (k, v) in headers {
-        req = req.header(*k, v.as_str());
+
+    struct Mock115 {
+        calls: Vec<MockCall>,
+        upload_reply: UploadReply,
+        reply: MockReply,
     }
-    if let Some(f) = form {
-        req = req.form(f);
-    }
-    match req.send() {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let body = resp.text().unwrap_or_default();
-            let snippet: String = body.chars().take(400).collect();
-            println!("[{label}] {method} {url} -> {status}  ({note})");
-            println!("        {} ", snippet.replace('\n', " "));
-            let verdict = match status {
-                200 | 201 => "端点存在（200）",
-                400 | 401 | 403 | 404 | 405 | 500 => "有响应但需核对参数/权限",
-                _ => "未知",
-            };
-            println!("        判定：{verdict}");
+
+    impl Mock115Api for Mock115 {
+        fn upload_torrent(
+            &mut self,
+            torrent: &[u8],
+            torrent_sha1: &str,
+            target_folder_id: &str,
+        ) -> Result<(UploadReply, String), String> {
+            self.calls.push(MockCall::Upload {
+                bytes: torrent.to_vec(),
+                torrent_sha1: torrent_sha1.to_string(),
+                target_folder_id: target_folder_id.to_string(),
+                endpoints: vec![
+                    "GET /open/upload/get_token",
+                    "POST /open/upload/init",
+                    "OSS object upload with callback",
+                ],
+            });
+            Ok((self.upload_reply, "mock-pick-code".to_string()))
         }
-        Err(e) => println!("[{label}] {method} {url} -> 网络失败：{e}  ({note})"),
-    }
-    std::thread::sleep(Duration::from_millis(700));
-}
 
-const OPEN_BASE: &str = "https://proapi.115.com";
-const WEB_BASE: &str = "https://webapi.115.com";
-
-fn probe_open(http: &reqwest::blocking::Client, args: &Args) -> Result<(), String> {
-    let token = std::env::var("115_OPEN_TOKEN")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .ok_or("缺少环境变量 115_OPEN_TOKEN（官方开放平台 access_token）")?;
-    println!("token 指纹：{}", fingerprint(&token));
-    println!("base：{OPEN_BASE}");
-    let auth = [
-        ("Authorization", format!("Bearer {token}")),
-        ("User-Agent", "RCH-research-probe/0.1".to_string()),
-    ];
-
-    // 1) 连通性与权限域
-    probe(
-        http,
-        "O1",
-        "GET",
-        &format!("{OPEN_BASE}/open/user/info"),
-        &auth,
-        None,
-        "基础连通性；确认 token 有效",
-    );
-    probe(
-        http,
-        "O2",
-        "GET",
-        &format!("{OPEN_BASE}/open/offline/download_list"),
-        &auth,
-        None,
-        "离线下载任务列表（候选路径 A）",
-    );
-    probe(
-        http,
-        "O3",
-        "GET",
-        &format!("{OPEN_BASE}/open/offline/task_list"),
-        &auth,
-        None,
-        "离线下载任务列表（候选路径 B）",
-    );
-    probe(
-        http,
-        "O4",
-        "GET",
-        &format!("{OPEN_BASE}/open/offline/quota"),
-        &auth,
-        None,
-        "离线配额（若存在；决定订阅频率上限）",
-    );
-
-    // 2) 加任务：用**故意无效**的磁力探测端点存在性，不会产生真实任务。
-    let bad_magnet =
-        "magnet:?xt=urn:btih:0000000000000000000000000000000000000000&dn=__rch_probe_invalid__";
-    let uri = args.add.clone().unwrap_or_else(|| bad_magnet.to_string());
-    println!(
-        "\n[注意] 下面用 {} 探测加任务端点；{}",
-        if args.add.is_some() {
-            "你提供的真实链接"
-        } else {
-            "一个故意无效的磁力"
-        },
-        if args.add.is_some() {
-            "这会真的创建离线任务"
-        } else {
-            "无效磁力不会产生任务"
+        fn parse_torrent(
+            &mut self,
+            torrent_sha1: &str,
+            pick_code: &str,
+        ) -> Result<ParsedTorrent, String> {
+            self.calls.push(MockCall::Parse {
+                torrent_sha1: torrent_sha1.to_string(),
+                pick_code: pick_code.to_string(),
+                endpoint: "POST /open/offline/torrent",
+            });
+            Ok(ParsedTorrent {
+                info_hash: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                files: vec![TorrentFile {
+                    path: "authorized-test.cbz".to_string(),
+                    size: 42,
+                }],
+            })
         }
-    );
-    let add_forms: Vec<(&str, Vec<(&str, String)>)> = vec![
-        ("/open/offline/add_task_url", vec![("url", uri.clone())]),
-        ("/open/offline/add_task_uri", vec![("url", uri.clone())]),
-        ("/open/offline/add_task", vec![("url", uri.clone())]),
-    ];
-    for (path, form) in add_forms {
-        probe(
-            http,
-            "O5",
-            "POST",
-            &format!("{OPEN_BASE}{path}"),
-            &auth,
-            Some(&form),
-            "加离线下载任务（候选路径，逐一实证）",
+
+        fn add_task_bt(&mut self, request: AddTaskBtRequest) -> MockReply {
+            self.calls.push(MockCall::Submit {
+                request,
+                endpoint: "POST /open/offline/add_task_bt",
+            });
+            self.reply
+        }
+
+        fn get_task_list(&mut self, page: u32) -> Result<Vec<RemoteTask>, String> {
+            self.calls.push(MockCall::ListTasks {
+                page,
+                endpoint: "GET /open/offline/get_task_list",
+            });
+            Ok(match self.reply {
+                MockReply::Accepted => vec![RemoteTask {
+                    info_hash: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                    wp_path_id: "42".to_string(),
+                    status: 1,
+                }],
+                MockReply::Unknown | MockReply::Rejected => Vec::new(),
+            })
+        }
+    }
+
+    const TORRENT_BYTES: &[u8] = b"mock authorized torrent bytes";
+    const TORRENT_SHA1: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const INFO_HASH: &str = "0123456789abcdef0123456789abcdef01234567";
+    const TARGET_FOLDER_ID: &str = "42";
+
+    #[test]
+    fn mock_upload_parse_submit_and_status_query_follow_one_torrent_contract() {
+        let mut api = Mock115 {
+            calls: Vec::new(),
+            upload_reply: UploadReply::Uploaded,
+            reply: MockReply::Accepted,
+        };
+
+        let outcome = run_single_torrent(
+            &mut api,
+            TORRENT_BYTES,
+            TORRENT_SHA1,
+            INFO_HASH,
+            TARGET_FOLDER_ID,
+            &[0],
+        )
+        .expect("mock contract flow");
+
+        assert!(matches!(
+            outcome,
+            ContractOutcome::RemoteTaskFound { status: 1 }
+        ));
+        assert_eq!(
+            api.calls,
+            vec![
+                MockCall::Upload {
+                    bytes: TORRENT_BYTES.to_vec(),
+                    torrent_sha1: TORRENT_SHA1.to_string(),
+                    target_folder_id: TARGET_FOLDER_ID.to_string(),
+                    endpoints: vec![
+                        "GET /open/upload/get_token",
+                        "POST /open/upload/init",
+                        "OSS object upload with callback",
+                    ],
+                },
+                MockCall::Parse {
+                    torrent_sha1: TORRENT_SHA1.to_string(),
+                    pick_code: "mock-pick-code".to_string(),
+                    endpoint: "POST /open/offline/torrent",
+                },
+                MockCall::Submit {
+                    request: AddTaskBtRequest {
+                        info_hash: INFO_HASH.to_string(),
+                        wanted: "0".to_string(),
+                        save_path: String::new(),
+                        torrent_sha1: TORRENT_SHA1.to_string(),
+                        pick_code: "mock-pick-code".to_string(),
+                        wp_path_id: TARGET_FOLDER_ID.to_string(),
+                    },
+                    endpoint: "POST /open/offline/add_task_bt",
+                },
+                MockCall::ListTasks {
+                    page: 1,
+                    endpoint: "GET /open/offline/get_task_list",
+                },
+            ]
         );
     }
 
-    // 3) 官方通道对种子的支持：一次探测即够，避免反复无效请求。
-    println!(
-        "\n[O 小结] 上面 O2–O5 中返回 200 的路径即为官方开放平台的真实契约；\n\
-         若全部 404/405，说明官方 API 的离线下载路径需要以官方文档为准（本探针路径为候选）。\n\
-         拿到 200 后请把响应字段贴回调研报告，作为「磁力/种子是否被接受」的证据。"
-    );
-    if args.destructive {
-        println!("[destructive] 已开启，但删除任务必须人工确认任务 id 后再做，探针不自动删。");
-    }
-    Ok(())
-}
+    #[test]
+    fn unknown_submit_is_checked_remotely_once_without_resubmission() {
+        let mut api = Mock115 {
+            calls: Vec::new(),
+            upload_reply: UploadReply::Uploaded,
+            reply: MockReply::Unknown,
+        };
 
-fn probe_web(http: &reqwest::blocking::Client, args: &Args) -> Result<(), String> {
-    let cookie = std::env::var("115_COOKIE")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .ok_or("缺少环境变量 115_COOKIE（扫码登录后的 webapi Cookie）")?;
-    let uid = cookie
-        .split(';')
-        .find_map(|kv| {
-            let kv = kv.trim();
-            kv.strip_prefix("UID=").map(|v| v.trim().to_string())
-        })
-        .ok_or("Cookie 中未找到 UID=")?;
-    println!("cookie 指纹：{}  uid={uid}", fingerprint(&cookie));
-    println!("base：{WEB_BASE}");
+        let outcome = run_single_torrent(
+            &mut api,
+            TORRENT_BYTES,
+            TORRENT_SHA1,
+            INFO_HASH,
+            TARGET_FOLDER_ID,
+            &[0],
+        )
+        .expect("unknown submit remains recoverable");
 
-    let headers = [
-        ("Cookie", cookie.clone()),
-        (
-            "User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36".to_string(),
-        ),
-        ("Referer", "https://115.com/".to_string()),
-    ];
-
-    // 1) 会话有效性（读）
-    probe(
-        http,
-        "W1",
-        "GET",
-        &format!("{WEB_BASE}/files?aid=1&cid=0&o=user_ptime&asc=0&show_dir=1&limit=1&offset=0"),
-        &headers,
-        None,
-        "确认 Cookie 有效且能列目录",
-    );
-    probe(
-        http,
-        "W2",
-        "GET",
-        &format!("{WEB_BASE}/offline/list?page=1"),
-        &headers,
-        None,
-        "离线任务列表（读，安全）",
-    );
-    probe(
-        http,
-        "W3",
-        "GET",
-        &format!("{WEB_BASE}/offline/quota?uid={uid}"),
-        &headers,
-        None,
-        "离线配额（读）",
-    );
-
-    // 2) 加任务：默认故意无效磁力（不产生任务）；给了 --add 才用真实链接。
-    let uri = args.add.clone().unwrap_or_else(|| {
-        "magnet:?xt=urn:btih:0000000000000000000000000000000000000000&dn=__rch_probe_invalid__"
-            .to_string()
-    });
-    println!(
-        "\n[注意] 下面用 {} 探测加任务端点；{}",
-        if args.add.is_some() {
-            "你提供的真实链接"
-        } else {
-            "一个故意无效的磁力"
-        },
-        if args.add.is_some() {
-            "这会真的创建离线任务"
-        } else {
-            "无效磁力不会产生任务"
-        }
-    );
-    let hash = format!("{WEB_BASE}/offline/add_task_url?uid={uid}");
-    let add_variants: Vec<(&str, Vec<(&str, String)>)> = vec![
-        (
-            "add_task_url",
-            vec![("url", uri.clone()), ("wp_path_id", "0".to_string())],
-        ),
-        (
-            "add_task_url",
-            vec![("url[0]", uri.clone()), ("wp_path_id[0]", "0".to_string())],
-        ),
-        ("add_task", vec![("url", uri.clone())]),
-        (
-            "add_task_bt",
-            vec![("url", uri.clone()), ("wp_path_id", "0".to_string())],
-        ),
-    ];
-    for (name, form) in add_variants {
-        probe(
-            http,
-            "W4",
-            "POST",
-            &hash,
-            &headers,
-            Some(&form),
-            &format!("{name}：加离线下载任务（候选参数形状）"),
+        assert_eq!(outcome, ContractOutcome::RemoteStateUnknown);
+        assert_eq!(
+            api.calls
+                .iter()
+                .filter(|call| matches!(call, MockCall::Submit { .. }))
+                .count(),
+            1
         );
+        assert!(matches!(
+            api.calls.last(),
+            Some(MockCall::ListTasks { page: 1, .. })
+        ));
     }
 
-    // 3) 任务状态查询与删除（默认不删）
-    probe(
-        http,
-        "W5",
-        "POST",
-        &format!("{WEB_BASE}/offline/clear?uid={uid}"),
-        &headers,
-        Some(&[("flag", "1".to_string())]),
-        "清理已完成任务（读列表意义；本探针默认不真正执行删除）",
-    );
+    #[test]
+    fn wanted_indexes_are_validated_before_the_single_write() {
+        let mut api = Mock115 {
+            calls: Vec::new(),
+            upload_reply: UploadReply::Uploaded,
+            reply: MockReply::Accepted,
+        };
 
-    println!(
-        "\n[W 小结] 你需要观察的关键点：\n\
-         - W2 是否返回 200 与任务字段（决定『已推送去重』能否落地）；\n\
-         - W4 中哪个参数形状返回「无效 bt 信息/磁力非法」类业务错误——那说明端点存在且可加任务；\n\
-         - 若 W4 全部 405/404，说明 webapi 的离线路径也变了，需要重新抓包确认。"
-    );
-    if args.destructive {
-        println!("[destructive] 已开启：若要真的清空已完成任务，请手动调用 /offline/clear。");
+        let result = run_single_torrent(
+            &mut api,
+            TORRENT_BYTES,
+            TORRENT_SHA1,
+            INFO_HASH,
+            TARGET_FOLDER_ID,
+            &[1],
+        );
+
+        assert!(result.is_err());
+        assert!(!api
+            .calls
+            .iter()
+            .any(|call| matches!(call, MockCall::Submit { .. })));
     }
-    Ok(())
+
+    #[test]
+    fn unknown_upload_stops_before_parse_or_submission() {
+        let mut api = Mock115 {
+            calls: Vec::new(),
+            upload_reply: UploadReply::Unknown,
+            reply: MockReply::Accepted,
+        };
+
+        let outcome = run_single_torrent(
+            &mut api,
+            TORRENT_BYTES,
+            TORRENT_SHA1,
+            INFO_HASH,
+            TARGET_FOLDER_ID,
+            &[0],
+        )
+        .expect("unknown upload remains unresolved");
+
+        assert_eq!(outcome, ContractOutcome::RemoteStateUnknown);
+        assert_eq!(api.calls.len(), 1);
+        assert!(matches!(api.calls[0], MockCall::Upload { .. }));
+    }
 }

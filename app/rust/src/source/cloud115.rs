@@ -19,7 +19,7 @@ use reqwest::header::{AUTHORIZATION, COOKIE, RANGE, USER_AGENT};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -203,6 +203,18 @@ fn http_client() -> Result<Client> {
         .connect_timeout(Duration::from_secs(10))
         .build()
         .context("创建 HTTP 客户端失败")
+}
+
+fn http_client_no_redirect() -> Result<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
+        // BT write requests must not be replayed or redirected by the client.
+        // Keep this transport separate so the existing reader client's policy
+        // and behavior remain unchanged.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("创建 115 BT 严格 HTTP 客户端失败")
 }
 
 /// 开始设备码授权：生成二维码载荷（Dart 渲染二维码给 115 APP 扫）。
@@ -907,7 +919,7 @@ fn m115_xor_transform(data: &mut [u8], key: &[u8]) {
 }
 
 /// RSA 加密（公钥 e=65537，PKCS#1 v1.5 type2 风格填充，按 128 字节分块）。
-/// `pad` 非空时用其字节生成填充（测试向量用），否则使用随机填充。
+/// `pad` 非空时用其字节生成填充；空时使用随机非零填充。
 fn m115_rsa_encrypt(input: &[u8], pad: &[u8]) -> Vec<u8> {
     use num_bigint::BigUint;
     let n = BigUint::parse_bytes(M115_N_HEX.as_bytes(), 16).expect("m115 modulus");
@@ -981,6 +993,13 @@ fn m115_encode_with(json: &str, pad: &[u8]) -> String {
 /// 加密直链请求体，返回 base64。
 fn m115_encode(json: &str) -> String {
     m115_encode_with(json, &[])
+}
+
+/// Cookie SSP 的 p115cipher 兼容编码。固定 XOR/反转/RSA 包装相同，但
+/// p115cipher@856e4f8 将 PKCS#1 type-2 填充字节固定为 0x02；保留原有
+/// `m115_encode` 随机填充路径，不改变阅读器 downurl 请求。
+fn m115_encode_ssp(json: &str) -> String {
+    m115_encode_with(json, &[1])
 }
 
 /// 解密直链响应（固定 key 还原）。
@@ -1102,6 +1121,12 @@ struct WebFilesResp {
 /// 115 网页客户端（Cookie 认证，与 AList/p115client 同款契约）。
 pub struct Cloud115WebClient {
     client: Client,
+    bt_strict_client: Client,
+    bt_endpoints: offline::BtEndpoints,
+    /// Per-process guards for manually initiated writes whose remote result
+    /// may be uncertain. They never touch the reader session or its Cookie.
+    bt_upload_attempts: Mutex<HashSet<String>>,
+    bt_submit_attempts: Mutex<HashSet<String>>,
     cookie: Mutex<String>,
     root: String,
     gate: RateGate,
@@ -1124,6 +1149,14 @@ pub struct Cloud115WebClient {
     /// pick_code -> 真实文件名（列表时缓存；下载/封面/历史打开都需要）。
     names: Mutex<HashMap<String, String>>,
 }
+
+#[path = "cloud115_offline.rs"]
+pub mod offline;
+
+pub use offline::{
+    Cloud115BtFile, Cloud115BtPreflight, Cloud115BtSubmitResult, Cloud115BtTaskStatus,
+    Cloud115BtUploadParseResult,
+};
 
 const WEB_DOWNLOAD_URL_CACHE_TTL: Duration = Duration::from_secs(300);
 const WEB_DOWNLOAD_URL_CACHE_CAPACITY: usize = 512;
@@ -1182,6 +1215,10 @@ impl Cloud115WebClient {
     pub fn new(cookie: &str, root: &str) -> Result<Self> {
         Ok(Cloud115WebClient {
             client: http_client()?,
+            bt_strict_client: http_client_no_redirect()?,
+            bt_endpoints: offline::BtEndpoints::production(),
+            bt_upload_attempts: Mutex::new(HashSet::new()),
+            bt_submit_attempts: Mutex::new(HashSet::new()),
             cookie: Mutex::new(cookie.trim().to_string()),
             root: if root.is_empty() {
                 "0".to_string()

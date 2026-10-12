@@ -1,0 +1,32 @@
+{
+  "id": "background-work-performance",
+  "name": "background-work-performance",
+  "title": "后台任务与前台响应优化",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-10-12",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-12-background-performance-baseline",
+    "10-12-index-refresh-sync-dirty-integrity",
+    "10-12-batch-tag-bulk-persistence",
+    "10-12-background-foreground-coordination",
+    "10-12-cloud-source-connect-loading"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

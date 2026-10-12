@@ -10,6 +10,7 @@ import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/folder_snapshot_store.dart';
+import 'package:app/store/foreground_work_coordinator.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
@@ -53,6 +54,27 @@ enum _FolderCoverKind {
 }
 
 enum _RemoteRecoveryChoice { retry, offline, cancel }
+
+enum _BatchTagChoiceKind { existing, createNew }
+
+class _BatchTagChoice {
+  const _BatchTagChoice.existing(this.tag)
+    : kind = _BatchTagChoiceKind.existing;
+  const _BatchTagChoice.createNew(this.tag)
+    : kind = _BatchTagChoiceKind.createNew;
+
+  final String tag;
+  final _BatchTagChoiceKind kind;
+}
+
+String? _findExactBatchTag(String value, Iterable<String> tags) {
+  final normalizedValue = value.trim().toLowerCase();
+  if (normalizedValue.isEmpty) return null;
+  for (final tag in tags) {
+    if (tag.toLowerCase() == normalizedValue) return tag;
+  }
+  return null;
+}
 
 /// Whether reconnecting from the current logical path can hand its next
 /// listing to the automatic scan's root request.
@@ -658,13 +680,14 @@ class _SourceBrowserState extends State<SourceBrowser>
     }
   }
 
-  Future<void> _relist() async {
-    if (_offlineMode) {
-      await _listOffline(_path);
-    } else {
-      await _list(_path, promptRecoveryOnFailure: true);
-    }
-  }
+  Future<void> _relist() =>
+      ForegroundWorkCoordinator.instance.runForeground(() async {
+        if (_offlineMode) {
+          await _listOffline(_path);
+        } else {
+          await _list(_path, promptRecoveryOnFailure: true);
+        }
+      });
 
   Future<void> _list(
     String path, {
@@ -1490,14 +1513,16 @@ class _SourceBrowserState extends State<SourceBrowser>
     }
     // 收集所有要打标签的漫画路径(文件夹递归展开)
     final store = LibraryStore.instance;
-    final expanded = await collectBatchTagTargets(
-      selectedPaths: _selectedPaths,
-      currentEntries: _entries,
-      effectiveRootPath: widget.source.effectiveRootPath,
-      isLocalFs: widget.source.isLocalFs,
-      listDirectory: _listForBatchTag,
-      isComicFolder: _comicFolderChecker.call,
-      isComicEntry: _isComicEntry,
+    final expanded = await ForegroundWorkCoordinator.instance.runForeground(
+      () => collectBatchTagTargets(
+        selectedPaths: _selectedPaths,
+        currentEntries: _entries,
+        effectiveRootPath: widget.source.effectiveRootPath,
+        isLocalFs: widget.source.isLocalFs,
+        listDirectory: _listForBatchTag,
+        isComicFolder: _comicFolderChecker.call,
+        isComicEntry: _isComicEntry,
+      ),
     );
     if (expanded.isEmpty) {
       if (mounted) {
@@ -1509,96 +1534,249 @@ class _SourceBrowserState extends State<SourceBrowser>
     }
     final metaSet = store.metaTagNames();
     final all = store.allTags();
-    final ctrl = TextEditingController();
     if (!mounted) return;
-    final tag = await showRchDialog<String>(
-      context: context,
-      builder: (c) => StatefulBuilder(
-        builder: (c, ss) => AlertDialog(
-          title: const Text('批量打标签'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Autocomplete<String>(
-                optionsBuilder: (v) {
-                  final q = v.text.toLowerCase();
-                  if (q.isEmpty) return const <String>[];
-                  return all.where((t) => t.toLowerCase().contains(q)).toList();
-                },
-                fieldViewBuilder: (c, fieldCtrl, fn, _) => TextField(
-                  controller: fieldCtrl,
-                  focusNode: fn,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                    hintText: '输入标签名',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (v) {
-                    if (v.trim().isNotEmpty) Navigator.of(c).pop(v.trim());
-                  },
-                ),
-                optionsViewBuilder: (c, fn, opts) => Align(
-                  alignment: Alignment.topLeft,
-                  child: Material(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 200),
-                      child: ListView(
-                        padding: EdgeInsets.zero,
-                        shrinkWrap: true,
-                        children: opts
-                            .map(
-                              (o) => ListTile(
+    final ctrl = TextEditingController();
+    _BatchTagChoice? choice;
+    try {
+      choice = await showRchDialog<_BatchTagChoice>(
+        context: context,
+        builder: (c) => StatefulBuilder(
+          builder: (c, setDialogState) {
+            final typedTag = ctrl.text.trim();
+            final exactTag = _findExactBatchTag(typedTag, all);
+            return AlertDialog(
+              title: const Text('批量打标签'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Autocomplete<_BatchTagChoice>(
+                    textEditingController: ctrl,
+                    displayStringForOption: (option) => option.tag,
+                    optionsBuilder: (value) {
+                      final query = value.text.trim();
+                      if (query.isEmpty) {
+                        return const <_BatchTagChoice>[];
+                      }
+                      final matches = rankBatchTagSuggestions(
+                        query,
+                        all,
+                      ).map(_BatchTagChoice.existing).toList();
+                      if (_findExactBatchTag(query, all) == null) {
+                        matches.add(_BatchTagChoice.createNew(query));
+                      }
+                      return matches;
+                    },
+                    fieldViewBuilder: (c, fieldCtrl, focusNode, onSubmitted) =>
+                        TextField(
+                          controller: fieldCtrl,
+                          focusNode: focusNode,
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            hintText: '输入标签名',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (_) => setDialogState(() {}),
+                          onSubmitted: (value) {
+                            final existing = _findExactBatchTag(value, all);
+                            if (existing != null) {
+                              Navigator.of(
+                                c,
+                              ).pop(_BatchTagChoice.existing(existing));
+                            } else {
+                              onSubmitted();
+                            }
+                          },
+                        ),
+                    optionsViewBuilder: (c, selectOption, options) => Align(
+                      alignment: Alignment.topLeft,
+                      child: Material(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 200),
+                          child: ListView(
+                            padding: EdgeInsets.zero,
+                            shrinkWrap: true,
+                            children: options.map((option) {
+                              final isCreateNew =
+                                  option.kind == _BatchTagChoiceKind.createNew;
+                              final isMetaTag = metaSet.contains(option.tag);
+                              final colorScheme = Theme.of(context).colorScheme;
+                              final color = isCreateNew
+                                  ? colorScheme.primary
+                                  : isMetaTag
+                                  ? colorScheme.error
+                                  : Colors.amber;
+                              return ListTile(
                                 dense: true,
                                 leading: Icon(
-                                  Icons.label,
+                                  isCreateNew ? Icons.add : Icons.label,
                                   size: 16,
-                                  color: metaSet.contains(o)
-                                      ? Theme.of(context).colorScheme.error
-                                      : Colors.amber,
+                                  color: color,
                                 ),
                                 title: Text(
-                                  o,
+                                  isCreateNew
+                                      ? '创建新标签“${option.tag}”'
+                                      : option.tag,
                                   style: TextStyle(
                                     fontSize: 14,
-                                    color: metaSet.contains(o)
-                                        ? Theme.of(context).colorScheme.error
+                                    color: isCreateNew || isMetaTag
+                                        ? color
                                         : null,
                                   ),
                                 ),
-                                onTap: () => fn(o),
-                              ),
-                            )
-                            .toList(),
+                                onTap: () => selectOption(option),
+                              );
+                            }).toList(),
+                          ),
+                        ),
                       ),
                     ),
+                    onSelected: (value) => Navigator.of(c).pop(value),
                   ),
-                ),
-                onSelected: (v) => Navigator.of(c).pop(v),
+                ],
               ),
-            ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(c).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: exactTag == null
+                      ? null
+                      : () => Navigator.of(
+                          c,
+                        ).pop(_BatchTagChoice.existing(exactTag)),
+                  child: const Text('确认使用'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      ctrl.dispose();
+    }
+
+    final selectedChoice = choice;
+    if (selectedChoice == null || !mounted) return;
+    var created = false;
+    if (selectedChoice.kind == _BatchTagChoiceKind.createNew) {
+      final confirmed = await showRchDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('创建新标签'),
+          content: Text(
+            '没有找到名称完全相同的已有标签。是否创建并应用“${selectedChoice.tag}”到 ${expanded.length} 项？',
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(c).pop(),
+              onPressed: () => Navigator.of(c).pop(false),
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: () {
-                final t = ctrl.text.trim();
-                if (t.isNotEmpty) Navigator.of(c).pop(t);
-              },
-              child: const Text('确认'),
+              onPressed: () => Navigator.of(c).pop(true),
+              child: const Text('创建并应用'),
             ),
           ],
         ),
+      );
+      if (confirmed != true || !mounted) return;
+      created = true;
+    }
+
+    final tag = selectedChoice.tag;
+    final progress = ValueNotifier<BatchTagProgress?>(null);
+    final progressDialog = showRchDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => ValueListenableBuilder<BatchTagProgress?>(
+        valueListenable: progress,
+        builder: (context, current, _) {
+          final phaseLabel = switch (current?.phase) {
+            BatchTagPhase.indexing => '正在建立离线索引',
+            BatchTagPhase.persisting => '正在写入标签和元数据',
+            BatchTagPhase.complete => '批量标签处理完成',
+            null => '正在准备批量操作',
+          };
+          final progressText = current == null
+              ? ''
+              : '${current.processed}/${current.total}';
+          return PopScope(
+            canPop: current?.phase == BatchTagPhase.complete,
+            child: AlertDialog(
+              title: const Text('批量打标签'),
+              content: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                  const SizedBox(width: 14),
+                  Flexible(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(phaseLabel),
+                        if (progressText.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(progressText),
+                        ],
+                        if (current != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '成功 ${current.succeeded} · 跳过 ${current.skipped} · 失败 ${current.failed}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
-    if (tag != null && tag.isNotEmpty) {
-      LibraryStore.instance.batchTag(widget.source, expanded, tag);
+
+    BatchTagResult? result;
+    try {
+      result = await store.batchTag(
+        widget.source,
+        expanded,
+        tag,
+        onProgress: (value) => progress.value = value,
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('批量标签失败：${error.runtimeType}')));
+      }
+    } finally {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      await progressDialog;
+      progress.dispose();
+    }
+
+    if (result == null || !mounted) return;
+    if (result.failed == 0) {
       _selectedPaths.clear();
       _selectMode = false;
-      _safeSetState(() {});
     }
+    _safeSetState(() {});
+    final action = created ? '创建并应用新标签“$tag”' : '应用标签“$tag”';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.failed == 0
+              ? '$action：已处理 ${result.processed}/${result.total}，成功 ${result.succeeded}，跳过 ${result.skipped}'
+              : '$action未完全完成：成功 ${result.succeeded}，跳过 ${result.skipped}，失败 ${result.failed}；可保留选择后重试',
+        ),
+      ),
+    );
   }
 
   @override

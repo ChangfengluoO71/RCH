@@ -1970,6 +1970,10 @@ fn load_all_book_tags_on(conn: &Connection) -> Vec<BookTagRow> {
 /// 若标签已存在则直接返回；否则创建并返回。
 pub fn ensure_tag(name: &str) -> Result<TagRow> {
     let conn = get().lock().unwrap();
+    ensure_tag_on(&conn, name)
+}
+
+fn ensure_tag_on(conn: &Connection, name: &str) -> Result<TagRow> {
     let id = tag_id(name);
 
     // 先查是否存在
@@ -2219,6 +2223,27 @@ fn set_book_tags_on(conn: &Connection, book_key: &str, tag_names: &[String]) -> 
 pub fn set_book_tags(book_key: &str, tag_names: &[String]) -> Result<()> {
     let conn = get().lock().unwrap();
     set_book_tags_on(&conn, book_key, tag_names)
+}
+
+pub struct BatchTagWriteRow {
+    pub book_key: String,
+    pub tag_name: String,
+    pub meta: Option<BookMetaRow>,
+}
+
+/// Persist one bounded batch of metadata edits and tag links atomically.
+pub fn apply_batch_tag_writes(writes: &[BatchTagWriteRow]) -> Result<()> {
+    let mut conn = get().lock().unwrap();
+    let tx = conn.transaction()?;
+    for write in writes {
+        if let Some(meta) = &write.meta {
+            upsert_meta_on(&tx, meta)?;
+        }
+        let tag = ensure_tag_on(&tx, &write.tag_name)?;
+        link_tag_on(&tx, &write.book_key, &tag.id)?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 // ============================================================

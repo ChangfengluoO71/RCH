@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `next_id`, `register_book`, `sessions`
+// These functions are ignored because they are not marked as `pub`: `next_id`, `open_local_document`, `register_book`, `sessions`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `BookSession`
 
 /// 打开本地书籍(ZIP/CBZ/EPUB),返回会话句柄与信息。

@@ -722,3 +722,24 @@ Committed and archived mobile wide-page splitting, prepared v0.6.4 version metad
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: 阅读器与后台工作流更新
+
+**Date**: 2026-10-12
+**Task**: 阅读器与后台工作流更新
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+提交了本次对话中的阅读器末页提示、书源与存储权限、云端连接、批量标签、EH/115 以及后台任务协调相关改动；Windows Profile 构建和 reader_page.dart 静态分析通过，手机端留待后续检验。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a4952d3` | (see git log) |
+
+### Status
+
+[OK] **Completed**

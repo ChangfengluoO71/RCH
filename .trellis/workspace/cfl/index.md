@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-10-11
+- **Total Sessions**: 22
+- **Last Active**: 2026-10-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~724 | Active |
+| `journal-1.md` | ~745 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-10-12 | 阅读器与后台工作流更新 | `a4952d3` | `local-ai/cover-quark-debug` |
 | 21 | 2026-10-11 | 修复 Windows 云母浅色背景并归档外观任务 | `5f91441` | `local-ai/cover-quark-debug` |
 | 20 | 2026-10-09 | Prepare and publish RCH v0.6.4 | `470b1bf`, `7718074` | `local-ai/cover-quark-debug` |
 | 19 | 2026-10-09 | Add app theme palettes and Chinese fonts | `4f3e052f93169e929a7591fa6d197278ead8e4e2` | `codex/app-theme-font` |

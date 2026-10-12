@@ -410,11 +410,20 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
     super.initState();
     _listener = AppLifecycleListener(onHide: _flush, onDetach: _flush);
     final pending = widget.startupPending;
-    if (pending != null) {
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _offerResumeMigration(pending),
-      );
-    }
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_runStartupPrompts(pending)),
+    );
+  }
+
+  Future<void> _runStartupPrompts((String, String)? pending) async {
+    if (pending != null) await _offerResumeMigration(pending);
+    if (!mounted) return;
+    final shouldPrompt = await claimStartupAllFilesAccessPrompt();
+    if (!mounted || !shouldPrompt) return;
+    await ensureAllFilesAccess(
+      context,
+      explanation: '读取手机共享存储中的漫画、识别本地文件夹、访问外部文件以及导出文件，需要此权限。',
+    );
   }
 
   Future<void> _flush() async {

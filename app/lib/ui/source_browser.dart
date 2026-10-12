@@ -19,7 +19,10 @@ import 'package:app/store/remote_listing.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:app/store/remote_cover_repository.dart';
+import 'package:app/store/storage_access.dart';
 import 'package:app/store/sftp_session.dart';
+import 'package:app/ui/cloud115_qr_scan.dart';
+import 'package:app/ui/quark_qr_scan.dart';
 import 'package:app/ui/book_detail_page.dart';
 import 'package:app/ui/book_navigation.dart';
 import 'package:app/ui/comic_cover.dart';
@@ -49,6 +52,8 @@ enum _FolderCoverKind {
   container,
 }
 
+enum _RemoteRecoveryChoice { retry, offline, cancel }
+
 /// Whether reconnecting from the current logical path can hand its next
 /// listing to the automatic scan's root request.
 bool shouldDeferRemoteRootListing({
@@ -70,6 +75,23 @@ bool shouldTriggerRemoteScanAfterReconnect({
 
 /// 书源浏览器:浏览某个书源的漫画。
 /// 本地 → 海报墙(目录可下钻);WebDAV → 列表(目录可下钻)。
+@visibleForTesting
+String sourceBrowserEntryPath({
+  required bool isLocalFs,
+  required bool usesOpaqueProviderPaths,
+  required String currentLogicalPath,
+  required String entryName,
+  required String entryPath,
+}) {
+  if (isLocalFs) return entryPath;
+  if (usesOpaqueProviderPaths) {
+    return _SourceBrowserState._normalizeRemoteLogicalPath(
+      '$currentLogicalPath/$entryName',
+    );
+  }
+  return _SourceBrowserState._normalizeRemoteLogicalPath(entryPath);
+}
+
 class SourceBrowser extends StatefulWidget {
   final BookSource source;
   final String search;
@@ -90,7 +112,8 @@ class SourceBrowser extends StatefulWidget {
   State<SourceBrowser> createState() => _SourceBrowserState();
 }
 
-class _SourceBrowserState extends State<SourceBrowser> {
+class _SourceBrowserState extends State<SourceBrowser>
+    with WidgetsBindingObserver {
   /// 安全 setState：widget 已从树上移除（页面被 pop / 切换）时静默忽略。
   ///
   /// 背景：本页有多条"异步拉取 → 更新界面"的路径（目录列表、封面、远端探测…），
@@ -110,6 +133,18 @@ class _SourceBrowserState extends State<SourceBrowser> {
   List<DirEntry> _entries = [];
   bool _loading = false;
   String? _error;
+  bool _needsAndroidStoragePermission = false;
+  bool _storagePermissionPromptScheduled = false;
+  bool _storagePermissionPromptShown = false;
+  bool _remoteRecoveryDialogOpen = false;
+  bool _remoteRecoveryRetrying = false;
+  bool _hasOfflineIndex = false;
+  Object? _remoteFailure;
+  bool _detectingLocalFolders = false;
+  int _localFolderDetectionDone = 0;
+  int _localFolderDetectionTotal = 0;
+  int _localFolderDetectionFailures = 0;
+  int _localFolderDetectionGeneration = 0;
   BigInt? _session;
   bool _posterMode = true; // true=海报墙, false=简略列表
   String _sort = 'alpha'; // alpha=按字母, added=按加入时间(最新在前)
@@ -176,13 +211,18 @@ class _SourceBrowserState extends State<SourceBrowser> {
     return value;
   }
 
-  String _logicalPathOf(DirEntry entry) => _usesOpaqueProviderPaths
-      ? _normalizeRemoteLogicalPath('$_logicalPath/${entry.name}')
-      : _normalizeRemoteLogicalPath(entry.path);
+  String _logicalPathOf(DirEntry entry) => sourceBrowserEntryPath(
+    isLocalFs: widget.source.isLocalFs,
+    usesOpaqueProviderPaths: _usesOpaqueProviderPaths,
+    currentLogicalPath: _logicalPath,
+    entryName: entry.name,
+    entryPath: entry.path,
+  );
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     LibraryStore.instance.addListener(_onStoreChanged);
     _remoteScanStatus = RemoteScanCoordinator.instance.statusFor(
       widget.source.id,
@@ -193,11 +233,46 @@ class _SourceBrowserState extends State<SourceBrowser> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _localFolderDetectionGeneration++;
     LibraryStore.instance.removeListener(_onStoreChanged);
     _remoteScanStatus.removeListener(_onRemoteScanStatusChanged);
     RemoteScanCoordinator.instance.cancelDeferredRootListing(widget.source);
     _remoteViewRefreshTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _needsAndroidStoragePermission &&
+        !_loading) {
+      unawaited(_retryAfterStoragePermissionSettings());
+    }
+  }
+
+  Future<void> _retryAfterStoragePermissionSettings() async {
+    if (!await isAllFilesAccessGranted() || !mounted) return;
+    await _init();
+  }
+
+  void _scheduleStoragePermissionPrompt() {
+    if (_storagePermissionPromptScheduled || _storagePermissionPromptShown) {
+      return;
+    }
+    _storagePermissionPromptScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _storagePermissionPromptScheduled = false;
+      if (!mounted || !_needsAndroidStoragePermission) return;
+      _storagePermissionPromptShown = true;
+      final granted = await ensureAllFilesAccess(
+        context,
+        explanation: '打开当前本地书源需要读取手机共享存储中的漫画文件和子文件夹。',
+      );
+      if (granted && mounted && _needsAndroidStoragePermission) {
+        await _init();
+      }
+    });
   }
 
   void _onRemoteScanStatusChanged() {
@@ -228,7 +303,33 @@ class _SourceBrowserState extends State<SourceBrowser> {
   Future<void> _init() async {
     final src = widget.source;
     final localFs = src.isLocalFs;
-    if (localFs && Directory(src.path).existsSync()) {
+    if (localFs &&
+        isAndroidPlatform &&
+        isAndroidSharedStoragePath(src.path) &&
+        !await isAllFilesAccessGranted()) {
+      if (mounted) {
+        _safeSetState(() {
+          _needsAndroidStoragePermission = true;
+          _offlineMode = false;
+          _loading = false;
+          _error = '无法读取手机共享存储目录。请授予“所有文件访问”权限后返回此页；授权后会自动重试。';
+        });
+        _scheduleStoragePermissionPrompt();
+      }
+      return;
+    }
+    _needsAndroidStoragePermission = false;
+    _storagePermissionPromptShown = false;
+    var localDirectoryExists = false;
+    if (localFs) {
+      try {
+        localDirectoryExists = Directory(src.path).existsSync();
+      } catch (_) {
+        // A malformed or inaccessible path must not crash the browser before
+        // it can fall back to the cached view or explain the permission issue.
+      }
+    }
+    if (localFs && localDirectoryExists) {
       // 本地源：路径在本机存在 → 默认在线浏览（真实目录）
       await _list(_path);
       return;
@@ -245,16 +346,12 @@ class _SourceBrowserState extends State<SourceBrowser> {
     await _connectSession();
     if (_session == null) {
       RemoteScanCoordinator.instance.cancelDeferredRootListing(src);
-      // 连不上：有离线索引则回退离线浏览，否则提示错误
-      final count = await frblib.dbSourceIndexCount(sourceId: src.id);
-      if (count > 0) {
-        _enterOffline();
-      } else if (mounted) {
-        _safeSetState(() => _error = '连接远程书源失败，暂无离线索引');
-      }
+      final failure =
+          _remoteFailure ?? StateError(_error ?? 'Remote connection failed');
+      await _promptRemoteRecovery(failure);
       return;
     }
-    await _list(_path);
+    await _list(_path, promptRecoveryOnFailure: true);
   }
 
   Future<void> _connectSession() async {
@@ -278,13 +375,188 @@ class _SourceBrowserState extends State<SourceBrowser> {
       // 浏览器自己建立的会话也写回缓存 ⇒ 之后再进这个源直接就命中，不再重复登录 ✓。
       final created = _session;
       if (created != null) cacheRemoteSession(widget.source.id, created);
+      _remoteFailure = null;
     } catch (e) {
       // 复用/新建失败都清缓存 ⇒ 下一次进源会重新登录（自愈），不会一直卡在失效会话上。
       evictRemoteSession(widget.source.id);
+      _remoteFailure = e;
       if (mounted) {
-        _safeSetState(() => _error = '连接远程书源失败：\${remoteErrorMessage(e)}');
+        _safeSetState(() => _error = '连接远程书源失败：${remoteErrorMessage(e)}');
       }
     }
+  }
+
+  Future<int> _offlineIndexCount() async {
+    try {
+      return await frblib.dbSourceIndexCount(sourceId: widget.source.id);
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<void> _promptRemoteRecovery(Object failure) async {
+    if (!mounted || _remoteRecoveryDialogOpen || _offlineMode) return;
+    _remoteRecoveryDialogOpen = true;
+    try {
+      final canBrowseOffline = await _offlineIndexCount() > 0;
+      if (!mounted) return;
+      _safeSetState(() => _hasOfflineIndex = canBrowseOffline);
+      final cookieMode115 =
+          widget.source.is115 && (widget.source.cookie ?? '').trim().isNotEmpty;
+      final choice = await showRchDialog<_RemoteRecoveryChoice>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('云端书源连接失败'),
+          content: Text(
+            '当前连接失败：${remoteErrorMessage(failure)}\n\n'
+            '${cookieMode115 ? '重连会重新打开 115 扫码登录。\n\n' : ''}'
+            '${canBrowseOffline ? '你可以重连，或使用本地离线索引继续浏览。' : '当前没有本地离线索引，暂时无法离线浏览。'}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_RemoteRecoveryChoice.cancel),
+              child: const Text('稍后处理'),
+            ),
+            if (canBrowseOffline)
+              TextButton(
+                onPressed: () => Navigator.of(
+                  dialogContext,
+                ).pop(_RemoteRecoveryChoice.offline),
+                child: const Text('进入离线状态'),
+              ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_RemoteRecoveryChoice.retry),
+              child: const Text('重连'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      switch (choice) {
+        case _RemoteRecoveryChoice.retry:
+          await _retryRemoteConnection();
+          break;
+        case _RemoteRecoveryChoice.offline:
+          _enterOffline();
+          break;
+        case _RemoteRecoveryChoice.cancel:
+        case null:
+          break;
+      }
+    } finally {
+      _remoteRecoveryDialogOpen = false;
+    }
+  }
+
+  void _clearProviderSessionCaches() {
+    final id = widget.source.id;
+    evictRemoteSession(id);
+    if (widget.source.isBaidu) clearBaiduSession(id);
+    if (widget.source.is115) clearCloud115Session(id);
+    if (widget.source.isQuark) clearQuarkSession(id);
+    if (widget.source.isSftp) clearSftpSession(id);
+    if (widget.source.isWebDav) clearWebdavSession(id);
+  }
+
+  Future<void> _retryRemoteConnection() async {
+    if (_remoteRecoveryRetrying || !mounted) return;
+    _remoteRecoveryRetrying = true;
+    final previousFailure = _remoteFailure;
+    _safeSetState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final src = widget.source;
+      if (src.is115 && (src.cookie ?? '').trim().isNotEmpty) {
+        String? scanError;
+        final cookie = await scanCloud115Cookie(
+          context,
+          onError: (message) => scanError = message,
+        );
+        if (!mounted) return;
+        if (cookie == null || cookie.trim().isEmpty) {
+          _safeSetState(() => _error = scanError ?? '115 扫码已取消，未更换登录信息。');
+          return;
+        }
+        src.cookie = cookie;
+        await LibraryStore.instance.updateSource(src.id, cookie: cookie);
+      } else if (src.isQuark &&
+          previousFailure != null &&
+          isQuarkCookieExpiredError(previousFailure)) {
+        String? scanError;
+        final cookie = await scanQuarkCookie(
+          context,
+          onError: (message) => scanError = message,
+        );
+        if (!mounted) return;
+        if (cookie == null || cookie.trim().isEmpty) {
+          _safeSetState(() => _error = scanError ?? '夸克扫码已取消，未更换登录信息。');
+          return;
+        }
+        src.cookie = cookie;
+        await LibraryStore.instance.updateSource(src.id, cookie: cookie);
+      }
+
+      if (src.isBaidu) {
+        _session = null;
+        evictRemoteSession(src.id);
+        clearBaiduSession(src.id);
+        if (shouldDeferRemoteRootListing(
+          currentLogicalPath: _path,
+          effectiveRootPath: src.effectiveRootPath,
+        )) {
+          RemoteScanCoordinator.instance.deferRootListing(src);
+        } else {
+          RemoteScanCoordinator.instance.cancelDeferredRootListing(src);
+        }
+        await _refreshBaiduToken();
+        if (_error != null) unawaited(_refreshOfflineAvailability());
+        return;
+      }
+
+      _session = null;
+      _remoteFailure = null;
+      _clearProviderSessionCaches();
+      if (shouldDeferRemoteRootListing(
+        currentLogicalPath: _path,
+        effectiveRootPath: src.effectiveRootPath,
+      )) {
+        RemoteScanCoordinator.instance.deferRootListing(src);
+      } else {
+        RemoteScanCoordinator.instance.cancelDeferredRootListing(src);
+      }
+      await _connectSession();
+      if (_session == null) {
+        unawaited(_refreshOfflineAvailability());
+        return;
+      }
+      await _list(_path);
+      if (!mounted) return;
+      if (_error == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('已重新连接云端书源')));
+      } else {
+        unawaited(_refreshOfflineAvailability());
+      }
+    } catch (e) {
+      _remoteFailure = e;
+      if (mounted) {
+        _safeSetState(() => _error = '重连失败：${remoteErrorMessage(e)}');
+        unawaited(_refreshOfflineAvailability());
+      }
+    } finally {
+      _remoteRecoveryRetrying = false;
+      if (mounted) _safeSetState(() => _loading = false);
+    }
+  }
+
+  Future<void> _refreshOfflineAvailability() async {
+    final available = await _offlineIndexCount() > 0;
+    if (mounted) _safeSetState(() => _hasOfflineIndex = available);
   }
 
   void _enterOffline() {
@@ -292,6 +564,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
       _offlineMode = true;
       _loading = true;
       _error = null;
+      _remoteFailure = null;
+      _hasOfflineIndex = true;
       _folderKinds.clear();
       _folderFirstFile.clear();
     });
@@ -305,6 +579,8 @@ class _SourceBrowserState extends State<SourceBrowser> {
       _offlineMode = false;
       _error = null;
     });
+    _session = null;
+    _clearProviderSessionCaches();
     final atRoot = shouldDeferRemoteRootListing(
       currentLogicalPath: _path,
       effectiveRootPath: widget.source.effectiveRootPath,
@@ -342,7 +618,7 @@ class _SourceBrowserState extends State<SourceBrowser> {
             .then<void>((_) {}, onError: (_) {}),
       );
     }
-    await _list(_path);
+    await _list(_path, promptRecoveryOnFailure: true);
   }
 
   /// 离线浏览：从 library_index 读取当前目录直接子条目（不建会话、不 list 服务器）。
@@ -386,17 +662,28 @@ class _SourceBrowserState extends State<SourceBrowser> {
     if (_offlineMode) {
       await _listOffline(_path);
     } else {
-      await _list(_path);
+      await _list(_path, promptRecoveryOnFailure: true);
     }
   }
 
-  Future<void> _list(String path) async {
+  Future<void> _list(
+    String path, {
+    bool promptRecoveryOnFailure = false,
+  }) async {
+    if (widget.source.isLocalFs) {
+      _localFolderDetectionGeneration++;
+    }
     _comicFolderChecker.clear();
     _safeSetState(() {
       _loading = true;
       _error = null;
+      _remoteFailure = null;
       _folderKinds.clear();
       _folderFirstFile.clear();
+      _detectingLocalFolders = false;
+      _localFolderDetectionDone = 0;
+      _localFolderDetectionTotal = 0;
+      _localFolderDetectionFailures = 0;
     });
     try {
       final list = switch (widget.source.type) {
@@ -464,7 +751,14 @@ class _SourceBrowserState extends State<SourceBrowser> {
         _entries = list.where((e) => e.isDir || _isComicEntry(e)).toList();
       });
       await _refreshRemoteDirectoryView();
-      await _detectComicFolders();
+      if (widget.source.isLocalFs) {
+        // Render the directory as soon as it is listed. Classification can
+        // involve many filesystem calls on Android, so keep it off the page's
+        // blocking loading state and process a few folders at a time.
+        unawaited(_detectComicFolders());
+      } else {
+        await _detectComicFolders();
+      }
     } catch (e) {
       final session = _session;
       final isRoot =
@@ -480,7 +774,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
               .then<void>((_) {}, onError: (_) {}),
         );
       }
+      _remoteFailure = e;
       if (mounted) _safeSetState(() => _error = remoteErrorMessage(e));
+      if (promptRecoveryOnFailure && widget.source.needsSession) {
+        unawaited(_promptRemoteRecovery(e));
+      }
     } finally {
       if (mounted) _safeSetState(() => _loading = false);
     }
@@ -548,29 +846,11 @@ class _SourceBrowserState extends State<SourceBrowser> {
   /// 网盘：只读本地快照 + 阅读记录，缺失时视为 uncached，绝不发起网盘请求。
   Future<void> _detectComicFolders() async {
     if (widget.source.isLocalFs) {
-      for (final e in _entries) {
-        if (!e.isDir) continue;
-        try {
-          if (await _comicFolderChecker(e.path)) {
-            _setFolderKind(e.path, _FolderCoverKind.book);
-            continue;
-          }
-          final first = _firstComicFileOf(await listLocalDir(path: e.path));
-          if (!mounted) return;
-          _safeSetState(() {
-            _folderKinds[e.path] = first == null
-                ? _FolderCoverKind.plain
-                : _FolderCoverKind.container;
-            if (first == null) {
-              _folderFirstFile.remove(e.path);
-            } else {
-              _folderFirstFile[e.path] = first;
-            }
-          });
-        } catch (_) {
-          _setFolderKind(e.path, _FolderCoverKind.plain);
-        }
-      }
+      final generation = ++_localFolderDetectionGeneration;
+      await _detectLocalComicFolders(
+        entries: List<DirEntry>.of(_entries),
+        generation: generation,
+      );
       return;
     }
     // 网盘：已发布的扫描清单优先；查询仅访问本地 SQLite，不建立新会话。
@@ -583,6 +863,82 @@ class _SourceBrowserState extends State<SourceBrowser> {
         _setFolderKind(e.path, _FolderCoverKind.book);
       } else if (mounted) {
         _safeSetState(() => _detectRemoteFolderKind(e));
+      }
+    }
+  }
+
+  Future<void> _detectLocalComicFolders({
+    required List<DirEntry> entries,
+    required int generation,
+  }) async {
+    final folders = entries.where((entry) => entry.isDir).toList();
+    if (!mounted || generation != _localFolderDetectionGeneration) return;
+    _safeSetState(() {
+      _detectingLocalFolders = folders.isNotEmpty;
+      _localFolderDetectionDone = 0;
+      _localFolderDetectionTotal = folders.length;
+      _localFolderDetectionFailures = 0;
+    });
+    if (folders.isEmpty) return;
+
+    const batchSize = 4;
+    try {
+      for (var start = 0; start < folders.length; start += batchSize) {
+        if (!mounted || generation != _localFolderDetectionGeneration) return;
+        final end = (start + batchSize).clamp(0, folders.length);
+        final batch = folders.sublist(start, end);
+        final results = await Future.wait(
+          batch.map((entry) async {
+            try {
+              if (await _comicFolderChecker(entry.path)) {
+                return (
+                  path: entry.path,
+                  kind: _FolderCoverKind.book,
+                  firstFile: null as String?,
+                  failed: false,
+                );
+              }
+              final first = _firstComicFileOf(
+                await listLocalDir(path: entry.path),
+              );
+              return (
+                path: entry.path,
+                kind: first == null
+                    ? _FolderCoverKind.plain
+                    : _FolderCoverKind.container,
+                firstFile: first,
+                failed: false,
+              );
+            } catch (_) {
+              return (
+                path: entry.path,
+                kind: _FolderCoverKind.plain,
+                firstFile: null as String?,
+                failed: true,
+              );
+            }
+          }),
+        );
+        if (!mounted || generation != _localFolderDetectionGeneration) return;
+        _safeSetState(() {
+          for (final result in results) {
+            _folderKinds[result.path] = result.kind;
+            if (result.firstFile == null) {
+              _folderFirstFile.remove(result.path);
+            } else {
+              _folderFirstFile[result.path] = result.firstFile!;
+            }
+            if (result.failed) _localFolderDetectionFailures++;
+          }
+          _localFolderDetectionDone += batch.length;
+        });
+        // Give Flutter a frame between batches so a large mobile directory
+        // stays responsive while its folders are classified.
+        await Future<void>.delayed(Duration.zero);
+      }
+    } finally {
+      if (mounted && generation == _localFolderDetectionGeneration) {
+        _safeSetState(() => _detectingLocalFolders = false);
       }
     }
   }
@@ -649,6 +1005,14 @@ class _SourceBrowserState extends State<SourceBrowser> {
   }
 
   void _openDir(String path, String name) {
+    if (widget.source.isLocalFs &&
+        _detectingLocalFolders &&
+        !_folderKinds.containsKey(path)) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('正在识别文件夹，请稍等片刻')));
+      return;
+    }
     _safeSetState(() {
       _stack.add(_path);
       _logicalStack.add(_logicalPath);
@@ -1386,9 +1750,99 @@ class _SourceBrowserState extends State<SourceBrowser> {
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.all(8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _error!,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                          if (_needsAndroidStoragePermission)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: () async {
+                                  final granted = await ensureAllFilesAccess(
+                                    context,
+                                    explanation:
+                                        '打开当前本地书源需要读取手机共享存储中的漫画文件和子文件夹。',
+                                  );
+                                  if (granted && mounted) await _init();
+                                },
+                                icon: const Icon(Icons.security),
+                                label: const Text('打开权限设置'),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (_error != null &&
+                      widget.source.needsSession &&
+                      !_offlineMode &&
+                      !_loading)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton.icon(
+                            onPressed: _retryRemoteConnection,
+                            icon: const Icon(Icons.refresh),
+                            label: Text(
+                              widget.source.is115 &&
+                                      (widget.source.cookie ?? '')
+                                          .trim()
+                                          .isNotEmpty
+                                  ? '重新扫码连接'
+                                  : '重试连接',
+                            ),
+                          ),
+                          if (_hasOfflineIndex)
+                            TextButton.icon(
+                              onPressed: _enterOffline,
+                              icon: const Icon(Icons.offline_bolt),
+                              label: const Text('进入离线浏览'),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (_detectingLocalFolders)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                      child: Row(
+                        children: [
+                          const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '正在识别漫画文件夹 '
+                              '($_localFolderDetectionDone/$_localFolderDetectionTotal)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (!_detectingLocalFolders &&
+                      _localFolderDetectionFailures > 0)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                       child: Text(
-                        _error!,
+                        '$_localFolderDetectionFailures 个文件夹无法读取，'
+                        '请检查存储权限或目录状态。',
                         style: TextStyle(
+                          fontSize: 12,
                           color: Theme.of(context).colorScheme.error,
                         ),
                       ),

@@ -5,6 +5,11 @@ import 'package:app/store/remote_scan_coordinator.dart';
 /// SFTP 会话缓存(按书源 id)，避免每次打开都重新连接。
 final Map<String, BigInt> _sftpSessions = {};
 
+/// Discard a cached SFTP session so an explicit reconnect opens a new client.
+void clearSftpSession(String sourceId) {
+  _sftpSessions.remove(sourceId);
+}
+
 /// 获取/重连某 SFTP 书源的会话（带缓存，避免每次打开都重连）。
 Future<BigInt> sftpSessionFor(BookSource source) async {
   final cached = _sftpSessions[source.id];

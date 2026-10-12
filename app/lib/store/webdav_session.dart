@@ -6,6 +6,11 @@ import 'package:app/store/remote_scan_coordinator.dart';
 /// WebDAV 会话缓存(按书源 id)，避免每次打开都重新连接。
 final Map<String, BigInt> _webdavSessions = {};
 
+/// Discard a cached WebDAV session so an explicit reconnect opens a new client.
+void clearWebdavSession(String sourceId) {
+  _webdavSessions.remove(sourceId);
+}
+
 /// 获取/重连某 WebDAV 书源的会话（带缓存，避免每次打开都重连）。
 Future<BigInt> webdavSessionFor(BookSource source) async {
   final cached = _webdavSessions[source.id];

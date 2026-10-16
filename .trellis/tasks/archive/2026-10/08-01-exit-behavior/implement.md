@@ -86,3 +86,10 @@
 - `git diff --check`: clean after removing one generated-binding trailing space. Git still reports line-ending conversion warnings for existing modified files.
 - Real Windows close-button GUI flow, isolated production-entry launch, Android/macOS/Linux lifecycle behavior, and power-loss durability were not tested. Overall implementation remains partial until isolated GUI validation and full manager coverage are complete.
 - P0 remains `P0_WEB_WRITE_AUTH_BLOCKED`; P0 real pass is `NO`. P1 remains `NOT_STARTED`. The historical 12 Rust parallel failures remain `BASELINE_UNRESOLVED`.
+
+## Release closeout — 2026-10-16
+
+- The implemented conditional exit prompt and task registry are included in the v0.6.6 release candidate.
+- Archived at the user's request for release closeout. This archive records release inclusion; it does not upgrade the earlier partial verification to a full acceptance pass.
+- Remaining unverified acceptance: real Windows close-button interaction in an isolated profile, silent root-lifecycle exit without work, complete per-manager registration coverage, and non-Windows lifecycle behavior.
+- No real EH request or 115 write was performed for release preparation. `P0_WEB_WRITE_AUTH_BLOCKED`, `P0_REAL_PASS=NO`, and `P1=NOT_STARTED` remain unchanged.

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/store/long_task_registry.dart';
 
 /// 更新流程状态。
 enum UpdateStatus {
@@ -392,9 +393,16 @@ class UpdateManager {
     if (active != null) return active;
 
     late final Future<void> flight;
-    flight = _downloadImpl().whenComplete(() {
-      if (identical(_downloadInFlight, flight)) _downloadInFlight = null;
-    });
+    flight = LongTaskRegistry.instance
+        .run<void>(
+          kind: 'application_update_download',
+          label: '下载 RCH 更新',
+          phase: '下载并校验安装包',
+          action: (_) => _downloadImpl(),
+        )
+        .whenComplete(() {
+          if (identical(_downloadInFlight, flight)) _downloadInFlight = null;
+        });
     _downloadInFlight = flight;
     return flight;
   }

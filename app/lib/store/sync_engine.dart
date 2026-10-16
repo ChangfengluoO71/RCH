@@ -13,6 +13,7 @@ import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/foreground_work_coordinator.dart';
+import 'package:app/store/long_task_registry.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:flutter/foundation.dart';
 
@@ -222,9 +223,13 @@ class SyncEngine {
           await LibraryIndexService.instance.refreshSourceIndex(
             source: s,
             force: false,
+            trackLongTask: false,
           );
         } else {
-          await LibraryIndexService.buildIndexFromSnapshots(s);
+          await LibraryIndexService.buildIndexFromSnapshots(
+            s,
+            trackLongTask: false,
+          );
         }
       } catch (e) {
         debugPrint('[SyncEngine] source index refresh failed ${s.name}: $e');
@@ -250,7 +255,12 @@ class SyncEngine {
       background: background,
     );
     if (background) return run();
-    return ForegroundWorkCoordinator.instance.runForeground(run);
+    return LongTaskRegistry.instance.run<SyncRunOutcome>(
+      kind: 'manual_sync',
+      label: '手动同步',
+      phase: '连接同步服务',
+      action: (_) => ForegroundWorkCoordinator.instance.runForeground(run),
+    );
   }
 
   Future<SyncRunOutcome> _runSyncNowWithOutcome({

@@ -1,5 +1,8 @@
 import 'package:app/store/eh_daily_coordinator.dart';
+import 'package:app/store/cloud115_bt_batch.dart';
 import 'package:app/store/eh_subscription_store.dart';
+import 'package:app/store/models.dart';
+import 'package:app/src/rust/source/cloud115/offline.dart';
 import 'package:app/ui/eh_subscription_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,7 +32,7 @@ void main() {
       ),
     );
 
-    expect(find.text('等待当前收集完成；Daily 不会抢占或中断当前任务。'), findsOneWidget);
+    expect(find.text('Daily 正在等待当前任务结束。'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
@@ -60,7 +63,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(store.dailyAutomation.dailyEnabled, isFalse);
-    expect(find.textContaining('保存 Daily 设置失败'), findsOneWidget);
+    expect(find.textContaining('保存自动化设置失败'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     store.dispose();
@@ -76,6 +79,7 @@ void main() {
         'automation': {'daily_enabled': false},
       },
       checkedManifestLoader: (_) async => '{"status":"empty","entries":[]}',
+      torrentDirectoryLoader: (_) async => '{"status":"empty","entries":[]}',
       collectRunner: (_) async {
         collectCalls++;
         throw StateError('controlled collection failure');
@@ -86,13 +90,35 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: SingleChildScrollView(
-            child: EhSubscriptionPanel(storeOverride: store),
+            child: EhSubscriptionPanel(
+              storeOverride: store,
+              btSourcesOverride: [
+                BookSource(
+                  id: 'test-source',
+                  type: '115',
+                  name: 'Test Cookie source',
+                  cookie: 'not-used-in-test',
+                ),
+              ],
+              btBatchPreferencesLoader: () async =>
+                  Cloud115BtBatchSelectionPreferences(
+                    sourceId: 'test-source',
+                    target: const Cloud115BtFolderSelection(
+                      id: 'target-folder',
+                      parentId: 'parent-folder',
+                      name: 'EH订阅',
+                      path: '/漫画/EH订阅',
+                    ),
+                  ),
+            ),
           ),
         ),
       ),
     );
-    await tester.ensureVisible(find.text('开始扫描'));
-    await tester.tap(find.text('开始扫描'));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('eh-full-workflow-run')),
+    );
+    await tester.tap(find.byKey(const ValueKey('eh-full-workflow-run')));
     await tester.pumpAndSettle();
 
     expect(collectCalls, 1);

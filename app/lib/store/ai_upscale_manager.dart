@@ -14,6 +14,7 @@ import 'baidu_session.dart';
 import 'cloud115_session.dart';
 import 'library_catalog.dart';
 import 'library_store.dart';
+import 'long_task_registry.dart';
 import 'models.dart';
 import 'quark_session.dart';
 import 'sftp_session.dart';
@@ -37,8 +38,8 @@ class AiTask {
     this.sortOrder = 0,
     int? createdAt,
     int? updatedAt,
-  })  : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch,
-        updatedAt = updatedAt ?? DateTime.now().millisecondsSinceEpoch;
+  }) : createdAt = createdAt ?? DateTime.now().millisecondsSinceEpoch,
+       updatedAt = updatedAt ?? DateTime.now().millisecondsSinceEpoch;
 
   final String id;
   final String bookKey;
@@ -50,47 +51,49 @@ class AiTask {
   int total;
   int done;
   AiTaskStatus status;
+
   /// 排队顺序（进行中固定为 0，排队任务从 1 递增；拖拽后持久化）。
   int sortOrder;
   final int createdAt;
   int updatedAt;
 
-  bool get isActive => status == AiTaskStatus.queued || status == AiTaskStatus.running;
+  bool get isActive =>
+      status == AiTaskStatus.queued || status == AiTaskStatus.running;
 
   AiTaskDto toDto() => AiTaskDto(
-        id: id,
-        bookKey: bookKey,
-        sourceType: sourceType,
-        sourceId: sourceId,
-        path: path,
-        title: title,
-        scale: scale,
-        total: total,
-        done: done,
-        status: status.name,
-        sortOrder: sortOrder,
-        createdAt: createdAt,
-        updatedAt: updatedAt,
-      );
+    id: id,
+    bookKey: bookKey,
+    sourceType: sourceType,
+    sourceId: sourceId,
+    path: path,
+    title: title,
+    scale: scale,
+    total: total,
+    done: done,
+    status: status.name,
+    sortOrder: sortOrder,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+  );
 
   factory AiTask.fromDto(AiTaskDto d) => AiTask(
-        id: d.id,
-        bookKey: d.bookKey,
-        sourceType: d.sourceType,
-        sourceId: d.sourceId,
-        path: d.path,
-        title: d.title,
-        scale: d.scale.toInt(),
-        total: d.total.toInt(),
-        done: d.done.toInt(),
-        status: AiTaskStatus.values.firstWhere(
-          (s) => s.name == d.status,
-          orElse: () => AiTaskStatus.queued,
-        ),
-        sortOrder: d.sortOrder.toInt(),
-        createdAt: d.createdAt.toInt(),
-        updatedAt: d.updatedAt.toInt(),
-      );
+    id: d.id,
+    bookKey: d.bookKey,
+    sourceType: d.sourceType,
+    sourceId: d.sourceId,
+    path: d.path,
+    title: d.title,
+    scale: d.scale.toInt(),
+    total: d.total.toInt(),
+    done: d.done.toInt(),
+    status: AiTaskStatus.values.firstWhere(
+      (s) => s.name == d.status,
+      orElse: () => AiTaskStatus.queued,
+    ),
+    sortOrder: d.sortOrder.toInt(),
+    createdAt: d.createdAt.toInt(),
+    updatedAt: d.updatedAt.toInt(),
+  );
 }
 
 /// AI 整本超分后台任务管理器（队列 + 持久化 + 进度 + 完成提示）。
@@ -99,7 +102,8 @@ class AiUpscaleManager extends ChangeNotifier {
   static final AiUpscaleManager instance = AiUpscaleManager._();
 
   /// 全局导航 key：完成提示对话框使用。
-  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   final List<AiTask> _tasks = [];
   bool _workerRunning = false;
@@ -111,13 +115,17 @@ class AiUpscaleManager extends ChangeNotifier {
   Timer? _completedTimer;
 
   List<AiTask> get tasks => List.unmodifiable(_tasks);
+
   /// 展示用活动任务：进行中固定在前，排队任务按 sortOrder 升序。
   List<AiTask> get activeTasks {
-    final running = _tasks.where((t) => t.status == AiTaskStatus.running).toList();
+    final running = _tasks
+        .where((t) => t.status == AiTaskStatus.running)
+        .toList();
     final queued = _tasks.where((t) => t.status == AiTaskStatus.queued).toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     return [...running, ...queued];
   }
+
   String? get readingBookKey => _readingBookKey;
   String? get forceAiVersionBookKey => _forceAiVersionBookKey;
   String? get lastCompletedTitle => _lastCompletedTitle;
@@ -171,7 +179,8 @@ class AiUpscaleManager extends ChangeNotifier {
       path: path,
       title: title,
       scale: scale,
-      sortOrder: _tasks.fold<int>(0, (m, e) => e.sortOrder > m ? e.sortOrder : m) + 1,
+      sortOrder:
+          _tasks.fold<int>(0, (m, e) => e.sortOrder > m ? e.sortOrder : m) + 1,
     );
     _tasks.add(t);
     await _persist(t);
@@ -198,7 +207,9 @@ class AiUpscaleManager extends ChangeNotifier {
   /// [oldIndex]/[newIndex] 是 `activeTasks`（进行中在前）里的下标；进行中任务不可拖。
   Future<void> reorderQueued(int oldIndex, int newIndex) async {
     final active = activeTasks;
-    final runCount = active.where((t) => t.status == AiTaskStatus.running).length;
+    final runCount = active
+        .where((t) => t.status == AiTaskStatus.running)
+        .length;
     if (oldIndex < runCount || oldIndex >= active.length) return;
     var ni = newIndex;
     if (ni < runCount) ni = runCount; // 不允许插到进行中任务之前
@@ -212,7 +223,9 @@ class AiUpscaleManager extends ChangeNotifier {
       ..addAll(ordered);
 
     // 按 _tasks 新顺序重编号排队任务（不能再按旧的 sortOrder 排序，否则顺序不变）
-    final queued = _tasks.where((t) => t.status == AiTaskStatus.queued).toList();
+    final queued = _tasks
+        .where((t) => t.status == AiTaskStatus.queued)
+        .toList();
     for (var i = 0; i < queued.length; i++) {
       queued[i].sortOrder = i + 1;
     }
@@ -277,6 +290,22 @@ class AiUpscaleManager extends ChangeNotifier {
     await _persist(task);
     notifyListeners();
 
+    await LongTaskRegistry.instance.run<void>(
+      kind: 'ai_upscale',
+      label: 'AI 超分队列',
+      phase: '恢复任务检查点',
+      resumable: true,
+      prepareForExit: () async {
+        // AI progress and the running marker are already persisted. Startup
+        // converts a stale running row back to queued, so this flush gives the
+        // next process the latest completed-page count without canceling work.
+        await dbUpsertAiTask(task: task.toDto());
+      },
+      action: (lease) => _continueRunTask(task, lease),
+    );
+  }
+
+  Future<void> _continueRunTask(AiTask task, LongTaskLease lease) async {
     final store = LibraryStore.instance;
     BookSource? source;
     for (final s in store.sources) {
@@ -298,31 +327,38 @@ class AiUpscaleManager extends ChangeNotifier {
       );
       final openFuture = switch (source.type) {
         'webdav' => openWebdavBook(
-            session: await webdavSessionFor(source),
-            path: providerPath,
-            strategy: strategy),
+          session: await webdavSessionFor(source),
+          path: providerPath,
+          strategy: strategy,
+        ),
         'sftp' => openSftpBook(
-            session: await sftpSessionFor(source),
-            path: providerPath,
-            strategy: strategy),
+          session: await sftpSessionFor(source),
+          path: providerPath,
+          strategy: strategy,
+        ),
         'baidu' => openBaiduBook(
-            session: await baiduSessionFor(source),
-            path: providerPath,
-            strategy: strategy),
-        '115' => openCloud115BookFor(source,
-            session: await cloud115SessionFor(source),
-            path: providerPath,
-            strategy: strategy),
+          session: await baiduSessionFor(source),
+          path: providerPath,
+          strategy: strategy,
+        ),
+        '115' => openCloud115BookFor(
+          source,
+          session: await cloud115SessionFor(source),
+          path: providerPath,
+          strategy: strategy,
+        ),
         'quark' => openQuarkBook(
-            session: await quarkSessionFor(source),
-            path: providerPath,
-            strategy: strategy),
+          session: await quarkSessionFor(source),
+          path: providerPath,
+          strategy: strategy,
+        ),
         _ => openLocalBook(path: providerPath),
       };
       final bk = await openFuture.timeout(const Duration(seconds: 60));
       task.total = bk.pageCount;
       task.updatedAt = DateTime.now().millisecondsSinceEpoch;
       await _persist(task);
+      lease.update(phase: '处理页面 0/${task.total}');
       notifyListeners();
 
       // 逐页处理：每页完成立即更新进度。
@@ -331,18 +367,25 @@ class AiUpscaleManager extends ChangeNotifier {
       for (var i = 0; i < task.total; i++) {
         if (task.status == AiTaskStatus.canceled) break;
         try {
-          final pageBytes = await bookPage(handle: bk.handle, index: i)
-              .timeout(const Duration(seconds: 60));
-          final result = await superResolve(pageBytes: pageBytes, scale: task.scale)
-              .timeout(const Duration(minutes: 2));
+          final pageBytes = await bookPage(
+            handle: bk.handle,
+            index: i,
+          ).timeout(const Duration(seconds: 60));
+          final result = await superResolve(
+            pageBytes: pageBytes,
+            scale: task.scale,
+          ).timeout(const Duration(minutes: 2));
           if (result.isNotEmpty) task.done++;
         } catch (_) {
           // 单页失败：跳过，任务继续
         }
         task.updatedAt = DateTime.now().millisecondsSinceEpoch;
         await _persist(task);
+        lease.update(phase: '处理页面 ${task.done}/${task.total}');
         notifyListeners();
-        await _logProgress('进度 ${task.status.name} ${task.done}/${task.total} ${task.title}');
+        await _logProgress(
+          '进度 ${task.status.name} ${task.done}/${task.total} ${task.title}',
+        );
       }
       try {
         closeBook(handle: bk.handle);
@@ -405,8 +448,14 @@ class AiUpscaleManager extends ChangeNotifier {
         title: const Text('AI 超分完成'),
         content: Text('《${task.title}》已超分完毕，是否全部加载为超分版本？'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('暂不')),
-          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('加载超分版本')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('暂不'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('加载超分版本'),
+          ),
         ],
       ),
     );
@@ -451,8 +500,10 @@ class AiUpscaleManager extends ChangeNotifier {
     try {
       final dir = await getApplicationSupportDirectory();
       final f = File('${dir.path}${Platform.pathSeparator}ai_progress.log');
-      await f.writeAsString('${DateTime.now().toIso8601String()} $msg\n',
-          mode: FileMode.append);
+      await f.writeAsString(
+        '${DateTime.now().toIso8601String()} $msg\n',
+        mode: FileMode.append,
+      );
     } catch (_) {}
   }
 

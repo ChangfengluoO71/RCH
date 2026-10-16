@@ -7,6 +7,54 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `book_meta_row`, `library_index_to_dto`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+
+/// Idempotently projects eligible credential-free ledger rows into the
+/// operational monitor tables. The monitor never writes to the ledger.
+Future<int> dbCloud115BtMonitorReconcile({
+  required List<Cloud115BtMonitorLedgerEntryDto> entries,
+}) => RustLib.instance.api.crateApiDbDbCloud115BtMonitorReconcile(
+  entries: entries,
+);
+
+/// Atomically claims due tasks for one account/source and returns a bounded
+/// set. The short SQLite transaction ends before the caller performs HTTP.
+Future<Cloud115BtMonitorClaimDto?> dbCloud115BtMonitorClaimDue({
+  required String accountId,
+  required String sourceId,
+  required String owner,
+  required PlatformInt64 leaseExpiresAt,
+  required int limit,
+}) => RustLib.instance.api.crateApiDbDbCloud115BtMonitorClaimDue(
+  accountId: accountId,
+  sourceId: sourceId,
+  owner: owner,
+  leaseExpiresAt: leaseExpiresAt,
+  limit: limit,
+);
+
+/// Persists only normalized task-list observations and releases the poll lease.
+Future<void> dbCloud115BtMonitorFinishPoll({
+  required String runId,
+  required String accountId,
+  required String owner,
+  required List<Cloud115BtMonitorObservationDto> observations,
+  String? errorClass,
+  required PlatformInt64 nextCheckAt,
+}) => RustLib.instance.api.crateApiDbDbCloud115BtMonitorFinishPoll(
+  runId: runId,
+  accountId: accountId,
+  owner: owner,
+  observations: observations,
+  errorClass: errorClass,
+  nextCheckAt: nextCheckAt,
+);
+
+Future<Cloud115BtMonitorSummaryDto> dbCloud115BtMonitorSummary({
+  String? sourceId,
+}) => RustLib.instance.api.crateApiDbDbCloud115BtMonitorSummary(
+  sourceId: sourceId,
+);
 
 /// 数据是否已从 library.json 迁移到 SQLite。
 Future<bool> dataIsMigrated() =>
@@ -561,6 +609,204 @@ class CatalogRevisionDto {
           revision == other.revision &&
           changedBookKeysJson == other.changedBookKeysJson &&
           updatedAt == other.updatedAt;
+}
+
+class Cloud115BtMonitorClaimDto {
+  final String runId;
+  final List<Cloud115BtMonitorTaskDto> tasks;
+
+  const Cloud115BtMonitorClaimDto({required this.runId, required this.tasks});
+
+  @override
+  int get hashCode => runId.hashCode ^ tasks.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtMonitorClaimDto &&
+          runtimeType == other.runtimeType &&
+          runId == other.runId &&
+          tasks == other.tasks;
+}
+
+class Cloud115BtMonitorLedgerEntryDto {
+  final String batchId;
+  final String accountId;
+  final String sourceId;
+  final String targetFolderId;
+  final String infoHash;
+  final String relativeFile;
+  final String ledgerState;
+  final PlatformInt64 updatedAt;
+
+  const Cloud115BtMonitorLedgerEntryDto({
+    required this.batchId,
+    required this.accountId,
+    required this.sourceId,
+    required this.targetFolderId,
+    required this.infoHash,
+    required this.relativeFile,
+    required this.ledgerState,
+    required this.updatedAt,
+  });
+
+  @override
+  int get hashCode =>
+      batchId.hashCode ^
+      accountId.hashCode ^
+      sourceId.hashCode ^
+      targetFolderId.hashCode ^
+      infoHash.hashCode ^
+      relativeFile.hashCode ^
+      ledgerState.hashCode ^
+      updatedAt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtMonitorLedgerEntryDto &&
+          runtimeType == other.runtimeType &&
+          batchId == other.batchId &&
+          accountId == other.accountId &&
+          sourceId == other.sourceId &&
+          targetFolderId == other.targetFolderId &&
+          infoHash == other.infoHash &&
+          relativeFile == other.relativeFile &&
+          ledgerState == other.ledgerState &&
+          updatedAt == other.updatedAt;
+}
+
+class Cloud115BtMonitorObservationDto {
+  final String accountId;
+  final String infoHash;
+  final String targetFolderId;
+  final bool? foundInSnapshot;
+  final PlatformInt64? statusCode;
+  final double? percentDone;
+  final String? errorClass;
+
+  const Cloud115BtMonitorObservationDto({
+    required this.accountId,
+    required this.infoHash,
+    required this.targetFolderId,
+    this.foundInSnapshot,
+    this.statusCode,
+    this.percentDone,
+    this.errorClass,
+  });
+
+  @override
+  int get hashCode =>
+      accountId.hashCode ^
+      infoHash.hashCode ^
+      targetFolderId.hashCode ^
+      foundInSnapshot.hashCode ^
+      statusCode.hashCode ^
+      percentDone.hashCode ^
+      errorClass.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtMonitorObservationDto &&
+          runtimeType == other.runtimeType &&
+          accountId == other.accountId &&
+          infoHash == other.infoHash &&
+          targetFolderId == other.targetFolderId &&
+          foundInSnapshot == other.foundInSnapshot &&
+          statusCode == other.statusCode &&
+          percentDone == other.percentDone &&
+          errorClass == other.errorClass;
+}
+
+class Cloud115BtMonitorSummaryDto {
+  final int trackedCount;
+  final int foundCount;
+  final int unknownCount;
+  final int dueCount;
+  final PlatformInt64? lastCheckedAt;
+  final PlatformInt64? nextCheckAt;
+  final String? lastErrorClass;
+
+  const Cloud115BtMonitorSummaryDto({
+    required this.trackedCount,
+    required this.foundCount,
+    required this.unknownCount,
+    required this.dueCount,
+    this.lastCheckedAt,
+    this.nextCheckAt,
+    this.lastErrorClass,
+  });
+
+  @override
+  int get hashCode =>
+      trackedCount.hashCode ^
+      foundCount.hashCode ^
+      unknownCount.hashCode ^
+      dueCount.hashCode ^
+      lastCheckedAt.hashCode ^
+      nextCheckAt.hashCode ^
+      lastErrorClass.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtMonitorSummaryDto &&
+          runtimeType == other.runtimeType &&
+          trackedCount == other.trackedCount &&
+          foundCount == other.foundCount &&
+          unknownCount == other.unknownCount &&
+          dueCount == other.dueCount &&
+          lastCheckedAt == other.lastCheckedAt &&
+          nextCheckAt == other.nextCheckAt &&
+          lastErrorClass == other.lastErrorClass;
+}
+
+class Cloud115BtMonitorTaskDto {
+  final String accountId;
+  final String sourceId;
+  final String targetFolderId;
+  final String infoHash;
+  final String relativeFile;
+  final String ledgerState;
+  final String batchId;
+  final PlatformInt64 attemptCount;
+
+  const Cloud115BtMonitorTaskDto({
+    required this.accountId,
+    required this.sourceId,
+    required this.targetFolderId,
+    required this.infoHash,
+    required this.relativeFile,
+    required this.ledgerState,
+    required this.batchId,
+    required this.attemptCount,
+  });
+
+  @override
+  int get hashCode =>
+      accountId.hashCode ^
+      sourceId.hashCode ^
+      targetFolderId.hashCode ^
+      infoHash.hashCode ^
+      relativeFile.hashCode ^
+      ledgerState.hashCode ^
+      batchId.hashCode ^
+      attemptCount.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtMonitorTaskDto &&
+          runtimeType == other.runtimeType &&
+          accountId == other.accountId &&
+          sourceId == other.sourceId &&
+          targetFolderId == other.targetFolderId &&
+          infoHash == other.infoHash &&
+          relativeFile == other.relativeFile &&
+          ledgerState == other.ledgerState &&
+          batchId == other.batchId &&
+          attemptCount == other.attemptCount;
 }
 
 /// 设备注册表条目（幽灵书源来源展示）。

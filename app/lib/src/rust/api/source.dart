@@ -283,6 +283,16 @@ Future<List<DirEntry>> cloud115CookieList({
   path: path,
 );
 
+/// Lists one level of existing target folders for the Cookie BT destination
+/// picker. This is a bounded read-only request on the already cached session.
+Future<List<Cloud115BtFolder>> cloud115CookieBtListChildFolders({
+  required BigInt session,
+  required String parentId,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieBtListChildFolders(
+  session: session,
+  parentId: parentId,
+);
+
 /// Validate one checked EH Torrent and query the existing Cookie session for
 /// the exact target directory and duplicate-task state. This operation is
 /// read-only and reuses the reader's Cookie client, rate gate, and WAF cooldown.
@@ -291,12 +301,33 @@ Future<Cloud115BtPreflight> cloud115CookieBtReadonlyPreflight({
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
+  required Cloud115BtFolderSelection target,
 }) => RustLib.instance.api.crateApiSourceCloud115CookieBtReadonlyPreflight(
   session: session,
   outputDir: outputDir,
   relativeFile: relativeFile,
   expectedInfoHash: expectedInfoHash,
+  target: target,
 );
+
+/// Remove only the checked local Torrent, and only after this existing Cookie
+/// session confirms that the expected account has a positive same-hash task.
+Future<void> cloud115CookieBtDeleteLocalIfRemoteTaskFound({
+  required BigInt session,
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedAccountId,
+  required Cloud115BtFolderSelection target,
+}) => RustLib.instance.api
+    .crateApiSourceCloud115CookieBtDeleteLocalIfRemoteTaskFound(
+      session: session,
+      outputDir: outputDir,
+      relativeFile: relativeFile,
+      expectedInfoHash: expectedInfoHash,
+      expectedAccountId: expectedAccountId,
+      target: target,
+    );
 
 /// Upload and parse one checked EH Torrent through the existing Cookie source
 /// session. This is called only after the Flutter UI's explicit upload
@@ -306,13 +337,13 @@ Future<Cloud115BtUploadParseResult> cloud115CookieBtUploadAndParse({
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
-  required String expectedTargetFolderId,
+  required Cloud115BtFolderSelection target,
 }) => RustLib.instance.api.crateApiSourceCloud115CookieBtUploadAndParse(
   session: session,
   outputDir: outputDir,
   relativeFile: relativeFile,
   expectedInfoHash: expectedInfoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
 );
 
 /// Read-only recovery after an uncertain Torrent upload. This never repeats
@@ -322,14 +353,14 @@ Future<Cloud115BtUploadParseResult> cloud115CookieBtConfirmUploadParse({
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
-  required String expectedTargetFolderId,
+  required Cloud115BtFolderSelection target,
   String? pickCode,
 }) => RustLib.instance.api.crateApiSourceCloud115CookieBtConfirmUploadParse(
   session: session,
   outputDir: outputDir,
   relativeFile: relativeFile,
   expectedInfoHash: expectedInfoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
   pickCode: pickCode,
 );
 
@@ -340,14 +371,14 @@ Future<Cloud115BtSubmitResult> cloud115CookieBtSubmitOnce({
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
-  required String expectedTargetFolderId,
+  required Cloud115BtFolderSelection target,
   required List<int> wantedIndices,
 }) => RustLib.instance.api.crateApiSourceCloud115CookieBtSubmitOnce(
   session: session,
   outputDir: outputDir,
   relativeFile: relativeFile,
   expectedInfoHash: expectedInfoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
   wantedIndices: wantedIndices,
 );
 
@@ -356,11 +387,19 @@ Future<Cloud115BtSubmitResult> cloud115CookieBtSubmitOnce({
 Future<Cloud115BtTaskStatus> cloud115CookieBtTaskStatus({
   required BigInt session,
   required String infoHash,
-  required String expectedTargetFolderId,
+  required Cloud115BtFolderSelection target,
 }) => RustLib.instance.api.crateApiSourceCloud115CookieBtTaskStatus(
   session: session,
   infoHash: infoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
+);
+
+/// One bounded read-only task-list snapshot through the already-owned Cookie
+/// session. This path has no upload or submit call.
+Future<Cloud115BtTaskSnapshot> cloud115CookieBtTaskSnapshot({
+  required BigInt session,
+}) => RustLib.instance.api.crateApiSourceCloud115CookieBtTaskSnapshot(
+  session: session,
 );
 
 /// 打开 115 上的书籍（path 为 pickcode，三态策略）。

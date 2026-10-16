@@ -9,6 +9,7 @@ enum EhDailyRunStatus {
   claimed,
   running,
   completed,
+  partial,
   failed,
   cancelled,
   interruptedUnknown,
@@ -21,14 +22,71 @@ enum EhDailyCoordinatorStatus {
   disabled,
   waitingForOutputDirectory,
   waitingForCurrentRun,
+  waitingForP0Gate,
   waitingForNextDate,
   persistenceFailed,
   claimed,
   running,
   completed,
+  partial,
   failed,
   cancelled,
   interruptedUnknown,
+}
+
+enum EhDailyCloudStageStatus {
+  notRun,
+  p0Blocked,
+  needsConfiguration,
+  sessionUnavailable,
+  completed,
+  partial,
+  failed,
+}
+
+class EhDailyCloudStageResult {
+  const EhDailyCloudStageResult({
+    this.status = EhDailyCloudStageStatus.notRun,
+    this.total = 0,
+    this.submitted = 0,
+    this.skipped = 0,
+    this.pending = 0,
+    this.removed = 0,
+    this.failed = 0,
+    this.message,
+  });
+
+  final EhDailyCloudStageStatus status;
+  final int total;
+  final int submitted;
+  final int skipped;
+  final int pending;
+  final int removed;
+  final int failed;
+  final String? message;
+
+  Map<String, Object?> toJson() => {
+    'status': _cloudStageToJson(status),
+    'total': total,
+    'submitted': submitted,
+    'skipped': skipped,
+    'pending': pending,
+    'removed': removed,
+    'failed': failed,
+    'message': message,
+  };
+
+  factory EhDailyCloudStageResult.fromJson(Map<String, Object?> json) =>
+      EhDailyCloudStageResult(
+        status: _cloudStageFromJson(json['status']),
+        total: (json['total'] as num?)?.toInt() ?? 0,
+        submitted: (json['submitted'] as num?)?.toInt() ?? 0,
+        skipped: (json['skipped'] as num?)?.toInt() ?? 0,
+        pending: (json['pending'] as num?)?.toInt() ?? 0,
+        removed: (json['removed'] as num?)?.toInt() ?? 0,
+        failed: (json['failed'] as num?)?.toInt() ?? 0,
+        message: json['message'] as String?,
+      );
 }
 
 class EhDailyRunRecord {
@@ -38,6 +96,7 @@ class EhDailyRunRecord {
     required this.status,
     this.saved = 0,
     this.error,
+    this.cloudStage = const EhDailyCloudStageResult(),
   });
 
   final String date;
@@ -45,6 +104,7 @@ class EhDailyRunRecord {
   final EhDailyRunStatus status;
   final int saved;
   final String? error;
+  final EhDailyCloudStageResult cloudStage;
 
   EhDailyRunRecord copyWith({
     String? date,
@@ -52,12 +112,14 @@ class EhDailyRunRecord {
     EhDailyRunStatus? status,
     int? saved,
     Object? error = _unchanged,
+    EhDailyCloudStageResult? cloudStage,
   }) => EhDailyRunRecord(
     date: date ?? this.date,
     source: source ?? this.source,
     status: status ?? this.status,
     saved: saved ?? this.saved,
     error: identical(error, _unchanged) ? this.error : error as String?,
+    cloudStage: cloudStage ?? this.cloudStage,
   );
 
   Map<String, Object?> toJson() => {
@@ -66,6 +128,7 @@ class EhDailyRunRecord {
     'status': _statusToJson(status),
     'saved': saved,
     'error': error,
+    'cloud_stage': cloudStage.toJson(),
   };
 
   factory EhDailyRunRecord.fromJson(Map<String, Object?> json) =>
@@ -75,6 +138,11 @@ class EhDailyRunRecord {
         status: _statusFromJson(json['status']),
         saved: (json['saved'] as num?)?.toInt() ?? 0,
         error: json['error'] as String?,
+        cloudStage: json['cloud_stage'] is Map
+            ? EhDailyCloudStageResult.fromJson(
+                Map<String, Object?>.from(json['cloud_stage'] as Map),
+              )
+            : const EhDailyCloudStageResult(),
       );
 }
 
@@ -145,6 +213,8 @@ abstract interface class EhDailyHost implements Listenable {
   bool get dailyReady;
   bool get hasOutDir;
   bool get busy;
+  bool get dailyWorkflowReady;
+  String get dailyWorkflowGateMessage;
 
   Future<void> setDailyEnabled(bool enabled);
   Future<bool> claimDailyRun(String date);
@@ -298,6 +368,13 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _pendingClaimDate = null;
       _waitingForCurrentRun = false;
       _setStatus(EhDailyCoordinatorStatus.disabled);
+      return;
+    }
+    if (!host.dailyWorkflowReady) {
+      _setStatus(
+        EhDailyCoordinatorStatus.waitingForP0Gate,
+        host.dailyWorkflowGateMessage,
+      );
       return;
     }
     if (!host.hasOutDir) {
@@ -510,7 +587,10 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _armNextLocalDay() {
-    if (!_started || !_isWindows || !host.dailyAutomation.dailyEnabled) {
+    if (!_started ||
+        !_isWindows ||
+        !host.dailyAutomation.dailyEnabled ||
+        !host.dailyWorkflowReady) {
       _wakeTimer.cancel();
       return;
     }
@@ -566,6 +646,7 @@ String _statusToJson(EhDailyRunStatus status) => switch (status) {
   EhDailyRunStatus.claimed => 'claimed',
   EhDailyRunStatus.running => 'running',
   EhDailyRunStatus.completed => 'completed',
+  EhDailyRunStatus.partial => 'partial',
   EhDailyRunStatus.failed => 'failed',
   EhDailyRunStatus.cancelled => 'cancelled',
   EhDailyRunStatus.interruptedUnknown => 'interrupted_unknown',
@@ -576,10 +657,31 @@ EhDailyRunStatus _statusFromJson(Object? value) => switch (value) {
   'claimed' => EhDailyRunStatus.claimed,
   'running' => EhDailyRunStatus.running,
   'completed' => EhDailyRunStatus.completed,
+  'partial' => EhDailyRunStatus.partial,
   'failed' => EhDailyRunStatus.failed,
   'cancelled' => EhDailyRunStatus.cancelled,
   'interrupted_unknown' => EhDailyRunStatus.interruptedUnknown,
   _ => EhDailyRunStatus.unknown,
+};
+
+String _cloudStageToJson(EhDailyCloudStageStatus status) => switch (status) {
+  EhDailyCloudStageStatus.notRun => 'not_run',
+  EhDailyCloudStageStatus.p0Blocked => 'p0_blocked',
+  EhDailyCloudStageStatus.needsConfiguration => 'needs_configuration',
+  EhDailyCloudStageStatus.sessionUnavailable => 'session_unavailable',
+  EhDailyCloudStageStatus.completed => 'completed',
+  EhDailyCloudStageStatus.partial => 'partial',
+  EhDailyCloudStageStatus.failed => 'failed',
+};
+
+EhDailyCloudStageStatus _cloudStageFromJson(Object? value) => switch (value) {
+  'p0_blocked' => EhDailyCloudStageStatus.p0Blocked,
+  'needs_configuration' => EhDailyCloudStageStatus.needsConfiguration,
+  'session_unavailable' => EhDailyCloudStageStatus.sessionUnavailable,
+  'completed' => EhDailyCloudStageStatus.completed,
+  'partial' => EhDailyCloudStageStatus.partial,
+  'failed' => EhDailyCloudStageStatus.failed,
+  _ => EhDailyCloudStageStatus.notRun,
 };
 
 EhDailyCoordinatorStatus _statusFor(EhDailyRunStatus status) =>
@@ -587,6 +689,7 @@ EhDailyCoordinatorStatus _statusFor(EhDailyRunStatus status) =>
       EhDailyRunStatus.claimed => EhDailyCoordinatorStatus.claimed,
       EhDailyRunStatus.running => EhDailyCoordinatorStatus.running,
       EhDailyRunStatus.completed => EhDailyCoordinatorStatus.completed,
+      EhDailyRunStatus.partial => EhDailyCoordinatorStatus.partial,
       EhDailyRunStatus.failed => EhDailyCoordinatorStatus.failed,
       EhDailyRunStatus.cancelled => EhDailyCoordinatorStatus.cancelled,
       EhDailyRunStatus.interruptedUnknown =>

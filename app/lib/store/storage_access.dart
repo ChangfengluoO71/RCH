@@ -42,6 +42,20 @@ Future<void> openAllFilesAccessSettings() async {
   } catch (_) {}
 }
 
+/// Opens the Android system folder picker at a shared-storage directory.
+/// RCH does not retain a new Storage Access Framework grant from this action.
+Future<bool> openAndroidDirectoryPicker(String directory) async {
+  if (!isAndroidPlatform || directory.trim().isEmpty) return false;
+  try {
+    return await _channel.invokeMethod<bool>('openEhOutputDirectory', {
+          'path': directory,
+        }) ??
+        false;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// Returns true once for each app installation that still needs storage
 /// access, so Android users see the explanation on their first launch.
 Future<bool> claimStartupAllFilesAccessPrompt() async {

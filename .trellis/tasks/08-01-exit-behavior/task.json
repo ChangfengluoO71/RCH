@@ -1,9 +1,9 @@
 {
   "id": "exit-behavior",
   "name": "exit-behavior",
-  "title": "全局设置 — 退出应用行为选择（彻底退出/后台运行/每次询问）",
-  "description": "",
-  "status": "planning",
+  "title": "活动长任务退出确认与恢复提示",
+  "description": "Show a conditional exit prompt for active local jobs and resumable Cloud115 monitoring. The historical tray/exit-mode proposal is deferred.",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

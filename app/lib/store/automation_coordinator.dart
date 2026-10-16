@@ -7,6 +7,7 @@ import 'package:app/store/library_index_service.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/sync_engine.dart';
 import 'package:app/store/foreground_work_coordinator.dart';
+import 'package:app/store/long_task_registry.dart';
 import 'package:flutter/foundation.dart';
 
 /// Owns the automatic sync -> catalog scrape pipeline.
@@ -128,6 +129,11 @@ class AutomationCoordinator {
     }
     _running = true;
     final startingGeneration = _dirtyGeneration;
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'automation_cycle',
+      label: '同步与本地目录整理',
+      phase: quickPoll ? '检查同步状态' : '刷新目录快照',
+    );
     try {
       final quickPollOutcome = quickPoll
           ? await SyncEngine.instance.probeQuickPoll(background: true)
@@ -138,6 +144,7 @@ class AutomationCoordinator {
             trigger: trigger,
             background: true,
           );
+      taskLease.update(phase: '同步配置');
       final syncOutcome =
           quickPollOutcome ??
           await SyncEngine.instance.syncNowWithOutcome(
@@ -164,6 +171,7 @@ class AutomationCoordinator {
             );
         postSyncChanged = postSyncCatalog.changed;
       }
+      taskLease.update(phase: '整理本地目录索引');
       // Catalog replacement marks deleted assets and clears their local
       // proposal/metadata/tag state in Rust. The Dart pass removes stale
       // records/caches from memory as well. M8 automation deliberately stays
@@ -183,6 +191,7 @@ class AutomationCoordinator {
         ancestorDepth: ancestorDepth,
         ruleVersion: ruleVersion,
       );
+      taskLease.update(phase: '应用已确认的本地整理');
       lastRun = run;
       final materialization = automaticMaterializationEnabled
           ? await _materializeReadyProposals(background: true)
@@ -228,6 +237,7 @@ class AutomationCoordinator {
       debugPrint('[AutomationCoordinator] $error');
       return null;
     } finally {
+      taskLease.dispose();
       _finishActiveWork(startingGeneration);
     }
   }
@@ -240,11 +250,18 @@ class AutomationCoordinator {
     }
     _running = true;
     final startingGeneration = _dirtyGeneration;
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'manual_catalog_scrape',
+      label: '手动刮削与本地整理',
+      phase: '刷新目录快照',
+    );
     try {
+      taskLease.update(phase: '刮削本地目录');
       return await ForegroundWorkCoordinator.instance.runForeground(
         _runManualScrape,
       );
     } finally {
+      taskLease.dispose();
       _finishActiveWork(startingGeneration);
     }
   }

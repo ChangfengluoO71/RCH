@@ -6,6 +6,7 @@ import 'package:app/src/rust/api/db.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/cache_root_marker.dart';
 import 'package:app/store/folder_snapshot_store.dart';
+import 'package:app/store/long_task_registry.dart';
 import 'package:app/ui/comic_cover.dart';
 import 'package:app/ui/common.dart';
 import 'package:file_selector/file_selector.dart';
@@ -37,8 +38,11 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _clear(String label, Future<BigInt> Function() fn,
-      {bool clearCoverMemory = false}) async {
+  Future<void> _clear(
+    String label,
+    Future<BigInt> Function() fn, {
+    bool clearCoverMemory = false,
+  }) async {
     if (!mounted) return;
     final ok = await showRchDialog<bool>(
       context: context,
@@ -46,16 +50,31 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
         title: const Text('确认清理'),
         content: Text('确定要$label吗？'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确定')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('确定'),
+          ),
         ],
       ),
     );
     if (ok != true) return;
-    final freed = await fn();
-    if (clearCoverMemory) ComicCover.clear();
-    if (mounted) _snack('已$label (释放 ${fmtSize(freed)})');
-    await _refresh();
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'cache_clear',
+      label: label,
+      phase: '清理本地缓存',
+    );
+    try {
+      final freed = await fn();
+      if (clearCoverMemory) ComicCover.clear();
+      if (mounted) _snack('已$label (释放 ${fmtSize(freed)})');
+      await _refresh();
+    } finally {
+      taskLease.dispose();
+    }
   }
 
   /// 「清空全部缓存」：缓存与阅读数据分开确认——最近阅读记录、阅读统计
@@ -67,48 +86,71 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     var clearStats = false;
     final ok = await showRchDialog<bool>(
       context: context,
-      builder: (c) => StatefulBuilder(builder: (c, setDlgState) => AlertDialog(
-        title: const Text('确认清理'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Padding(padding: EdgeInsets.only(bottom: 6), child: Text('确定要清空全部缓存吗？阅读数据请分别确认：')),
-          CheckboxListTile(
-            value: clearRecent,
-            dense: true,
-            onChanged: (v) => setDlgState(() => clearRecent = v ?? false),
-            title: const Text('同时清空最近阅读记录'),
-            subtitle: const Text('删除最近阅读/最多阅读列表与阅读进度；阅读统计同源于记录，会一并清空'),
+      builder: (c) => StatefulBuilder(
+        builder: (c, setDlgState) => AlertDialog(
+          title: const Text('确认清理'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 6),
+                child: Text('确定要清空全部缓存吗？阅读数据请分别确认：'),
+              ),
+              CheckboxListTile(
+                value: clearRecent,
+                dense: true,
+                onChanged: (v) => setDlgState(() => clearRecent = v ?? false),
+                title: const Text('同时清空最近阅读记录'),
+                subtitle: const Text('删除最近阅读/最多阅读列表与阅读进度；阅读统计同源于记录，会一并清空'),
+              ),
+              CheckboxListTile(
+                value: clearStats,
+                dense: true,
+                onChanged: (v) => setDlgState(() => clearStats = v ?? false),
+                title: const Text('同时清空阅读统计'),
+                subtitle: const Text('仅阅读次数归零；最近阅读列表与进度保留'),
+              ),
+            ],
           ),
-          CheckboxListTile(
-            value: clearStats,
-            dense: true,
-            onChanged: (v) => setDlgState(() => clearStats = v ?? false),
-            title: const Text('同时清空阅读统计'),
-            subtitle: const Text('仅阅读次数归零；最近阅读列表与进度保留'),
-          ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确定')),
-        ],
-      )),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(c).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(c).pop(true),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      ),
     );
     if (ok != true) return;
-    final msg = StringBuffer('已清空全部缓存');
-    if (clearRecent) {
-      await LibraryStore.instance.clearReadRecords();
-      msg.write('、最近阅读记录');
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'cache_clear_all',
+      label: '清空全部缓存',
+      phase: '清理所选阅读数据与缓存',
+    );
+    try {
+      final msg = StringBuffer('已清空全部缓存');
+      if (clearRecent) {
+        await LibraryStore.instance.clearReadRecords();
+        msg.write('、最近阅读记录');
+      }
+      if (clearStats) {
+        await LibraryStore.instance.resetReadCounts();
+        msg.write('、阅读统计');
+      }
+      final freed = await clearAllCaches();
+      // 目录快照是缓存根下的可重建索引；清空全部缓存时同步清掉内存和
+      // 磁盘副本，避免下一次浏览继续使用已失效的远程文件夹条目。
+      await FolderSnapshotStore.instance.clear();
+      ComicCover.clear();
+      if (mounted) _snack('$msg (释放 ${fmtSize(freed)})');
+      await _refresh();
+    } finally {
+      taskLease.dispose();
     }
-    if (clearStats) {
-      await LibraryStore.instance.resetReadCounts();
-      msg.write('、阅读统计');
-    }
-    final freed = await clearAllCaches();
-    // 目录快照是缓存根下的可重建索引；清空全部缓存时同步清掉内存和
-    // 磁盘副本，避免下一次浏览继续使用已失效的远程文件夹条目。
-    await FolderSnapshotStore.instance.clear();
-    ComicCover.clear();
-    if (mounted) _snack('$msg (释放 ${fmtSize(freed)})');
-    await _refresh();
   }
 
   Future<void> _changeCacheDir() async {
@@ -149,37 +191,60 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('迁移根目录'),
-        content: Text('将整个根目录（数据库 + 缓存，约 ${fmtSize(needed)}）从：\n$current\n\n迁移到：\n$newPath\n\n书源、标签、阅读记录随数据库一起迁移。'),
+        content: Text(
+          '将整个根目录（数据库 + 缓存，约 ${fmtSize(needed)}）从：\n$current\n\n迁移到：\n$newPath\n\n书源、标签、阅读记录随数据库一起迁移。',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确认迁移')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('确认迁移'),
+          ),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
 
-    // 迁移前先把排队中的保存落盘，降低复制热库的不一致风险。
-    await LibraryStore.instance.flushPendingSave();
-    final ok = await _runMigration(from: current, to: newPath);
-    if (!ok || !mounted) return;
-
-    await setCacheRootPath(path: newPath);
-    await writeCacheRootMarker(newPath);
-    // 重开数据库连接：后续读写指向新根，旧文件不再被占用。
-    await reopenDataDb();
-    final store = LibraryStore.instance;
-    store.settings.cacheDir = newPath;
-    store.updateSettings(store.settings);
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'cache_root_migration',
+      label: '迁移缓存根目录',
+      phase: '保存资料库并准备迁移',
+    );
     try {
-      await deleteMigratedItems(root: current);
-    } catch (e) {
-      if (mounted) _snack('迁移完成，但旧目录清理失败（可稍后手动删除）: $e');
-      await _refresh();
-      return;
-    }
-    if (mounted) {
-      _snack('根目录已切换并完成迁移');
-      await _refresh();
+      // 迁移前先把排队中的保存落盘，降低复制热库的不一致风险。
+      await LibraryStore.instance.flushPendingSave();
+      final ok = await _runMigration(
+        from: current,
+        to: newPath,
+        taskLease: taskLease,
+      );
+      if (!ok || !mounted) return;
+
+      taskLease.update(phase: '切换数据库根目录');
+      await setCacheRootPath(path: newPath);
+      await writeCacheRootMarker(newPath);
+      // 重开数据库连接：后续读写指向新根，旧文件不再被占用。
+      await reopenDataDb();
+      final store = LibraryStore.instance;
+      store.settings.cacheDir = newPath;
+      store.updateSettings(store.settings);
+      taskLease.update(phase: '清理迁移后的旧副本');
+      try {
+        await deleteMigratedItems(root: current);
+      } catch (e) {
+        if (mounted) _snack('迁移完成，但旧目录清理失败（可稍后手动删除）: $e');
+        await _refresh();
+        return;
+      }
+      if (mounted) {
+        _snack('根目录已切换并完成迁移');
+        await _refresh();
+      }
+    } finally {
+      taskLease.dispose();
     }
   }
 
@@ -207,46 +272,65 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('恢复默认缓存目录'),
-        content: Text('将整个根目录（约 ${fmtSize(needed)}）从：\n$current\n\n迁回默认目录：\n$defaultPath'),
+        content: Text(
+          '将整个根目录（约 ${fmtSize(needed)}）从：\n$current\n\n迁回默认目录：\n$defaultPath',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('确认恢复')),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('确认恢复'),
+          ),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
 
-    await LibraryStore.instance.flushPendingSave();
-    final ok = await _runMigration(from: current, to: defaultPath);
-    if (!ok || !mounted) return;
-
-    await setCacheRootPath(path: '');
-    await writeCacheRootMarker('');
-    await reopenDataDb();
-    final store = LibraryStore.instance;
-    store.settings.cacheDir = null;
-    store.updateSettings(store.settings);
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'cache_root_migration',
+      label: '恢复默认缓存目录',
+      phase: '保存资料库并准备迁移',
+    );
     try {
-      await deleteMigratedItems(root: current);
-    } catch (e) {
-      if (mounted) _snack('已恢复默认目录，但旧目录清理失败（可稍后手动删除）: $e');
-      await _refresh();
-      return;
-    }
-    if (mounted) {
-      _snack('已恢复默认缓存目录');
-      await _refresh();
+      await LibraryStore.instance.flushPendingSave();
+      final ok = await _runMigration(
+        from: current,
+        to: defaultPath,
+        taskLease: taskLease,
+      );
+      if (!ok || !mounted) return;
+
+      taskLease.update(phase: '切换数据库根目录');
+      await setCacheRootPath(path: '');
+      await writeCacheRootMarker('');
+      await reopenDataDb();
+      final store = LibraryStore.instance;
+      store.settings.cacheDir = null;
+      store.updateSettings(store.settings);
+      taskLease.update(phase: '清理迁移后的旧副本');
+      try {
+        await deleteMigratedItems(root: current);
+      } catch (e) {
+        if (mounted) _snack('已恢复默认目录，但旧目录清理失败（可稍后手动删除）: $e');
+        await _refresh();
+        return;
+      }
+      if (mounted) {
+        _snack('已恢复默认缓存目录');
+        await _refresh();
+      }
+    } finally {
+      taskLease.dispose();
     }
   }
 
   /// 根目录待迁移总量：缓存大小 + database.db（若存在）。
   Future<BigInt> _rootSize(String root) async {
     final sizes = await cacheSizes();
-    var total = sizes.page +
-        sizes.raw +
-        sizes.cover +
-        sizes.ai +
-        sizes.temp;
+    var total = sizes.page + sizes.raw + sizes.cover + sizes.ai + sizes.temp;
     try {
       final db = File('$root${Platform.pathSeparator}database.db');
       if (await db.exists()) {
@@ -256,28 +340,35 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     return total;
   }
 
-  Future<bool> _runMigration({required String from, required String to}) async {
+  Future<bool> _runMigration({
+    required String from,
+    required String to,
+    required LongTaskLease taskLease,
+  }) async {
     final supportDir = (await getApplicationSupportDirectory()).path;
     if (!mounted) return false;
+    taskLease.update(phase: '复制数据库与缓存');
     final notifier = ValueNotifier<double>(0);
-    unawaited(showRchDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('迁移根目录'),
-        content: ValueListenableBuilder<double>(
-          valueListenable: notifier,
-          builder: (_, v, _) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              LinearProgressIndicator(value: v > 0 ? v : null),
-              const SizedBox(height: 8),
-              Text('迁移中 ${(v * 100).toStringAsFixed(0)}% ...'),
-            ],
+    unawaited(
+      showRchDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: const Text('迁移根目录'),
+          content: ValueListenableBuilder<double>(
+            valueListenable: notifier,
+            builder: (_, v, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinearProgressIndicator(value: v > 0 ? v : null),
+                const SizedBox(height: 8),
+                Text('迁移中 ${(v * 100).toStringAsFixed(0)}% ...'),
+              ],
+            ),
           ),
         ),
       ),
-    ));
+    );
     final timer = Timer.periodic(const Duration(milliseconds: 300), (_) async {
       final p = await migrationProgress();
       final total = p.$2;
@@ -285,6 +376,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
     });
     try {
       await migrateCacheRoot(from: from, to: to, supportDir: supportDir);
+      taskLease.update(phase: '切换数据库根目录');
       notifier.value = 1;
       return true;
     } catch (e) {
@@ -301,6 +393,7 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
       final t = x.trim().replaceAll('\\', '/');
       return t.endsWith('/') ? t.substring(0, t.length - 1) : t;
     }
+
     return n(a).toLowerCase() == n(b).toLowerCase();
   }
 
@@ -318,99 +411,153 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('缓存管理', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 4),
-      Text('各缓存分类独立清理，清理后可自动重新生成',
-          style: Theme.of(context).textTheme.bodySmall),
-      const SizedBox(height: 12),
-      if (_loading)
-        const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-      else ...[
-        if (_sizes != null) ...[
-          Text('磁盘总占用: ${fmtSize(_sizes!.total)}',
-              style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          const SizedBox(height: 10),
-          _cacheRow(Icons.download, '页面缓存（page/）', _sizes!.page,
-              'L2 磁盘缓存，复用后秒开',
-              () => _clear('清空页面缓存', clearPageCache)),
-          _cacheRow(Icons.cloud_download, '整本下载（raw/）', _sizes!.raw,
-              '远程书源整本下载的原始文件',
-              () => _clear('清空整本下载缓存', clearRawCache)),
-          _cacheRow(Icons.image, '封面缩略图（cover/）', _sizes!.cover,
-              '海报墙封面图片缓存',
-              () => _clear('清空封面缓存', clearCoverCache, clearCoverMemory: true)),
-          _cacheRow(Icons.auto_awesome, 'AI 超分结果（ai/）', _sizes!.ai,
-              'AI 超分输出缓存',
-              () => _clear('清空 AI 缓存', clearAiCache)),
-          _cacheRow(Icons.storage, '临时文件（temp/）', _sizes!.temp,
-              'AI 超分输入/输出中间文件',
-              () => _clear('清空临时文件', clearTempCache)),
-        ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '缓存管理',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '各缓存分类独立清理，清理后可自动重新生成',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
         const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () => _clearAllWithChoices(),
-            icon: const Icon(Icons.delete_sweep, size: 18),
-            label: const Text('清空全部缓存'),
+        if (_loading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: CircularProgressIndicator(),
+            ),
+          )
+        else ...[
+          if (_sizes != null) ...[
+            Text(
+              '磁盘总占用: ${fmtSize(_sizes!.total)}',
+              style: TextStyle(
+                fontSize: 13,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _cacheRow(
+              Icons.download,
+              '页面缓存（page/）',
+              _sizes!.page,
+              'L2 磁盘缓存，复用后秒开',
+              () => _clear('清空页面缓存', clearPageCache),
+            ),
+            _cacheRow(
+              Icons.cloud_download,
+              '整本下载（raw/）',
+              _sizes!.raw,
+              '远程书源整本下载的原始文件',
+              () => _clear('清空整本下载缓存', clearRawCache),
+            ),
+            _cacheRow(
+              Icons.image,
+              '封面缩略图（cover/）',
+              _sizes!.cover,
+              '海报墙封面图片缓存',
+              () => _clear('清空封面缓存', clearCoverCache, clearCoverMemory: true),
+            ),
+            _cacheRow(
+              Icons.auto_awesome,
+              'AI 超分结果（ai/）',
+              _sizes!.ai,
+              'AI 超分输出缓存',
+              () => _clear('清空 AI 缓存', clearAiCache),
+            ),
+            _cacheRow(
+              Icons.storage,
+              '临时文件（temp/）',
+              _sizes!.temp,
+              'AI 超分输入/输出中间文件',
+              () => _clear('清空临时文件', clearTempCache),
+            ),
+          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _clearAllWithChoices(),
+              icon: const Icon(Icons.delete_sweep, size: 18),
+              label: const Text('清空全部缓存'),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        FutureBuilder<String>(
-          future: cacheRootPath(),
-          builder: (c, sn) => Column(children: [
-            Text('目录: ${sn.data ?? ''}',
-                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _changeCacheDir,
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: const Text('更改缓存目录'),
-              ),
+          const SizedBox(height: 8),
+          FutureBuilder<String>(
+            future: cacheRootPath(),
+            builder: (c, sn) => Column(
+              children: [
+                Text(
+                  '目录: ${sn.data ?? ''}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _changeCacheDir,
+                    icon: const Icon(Icons.folder_open, size: 18),
+                    label: const Text('更改缓存目录'),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _restoreDefaultCacheDir,
+                    icon: const Icon(Icons.settings_backup_restore, size: 18),
+                    label: const Text('恢复默认缓存目录'),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _purging
+                        ? null
+                        : () async {
+                            setState(() => _purging = true);
+                            try {
+                              final (r, m, freed, failed) = await LibraryStore
+                                  .instance
+                                  .purgeStaleData();
+                              final tip = failed > 0
+                                  ? '（$failed 个远程书源在线核对失败，已保留其数据，请检查网络/登录后重试）'
+                                  : '';
+                              _snack(
+                                '已清理 $r 条失效记录、$m 条失效元数据，释放 '
+                                '${fmtSize(BigInt.from(freed))} 缓存$tip',
+                              );
+                            } finally {
+                              if (mounted) setState(() => _purging = false);
+                            }
+                          },
+                    icon: const Icon(Icons.cleaning_services, size: 18),
+                    label: Text(_purging ? '正在核对远程书源并清理…' : '清理失效漫画数据'),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 4),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _restoreDefaultCacheDir,
-                icon: const Icon(Icons.settings_backup_restore, size: 18),
-                label: const Text('恢复默认缓存目录'),
-              ),
-            ),
-            const SizedBox(height: 4),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _purging
-                    ? null
-                    : () async {
-                        setState(() => _purging = true);
-                        try {
-                          final (r, m, freed, failed) =
-                              await LibraryStore.instance.purgeStaleData();
-                          final tip = failed > 0
-                              ? '（$failed 个远程书源在线核对失败，已保留其数据，请检查网络/登录后重试）'
-                              : '';
-                          _snack('已清理 $r 条失效记录、$m 条失效元数据，释放 '
-                              '${fmtSize(BigInt.from(freed))} 缓存$tip');
-                        } finally {
-                          if (mounted) setState(() => _purging = false);
-                        }
-                      },
-                icon: const Icon(Icons.cleaning_services, size: 18),
-                label: Text(_purging ? '正在核对远程书源并清理…' : '清理失效漫画数据'),
-              ),
-            ),
-          ]),
-        ),
+          ),
+        ],
       ],
-    ]);
+    );
   }
 
-  Widget _cacheRow(IconData icon, String label, BigInt size, String hint, VoidCallback onClear) {
+  Widget _cacheRow(
+    IconData icon,
+    String label,
+    BigInt size,
+    String hint,
+    VoidCallback onClear,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: ListTile(
@@ -424,12 +571,30 @@ class _CacheManagerPanelState extends State<CacheManagerPanel> {
               : Theme.of(context).colorScheme.onSurfaceVariant,
         ),
         title: Text(label, style: const TextStyle(fontSize: 13)),
-        subtitle: Text(hint, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(fmtSize(size), style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          const SizedBox(width: 8),
-          OutlinedButton(onPressed: onClear, child: const Text('清理', style: TextStyle(fontSize: 12))),
-        ]),
+        subtitle: Text(
+          hint,
+          style: TextStyle(
+            fontSize: 11,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              fmtSize(size),
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: onClear,
+              child: const Text('清理', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
       ),
     );
   }

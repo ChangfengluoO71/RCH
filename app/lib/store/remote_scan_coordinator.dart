@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app/src/rust/api/remote_cover.dart' as rust_cover;
 import 'package:app/src/rust/api/remote_scan.dart' as rust;
 import 'package:app/store/library_store.dart';
+import 'package:app/store/long_task_registry.dart';
 import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/remote_scan_models.dart';
@@ -117,15 +118,21 @@ String _shortSourceId(String id) {
 /// 但"是认证问题还是网络问题"必须能判读（见 logging-guidelines 的脱敏红线）。
 String _safeSessionErrorClass(Object error) {
   final text = error.toString().toLowerCase();
-  if (text.contains('401') || text.contains('unauthor') || text.contains('登录')) {
+  if (text.contains('401') ||
+      text.contains('unauthor') ||
+      text.contains('登录')) {
     return '401';
   }
-  if (text.contains('403') || text.contains('forbidden') || text.contains('denied')) {
+  if (text.contains('403') ||
+      text.contains('forbidden') ||
+      text.contains('denied')) {
     return '403';
   }
   if (text.contains('404') || text.contains('not found')) return '404';
   if (text.contains('429')) return '429';
-  if (text.contains('timeout') || text.contains('timed out') || text.contains('超时')) {
+  if (text.contains('timeout') ||
+      text.contains('timed out') ||
+      text.contains('超时')) {
     return 'timeout';
   }
   if (text.contains('socket') ||
@@ -139,7 +146,9 @@ String _safeSessionErrorClass(Object error) {
   // 还是服务端错误(5xx)。这里统一抽 `HTTP <code>`，映射成 `http-<code>`（只保留数字，安全）。
   final httpCode = RegExp(r'HTTP\s*(\d{3})').firstMatch(error.toString());
   if (httpCode != null) return 'http-${httpCode.group(1)}';
-  if (text.contains('xml') || text.contains('propfind') || text.contains('协议')) {
+  if (text.contains('xml') ||
+      text.contains('propfind') ||
+      text.contains('协议')) {
     return 'proto';
   }
   return 'other';
@@ -161,6 +170,7 @@ class RemoteScanCoordinator {
     this._debounce = const Duration(seconds: 2),
     this.progressPollInterval = const Duration(milliseconds: 500),
     DateTime Function()? clock,
+    LongTaskRegistry? taskRegistry,
   }) : _start = start ?? _nativeStart,
        _startManual =
            startManual ?? (start == null ? _nativeStartManual : null),
@@ -176,7 +186,8 @@ class RemoteScanCoordinator {
            coverFetchEnabled ??
            (() => LibraryStore.instance.settings.remoteCoverFetchEnabled),
        _settingsListenable = settingsListenable ?? LibraryStore.instance,
-       _clock = clock ?? DateTime.now {
+       _clock = clock ?? DateTime.now,
+       _taskRegistry = taskRegistry ?? LongTaskRegistry.instance {
     _settingsListenable.addListener(_onSettingsChanged);
     _sessionSubscription = (sessionHub ?? remoteSessionSuccessHub).events
         .listen((event) {
@@ -209,6 +220,7 @@ class RemoteScanCoordinator {
   final Duration _debounce;
   final Duration progressPollInterval;
   final DateTime Function() _clock;
+  final LongTaskRegistry _taskRegistry;
   late final StreamSubscription<RemoteSessionSuccess> _sessionSubscription;
   final Map<String, Future<RemoteScanStatus>> _inflight = {};
   final Map<String, String> _inflightModes = {};
@@ -227,6 +239,7 @@ class RemoteScanCoordinator {
   final Map<String, int> _lastSeenCoverRevision = {};
   final Map<String, ValueNotifier<int>> _coverRevisions = {};
   StreamSubscription<rust_cover.CoverRevisionEvent>? _coverSubscription;
+
   /// 测试注入点：默认走真实 FRB（subscribeCoverRevisions / remoteViewRevision）。
   Stream<rust_cover.CoverRevisionEvent>? debugCoverRevisionStream;
   Future<int> Function(String sourceId)? debugCoverRevisionReader;
@@ -234,6 +247,7 @@ class RemoteScanCoordinator {
   final Set<String> _deferredRootListings = {};
   final Map<String, Timer> _progressTimers = {};
   final Set<String> _progressPollInFlight = {};
+  final Map<String, LongTaskLease> _longTaskLeases = {};
   bool _disposed = false;
 
   /// 某 source 的 cover revision（单调递增 durable token；**仅用于 wake-up**）。
@@ -250,7 +264,9 @@ class RemoteScanCoordinator {
   /// 泄露风险，这里**只输出枚举码**，绝不把原生文本带进 UI。
   static String scanStartRejectionCode(Object error) {
     final text = error.toString().toLowerCase();
-    if (text.contains('session unavailable')) return 'scanStartRejected:session';
+    if (text.contains('session unavailable')) {
+      return 'scanStartRejected:session';
+    }
     if (text.contains('session proof')) return 'scanStartRejected:epoch';
     if (text.contains('root changed')) return 'scanStartRejected:root';
     if (text.contains('proof unavailable')) return 'scanStartRejected:proof';
@@ -258,7 +274,9 @@ class RemoteScanCoordinator {
       return 'scanStartRejected:recovery';
     }
     if (text.contains('state unavailable')) return 'scanStartRejected:state';
-    if (text.contains('baseline unavailable')) return 'scanStartRejected:baseline';
+    if (text.contains('baseline unavailable')) {
+      return 'scanStartRejected:baseline';
+    }
     if (text.contains('local-only')) return 'scanStartRejected:localOnly';
     if (text.contains('invalid scan mode')) return 'scanStartRejected:mode';
     return 'scanStartRejected:unknown';
@@ -297,7 +315,8 @@ class RemoteScanCoordinator {
     final lastSeen = _lastSeenCoverRevision[sourceId] ?? 0;
     if (durable <= lastSeen) return; // duplicate wake：忽略，绝不重复刷新
     _lastSeenCoverRevision[sourceId] = durable;
-    _coverRevisions.putIfAbsent(sourceId, () => ValueNotifier(0)).value = durable;
+    _coverRevisions.putIfAbsent(sourceId, () => ValueNotifier(0)).value =
+        durable;
     await _refreshCoverAggregate(sourceId);
   }
 
@@ -377,44 +396,56 @@ class RemoteScanCoordinator {
   /// 登录接口）、不抛异常；结果写 `scan_diag.log`（`startup_session_warmup …`）。
   Future<void> warmUpSessions(Iterable<BookSource> sources) async {
     final candidates = sources.where(_hasStoredCredentials).toList();
-    var connected = 0;
-    final failures = <String>[];
-    for (final source in candidates) {
-      try {
-        final session = await remoteSessionFor(source);
-        if (session != null) {
-          await rust.notifySourceSessionReady(
-            sourceId: source.id,
-            session: session,
+    if (candidates.isEmpty) return;
+    await _taskRegistry.run<void>(
+      kind: 'remote_session_warmup',
+      label: '预热远程书源会话',
+      phase: '准备会话',
+      action: (lease) async {
+        var connected = 0;
+        final failures = <String>[];
+        for (var index = 0; index < candidates.length; index++) {
+          final source = candidates[index];
+          lease.update(phase: '连接已保存的书源会话 ${index + 1}/${candidates.length}');
+          try {
+            final session = await remoteSessionFor(source);
+            if (session != null) {
+              await rust.notifySourceSessionReady(
+                sourceId: source.id,
+                session: session,
+              );
+              connected += 1;
+            }
+          } catch (error) {
+            // 2026-09-22：过去这里只把 "type:id" 收进 failures，**却从没写进日志** ✗，
+            // 于是 `startup_session_warmup connected=1 failed=2` 只说"有两个源连不上"，
+            // 不说**是哪两个、为什么** —— WebDAV 封面全部停在 pending 时无从判读。
+            // 现在逐源落一条**安全**诊断：只记类型、短 id 与错误类别，不含凭据 / URL / provider 原文。
+            final errorClass = _safeSessionErrorClass(error);
+            failures.add('${source.type}:$errorClass');
+            await appendScanDiag(
+              'session_warmup_fail type=${source.type} '
+              'src=${_shortSourceId(source.id)} class=$errorClass '
+              // kind/msg_len 是**绝对安全**的两个字段：只有类型名与长度，
+              // 既不含消息内容，也不含 URL / 凭据 / provider 原文（见 logging-guidelines 红线）。
+              'kind=${error.runtimeType} msg_len=${error.toString().length}',
+            );
+            debugPrint(
+              '[RemoteScanCoordinator] session warm-up failed: $error',
+            );
+            continue;
+          }
+          await appendScanDiag(
+            'session_warmup_ok type=${source.type} '
+            'src=${_shortSourceId(source.id)}',
           );
-          connected += 1;
         }
-      } catch (error) {
-        // 2026-09-22：过去这里只把 "type:id" 收进 failures，**却从没写进日志** ✗，
-        // 于是 `startup_session_warmup connected=1 failed=2` 只说"有两个源连不上"，
-        // 不说**是哪两个、为什么** —— WebDAV 封面全部停在 pending 时无从判读。
-        // 现在逐源落一条**安全**诊断：只记类型、短 id 与错误类别，不含凭据 / URL / provider 原文。
-        final errorClass = _safeSessionErrorClass(error);
-        failures.add('${source.type}:$errorClass');
         await appendScanDiag(
-          'session_warmup_fail type=${source.type} '
-          'src=${_shortSourceId(source.id)} class=$errorClass '
-          // kind/msg_len 是**绝对安全**的两个字段：只有类型名与长度，
-          // 既不含消息内容，也不含 URL / 凭据 / provider 原文（见 logging-guidelines 红线）。
-          'kind=${error.runtimeType} msg_len=${error.toString().length}',
+          'startup_session_warmup candidates=${candidates.length} '
+          'connected=$connected failed=${failures.length}'
+          '${failures.isEmpty ? '' : ' fails=${failures.join(',')}'}',
         );
-        debugPrint('[RemoteScanCoordinator] session warm-up failed: $error');
-        continue;
-      }
-      await appendScanDiag(
-        'session_warmup_ok type=${source.type} '
-        'src=${_shortSourceId(source.id)}',
-      );
-    }
-    await appendScanDiag(
-      'startup_session_warmup candidates=${candidates.length} '
-      'connected=$connected failed=${failures.length}'
-      '${failures.isEmpty ? '' : ' fails=${failures.join(',')}'}',
+      },
     );
   }
 
@@ -487,12 +518,14 @@ class RemoteScanCoordinator {
   Future<void> pause(String sourceId) async {
     await _pause(sourceId);
     _setControlState(sourceId, 'paused');
+    _longTaskLeases[sourceId]?.update(phase: '已暂停');
     _stopProgressMonitor(sourceId);
   }
 
   Future<void> resume(String sourceId) async {
     await _resume(sourceId);
     _setControlState(sourceId, 'running');
+    _longTaskLeases[sourceId]?.update(phase: '继续目录扫描');
     _startProgressMonitor(sourceId);
   }
 
@@ -500,6 +533,7 @@ class RemoteScanCoordinator {
     await _cancel(sourceId);
     _setControlState(sourceId, 'cancelled');
     _stopProgressMonitor(sourceId);
+    _releaseLongTaskLease(sourceId);
   }
 
   Future<RemoteScanStatus> _startShared(
@@ -509,6 +543,13 @@ class RemoteScanCoordinator {
     String? initialListingJson,
     bool forceRecheck = false,
   }) {
+    final lease = _longTaskLeases[source.id] ??= _taskRegistry.register(
+      kind: 'remote_source_scan',
+      label: '${source.type} 书源扫描',
+      phase: '连接远程书源',
+      prepareForExit: () => cancel(source.id),
+    );
+    lease.update(phase: '启动目录扫描');
     // Native start returns a job handle while the status is polled. Publish a
     // state immediately so the status panel is useful during that interval.
     _setStatus(
@@ -570,15 +611,20 @@ class RemoteScanCoordinator {
             }
             if (!_shouldMonitorProgress(status)) {
               _stopProgressMonitor(source.id);
+              _releaseLongTaskLease(source.id);
+            } else {
+              lease.update(phase: _scanExitPhase(status));
             }
             return status;
           },
           onError: (Object error, StackTrace stackTrace) {
             // RG-B：把**已处理**的启动失败写进本地诊断日志（只写枚举码与源标识）。
-            unawaited(appendScanDiag(
-              'scan_start_rejected source=${source.id} type=${source.type} '
-              'code=${scanStartRejectionCode(error)}',
-            ));
+            unawaited(
+              appendScanDiag(
+                'scan_start_rejected source=${source.id} type=${source.type} '
+                'code=${scanStartRejectionCode(error)}',
+              ),
+            );
             // Never surface the native exception text here: provider errors
             // may contain credentials or private URLs. Return a stable,
             // safe status so UI callbacks do not create an unhandled error;
@@ -598,6 +644,7 @@ class RemoteScanCoordinator {
             _completedAt.remove(source.id);
             _lastCompleted.remove(source.id);
             _stopProgressMonitor(source.id);
+            _releaseLongTaskLease(source.id);
             return RemoteScanStatus(
               sourceId: source.id,
               status: 'failed',
@@ -680,6 +727,9 @@ class RemoteScanCoordinator {
       _setStatus(sourceId, status);
       if (!_shouldMonitorProgress(status)) {
         _stopProgressMonitor(sourceId);
+        _releaseLongTaskLease(sourceId);
+      } else {
+        _longTaskLeases[sourceId]?.update(phase: _scanExitPhase(status));
       }
     } catch (_) {
       // The native start future owns terminal errors. A transient status poll
@@ -687,6 +737,20 @@ class RemoteScanCoordinator {
     } finally {
       _progressPollInFlight.remove(sourceId);
     }
+  }
+
+  static String _scanExitPhase(RemoteScanStatus status) {
+    final state = status.status.trim().toLowerCase();
+    if (state == 'paused') return '已暂停';
+    if (status.activeBooks > 0 || status.pendingBooks > 0) {
+      return '扫描目录与文件';
+    }
+    if (status.retryBooks > 0) return '等待失败项重试';
+    return state == 'queued' ? '等待扫描' : '扫描远程目录';
+  }
+
+  void _releaseLongTaskLease(String sourceId) {
+    _longTaskLeases.remove(sourceId)?.dispose();
   }
 
   void _setControlState(String sourceId, String state) {
@@ -717,6 +781,7 @@ class RemoteScanCoordinator {
         _startProgressMonitor(entry.key);
       } else if (!coverEnabled && !_isActiveScanStatus(status.status)) {
         _stopProgressMonitor(entry.key);
+        _releaseLongTaskLease(entry.key);
       }
       _viewStates
           .putIfAbsent(entry.key, () => ValueNotifier(null))
@@ -830,6 +895,10 @@ class RemoteScanCoordinator {
     }
     _progressTimers.clear();
     _progressPollInFlight.clear();
+    for (final lease in _longTaskLeases.values) {
+      lease.dispose();
+    }
+    _longTaskLeases.clear();
     for (final notifier in _statuses.values) {
       notifier.dispose();
     }

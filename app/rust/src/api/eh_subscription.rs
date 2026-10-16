@@ -426,3 +426,14 @@ pub async fn eh_manifest_checked(out_dir: String) -> Result<String, String> {
     .await
     .map_err(|e| format!("任务失败：{e}"))?
 }
+
+/// Enumerate only immediate `.torrent` files in the configured output folder.
+/// This local read is independent of `manifest.json` and never recurses.
+pub async fn eh_torrents_checked(out_dir: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let report = eh::read_torrent_directory_checked(Path::new(&out_dir));
+        serde_json::to_string(&report).map_err(|e| format!("Torrent 目录校验结果序列化失败：{e}"))
+    })
+    .await
+    .map_err(|e| format!("任务失败：{e}"))?
+}

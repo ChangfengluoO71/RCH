@@ -38,7 +38,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2076814037;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1770054982;
 
 // Section: executor
 
@@ -958,7 +958,10 @@ fn wire__crate__api__source__cloud115_cookie_bt_confirm_upload_parse_impl(
             let api_output_dir = <String>::sse_decode(&mut deserializer);
             let api_relative_file = <String>::sse_decode(&mut deserializer);
             let api_expected_info_hash = <String>::sse_decode(&mut deserializer);
-            let api_expected_target_folder_id = <String>::sse_decode(&mut deserializer);
+            let api_target =
+                <crate::source::cloud115::offline::Cloud115BtFolderSelection>::sse_decode(
+                    &mut deserializer,
+                );
             let api_pick_code = <Option<String>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
@@ -970,10 +973,71 @@ fn wire__crate__api__source__cloud115_cookie_bt_confirm_upload_parse_impl(
                                 api_output_dir,
                                 api_relative_file,
                                 api_expected_info_hash,
-                                api_expected_target_folder_id,
+                                api_target,
                                 api_pick_code,
                             )
                             .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__source__cloud115_cookie_bt_delete_local_if_remote_task_found_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec,_,_,_>(flutter_rust_bridge::for_generated::TaskInfo{ debug_name: "cloud115_cookie_bt_delete_local_if_remote_task_found", port: Some(port_), mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal }, move || {
+            let message = unsafe { flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(ptr_, rust_vec_len_, data_len_) };
+            let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+let api_output_dir = <String>::sse_decode(&mut deserializer);
+let api_relative_file = <String>::sse_decode(&mut deserializer);
+let api_expected_info_hash = <String>::sse_decode(&mut deserializer);
+let api_expected_account_id = <String>::sse_decode(&mut deserializer);
+let api_target = <crate::source::cloud115::offline::Cloud115BtFolderSelection>::sse_decode(&mut deserializer);deserializer.end(); move |context| async move {
+                    transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>((move || async move {
+                         let output_ok = crate::api::source::cloud115_cookie_bt_delete_local_if_remote_task_found(api_session, api_output_dir, api_relative_file, api_expected_info_hash, api_expected_account_id, api_target).await?;   Ok(output_ok)
+                    })().await)
+                } })
+}
+fn wire__crate__api__source__cloud115_cookie_bt_list_child_folders_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud115_cookie_bt_list_child_folders",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            let api_parent_id = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok = crate::api::source::cloud115_cookie_bt_list_child_folders(
+                            api_session,
+                            api_parent_id,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1008,6 +1072,10 @@ fn wire__crate__api__source__cloud115_cookie_bt_readonly_preflight_impl(
             let api_output_dir = <String>::sse_decode(&mut deserializer);
             let api_relative_file = <String>::sse_decode(&mut deserializer);
             let api_expected_info_hash = <String>::sse_decode(&mut deserializer);
+            let api_target =
+                <crate::source::cloud115::offline::Cloud115BtFolderSelection>::sse_decode(
+                    &mut deserializer,
+                );
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1017,6 +1085,7 @@ fn wire__crate__api__source__cloud115_cookie_bt_readonly_preflight_impl(
                             api_output_dir,
                             api_relative_file,
                             api_expected_info_hash,
+                            api_target,
                         )
                         .await?;
                         Ok(output_ok)
@@ -1053,7 +1122,10 @@ fn wire__crate__api__source__cloud115_cookie_bt_submit_once_impl(
             let api_output_dir = <String>::sse_decode(&mut deserializer);
             let api_relative_file = <String>::sse_decode(&mut deserializer);
             let api_expected_info_hash = <String>::sse_decode(&mut deserializer);
-            let api_expected_target_folder_id = <String>::sse_decode(&mut deserializer);
+            let api_target =
+                <crate::source::cloud115::offline::Cloud115BtFolderSelection>::sse_decode(
+                    &mut deserializer,
+                );
             let api_wanted_indices = <Vec<u32>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
@@ -1064,10 +1136,48 @@ fn wire__crate__api__source__cloud115_cookie_bt_submit_once_impl(
                             api_output_dir,
                             api_relative_file,
                             api_expected_info_hash,
-                            api_expected_target_folder_id,
+                            api_target,
                             api_wanted_indices,
                         )
                         .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__source__cloud115_cookie_bt_task_snapshot_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "cloud115_cookie_bt_task_snapshot",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_session = <u64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let output_ok =
+                            crate::api::source::cloud115_cookie_bt_task_snapshot(api_session)
+                                .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -1100,7 +1210,10 @@ fn wire__crate__api__source__cloud115_cookie_bt_task_status_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_session = <u64>::sse_decode(&mut deserializer);
             let api_info_hash = <String>::sse_decode(&mut deserializer);
-            let api_expected_target_folder_id = <String>::sse_decode(&mut deserializer);
+            let api_target =
+                <crate::source::cloud115::offline::Cloud115BtFolderSelection>::sse_decode(
+                    &mut deserializer,
+                );
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1108,7 +1221,7 @@ fn wire__crate__api__source__cloud115_cookie_bt_task_status_impl(
                         let output_ok = crate::api::source::cloud115_cookie_bt_task_status(
                             api_session,
                             api_info_hash,
-                            api_expected_target_folder_id,
+                            api_target,
                         )
                         .await?;
                         Ok(output_ok)
@@ -1145,7 +1258,10 @@ fn wire__crate__api__source__cloud115_cookie_bt_upload_and_parse_impl(
             let api_output_dir = <String>::sse_decode(&mut deserializer);
             let api_relative_file = <String>::sse_decode(&mut deserializer);
             let api_expected_info_hash = <String>::sse_decode(&mut deserializer);
-            let api_expected_target_folder_id = <String>::sse_decode(&mut deserializer);
+            let api_target =
+                <crate::source::cloud115::offline::Cloud115BtFolderSelection>::sse_decode(
+                    &mut deserializer,
+                );
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -1155,7 +1271,7 @@ fn wire__crate__api__source__cloud115_cookie_bt_upload_and_parse_impl(
                             api_output_dir,
                             api_relative_file,
                             api_expected_info_hash,
-                            api_expected_target_folder_id,
+                            api_target,
                         )
                         .await?;
                         Ok(output_ok)
@@ -1952,6 +2068,165 @@ fn wire__crate__api__scraper__db_claim_catalog_scrape_impl(
                 transform_result_sse::<_, ()>((move || {
                     let output_ok =
                         Result::<_, ()>::Ok(crate::api::scraper::db_claim_catalog_scrape(api_now))?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__db__db_cloud115_bt_monitor_claim_due_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "db_cloud115_bt_monitor_claim_due",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_account_id = <String>::sse_decode(&mut deserializer);
+            let api_source_id = <String>::sse_decode(&mut deserializer);
+            let api_owner = <String>::sse_decode(&mut deserializer);
+            let api_lease_expires_at = <i64>::sse_decode(&mut deserializer);
+            let api_limit = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::db::db_cloud115_bt_monitor_claim_due(
+                        api_account_id,
+                        api_source_id,
+                        api_owner,
+                        api_lease_expires_at,
+                        api_limit,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__db__db_cloud115_bt_monitor_finish_poll_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "db_cloud115_bt_monitor_finish_poll",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_run_id = <String>::sse_decode(&mut deserializer);
+            let api_account_id = <String>::sse_decode(&mut deserializer);
+            let api_owner = <String>::sse_decode(&mut deserializer);
+            let api_observations =
+                <Vec<crate::api::db::Cloud115BtMonitorObservationDto>>::sse_decode(
+                    &mut deserializer,
+                );
+            let api_error_class = <Option<String>>::sse_decode(&mut deserializer);
+            let api_next_check_at = <i64>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::db::db_cloud115_bt_monitor_finish_poll(
+                        api_run_id,
+                        api_account_id,
+                        api_owner,
+                        api_observations,
+                        api_error_class,
+                        api_next_check_at,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__db__db_cloud115_bt_monitor_reconcile_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "db_cloud115_bt_monitor_reconcile",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_entries = <Vec<crate::api::db::Cloud115BtMonitorLedgerEntryDto>>::sse_decode(
+                &mut deserializer,
+            );
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::db::db_cloud115_bt_monitor_reconcile(api_entries)?;
+                    Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__db__db_cloud115_bt_monitor_summary_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "db_cloud115_bt_monitor_summary",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_source_id = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::db::db_cloud115_bt_monitor_summary(api_source_id)?;
                     Ok(output_ok)
                 })())
             }
@@ -4534,6 +4809,43 @@ fn wire__crate__api__eh_subscription__eh_set_daily_enabled_impl(
                             api_enabled,
                         )
                         .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
+fn wire__crate__api__eh_subscription__eh_torrents_checked_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "eh_torrents_checked",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_out_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok =
+                            crate::api::eh_subscription::eh_torrents_checked(api_out_dir).await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -8436,6 +8748,139 @@ impl SseDecode for crate::source::cloud115::offline::Cloud115BtFile {
     }
 }
 
+impl SseDecode for crate::source::cloud115::offline::Cloud115BtFolder {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_name = <String>::sse_decode(deserializer);
+        return crate::source::cloud115::offline::Cloud115BtFolder {
+            id: var_id,
+            name: var_name,
+        };
+    }
+}
+
+impl SseDecode for crate::source::cloud115::offline::Cloud115BtFolderSelection {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <String>::sse_decode(deserializer);
+        let mut var_parentId = <String>::sse_decode(deserializer);
+        let mut var_name = <String>::sse_decode(deserializer);
+        let mut var_path = <String>::sse_decode(deserializer);
+        return crate::source::cloud115::offline::Cloud115BtFolderSelection {
+            id: var_id,
+            parent_id: var_parentId,
+            name: var_name,
+            path: var_path,
+        };
+    }
+}
+
+impl SseDecode for crate::api::db::Cloud115BtMonitorClaimDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_runId = <String>::sse_decode(deserializer);
+        let mut var_tasks =
+            <Vec<crate::api::db::Cloud115BtMonitorTaskDto>>::sse_decode(deserializer);
+        return crate::api::db::Cloud115BtMonitorClaimDto {
+            run_id: var_runId,
+            tasks: var_tasks,
+        };
+    }
+}
+
+impl SseDecode for crate::api::db::Cloud115BtMonitorLedgerEntryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_batchId = <String>::sse_decode(deserializer);
+        let mut var_accountId = <String>::sse_decode(deserializer);
+        let mut var_sourceId = <String>::sse_decode(deserializer);
+        let mut var_targetFolderId = <String>::sse_decode(deserializer);
+        let mut var_infoHash = <String>::sse_decode(deserializer);
+        let mut var_relativeFile = <String>::sse_decode(deserializer);
+        let mut var_ledgerState = <String>::sse_decode(deserializer);
+        let mut var_updatedAt = <i64>::sse_decode(deserializer);
+        return crate::api::db::Cloud115BtMonitorLedgerEntryDto {
+            batch_id: var_batchId,
+            account_id: var_accountId,
+            source_id: var_sourceId,
+            target_folder_id: var_targetFolderId,
+            info_hash: var_infoHash,
+            relative_file: var_relativeFile,
+            ledger_state: var_ledgerState,
+            updated_at: var_updatedAt,
+        };
+    }
+}
+
+impl SseDecode for crate::api::db::Cloud115BtMonitorObservationDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_accountId = <String>::sse_decode(deserializer);
+        let mut var_infoHash = <String>::sse_decode(deserializer);
+        let mut var_targetFolderId = <String>::sse_decode(deserializer);
+        let mut var_foundInSnapshot = <Option<bool>>::sse_decode(deserializer);
+        let mut var_statusCode = <Option<i64>>::sse_decode(deserializer);
+        let mut var_percentDone = <Option<f64>>::sse_decode(deserializer);
+        let mut var_errorClass = <Option<String>>::sse_decode(deserializer);
+        return crate::api::db::Cloud115BtMonitorObservationDto {
+            account_id: var_accountId,
+            info_hash: var_infoHash,
+            target_folder_id: var_targetFolderId,
+            found_in_snapshot: var_foundInSnapshot,
+            status_code: var_statusCode,
+            percent_done: var_percentDone,
+            error_class: var_errorClass,
+        };
+    }
+}
+
+impl SseDecode for crate::api::db::Cloud115BtMonitorSummaryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_trackedCount = <u32>::sse_decode(deserializer);
+        let mut var_foundCount = <u32>::sse_decode(deserializer);
+        let mut var_unknownCount = <u32>::sse_decode(deserializer);
+        let mut var_dueCount = <u32>::sse_decode(deserializer);
+        let mut var_lastCheckedAt = <Option<i64>>::sse_decode(deserializer);
+        let mut var_nextCheckAt = <Option<i64>>::sse_decode(deserializer);
+        let mut var_lastErrorClass = <Option<String>>::sse_decode(deserializer);
+        return crate::api::db::Cloud115BtMonitorSummaryDto {
+            tracked_count: var_trackedCount,
+            found_count: var_foundCount,
+            unknown_count: var_unknownCount,
+            due_count: var_dueCount,
+            last_checked_at: var_lastCheckedAt,
+            next_check_at: var_nextCheckAt,
+            last_error_class: var_lastErrorClass,
+        };
+    }
+}
+
+impl SseDecode for crate::api::db::Cloud115BtMonitorTaskDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_accountId = <String>::sse_decode(deserializer);
+        let mut var_sourceId = <String>::sse_decode(deserializer);
+        let mut var_targetFolderId = <String>::sse_decode(deserializer);
+        let mut var_infoHash = <String>::sse_decode(deserializer);
+        let mut var_relativeFile = <String>::sse_decode(deserializer);
+        let mut var_ledgerState = <String>::sse_decode(deserializer);
+        let mut var_batchId = <String>::sse_decode(deserializer);
+        let mut var_attemptCount = <i64>::sse_decode(deserializer);
+        return crate::api::db::Cloud115BtMonitorTaskDto {
+            account_id: var_accountId,
+            source_id: var_sourceId,
+            target_folder_id: var_targetFolderId,
+            info_hash: var_infoHash,
+            relative_file: var_relativeFile,
+            ledger_state: var_ledgerState,
+            batch_id: var_batchId,
+            attempt_count: var_attemptCount,
+        };
+    }
+}
+
 impl SseDecode for crate::source::cloud115::offline::Cloud115BtPreflight {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -8449,6 +8894,7 @@ impl SseDecode for crate::source::cloud115::offline::Cloud115BtPreflight {
         let mut var_files =
             <Vec<crate::source::cloud115::offline::Cloud115BtFile>>::sse_decode(deserializer);
         let mut var_duplicateStatus = <String>::sse_decode(deserializer);
+        let mut var_duplicateDetail = <String>::sse_decode(deserializer);
         let mut var_writeGate = <String>::sse_decode(deserializer);
         return crate::source::cloud115::offline::Cloud115BtPreflight {
             account_id: var_accountId,
@@ -8460,6 +8906,7 @@ impl SseDecode for crate::source::cloud115::offline::Cloud115BtPreflight {
             info_hash: var_infoHash,
             files: var_files,
             duplicate_status: var_duplicateStatus,
+            duplicate_detail: var_duplicateDetail,
             write_gate: var_writeGate,
         };
     }
@@ -8477,6 +8924,45 @@ impl SseDecode for crate::source::cloud115::offline::Cloud115BtSubmitResult {
             info_hash: var_infoHash,
             message: var_message,
             target_folder_id: var_targetFolderId,
+        };
+    }
+}
+
+impl SseDecode for crate::source::cloud115::offline::Cloud115BtTaskSnapshot {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_accountId = <String>::sse_decode(deserializer);
+        let mut var_state = <String>::sse_decode(deserializer);
+        let mut var_complete = <bool>::sse_decode(deserializer);
+        let mut var_pagesRead = <u32>::sse_decode(deserializer);
+        let mut var_errorClass = <Option<String>>::sse_decode(deserializer);
+        let mut var_message = <String>::sse_decode(deserializer);
+        let mut var_tasks =
+            <Vec<crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem>>::sse_decode(
+                deserializer,
+            );
+        return crate::source::cloud115::offline::Cloud115BtTaskSnapshot {
+            account_id: var_accountId,
+            state: var_state,
+            complete: var_complete,
+            pages_read: var_pagesRead,
+            error_class: var_errorClass,
+            message: var_message,
+            tasks: var_tasks,
+        };
+    }
+}
+
+impl SseDecode for crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_infoHash = <String>::sse_decode(deserializer);
+        let mut var_statusCode = <Option<i64>>::sse_decode(deserializer);
+        let mut var_percentDone = <Option<f64>>::sse_decode(deserializer);
+        return crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem {
+            info_hash: var_infoHash,
+            status_code: var_statusCode,
+            percent_done: var_percentDone,
         };
     }
 }
@@ -8943,6 +9429,74 @@ impl SseDecode for Vec<crate::source::cloud115::offline::Cloud115BtFile> {
     }
 }
 
+impl SseDecode for Vec<crate::source::cloud115::offline::Cloud115BtFolder> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(
+                <crate::source::cloud115::offline::Cloud115BtFolder>::sse_decode(deserializer),
+            );
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::db::Cloud115BtMonitorLedgerEntryDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::db::Cloud115BtMonitorLedgerEntryDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::db::Cloud115BtMonitorObservationDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::db::Cloud115BtMonitorObservationDto>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::db::Cloud115BtMonitorTaskDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::db::Cloud115BtMonitorTaskDto>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(
+                <crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem>::sse_decode(
+                    deserializer,
+                ),
+            );
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::db::DeviceDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -9305,6 +9859,19 @@ impl SseDecode for Option<crate::api::db::CatalogRevisionDto> {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<crate::api::db::CatalogRevisionDto>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<crate::api::db::Cloud115BtMonitorClaimDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::db::Cloud115BtMonitorClaimDto>::sse_decode(
                 deserializer,
             ));
         } else {
@@ -10247,580 +10814,628 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        26 => wire__crate__api__source__cloud115_cookie_bt_readonly_preflight_impl(
+        26 => wire__crate__api__source__cloud115_cookie_bt_delete_local_if_remote_task_found_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        27 => wire__crate__api__source__cloud115_cookie_bt_submit_once_impl(
+        27 => wire__crate__api__source__cloud115_cookie_bt_list_child_folders_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        28 => wire__crate__api__source__cloud115_cookie_bt_task_status_impl(
+        28 => wire__crate__api__source__cloud115_cookie_bt_readonly_preflight_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        29 => wire__crate__api__source__cloud115_cookie_bt_upload_and_parse_impl(
+        29 => wire__crate__api__source__cloud115_cookie_bt_submit_once_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        30 => wire__crate__api__source__cloud115_cookie_connect_impl(
+        30 => wire__crate__api__source__cloud115_cookie_bt_task_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        31 => {
+        31 => wire__crate__api__source__cloud115_cookie_bt_task_status_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        32 => wire__crate__api__source__cloud115_cookie_bt_upload_and_parse_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        33 => wire__crate__api__source__cloud115_cookie_connect_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        34 => {
             wire__crate__api__source__cloud115_cookie_cover_impl(port, ptr, rust_vec_len, data_len)
         }
-        32 => wire__crate__api__source__cloud115_cookie_disconnect_impl(
+        35 => wire__crate__api__source__cloud115_cookie_disconnect_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        33 => wire__crate__api__source__cloud115_cookie_download_progress_impl(
+        36 => wire__crate__api__source__cloud115_cookie_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        34 => wire__crate__api__source__cloud115_cookie_has_raw_cache_impl(
+        37 => wire__crate__api__source__cloud115_cookie_has_raw_cache_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        35 => {
+        38 => {
             wire__crate__api__source__cloud115_cookie_list_impl(port, ptr, rust_vec_len, data_len)
         }
-        36 => wire__crate__api__source__cloud115_cookie_qr_poll_impl(
+        39 => wire__crate__api__source__cloud115_cookie_qr_poll_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        37 => wire__crate__api__source__cloud115_cookie_qr_result_impl(
+        40 => wire__crate__api__source__cloud115_cookie_qr_result_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__source__cloud115_cookie_qr_start_impl(
+        41 => wire__crate__api__source__cloud115_cookie_qr_start_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        39 => wire__crate__api__source__cloud115_cover_impl(port, ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__source__cloud115_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__source__cloud115_download_progress_impl(
+        42 => wire__crate__api__source__cloud115_cover_impl(port, ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__source__cloud115_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__source__cloud115_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        42 => {
+        45 => {
             wire__crate__api__source__cloud115_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        43 => wire__crate__api__source__cloud115_list_impl(port, ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__source__cloud115_qr_poll_impl(port, ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__source__cloud115_qr_start_impl(port, ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__db__data_is_migrated_impl(port, ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__db__data_migrate_from_json_impl(port, ptr, rust_vec_len, data_len),
-        48 => {
+        46 => wire__crate__api__source__cloud115_list_impl(port, ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__source__cloud115_qr_poll_impl(port, ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__source__cloud115_qr_start_impl(port, ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__db__data_is_migrated_impl(port, ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__db__data_migrate_from_json_impl(port, ptr, rust_vec_len, data_len),
+        51 => {
             wire__crate__api__db__db_apply_batch_tag_writes_impl(port, ptr, rust_vec_len, data_len)
         }
-        49 => wire__crate__api__db__db_book_key_of_impl(port, ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__scraper__db_claim_catalog_scrape_impl(
+        52 => wire__crate__api__db__db_book_key_of_impl(port, ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__scraper__db_claim_catalog_scrape_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        51 => wire__crate__api__scraper__db_complete_catalog_scrape_impl(
+        54 => wire__crate__api__db__db_cloud115_bt_monitor_claim_due_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        52 => wire__crate__api__db__db_delete_ai_task_impl(port, ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__db__db_delete_meta_impl(port, ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__db__db_delete_metas_by_source_prefix_impl(
+        55 => wire__crate__api__db__db_cloud115_bt_monitor_finish_poll_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        55 => wire__crate__api__db__db_delete_record_impl(port, ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__db__db_delete_records_by_source_prefix_impl(
+        56 => wire__crate__api__db__db_cloud115_bt_monitor_reconcile_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        57 => wire__crate__api__db__db_delete_setting_impl(port, ptr, rust_vec_len, data_len),
-        58 => wire__crate__api__db__db_delete_source_impl(port, ptr, rust_vec_len, data_len),
-        59 => wire__crate__api__db__db_delete_tag_impl(port, ptr, rust_vec_len, data_len),
-        60 => wire__crate__api__scraper__db_enqueue_catalog_scrape_impl(
+        57 => wire__crate__api__db__db_cloud115_bt_monitor_summary_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        61 => wire__crate__api__db__db_ensure_index_entries_impl(port, ptr, rust_vec_len, data_len),
-        62 => wire__crate__api__db__db_ensure_index_entry_impl(port, ptr, rust_vec_len, data_len),
-        63 => wire__crate__api__db__db_ensure_tag_impl(port, ptr, rust_vec_len, data_len),
-        64 => wire__crate__api__db__db_get_catalog_revision_impl(port, ptr, rust_vec_len, data_len),
-        65 => {
+        58 => wire__crate__api__scraper__db_complete_catalog_scrape_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        59 => wire__crate__api__db__db_delete_ai_task_impl(port, ptr, rust_vec_len, data_len),
+        60 => wire__crate__api__db__db_delete_meta_impl(port, ptr, rust_vec_len, data_len),
+        61 => wire__crate__api__db__db_delete_metas_by_source_prefix_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        62 => wire__crate__api__db__db_delete_record_impl(port, ptr, rust_vec_len, data_len),
+        63 => wire__crate__api__db__db_delete_records_by_source_prefix_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        64 => wire__crate__api__db__db_delete_setting_impl(port, ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__db__db_delete_source_impl(port, ptr, rust_vec_len, data_len),
+        66 => wire__crate__api__db__db_delete_tag_impl(port, ptr, rust_vec_len, data_len),
+        67 => wire__crate__api__scraper__db_enqueue_catalog_scrape_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        68 => wire__crate__api__db__db_ensure_index_entries_impl(port, ptr, rust_vec_len, data_len),
+        69 => wire__crate__api__db__db_ensure_index_entry_impl(port, ptr, rust_vec_len, data_len),
+        70 => wire__crate__api__db__db_ensure_tag_impl(port, ptr, rust_vec_len, data_len),
+        71 => wire__crate__api__db__db_get_catalog_revision_impl(port, ptr, rust_vec_len, data_len),
+        72 => {
             wire__crate__api__db__db_get_source_fingerprint_impl(port, ptr, rust_vec_len, data_len)
         }
-        66 => wire__crate__api__db__db_get_source_snapshot_impl(port, ptr, rust_vec_len, data_len),
-        67 => wire__crate__api__db__db_link_tag_impl(port, ptr, rust_vec_len, data_len),
-        68 => wire__crate__api__db__db_list_devices_impl(port, ptr, rust_vec_len, data_len),
-        69 => wire__crate__api__db__db_load_all_ai_tasks_impl(port, ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__db__db_load_all_book_tags_impl(port, ptr, rust_vec_len, data_len),
-        71 => wire__crate__api__db__db_load_all_metas_impl(port, ptr, rust_vec_len, data_len),
-        72 => wire__crate__api__db__db_load_all_records_impl(port, ptr, rust_vec_len, data_len),
-        73 => wire__crate__api__db__db_load_all_settings_impl(port, ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__db__db_load_all_sources_impl(port, ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__db__db_load_all_tags_impl(port, ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__db__db_load_library_index_for_source_impl(
+        73 => wire__crate__api__db__db_get_source_snapshot_impl(port, ptr, rust_vec_len, data_len),
+        74 => wire__crate__api__db__db_link_tag_impl(port, ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__db__db_list_devices_impl(port, ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__db__db_load_all_ai_tasks_impl(port, ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__db__db_load_all_book_tags_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__db__db_load_all_metas_impl(port, ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__db__db_load_all_records_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__db__db_load_all_settings_impl(port, ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__db__db_load_all_sources_impl(port, ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__db__db_load_all_tags_impl(port, ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__db__db_load_library_index_for_source_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        77 => wire__crate__api__db__db_load_library_index_tombstones_impl(
+        84 => wire__crate__api__db__db_load_library_index_tombstones_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        78 => {
+        85 => {
             wire__crate__api__scraper__db_load_scrape_jobs_impl(port, ptr, rust_vec_len, data_len)
         }
-        79 => wire__crate__api__scraper__db_load_scrape_proposals_impl(
+        86 => wire__crate__api__scraper__db_load_scrape_proposals_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        80 => wire__crate__api__db__db_load_verified_remote_tombstones_impl(
+        87 => wire__crate__api__db__db_load_verified_remote_tombstones_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        81 => wire__crate__api__scraper__db_materialize_ready_proposal_impl(
+        88 => wire__crate__api__scraper__db_materialize_ready_proposal_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        82 => wire__crate__api__scraper__db_parse_catalog_impl(port, ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__library__db_random_library_candidates_impl(
+        89 => wire__crate__api__scraper__db_parse_catalog_impl(port, ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__library__db_random_library_candidates_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        84 => {
+        91 => {
             wire__crate__api__db__db_record_catalog_revision_impl(port, ptr, rust_vec_len, data_len)
         }
-        85 => wire__crate__api__db__db_rename_tag_impl(port, ptr, rust_vec_len, data_len),
-        86 => wire__crate__api__db__db_reorder_ai_tasks_impl(port, ptr, rust_vec_len, data_len),
-        87 => wire__crate__api__db__db_replace_source_library_index_impl(
+        92 => wire__crate__api__db__db_rename_tag_impl(port, ptr, rust_vec_len, data_len),
+        93 => wire__crate__api__db__db_reorder_ai_tasks_impl(port, ptr, rust_vec_len, data_len),
+        94 => wire__crate__api__db__db_replace_source_library_index_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        88 => wire__crate__api__db__db_reset_read_counts_impl(port, ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__library__db_resolve_remote_provider_path_impl(
+        95 => wire__crate__api__db__db_reset_read_counts_impl(port, ptr, rust_vec_len, data_len),
+        96 => wire__crate__api__library__db_resolve_remote_provider_path_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        90 => {
+        97 => {
             wire__crate__api__scraper__db_run_catalog_scrape_impl(port, ptr, rust_vec_len, data_len)
         }
-        91 => wire__crate__api__db__db_save_setting_impl(port, ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__library__db_search_books_impl(port, ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__db__db_set_book_tags_impl(port, ptr, rust_vec_len, data_len),
-        94 => wire__crate__api__db__db_set_source_snapshot_impl(port, ptr, rust_vec_len, data_len),
-        95 => wire__crate__api__library__db_source_books_impl(port, ptr, rust_vec_len, data_len),
-        96 => {
+        98 => wire__crate__api__db__db_save_setting_impl(port, ptr, rust_vec_len, data_len),
+        99 => wire__crate__api__library__db_search_books_impl(port, ptr, rust_vec_len, data_len),
+        100 => wire__crate__api__db__db_set_book_tags_impl(port, ptr, rust_vec_len, data_len),
+        101 => wire__crate__api__db__db_set_source_snapshot_impl(port, ptr, rust_vec_len, data_len),
+        102 => wire__crate__api__library__db_source_books_impl(port, ptr, rust_vec_len, data_len),
+        103 => {
             wire__crate__api__library__db_source_dir_entries_impl(port, ptr, rust_vec_len, data_len)
         }
-        97 => {
+        104 => {
             wire__crate__api__library__db_source_index_count_impl(port, ptr, rust_vec_len, data_len)
         }
-        98 => wire__crate__api__library__db_source_tree_impl(port, ptr, rust_vec_len, data_len),
-        99 => wire__crate__api__db__db_unlink_tag_impl(port, ptr, rust_vec_len, data_len),
-        100 => wire__crate__api__db__db_upsert_ai_task_impl(port, ptr, rust_vec_len, data_len),
-        101 => wire__crate__api__db__db_upsert_library_index_entries_impl(
+        105 => wire__crate__api__library__db_source_tree_impl(port, ptr, rust_vec_len, data_len),
+        106 => wire__crate__api__db__db_unlink_tag_impl(port, ptr, rust_vec_len, data_len),
+        107 => wire__crate__api__db__db_upsert_ai_task_impl(port, ptr, rust_vec_len, data_len),
+        108 => wire__crate__api__db__db_upsert_library_index_entries_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        102 => wire__crate__api__db__db_upsert_meta_impl(port, ptr, rust_vec_len, data_len),
-        103 => wire__crate__api__db__db_upsert_record_impl(port, ptr, rust_vec_len, data_len),
-        104 => wire__crate__api__db__db_upsert_source_impl(port, ptr, rust_vec_len, data_len),
-        105 => {
+        109 => wire__crate__api__db__db_upsert_meta_impl(port, ptr, rust_vec_len, data_len),
+        110 => wire__crate__api__db__db_upsert_record_impl(port, ptr, rust_vec_len, data_len),
+        111 => wire__crate__api__db__db_upsert_source_impl(port, ptr, rust_vec_len, data_len),
+        112 => {
             wire__crate__api__cache__default_cache_root_path_impl(port, ptr, rust_vec_len, data_len)
         }
-        106 => {
+        113 => {
             wire__crate__api__ai__delete_ai_cache_for_page_impl(port, ptr, rust_vec_len, data_len)
         }
-        107 => {
+        114 => {
             wire__crate__api__cache__delete_migrated_items_impl(port, ptr, rust_vec_len, data_len)
         }
-        108 => wire__crate__api__cache__delete_raw_package_impl(port, ptr, rust_vec_len, data_len),
-        109 => wire__crate__api__eh_subscription__eh_cancel_impl(port, ptr, rust_vec_len, data_len),
-        110 => wire__crate__api__eh_subscription__eh_claim_daily_impl(
+        115 => wire__crate__api__cache__delete_raw_package_impl(port, ptr, rust_vec_len, data_len),
+        116 => wire__crate__api__eh_subscription__eh_cancel_impl(port, ptr, rust_vec_len, data_len),
+        117 => wire__crate__api__eh_subscription__eh_claim_daily_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        111 => {
+        118 => {
             wire__crate__api__eh_subscription__eh_collect_impl(port, ptr, rust_vec_len, data_len)
         }
-        112 => wire__crate__api__eh_subscription__eh_default_rules_impl(
+        119 => wire__crate__api__eh_subscription__eh_default_rules_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        113 => {
+        120 => {
             wire__crate__api__eh_subscription__eh_load_rules_impl(port, ptr, rust_vec_len, data_len)
         }
-        114 => {
+        121 => {
             wire__crate__api__eh_subscription__eh_manifest_impl(port, ptr, rust_vec_len, data_len)
         }
-        115 => wire__crate__api__eh_subscription__eh_manifest_checked_impl(
+        122 => wire__crate__api__eh_subscription__eh_manifest_checked_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        116 => wire__crate__api__eh_subscription__eh_plan_book_live_impl(
+        123 => wire__crate__api__eh_subscription__eh_plan_book_live_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        117 => wire__crate__api__eh_subscription__eh_plan_import_impl(
+        124 => wire__crate__api__eh_subscription__eh_plan_import_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        118 => wire__crate__api__eh_subscription__eh_probe_impl(port, ptr, rust_vec_len, data_len),
-        119 => {
+        125 => wire__crate__api__eh_subscription__eh_probe_impl(port, ptr, rust_vec_len, data_len),
+        126 => {
             wire__crate__api__eh_subscription__eh_progress_impl(port, ptr, rust_vec_len, data_len)
         }
-        120 => wire__crate__api__eh_subscription__eh_recover_daily_run_impl(
+        127 => wire__crate__api__eh_subscription__eh_recover_daily_run_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        121 => {
+        128 => {
             wire__crate__api__eh_subscription__eh_save_rules_impl(port, ptr, rust_vec_len, data_len)
         }
-        122 => wire__crate__api__eh_subscription__eh_set_daily_enabled_impl(
+        129 => wire__crate__api__eh_subscription__eh_set_daily_enabled_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        123 => wire__crate__api__eh_subscription__eh_update_daily_run_impl(
+        130 => wire__crate__api__eh_subscription__eh_torrents_checked_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        124 => {
+        131 => wire__crate__api__eh_subscription__eh_update_daily_run_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        132 => {
             wire__crate__api__export__export_folder_to_cbz_impl(port, ptr, rust_vec_len, data_len)
         }
-        125 => wire__crate__api__export__export_zip_as_cbz_impl(port, ptr, rust_vec_len, data_len),
-        126 => wire__crate__api__book__folder_cover_path_impl(port, ptr, rust_vec_len, data_len),
-        127 => wire__crate__api__book__get_reader_page_split_override_impl(
+        133 => wire__crate__api__export__export_zip_as_cbz_impl(port, ptr, rust_vec_len, data_len),
+        134 => wire__crate__api__book__folder_cover_path_impl(port, ptr, rust_vec_len, data_len),
+        135 => wire__crate__api__book__get_reader_page_split_override_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        129 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
-        130 => wire__crate__api__book__is_comic_folder_impl(port, ptr, rust_vec_len, data_len),
-        131 => wire__crate__api__book__list_local_dir_impl(port, ptr, rust_vec_len, data_len),
-        132 => wire__crate__api__source__log_reader_timing_impl(port, ptr, rust_vec_len, data_len),
-        133 => wire__crate__api__ai__lookup_cache_impl(port, ptr, rust_vec_len, data_len),
-        134 => wire__crate__api__cache__migrate_cache_root_impl(port, ptr, rust_vec_len, data_len),
-        135 => wire__crate__api__cache__migration_progress_impl(port, ptr, rust_vec_len, data_len),
-        136 => wire__crate__api__remote_scan__notify_source_session_ready_impl(
+        137 => wire__crate__api__simple__init_app_impl(port, ptr, rust_vec_len, data_len),
+        138 => wire__crate__api__book__is_comic_folder_impl(port, ptr, rust_vec_len, data_len),
+        139 => wire__crate__api__book__list_local_dir_impl(port, ptr, rust_vec_len, data_len),
+        140 => wire__crate__api__source__log_reader_timing_impl(port, ptr, rust_vec_len, data_len),
+        141 => wire__crate__api__ai__lookup_cache_impl(port, ptr, rust_vec_len, data_len),
+        142 => wire__crate__api__cache__migrate_cache_root_impl(port, ptr, rust_vec_len, data_len),
+        143 => wire__crate__api__cache__migration_progress_impl(port, ptr, rust_vec_len, data_len),
+        144 => wire__crate__api__remote_scan__notify_source_session_ready_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        137 => wire__crate__api__source__open_baidu_book_impl(port, ptr, rust_vec_len, data_len),
-        138 => wire__crate__api__source__open_cached_remote_book_impl(
+        145 => wire__crate__api__source__open_baidu_book_impl(port, ptr, rust_vec_len, data_len),
+        146 => wire__crate__api__source__open_cached_remote_book_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        139 => wire__crate__api__source__open_cloud115_book_impl(port, ptr, rust_vec_len, data_len),
-        140 => wire__crate__api__source__open_cloud115_cookie_book_impl(
+        147 => wire__crate__api__source__open_cloud115_book_impl(port, ptr, rust_vec_len, data_len),
+        148 => wire__crate__api__source__open_cloud115_cookie_book_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        141 => wire__crate__api__book__open_local_book_impl(port, ptr, rust_vec_len, data_len),
-        142 => wire__crate__api__source__open_quark_book_impl(port, ptr, rust_vec_len, data_len),
-        143 => wire__crate__api__source__open_remote_folder_book_impl(
+        149 => wire__crate__api__book__open_local_book_impl(port, ptr, rust_vec_len, data_len),
+        150 => wire__crate__api__source__open_quark_book_impl(port, ptr, rust_vec_len, data_len),
+        151 => wire__crate__api__source__open_remote_folder_book_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        144 => wire__crate__api__source__open_sftp_book_impl(port, ptr, rust_vec_len, data_len),
-        145 => wire__crate__api__source__open_webdav_book_impl(port, ptr, rust_vec_len, data_len),
-        146 => wire__crate__api__cache__page_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        147 => wire__crate__api__cache__pending_migration_impl(port, ptr, rust_vec_len, data_len),
-        148 => wire__crate__api__cache__purge_remote_book_content_cache_impl(
+        152 => wire__crate__api__source__open_sftp_book_impl(port, ptr, rust_vec_len, data_len),
+        153 => wire__crate__api__source__open_webdav_book_impl(port, ptr, rust_vec_len, data_len),
+        154 => wire__crate__api__cache__page_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        155 => wire__crate__api__cache__pending_migration_impl(port, ptr, rust_vec_len, data_len),
+        156 => wire__crate__api__cache__purge_remote_book_content_cache_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        149 => {
+        157 => {
             wire__crate__api__cache__purge_stale_book_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        150 => wire__crate__api__cache__purge_verified_remote_asset_impl(
+        158 => wire__crate__api__cache__purge_verified_remote_asset_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        151 => wire__crate__api__source__quark_connect_impl(port, ptr, rust_vec_len, data_len),
-        152 => wire__crate__api__source__quark_cover_impl(port, ptr, rust_vec_len, data_len),
-        153 => wire__crate__api__source__quark_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        154 => wire__crate__api__source__quark_download_progress_impl(
+        159 => wire__crate__api__source__quark_connect_impl(port, ptr, rust_vec_len, data_len),
+        160 => wire__crate__api__source__quark_cover_impl(port, ptr, rust_vec_len, data_len),
+        161 => wire__crate__api__source__quark_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        162 => wire__crate__api__source__quark_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        155 => {
+        163 => {
             wire__crate__api__source__quark_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        156 => wire__crate__api__source__quark_list_impl(port, ptr, rust_vec_len, data_len),
-        157 => wire__crate__api__source__quark_qr_poll_impl(port, ptr, rust_vec_len, data_len),
-        158 => wire__crate__api__source__quark_qr_result_impl(port, ptr, rust_vec_len, data_len),
-        159 => wire__crate__api__source__quark_qr_start_impl(port, ptr, rust_vec_len, data_len),
-        160 => wire__crate__api__package__rchpkg_default_sync_dir_impl(
+        164 => wire__crate__api__source__quark_list_impl(port, ptr, rust_vec_len, data_len),
+        165 => wire__crate__api__source__quark_qr_poll_impl(port, ptr, rust_vec_len, data_len),
+        166 => wire__crate__api__source__quark_qr_result_impl(port, ptr, rust_vec_len, data_len),
+        167 => wire__crate__api__source__quark_qr_start_impl(port, ptr, rust_vec_len, data_len),
+        168 => wire__crate__api__package__rchpkg_default_sync_dir_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        161 => wire__crate__api__package__rchpkg_export_impl(port, ptr, rust_vec_len, data_len),
-        162 => wire__crate__api__package__rchpkg_export_snapshot_impl(
+        169 => wire__crate__api__package__rchpkg_export_impl(port, ptr, rust_vec_len, data_len),
+        170 => wire__crate__api__package__rchpkg_export_snapshot_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        163 => wire__crate__api__package__rchpkg_export_with_credentials_impl(
+        171 => wire__crate__api__package__rchpkg_export_with_credentials_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        164 => wire__crate__api__package__rchpkg_import_impl(port, ptr, rust_vec_len, data_len),
-        165 => wire__crate__api__package__rchpkg_import_with_credentials_impl(
+        172 => wire__crate__api__package__rchpkg_import_impl(port, ptr, rust_vec_len, data_len),
+        173 => wire__crate__api__package__rchpkg_import_with_credentials_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        166 => wire__crate__api__source__read_legacy_cover_local_impl(
+        174 => wire__crate__api__source__read_legacy_cover_local_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        167 => wire__crate__api__remote_cover__remote_cover_read_impl(
+        175 => wire__crate__api__remote_cover__remote_cover_read_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        168 => wire__crate__api__remote_scan__remote_cover_reconcile_dto_default_impl(
+        176 => wire__crate__api__remote_scan__remote_cover_reconcile_dto_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        169 => wire__crate__api__remote_cover__remote_cover_release_impl(
+        177 => wire__crate__api__remote_cover__remote_cover_release_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        170 => wire__crate__api__remote_cover__remote_cover_request_impl(
+        178 => wire__crate__api__remote_cover__remote_cover_request_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        171 => wire__crate__api__remote_cover__remote_cover_reset_to_current_profile_impl(
+        179 => wire__crate__api__remote_cover__remote_cover_reset_to_current_profile_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        172 => wire__crate__api__remote_cover__remote_cover_retry_impl(
+        180 => wire__crate__api__remote_cover__remote_cover_retry_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        173 => wire__crate__api__remote_cover__remote_cover_retry_failed_impl(
+        181 => wire__crate__api__remote_cover__remote_cover_retry_failed_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        174 => wire__crate__api__remote_cover__remote_cover_state_impl(
+        182 => wire__crate__api__remote_cover__remote_cover_state_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        175 => wire__crate__api__remote_cover__remote_directory_view_impl(
+        183 => wire__crate__api__remote_cover__remote_directory_view_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        176 => wire__crate__api__source__remote_image_folder_manifest_complete_impl(
+        184 => wire__crate__api__source__remote_image_folder_manifest_complete_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        177 => wire__crate__api__remote_scan__remote_scan_cancel_impl(
+        185 => wire__crate__api__remote_scan__remote_scan_cancel_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        178 => {
+        186 => {
             wire__crate__api__remote_scan__remote_scan_pause_impl(port, ptr, rust_vec_len, data_len)
         }
-        179 => wire__crate__api__remote_scan__remote_scan_recover_interrupted_all_impl(
+        187 => wire__crate__api__remote_scan__remote_scan_recover_interrupted_all_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        180 => wire__crate__api__remote_scan__remote_scan_resume_impl(
+        188 => wire__crate__api__remote_scan__remote_scan_resume_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        181 => {
+        189 => {
             wire__crate__api__remote_scan__remote_scan_start_impl(port, ptr, rust_vec_len, data_len)
         }
-        182 => wire__crate__api__remote_scan__remote_scan_start_manual_impl(
+        190 => wire__crate__api__remote_scan__remote_scan_start_manual_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        183 => wire__crate__api__remote_scan__remote_scan_status_impl(
+        191 => wire__crate__api__remote_scan__remote_scan_status_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        184 => wire__crate__api__remote_cover__remote_view_revision_impl(
+        192 => wire__crate__api__remote_cover__remote_view_revision_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        185 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
-        186 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
-        187 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
-        188 => wire__crate__api__book__set_reader_page_split_override_impl(
+        193 => wire__crate__api__db__reopen_data_db_impl(port, ptr, rust_vec_len, data_len),
+        194 => wire__crate__api__cache__set_cache_root_path_impl(port, ptr, rust_vec_len, data_len),
+        195 => wire__crate__api__pdf__set_native_lib_dir_impl(port, ptr, rust_vec_len, data_len),
+        196 => wire__crate__api__book__set_reader_page_split_override_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        189 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
-        190 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
-        191 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        192 => {
+        197 => wire__crate__api__source__sftp_connect_impl(port, ptr, rust_vec_len, data_len),
+        198 => wire__crate__api__source__sftp_cover_impl(port, ptr, rust_vec_len, data_len),
+        199 => wire__crate__api__source__sftp_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        200 => {
             wire__crate__api__source__sftp_download_progress_impl(port, ptr, rust_vec_len, data_len)
         }
-        193 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
-        194 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
-        195 => wire__crate__api__remote_cover__subscribe_cover_revisions_impl(
+        201 => wire__crate__api__source__sftp_has_raw_cache_impl(port, ptr, rust_vec_len, data_len),
+        202 => wire__crate__api__source__sftp_list_impl(port, ptr, rust_vec_len, data_len),
+        203 => wire__crate__api__remote_cover__subscribe_cover_revisions_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        196 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
-        197 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
-        198 => {
+        204 => wire__crate__api__ai__super_resolve_impl(port, ptr, rust_vec_len, data_len),
+        205 => wire__crate__api__ai__super_resolve_batch_impl(port, ptr, rust_vec_len, data_len),
+        206 => {
             wire__crate__api__sync__sync_clear_last_error_impl(port, ptr, rust_vec_len, data_len)
         }
-        199 => wire__crate__api__sync__sync_devices_list_impl(port, ptr, rust_vec_len, data_len),
-        200 => wire__crate__api__sync__sync_history_recent_impl(port, ptr, rust_vec_len, data_len),
-        201 => wire__crate__api__sync__sync_local_counts_impl(port, ptr, rust_vec_len, data_len),
-        202 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
-        203 => wire__crate__api__sync__sync_remote_revision_impl(port, ptr, rust_vec_len, data_len),
-        204 => wire__crate__api__sync__sync_set_last_error_impl(port, ptr, rust_vec_len, data_len),
-        205 => wire__crate__api__sync__sync_status_impl(port, ptr, rust_vec_len, data_len),
-        206 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
-        207 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
-        208 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
-        209 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
-        210 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
-        211 => {
+        207 => wire__crate__api__sync__sync_devices_list_impl(port, ptr, rust_vec_len, data_len),
+        208 => wire__crate__api__sync__sync_history_recent_impl(port, ptr, rust_vec_len, data_len),
+        209 => wire__crate__api__sync__sync_local_counts_impl(port, ptr, rust_vec_len, data_len),
+        210 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
+        211 => wire__crate__api__sync__sync_remote_revision_impl(port, ptr, rust_vec_len, data_len),
+        212 => wire__crate__api__sync__sync_set_last_error_impl(port, ptr, rust_vec_len, data_len),
+        213 => wire__crate__api__sync__sync_status_impl(port, ptr, rust_vec_len, data_len),
+        214 => wire__crate__api__cache__total_cache_size_impl(port, ptr, rust_vec_len, data_len),
+        215 => wire__crate__api__source__webdav_connect_impl(port, ptr, rust_vec_len, data_len),
+        216 => wire__crate__api__source__webdav_cover_impl(port, ptr, rust_vec_len, data_len),
+        217 => wire__crate__api__source__webdav_delete_file_impl(port, ptr, rust_vec_len, data_len),
+        218 => wire__crate__api__source__webdav_disconnect_impl(port, ptr, rust_vec_len, data_len),
+        219 => {
             wire__crate__api__source__webdav_download_file_impl(port, ptr, rust_vec_len, data_len)
         }
-        212 => wire__crate__api__source__webdav_download_progress_impl(
+        220 => wire__crate__api__source__webdav_download_progress_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        213 => {
+        221 => {
             wire__crate__api__source__webdav_has_raw_cache_impl(port, ptr, rust_vec_len, data_len)
         }
-        214 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
-        215 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
-        216 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
+        222 => wire__crate__api__source__webdav_list_impl(port, ptr, rust_vec_len, data_len),
+        223 => wire__crate__api__source__webdav_make_dir_impl(port, ptr, rust_vec_len, data_len),
+        224 => wire__crate__api__source__webdav_upload_file_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -10833,7 +11448,7 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        128 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
+        136 => wire__crate__api__simple__greet_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -11152,6 +11767,177 @@ impl flutter_rust_bridge::IntoIntoDart<crate::source::cloud115::offline::Cloud11
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::source::cloud115::offline::Cloud115BtFolder {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.name.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::source::cloud115::offline::Cloud115BtFolder
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::source::cloud115::offline::Cloud115BtFolder>
+    for crate::source::cloud115::offline::Cloud115BtFolder
+{
+    fn into_into_dart(self) -> crate::source::cloud115::offline::Cloud115BtFolder {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::source::cloud115::offline::Cloud115BtFolderSelection {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.parent_id.into_into_dart().into_dart(),
+            self.name.into_into_dart().into_dart(),
+            self.path.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::source::cloud115::offline::Cloud115BtFolderSelection
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::source::cloud115::offline::Cloud115BtFolderSelection>
+    for crate::source::cloud115::offline::Cloud115BtFolderSelection
+{
+    fn into_into_dart(self) -> crate::source::cloud115::offline::Cloud115BtFolderSelection {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::db::Cloud115BtMonitorClaimDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.run_id.into_into_dart().into_dart(),
+            self.tasks.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::db::Cloud115BtMonitorClaimDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::db::Cloud115BtMonitorClaimDto>
+    for crate::api::db::Cloud115BtMonitorClaimDto
+{
+    fn into_into_dart(self) -> crate::api::db::Cloud115BtMonitorClaimDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::db::Cloud115BtMonitorLedgerEntryDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.batch_id.into_into_dart().into_dart(),
+            self.account_id.into_into_dart().into_dart(),
+            self.source_id.into_into_dart().into_dart(),
+            self.target_folder_id.into_into_dart().into_dart(),
+            self.info_hash.into_into_dart().into_dart(),
+            self.relative_file.into_into_dart().into_dart(),
+            self.ledger_state.into_into_dart().into_dart(),
+            self.updated_at.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::db::Cloud115BtMonitorLedgerEntryDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::db::Cloud115BtMonitorLedgerEntryDto>
+    for crate::api::db::Cloud115BtMonitorLedgerEntryDto
+{
+    fn into_into_dart(self) -> crate::api::db::Cloud115BtMonitorLedgerEntryDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::db::Cloud115BtMonitorObservationDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.account_id.into_into_dart().into_dart(),
+            self.info_hash.into_into_dart().into_dart(),
+            self.target_folder_id.into_into_dart().into_dart(),
+            self.found_in_snapshot.into_into_dart().into_dart(),
+            self.status_code.into_into_dart().into_dart(),
+            self.percent_done.into_into_dart().into_dart(),
+            self.error_class.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::db::Cloud115BtMonitorObservationDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::db::Cloud115BtMonitorObservationDto>
+    for crate::api::db::Cloud115BtMonitorObservationDto
+{
+    fn into_into_dart(self) -> crate::api::db::Cloud115BtMonitorObservationDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::db::Cloud115BtMonitorSummaryDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.tracked_count.into_into_dart().into_dart(),
+            self.found_count.into_into_dart().into_dart(),
+            self.unknown_count.into_into_dart().into_dart(),
+            self.due_count.into_into_dart().into_dart(),
+            self.last_checked_at.into_into_dart().into_dart(),
+            self.next_check_at.into_into_dart().into_dart(),
+            self.last_error_class.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::db::Cloud115BtMonitorSummaryDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::db::Cloud115BtMonitorSummaryDto>
+    for crate::api::db::Cloud115BtMonitorSummaryDto
+{
+    fn into_into_dart(self) -> crate::api::db::Cloud115BtMonitorSummaryDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::db::Cloud115BtMonitorTaskDto {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.account_id.into_into_dart().into_dart(),
+            self.source_id.into_into_dart().into_dart(),
+            self.target_folder_id.into_into_dart().into_dart(),
+            self.info_hash.into_into_dart().into_dart(),
+            self.relative_file.into_into_dart().into_dart(),
+            self.ledger_state.into_into_dart().into_dart(),
+            self.batch_id.into_into_dart().into_dart(),
+            self.attempt_count.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::db::Cloud115BtMonitorTaskDto
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::db::Cloud115BtMonitorTaskDto>
+    for crate::api::db::Cloud115BtMonitorTaskDto
+{
+    fn into_into_dart(self) -> crate::api::db::Cloud115BtMonitorTaskDto {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::source::cloud115::offline::Cloud115BtPreflight {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -11164,6 +11950,7 @@ impl flutter_rust_bridge::IntoDart for crate::source::cloud115::offline::Cloud11
             self.info_hash.into_into_dart().into_dart(),
             self.files.into_into_dart().into_dart(),
             self.duplicate_status.into_into_dart().into_dart(),
+            self.duplicate_detail.into_into_dart().into_dart(),
             self.write_gate.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -11200,6 +11987,56 @@ impl flutter_rust_bridge::IntoIntoDart<crate::source::cloud115::offline::Cloud11
     for crate::source::cloud115::offline::Cloud115BtSubmitResult
 {
     fn into_into_dart(self) -> crate::source::cloud115::offline::Cloud115BtSubmitResult {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::source::cloud115::offline::Cloud115BtTaskSnapshot {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.account_id.into_into_dart().into_dart(),
+            self.state.into_into_dart().into_dart(),
+            self.complete.into_into_dart().into_dart(),
+            self.pages_read.into_into_dart().into_dart(),
+            self.error_class.into_into_dart().into_dart(),
+            self.message.into_into_dart().into_dart(),
+            self.tasks.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::source::cloud115::offline::Cloud115BtTaskSnapshot
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::source::cloud115::offline::Cloud115BtTaskSnapshot>
+    for crate::source::cloud115::offline::Cloud115BtTaskSnapshot
+{
+    fn into_into_dart(self) -> crate::source::cloud115::offline::Cloud115BtTaskSnapshot {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart
+    for crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem
+{
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.info_hash.into_into_dart().into_dart(),
+            self.status_code.into_into_dart().into_dart(),
+            self.percent_done.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem>
+    for crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem
+{
+    fn into_into_dart(self) -> crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem {
         self
     }
 }
@@ -12637,6 +13474,86 @@ impl SseEncode for crate::source::cloud115::offline::Cloud115BtFile {
     }
 }
 
+impl SseEncode for crate::source::cloud115::offline::Cloud115BtFolder {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.name, serializer);
+    }
+}
+
+impl SseEncode for crate::source::cloud115::offline::Cloud115BtFolderSelection {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.id, serializer);
+        <String>::sse_encode(self.parent_id, serializer);
+        <String>::sse_encode(self.name, serializer);
+        <String>::sse_encode(self.path, serializer);
+    }
+}
+
+impl SseEncode for crate::api::db::Cloud115BtMonitorClaimDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.run_id, serializer);
+        <Vec<crate::api::db::Cloud115BtMonitorTaskDto>>::sse_encode(self.tasks, serializer);
+    }
+}
+
+impl SseEncode for crate::api::db::Cloud115BtMonitorLedgerEntryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.batch_id, serializer);
+        <String>::sse_encode(self.account_id, serializer);
+        <String>::sse_encode(self.source_id, serializer);
+        <String>::sse_encode(self.target_folder_id, serializer);
+        <String>::sse_encode(self.info_hash, serializer);
+        <String>::sse_encode(self.relative_file, serializer);
+        <String>::sse_encode(self.ledger_state, serializer);
+        <i64>::sse_encode(self.updated_at, serializer);
+    }
+}
+
+impl SseEncode for crate::api::db::Cloud115BtMonitorObservationDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.account_id, serializer);
+        <String>::sse_encode(self.info_hash, serializer);
+        <String>::sse_encode(self.target_folder_id, serializer);
+        <Option<bool>>::sse_encode(self.found_in_snapshot, serializer);
+        <Option<i64>>::sse_encode(self.status_code, serializer);
+        <Option<f64>>::sse_encode(self.percent_done, serializer);
+        <Option<String>>::sse_encode(self.error_class, serializer);
+    }
+}
+
+impl SseEncode for crate::api::db::Cloud115BtMonitorSummaryDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.tracked_count, serializer);
+        <u32>::sse_encode(self.found_count, serializer);
+        <u32>::sse_encode(self.unknown_count, serializer);
+        <u32>::sse_encode(self.due_count, serializer);
+        <Option<i64>>::sse_encode(self.last_checked_at, serializer);
+        <Option<i64>>::sse_encode(self.next_check_at, serializer);
+        <Option<String>>::sse_encode(self.last_error_class, serializer);
+    }
+}
+
+impl SseEncode for crate::api::db::Cloud115BtMonitorTaskDto {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.account_id, serializer);
+        <String>::sse_encode(self.source_id, serializer);
+        <String>::sse_encode(self.target_folder_id, serializer);
+        <String>::sse_encode(self.info_hash, serializer);
+        <String>::sse_encode(self.relative_file, serializer);
+        <String>::sse_encode(self.ledger_state, serializer);
+        <String>::sse_encode(self.batch_id, serializer);
+        <i64>::sse_encode(self.attempt_count, serializer);
+    }
+}
+
 impl SseEncode for crate::source::cloud115::offline::Cloud115BtPreflight {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -12649,6 +13566,7 @@ impl SseEncode for crate::source::cloud115::offline::Cloud115BtPreflight {
         <String>::sse_encode(self.info_hash, serializer);
         <Vec<crate::source::cloud115::offline::Cloud115BtFile>>::sse_encode(self.files, serializer);
         <String>::sse_encode(self.duplicate_status, serializer);
+        <String>::sse_encode(self.duplicate_detail, serializer);
         <String>::sse_encode(self.write_gate, serializer);
     }
 }
@@ -12660,6 +13578,30 @@ impl SseEncode for crate::source::cloud115::offline::Cloud115BtSubmitResult {
         <String>::sse_encode(self.info_hash, serializer);
         <String>::sse_encode(self.message, serializer);
         <String>::sse_encode(self.target_folder_id, serializer);
+    }
+}
+
+impl SseEncode for crate::source::cloud115::offline::Cloud115BtTaskSnapshot {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.account_id, serializer);
+        <String>::sse_encode(self.state, serializer);
+        <bool>::sse_encode(self.complete, serializer);
+        <u32>::sse_encode(self.pages_read, serializer);
+        <Option<String>>::sse_encode(self.error_class, serializer);
+        <String>::sse_encode(self.message, serializer);
+        <Vec<crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem>>::sse_encode(
+            self.tasks, serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.info_hash, serializer);
+        <Option<i64>>::sse_encode(self.status_code, serializer);
+        <Option<f64>>::sse_encode(self.percent_done, serializer);
     }
 }
 
@@ -12971,6 +13913,58 @@ impl SseEncode for Vec<crate::source::cloud115::offline::Cloud115BtFile> {
     }
 }
 
+impl SseEncode for Vec<crate::source::cloud115::offline::Cloud115BtFolder> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::source::cloud115::offline::Cloud115BtFolder>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::db::Cloud115BtMonitorLedgerEntryDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::db::Cloud115BtMonitorLedgerEntryDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::db::Cloud115BtMonitorObservationDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::db::Cloud115BtMonitorObservationDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::db::Cloud115BtMonitorTaskDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::db::Cloud115BtMonitorTaskDto>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::source::cloud115::offline::Cloud115BtTaskSnapshotItem>::sse_encode(
+                item, serializer,
+            );
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::db::DeviceDto> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -13260,6 +14254,16 @@ impl SseEncode for Option<crate::api::db::CatalogRevisionDto> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::db::CatalogRevisionDto>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::db::Cloud115BtMonitorClaimDto> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::db::Cloud115BtMonitorClaimDto>::sse_encode(value, serializer);
         }
     }
 }

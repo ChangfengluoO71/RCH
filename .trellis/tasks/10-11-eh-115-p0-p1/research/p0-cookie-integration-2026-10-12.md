@@ -80,3 +80,13 @@ No real 115 request was made by this development run. Cookie authentication, tar
 To exercise the candidate, open the newly built Debug app, connect the chosen Cookie source using its normal RCH source flow, open EH settings, select one H0-validated Torrent, then click “检查账号、目录与重复任务”. Review account/folder/hash/duplicate details. “上传 Torrent 并解析” has its own confirmation; after a verified parsed result, choose the wanted file indices and use the separate “提交 BT 任务（一次）” confirmation. If either result is uncertain, use only the read-only reconciliation/status action and do not repeat a write. The dialogs warn that the route and live compatibility are unverified. The 12 historical parallel Rust failures remain `BASELINE_UNRESOLVED`.
 
 Commit: NO · Push: NO · Merge: NO · Rebase: NO · Tag: NO · Release: NO · Delete: NO · Cleanup: NO.
+
+## 2026-10-12 destination picker and Windows candidate follow-up
+
+The Windows Debug candidate now provides a read-only browser for existing 115 folders. It never creates folders, does not assume the configured source `root_id` is the target, and revalidates the selected ID/name under its parent before preflight, upload recovery, BT submit, and task status. Panel initialization is inert; folder listing starts only after the user opens the picker. The first H0-validated Torrent is selected by default, and another item can be chosen. Upload/parse and BT submission remain separate, one-item confirmation steps.
+
+No live Cookie session was queried, no target directory ID was read, and no 115 request or write was sent. The current status remains `SSP_WIRE_UNVERIFIED`, `P0_WEB_WRITE_AUTH_BLOCKED`, `P0_REAL_PASS=NO`, and `P1_NOT_STARTED`. Batch automatic upload is not implemented. Automatic local Torrent deletion is deferred because without a durable cleanup marker an intentional deletion would be indistinguishable from data loss in the H0 manifest, and could remove recovery evidence.
+
+Rust BT Mock tests passed 21/21 in three consecutive default-parallel runs. The Windows-only intermittent Mock failure was traced to accepted connections retaining nonblocking reads; partial request headers made `read_exact` return `WouldBlock`. Accepted Mock streams now use blocking reads with a bounded timeout. Test Torrent directories also use an atomic sequence and exclusive directory creation. Focused Flutter tests passed 5/5, targeted analysis and `cargo check --lib --locked --offline` passed, and `flutter build windows --debug --no-pub` passed. The app was not launched. Full-crate rustfmt still reports unrelated EH Daily formatting differences; changed Rust files pass scoped checks. The 12 historical parallel Rust failures remain `BASELINE_UNRESOLVED`.
+
+Commit/Push/Merge/Rebase/Tag/Release/Delete/Cleanup: NO.

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:app/src/rust/api/cache.dart';
 import 'package:app/src/rust/api/db.dart';
@@ -11,6 +12,8 @@ import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/automation_coordinator.dart';
 import 'package:app/store/eh_daily_coordinator.dart';
 import 'package:app/store/eh_subscription_store.dart';
+import 'package:app/store/cloud115_bt_daily_workflow.dart';
+import 'package:app/store/cloud115_bt_monitor.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
@@ -26,6 +29,8 @@ import 'package:app/theme/window_material_scope.dart';
 import 'package:app/theme/overlay_material_scope.dart';
 import 'package:app/ui/ai_floating_progress.dart';
 import 'package:app/ui/home_page.dart';
+import 'package:app/store/long_task_registry.dart';
+import 'package:app/ui/exit_work_dialog.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/foundation.dart';
@@ -79,7 +84,15 @@ Future<void> main() async {
   // 检测未完成的根目录迁移（源根上的 migration.partial 标记）。
   final root = await cacheRootPath();
   final pending = await pendingMigration(root: root);
-  EhDailyCoordinator.initialize(EhSubscriptionStore.instance);
+  final ehStore = EhSubscriptionStore.instance;
+  final dailyCloudWorkflow = Cloud115BtDailyWorkflow();
+  ehStore.configureDailyWorkflowGate(
+    isReady: () => dailyCloudWorkflow.ready,
+    blockedMessage: () => dailyCloudWorkflow.blockedMessage,
+    runCloudStage: (entries) =>
+        dailyCloudWorkflow.run(entries: entries, outputDir: ehStore.outDir),
+  );
+  EhDailyCoordinator.initialize(ehStore);
   runApp(RchApp(startupPending: pending));
 
   // 非关键初始化放到首帧之后：保留原有自动同步/刮削与 AI 续跑语义，
@@ -96,6 +109,9 @@ Future<void> _initializeAfterFirstFrame() async {
   // 本地只读/轻量状态先恢复，再启动可能涉及同步与刮削的较重流程。
   await FolderSnapshotStore.instance.load();
   await LibraryCatalogStore.instance.loadTree();
+  // Rebuild the read-only 115 status projection from the write ledger, then
+  // poll only through already-cached Cookie sessions. No write is reachable.
+  unawaited(Cloud115BtMonitor.instance.start());
   // RG-B 健壮性修复（A）：把崩溃/强制退出留下的 `running` 扫描残留恢复为中断终态，
   // 否则这些源会永久无法扫描。启动时内存 job 表为空 ⇒ 此调用安全（运行期不得调用）。
   try {
@@ -235,7 +251,7 @@ class RchApp extends StatefulWidget {
   State<RchApp> createState() => _RchAppState();
 }
 
-class _RchAppState extends State<RchApp> {
+class _RchAppState extends State<RchApp> with WidgetsBindingObserver {
   bool _micaSupported = false;
   bool _micaCapabilityLoaded = false;
   bool _micaApplied = false;
@@ -243,12 +259,14 @@ class _RchAppState extends State<RchApp> {
   String? _lastWindowMaterialSetting;
   String? _lastWindowThemeModeSetting;
   late final AppLifecycleListener _windowLifecycleListener;
+  final ExitRequestGate _exitRequestGate = ExitRequestGate();
 
   bool get _isWindows => defaultTargetPlatform == TargetPlatform.windows;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _windowLifecycleListener = AppLifecycleListener(onResume: _onWindowResume);
     if (_isWindows) {
       final settings = LibraryStore.instance.settings;
@@ -257,6 +275,73 @@ class _RchAppState extends State<RchApp> {
       LibraryStore.instance.addListener(_onSettingsChanged);
       unawaited(_loadWindowMaterialCapability());
     }
+  }
+
+  @override
+  Future<AppExitResponse> didRequestAppExit() => _exitRequestGate.run(
+    duplicateResult: AppExitResponse.cancel,
+    action: _handleAppExitRequest,
+  );
+
+  Future<AppExitResponse> _handleAppExitRequest() async {
+    if (!_isWindows) return AppExitResponse.exit;
+    final registry = LongTaskRegistry.instance;
+    final tasks = registry.snapshot();
+    final monitor = Cloud115BtMonitor.instance;
+    var monitorStatusKnown = true;
+    try {
+      await monitor.refreshSummary();
+    } catch (_) {
+      // Retain the last in-memory summary; the exit prompt must remain usable
+      // if the operational status query itself is unavailable.
+      monitorStatusKnown = false;
+    }
+    if (!mounted) return AppExitResponse.exit;
+    final monitorSummary = monitor.summaryValue;
+    if (!shouldPromptBeforeExit(
+      hasActiveTasks: tasks.isNotEmpty,
+      hasResumableWork: monitorSummary.hasResumableWork,
+      monitorStatusKnown: monitorStatusKnown,
+    )) {
+      return AppExitResponse.exit;
+    }
+    final dialogContext = AiUpscaleManager.navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) {
+      return AppExitResponse.cancel;
+    }
+
+    final shouldExit = await showRchDialog<bool>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (_) => ExitWorkDialog(
+        tasks: tasks,
+        monitorSummary: monitorSummary,
+        monitorStatusUnknown: !monitorStatusKnown,
+        prepareForExit: () async {
+          final prepared = await registry.prepareForExit(
+            tasks,
+            timeout: const Duration(seconds: 15),
+          );
+          if (!prepared.completed) return prepared;
+          final monitorWasStarted = monitor.isStarted;
+          try {
+            await monitor.stopForExit();
+            await LibraryStore.instance.flushPendingSave();
+            await FolderSnapshotStore.instance.flush();
+          } catch (_) {
+            if (monitorWasStarted) await monitor.start();
+            return const ExitPreparationResult(
+              completed: false,
+              failedLabels: ['本地数据保存'],
+              unpreparedLabels: [],
+              timedOut: false,
+            );
+          }
+          return prepared;
+        },
+      ),
+    );
+    return shouldExit == true ? AppExitResponse.exit : AppExitResponse.cancel;
   }
 
   Future<void> _loadWindowMaterialCapability() async {
@@ -312,6 +397,7 @@ class _RchAppState extends State<RchApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_isWindows) {
       LibraryStore.instance.removeListener(_onSettingsChanged);
     }
@@ -471,6 +557,11 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
       ),
     );
     if (resume != true) return;
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'cache_root_migration_recovery',
+      label: '恢复缓存根目录迁移',
+      phase: '继续复制数据库与缓存',
+    );
     try {
       final supportDir = (await getApplicationSupportDirectory()).path;
       await migrateCacheRoot(from: from, to: to, supportDir: supportDir);
@@ -488,6 +579,8 @@ class _LifecycleFlushState extends State<_LifecycleFlush> {
       messenger.showSnackBar(const SnackBar(content: Text('缓存迁移已恢复完成')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('恢复迁移失败: $e')));
+    } finally {
+      taskLease.dispose();
     }
   }
 

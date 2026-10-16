@@ -62,6 +62,42 @@ void main() {
     expect(report.entries.single.fullPath, contains('漫画 & [测试].torrent'));
   });
 
+  test('folder inventory is loaded independently from the manifest', () async {
+    var manifestReads = 0;
+    var directoryReads = 0;
+    final directory = _checkedManifest();
+    final entries = directory['entries'] as List;
+    final entry = entries.single as Map<String, dynamic>;
+    final item = entry['item'] as Map<String, dynamic>;
+    item['file'] = 'orphan.torrent';
+    item['torrent_name'] = 'orphan.torrent';
+    entry['full_path'] = r'D:\EhTorrents\orphan.torrent';
+
+    final store = EhSubscriptionStore.forTest(
+      rules: {'out_dir': r'D:\EhTorrents'},
+      checkedManifestLoader: (_) async {
+        manifestReads++;
+        throw StateError('manifest must not be read for disk inventory');
+      },
+      torrentDirectoryLoader: (outDir) async {
+        directoryReads++;
+        expect(outDir, r'D:\EhTorrents');
+        return jsonEncode(directory);
+      },
+    );
+
+    await store.refreshTorrentDirectory();
+
+    expect(directoryReads, 1);
+    expect(manifestReads, 0);
+    expect(
+      store.torrentDirectoryReport.entries.single.item.file,
+      'orphan.torrent',
+    );
+    expect(store.manifestReport.status, EhManifestReadStatus.empty);
+    expect(store.manifestReport.entries, isEmpty);
+  });
+
   test(
     'non-Windows folder open safely declines without launching a process',
     () async {
@@ -203,6 +239,39 @@ void main() {
       );
     },
   );
+
+  testWidgets('saved Torrent list defaults to the newest entry only', (
+    tester,
+  ) async {
+    final manifest = _checkedManifest();
+    final entries = manifest['entries'] as List;
+    final older =
+        jsonDecode(jsonEncode(entries.single)) as Map<String, dynamic>;
+    final olderItem = older['item'] as Map<String, dynamic>;
+    olderItem['title_jpn'] = 'older Torrent';
+    olderItem['file'] = 'older.torrent';
+    olderItem['infohash'] = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    manifest['entries'] = [older, entries.single];
+    final store = EhSubscriptionStore.forTest(
+      rules: {'out_dir': r'D:\EhTorrents'},
+      manifestReport: EhManifestReport.fromJson(manifest),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: EhSubscriptionPanel(storeOverride: store),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('eh-handoff-select-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('eh-handoff-select-1')), findsNothing);
+    expect(find.byKey(const ValueKey('eh-handoff-toggle-all')), findsNothing);
+    expect(find.text('展开全部'), findsNothing);
+  });
 
   testWidgets('initializing the handoff panel does not call a 115 client', (
     tester,

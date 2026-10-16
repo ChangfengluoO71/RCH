@@ -14,6 +14,7 @@ import 'package:app/src/rust/api/db.dart' as frb;
 import 'package:app/src/rust/api/library.dart' as frblib;
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/foreground_work_coordinator.dart';
+import 'package:app/store/long_task_registry.dart';
 import 'package:app/store/models.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart'
@@ -174,30 +175,43 @@ class LibraryIndexService {
 
   /// 本地化生成：从 FolderSnapshotStore 已有浏览快照构建索引（零网络请求）。
   /// ADR-029：替代"全量爬云端树"的默认行为；未浏览过的目录保持在线浏览。
-  static Future<int> buildIndexFromSnapshots(BookSource source) async {
-    final folders = FolderSnapshotStore.instance.foldersFor(source);
-    var n = 0;
-    for (final e in folders.entries) {
-      await indexDirSnapshot(source, e.key, e.value);
-      n += e.value.length;
-    }
-    if (folders.isNotEmpty) {
-      final indexed = await frb.dbLoadLibraryIndexForSource(
-        sourceId: source.id,
-      );
-      final rootHash = rootHashOf(indexed);
-      final previous = await frb.dbGetSourceSnapshot(sourceId: source.id);
-      if (previous?.rootHash != rootHash ||
-          previous?.entryCount != indexed.length) {
-        await frb.dbSetSourceSnapshot(
-          sourceId: source.id,
-          lastScanTime: DateTime.now().millisecondsSinceEpoch,
-          entryCount: indexed.length,
-          rootHash: rootHash,
-        );
+  static Future<int> buildIndexFromSnapshots(
+    BookSource source, {
+    bool trackLongTask = true,
+  }) {
+    Future<int> build() async {
+      final folders = FolderSnapshotStore.instance.foldersFor(source);
+      var n = 0;
+      for (final e in folders.entries) {
+        await indexDirSnapshot(source, e.key, e.value);
+        n += e.value.length;
       }
+      if (folders.isNotEmpty) {
+        final indexed = await frb.dbLoadLibraryIndexForSource(
+          sourceId: source.id,
+        );
+        final rootHash = rootHashOf(indexed);
+        final previous = await frb.dbGetSourceSnapshot(sourceId: source.id);
+        if (previous?.rootHash != rootHash ||
+            previous?.entryCount != indexed.length) {
+          await frb.dbSetSourceSnapshot(
+            sourceId: source.id,
+            lastScanTime: DateTime.now().millisecondsSinceEpoch,
+            entryCount: indexed.length,
+            rootHash: rootHash,
+          );
+        }
+      }
+      return n;
     }
-    return n;
+
+    if (!trackLongTask) return build();
+    return LongTaskRegistry.instance.run<int>(
+      kind: 'source_snapshot_index',
+      label: '${source.type} 书源快照索引',
+      phase: '整理已浏览目录快照',
+      action: (_) => build(),
+    );
   }
 
   /// Refresh local filesystem indexes and persisted remote snapshots. This is
@@ -220,7 +234,11 @@ class LibraryIndexService {
       }
       try {
         final result = source.isLocalFs
-            ? await refreshSourceIndex(source: source, force: false)
+            ? await refreshSourceIndex(
+                source: source,
+                force: false,
+                trackLongTask: false,
+              )
             : await _refreshPersistedRemoteSnapshot(source);
         if (result.changed) changedSources++;
         revisions.add('${source.id}:${result.revision}');
@@ -268,7 +286,7 @@ class LibraryIndexService {
   >
   _refreshPersistedRemoteSnapshot(BookSource source) async {
     final previous = await frb.dbGetSourceSnapshot(sourceId: source.id);
-    await buildIndexFromSnapshots(source);
+    await buildIndexFromSnapshots(source, trackLongTask: false);
     final indexed = await frb.dbLoadLibraryIndexForSource(sourceId: source.id);
     final revision = rootHashOf(indexed);
     final changed =
@@ -565,6 +583,7 @@ class LibraryIndexService {
     required BookSource source,
     bool force = false,
     Future<List<FolderSnapshotEntry>> Function(String path)? listRemote,
+    bool trackLongTask = true,
   }) {
     final flight = _sourceRefreshFlights.putIfAbsent(
       source.id,
@@ -572,6 +591,8 @@ class LibraryIndexService {
     );
     return flight.request(
       force: force,
+      taskRegistry: trackLongTask ? LongTaskRegistry.instance : null,
+      taskLabel: '${source.type} 书源目录索引',
       refresh: () => _refreshSourceIndex(
         source: source,
         force: force,
@@ -690,12 +711,20 @@ class _SourceRefreshFlight {
 
   Future<SourceIndexRefreshResult> request({
     required bool force,
+    required LongTaskRegistry? taskRegistry,
+    required String taskLabel,
     required Future<SourceIndexRefreshResult> Function() refresh,
     required VoidCallback onIdle,
   }) {
     final active = _active;
     if (active == null) {
-      return _start(force: force, refresh: refresh, onIdle: onIdle);
+      return _start(
+        force: force,
+        taskRegistry: taskRegistry,
+        taskLabel: taskLabel,
+        refresh: refresh,
+        onIdle: onIdle,
+      );
     }
 
     final queuedForce = _queuedForce;
@@ -707,6 +736,8 @@ class _SourceRefreshFlight {
     unawaited(
       _runQueuedForce(
         active: active,
+        taskRegistry: taskRegistry,
+        taskLabel: taskLabel,
         refresh: refresh,
         completer: completer,
         onIdle: onIdle,
@@ -717,11 +748,20 @@ class _SourceRefreshFlight {
 
   Future<SourceIndexRefreshResult> _start({
     required bool force,
+    required LongTaskRegistry? taskRegistry,
+    required String taskLabel,
     required Future<SourceIndexRefreshResult> Function() refresh,
     required VoidCallback onIdle,
   }) {
     _activeIsForced = force;
-    final operation = Future<SourceIndexRefreshResult>.sync(refresh);
+    final operation = taskRegistry == null
+        ? Future<SourceIndexRefreshResult>.sync(refresh)
+        : taskRegistry.run<SourceIndexRefreshResult>(
+            kind: 'source_index_refresh',
+            label: taskLabel,
+            phase: '遍历书源目录',
+            action: (_) => Future<SourceIndexRefreshResult>.sync(refresh),
+          );
     _active = operation;
     operation.then<void>(
       (_) => _finish(operation, onIdle),
@@ -732,6 +772,8 @@ class _SourceRefreshFlight {
 
   Future<void> _runQueuedForce({
     required Future<SourceIndexRefreshResult> active,
+    required LongTaskRegistry? taskRegistry,
+    required String taskLabel,
     required Future<SourceIndexRefreshResult> Function() refresh,
     required Completer<SourceIndexRefreshResult> completer,
     required VoidCallback onIdle,
@@ -745,7 +787,13 @@ class _SourceRefreshFlight {
     _queuedForce = null;
     try {
       completer.complete(
-        await _start(force: true, refresh: refresh, onIdle: onIdle),
+        await _start(
+          force: true,
+          taskRegistry: taskRegistry,
+          taskLabel: taskLabel,
+          refresh: refresh,
+          onIdle: onIdle,
+        ),
       );
     } catch (error, stackTrace) {
       completer.completeError(error, stackTrace);

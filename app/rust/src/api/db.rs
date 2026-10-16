@@ -6,6 +6,175 @@
 use crate::db;
 use anyhow::Result;
 
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorLedgerEntryDto {
+    pub batch_id: String,
+    pub account_id: String,
+    pub source_id: String,
+    pub target_folder_id: String,
+    pub info_hash: String,
+    pub relative_file: String,
+    pub ledger_state: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorTaskDto {
+    pub account_id: String,
+    pub source_id: String,
+    pub target_folder_id: String,
+    pub info_hash: String,
+    pub relative_file: String,
+    pub ledger_state: String,
+    pub batch_id: String,
+    pub attempt_count: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorClaimDto {
+    pub run_id: String,
+    pub tasks: Vec<Cloud115BtMonitorTaskDto>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorObservationDto {
+    pub account_id: String,
+    pub info_hash: String,
+    pub target_folder_id: String,
+    pub found_in_snapshot: Option<bool>,
+    pub status_code: Option<i64>,
+    pub percent_done: Option<f64>,
+    pub error_class: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorSummaryDto {
+    pub tracked_count: u32,
+    pub found_count: u32,
+    pub unknown_count: u32,
+    pub due_count: u32,
+    pub last_checked_at: Option<i64>,
+    pub next_check_at: Option<i64>,
+    pub last_error_class: Option<String>,
+}
+
+/// Idempotently projects eligible credential-free ledger rows into the
+/// operational monitor tables. The monitor never writes to the ledger.
+pub fn db_cloud115_bt_monitor_reconcile(
+    entries: Vec<Cloud115BtMonitorLedgerEntryDto>,
+) -> Result<u32, String> {
+    let rows = entries
+        .into_iter()
+        .map(|entry| db::Cloud115BtMonitorLedgerEntry {
+            batch_id: entry.batch_id,
+            account_id: entry.account_id,
+            source_id: entry.source_id,
+            target_folder_id: entry.target_folder_id,
+            info_hash: entry.info_hash,
+            relative_file: entry.relative_file,
+            ledger_state: entry.ledger_state,
+            updated_at: entry.updated_at,
+        })
+        .collect::<Vec<_>>();
+    let conn = db::get().lock().unwrap();
+    db::reconcile_cloud115_bt_monitor_entries(&conn, &rows, db::now_ms())
+        .map(|count| count.min(u32::MAX as usize) as u32)
+        .map_err(|error| error.to_string())
+}
+
+/// Atomically claims due tasks for one account/source and returns a bounded
+/// set. The short SQLite transaction ends before the caller performs HTTP.
+pub fn db_cloud115_bt_monitor_claim_due(
+    account_id: String,
+    source_id: String,
+    owner: String,
+    lease_expires_at: i64,
+    limit: u32,
+) -> Result<Option<Cloud115BtMonitorClaimDto>, String> {
+    let conn = db::get().lock().unwrap();
+    db::claim_cloud115_bt_monitor_due(
+        &conn,
+        &account_id,
+        &source_id,
+        &owner,
+        db::now_ms(),
+        lease_expires_at,
+        limit,
+    )
+    .map(|claim| {
+        claim.map(|claim| Cloud115BtMonitorClaimDto {
+            run_id: claim.run_id,
+            tasks: claim
+                .tasks
+                .into_iter()
+                .map(|task| Cloud115BtMonitorTaskDto {
+                    account_id: task.account_id,
+                    source_id: task.source_id,
+                    target_folder_id: task.target_folder_id,
+                    info_hash: task.info_hash,
+                    relative_file: task.relative_file,
+                    ledger_state: task.ledger_state,
+                    batch_id: task.batch_id,
+                    attempt_count: task.attempt_count,
+                })
+                .collect(),
+        })
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Persists only normalized task-list observations and releases the poll lease.
+pub fn db_cloud115_bt_monitor_finish_poll(
+    run_id: String,
+    account_id: String,
+    owner: String,
+    observations: Vec<Cloud115BtMonitorObservationDto>,
+    error_class: Option<String>,
+    next_check_at: i64,
+) -> Result<(), String> {
+    let rows = observations
+        .into_iter()
+        .map(|observation| db::Cloud115BtMonitorObservation {
+            account_id: observation.account_id,
+            info_hash: observation.info_hash,
+            target_folder_id: observation.target_folder_id,
+            found_in_snapshot: observation.found_in_snapshot,
+            status_code: observation.status_code,
+            percent_done: observation.percent_done,
+            error_class: observation.error_class,
+        })
+        .collect::<Vec<_>>();
+    let conn = db::get().lock().unwrap();
+    db::finish_cloud115_bt_monitor_poll(
+        &conn,
+        &run_id,
+        &account_id,
+        &owner,
+        &rows,
+        error_class.as_deref(),
+        next_check_at,
+        db::now_ms(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+pub fn db_cloud115_bt_monitor_summary(
+    source_id: Option<String>,
+) -> Result<Cloud115BtMonitorSummaryDto, String> {
+    let conn = db::get().lock().unwrap();
+    db::cloud115_bt_monitor_summary(&conn, source_id.as_deref(), db::now_ms())
+        .map(|summary| Cloud115BtMonitorSummaryDto {
+            tracked_count: summary.tracked_count,
+            found_count: summary.found_count,
+            unknown_count: summary.unknown_count,
+            due_count: summary.due_count,
+            last_checked_at: summary.last_checked_at,
+            next_check_at: summary.next_check_at,
+            last_error_class: summary.last_error_class,
+        })
+        .map_err(|error| error.to_string())
+}
+
 // ============================================================
 // 迁移
 // ============================================================

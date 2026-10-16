@@ -102,6 +102,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CatalogRevisionDto dco_decode_box_autoadd_catalog_revision_dto(dynamic raw);
 
   @protected
+  Cloud115BtFolderSelection
+  dco_decode_box_autoadd_cloud_115_bt_folder_selection(dynamic raw);
+
+  @protected
+  Cloud115BtMonitorClaimDto
+  dco_decode_box_autoadd_cloud_115_bt_monitor_claim_dto(dynamic raw);
+
+  @protected
   CoverProfileDto dco_decode_box_autoadd_cover_profile_dto(dynamic raw);
 
   @protected
@@ -161,10 +169,49 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Cloud115BtFile dco_decode_cloud_115_bt_file(dynamic raw);
 
   @protected
+  Cloud115BtFolder dco_decode_cloud_115_bt_folder(dynamic raw);
+
+  @protected
+  Cloud115BtFolderSelection dco_decode_cloud_115_bt_folder_selection(
+    dynamic raw,
+  );
+
+  @protected
+  Cloud115BtMonitorClaimDto dco_decode_cloud_115_bt_monitor_claim_dto(
+    dynamic raw,
+  );
+
+  @protected
+  Cloud115BtMonitorLedgerEntryDto
+  dco_decode_cloud_115_bt_monitor_ledger_entry_dto(dynamic raw);
+
+  @protected
+  Cloud115BtMonitorObservationDto
+  dco_decode_cloud_115_bt_monitor_observation_dto(dynamic raw);
+
+  @protected
+  Cloud115BtMonitorSummaryDto dco_decode_cloud_115_bt_monitor_summary_dto(
+    dynamic raw,
+  );
+
+  @protected
+  Cloud115BtMonitorTaskDto dco_decode_cloud_115_bt_monitor_task_dto(
+    dynamic raw,
+  );
+
+  @protected
   Cloud115BtPreflight dco_decode_cloud_115_bt_preflight(dynamic raw);
 
   @protected
   Cloud115BtSubmitResult dco_decode_cloud_115_bt_submit_result(dynamic raw);
+
+  @protected
+  Cloud115BtTaskSnapshot dco_decode_cloud_115_bt_task_snapshot(dynamic raw);
+
+  @protected
+  Cloud115BtTaskSnapshotItem dco_decode_cloud_115_bt_task_snapshot_item(
+    dynamic raw,
+  );
 
   @protected
   Cloud115BtTaskStatus dco_decode_cloud_115_bt_task_status(dynamic raw);
@@ -258,6 +305,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<Cloud115BtFile> dco_decode_list_cloud_115_bt_file(dynamic raw);
+
+  @protected
+  List<Cloud115BtFolder> dco_decode_list_cloud_115_bt_folder(dynamic raw);
+
+  @protected
+  List<Cloud115BtMonitorLedgerEntryDto>
+  dco_decode_list_cloud_115_bt_monitor_ledger_entry_dto(dynamic raw);
+
+  @protected
+  List<Cloud115BtMonitorObservationDto>
+  dco_decode_list_cloud_115_bt_monitor_observation_dto(dynamic raw);
+
+  @protected
+  List<Cloud115BtMonitorTaskDto> dco_decode_list_cloud_115_bt_monitor_task_dto(
+    dynamic raw,
+  );
+
+  @protected
+  List<Cloud115BtTaskSnapshotItem>
+  dco_decode_list_cloud_115_bt_task_snapshot_item(dynamic raw);
 
   @protected
   List<DeviceDto> dco_decode_list_device_dto(dynamic raw);
@@ -362,6 +429,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CatalogRevisionDto? dco_decode_opt_box_autoadd_catalog_revision_dto(
     dynamic raw,
   );
+
+  @protected
+  Cloud115BtMonitorClaimDto?
+  dco_decode_opt_box_autoadd_cloud_115_bt_monitor_claim_dto(dynamic raw);
 
   @protected
   CropRect? dco_decode_opt_box_autoadd_crop_rect(dynamic raw);
@@ -600,6 +671,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  Cloud115BtFolderSelection
+  sse_decode_box_autoadd_cloud_115_bt_folder_selection(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtMonitorClaimDto
+  sse_decode_box_autoadd_cloud_115_bt_monitor_claim_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CoverProfileDto sse_decode_box_autoadd_cover_profile_dto(
     SseDeserializer deserializer,
   );
@@ -675,12 +758,55 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Cloud115BtFile sse_decode_cloud_115_bt_file(SseDeserializer deserializer);
 
   @protected
+  Cloud115BtFolder sse_decode_cloud_115_bt_folder(SseDeserializer deserializer);
+
+  @protected
+  Cloud115BtFolderSelection sse_decode_cloud_115_bt_folder_selection(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtMonitorClaimDto sse_decode_cloud_115_bt_monitor_claim_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtMonitorLedgerEntryDto
+  sse_decode_cloud_115_bt_monitor_ledger_entry_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtMonitorObservationDto
+  sse_decode_cloud_115_bt_monitor_observation_dto(SseDeserializer deserializer);
+
+  @protected
+  Cloud115BtMonitorSummaryDto sse_decode_cloud_115_bt_monitor_summary_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtMonitorTaskDto sse_decode_cloud_115_bt_monitor_task_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   Cloud115BtPreflight sse_decode_cloud_115_bt_preflight(
     SseDeserializer deserializer,
   );
 
   @protected
   Cloud115BtSubmitResult sse_decode_cloud_115_bt_submit_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtTaskSnapshot sse_decode_cloud_115_bt_task_snapshot(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtTaskSnapshotItem sse_decode_cloud_115_bt_task_snapshot_item(
     SseDeserializer deserializer,
   );
 
@@ -798,6 +924,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Cloud115BtFile> sse_decode_list_cloud_115_bt_file(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<Cloud115BtFolder> sse_decode_list_cloud_115_bt_folder(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<Cloud115BtMonitorLedgerEntryDto>
+  sse_decode_list_cloud_115_bt_monitor_ledger_entry_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<Cloud115BtMonitorObservationDto>
+  sse_decode_list_cloud_115_bt_monitor_observation_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<Cloud115BtMonitorTaskDto> sse_decode_list_cloud_115_bt_monitor_task_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<Cloud115BtTaskSnapshotItem>
+  sse_decode_list_cloud_115_bt_task_snapshot_item(SseDeserializer deserializer);
 
   @protected
   List<DeviceDto> sse_decode_list_device_dto(SseDeserializer deserializer);
@@ -926,6 +1078,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CatalogRevisionDto? sse_decode_opt_box_autoadd_catalog_revision_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Cloud115BtMonitorClaimDto?
+  sse_decode_opt_box_autoadd_cloud_115_bt_monitor_claim_dto(
     SseDeserializer deserializer,
   );
 
@@ -1222,6 +1380,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_115_bt_folder_selection(
+    Cloud115BtFolderSelection self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_115_bt_monitor_claim_dto(
+    Cloud115BtMonitorClaimDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cover_profile_dto(
     CoverProfileDto self,
     SseSerializer serializer,
@@ -1318,6 +1488,48 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_115_bt_folder(
+    Cloud115BtFolder self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_folder_selection(
+    Cloud115BtFolderSelection self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_monitor_claim_dto(
+    Cloud115BtMonitorClaimDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_monitor_ledger_entry_dto(
+    Cloud115BtMonitorLedgerEntryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_monitor_observation_dto(
+    Cloud115BtMonitorObservationDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_monitor_summary_dto(
+    Cloud115BtMonitorSummaryDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_monitor_task_dto(
+    Cloud115BtMonitorTaskDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_115_bt_preflight(
     Cloud115BtPreflight self,
     SseSerializer serializer,
@@ -1326,6 +1538,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_115_bt_submit_result(
     Cloud115BtSubmitResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_task_snapshot(
+    Cloud115BtTaskSnapshot self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_115_bt_task_snapshot_item(
+    Cloud115BtTaskSnapshotItem self,
     SseSerializer serializer,
   );
 
@@ -1476,6 +1700,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cloud_115_bt_file(
     List<Cloud115BtFile> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_115_bt_folder(
+    List<Cloud115BtFolder> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_115_bt_monitor_ledger_entry_dto(
+    List<Cloud115BtMonitorLedgerEntryDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_115_bt_monitor_observation_dto(
+    List<Cloud115BtMonitorObservationDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_115_bt_monitor_task_dto(
+    List<Cloud115BtMonitorTaskDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_115_bt_task_snapshot_item(
+    List<Cloud115BtTaskSnapshotItem> self,
     SseSerializer serializer,
   );
 
@@ -1647,6 +1901,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_catalog_revision_dto(
     CatalogRevisionDto? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_115_bt_monitor_claim_dto(
+    Cloud115BtMonitorClaimDto? self,
     SseSerializer serializer,
   );
 

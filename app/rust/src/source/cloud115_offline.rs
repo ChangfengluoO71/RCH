@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine as _;
 use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use md5::{Digest as Md5Digest, Md5};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
@@ -42,6 +42,22 @@ pub struct Cloud115BtFile {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct Cloud115BtFolder {
+    pub id: String,
+    pub name: String,
+}
+
+/// A directory chosen by the user in the read-only folder picker. The backend
+/// rechecks the final folder against its parent before every BT operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cloud115BtFolderSelection {
+    pub id: String,
+    pub parent_id: String,
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Cloud115BtPreflight {
     pub account_id: String,
     pub target_folder_path: String,
@@ -53,6 +69,8 @@ pub struct Cloud115BtPreflight {
     pub files: Vec<Cloud115BtFile>,
     /// `found`, `not_found`, or `unknown`. Unknown blocks any future submit.
     pub duplicate_status: String,
+    /// Safe local explanation when the task list cannot prove absence.
+    pub duplicate_detail: String,
     pub write_gate: String,
 }
 
@@ -82,12 +100,38 @@ pub struct Cloud115BtTaskStatus {
     pub target_folder_id: String,
 }
 
+/// One task row from a complete, bounded account task-list snapshot. The
+/// provider's status code is retained as evidence; undocumented values are not
+/// translated into terminal states.
+#[derive(Debug, Clone, Serialize)]
+pub struct Cloud115BtTaskSnapshotItem {
+    pub info_hash: String,
+    pub status_code: Option<i64>,
+    pub percent_done: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Cloud115BtTaskSnapshot {
+    pub account_id: String,
+    pub state: String,
+    pub complete: bool,
+    pub pages_read: u32,
+    pub error_class: Option<String>,
+    pub message: String,
+    pub tasks: Vec<Cloud115BtTaskSnapshotItem>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Cloud115BtSubmitResult {
     pub state: String,
     pub info_hash: String,
     pub message: String,
     pub target_folder_id: String,
+}
+
+enum BtUploadParseOutcome {
+    Parsed(Vec<Cloud115BtFile>),
+    Blocked(&'static str, &'static str),
 }
 
 #[derive(Debug, Clone)]
@@ -476,14 +520,8 @@ fn build_oss_authorization(
 }
 
 fn ensure_bt_read_status(_client: &Cloud115WebClient, status: u16, operation: &str) -> Result<()> {
-    if status == 405 {
-        bail!("{operation} 返回 WAF 405；已停止该 Cookie 会话后台请求");
-    }
-    if status == 429 {
-        bail!("{operation} 触发 HTTP 429 限流");
-    }
-    if matches!(status, 401 | 403) {
-        bail!("{operation} 的 115 Cookie 会话鉴权失败（HTTP {status}）");
+    if let Some((_, message)) = bt_gate_status_result(status) {
+        bail!("{operation}：{message}");
     }
     if !(200..300).contains(&status) {
         bail!("{operation} 失败（HTTP {status}）");
@@ -491,12 +529,29 @@ fn ensure_bt_read_status(_client: &Cloud115WebClient, status: u16, operation: &s
     Ok(())
 }
 
-fn unknown_task_status(info_hash: &str, target_folder_id: &str) -> Cloud115BtTaskStatus {
+fn bt_gate_status_result(status: u16) -> Option<(&'static str, &'static str)> {
+    match status {
+        405 => Some((
+            "WAF_BLOCKED",
+            "115 返回 WAF 405；已停止该 Cookie 会话后台请求",
+        )),
+        429 => Some(("RATE_LIMITED", "115 返回 HTTP 429 限流；没有重试")),
+        401 => Some(("AUTH_EXPIRED", "115 Cookie 会话鉴权失败（HTTP 401）")),
+        403 => Some(("ACCESS_DENIED", "115 拒绝当前 Cookie 会话访问（HTTP 403）")),
+        _ => None,
+    }
+}
+
+fn unknown_task_status(
+    info_hash: &str,
+    target_folder_id: &str,
+    reason: &str,
+) -> Cloud115BtTaskStatus {
     Cloud115BtTaskStatus {
         state: "unknown".into(),
         info_hash: info_hash.to_ascii_lowercase(),
         status_code: None,
-        status_text: String::new(),
+        status_text: reason.to_string(),
         percent_done: None,
         target_folder_id: target_folder_id.to_string(),
     }
@@ -544,13 +599,29 @@ struct FolderCandidate {
 }
 
 impl Cloud115WebClient {
+    /// Lists one bounded level of folders for the user-invoked destination
+    /// picker. It reuses this reader session and never records open time.
+    pub fn bt_list_child_folders(&self, parent_id: &str) -> Result<Vec<Cloud115BtFolder>> {
+        self.ensure_web_request_allowed()?;
+        let folders = self.read_folder_children(parent_id)?;
+        Ok(folders
+            .into_iter()
+            .map(|folder| Cloud115BtFolder {
+                id: folder.id,
+                name: folder.name,
+            })
+            .collect())
+    }
+
     /// Validates exactly one H0-manifest-relative Torrent and performs bounded,
-    /// read-only account/folder/task checks on the existing Cookie session.
+    /// read-only account/folder checks on the existing Cookie session. Remote
+    /// duplicate handling is left to 115 when the user confirms submission.
     pub fn bt_readonly_preflight(
         &self,
         output_dir: &str,
         relative_file: &str,
         expected_info_hash: &str,
+        target: &Cloud115BtFolderSelection,
     ) -> Result<Cloud115BtPreflight> {
         self.ensure_web_request_allowed()?;
         let parsed = load_checked_torrent(output_dir, relative_file, expected_info_hash)?;
@@ -558,8 +629,9 @@ impl Cloud115WebClient {
         let account_id = super::user_id_from_cookie(&cookie)
             .filter(|id| !id.trim().is_empty())
             .ok_or_else(|| anyhow!("无法从当前 115 Cookie 会话确认账号标识"))?;
-        let (target_folder_id, duplicate_status) =
-            self.resolve_target_and_check_task(&parsed.info_hash)?;
+        let target_folder_id = self.validate_target_folder_selection(target)?;
+        let duplicate_status = "submit_first".to_string();
+        let duplicate_detail = String::new();
         let torrent_name = Path::new(relative_file)
             .file_name()
             .and_then(|name| name.to_str())
@@ -569,7 +641,7 @@ impl Cloud115WebClient {
             std::fs::metadata(canonical_manifest_file(output_dir, relative_file)?)?.len();
         Ok(Cloud115BtPreflight {
             account_id,
-            target_folder_path: "/漫画/EH订阅".to_string(),
+            target_folder_path: target.path.clone(),
             target_folder_id,
             torrent_name,
             torrent_size,
@@ -577,8 +649,58 @@ impl Cloud115WebClient {
             info_hash: parsed.info_hash,
             files: parsed.files,
             duplicate_status,
+            duplicate_detail,
             write_gate: "REQUIRES_EXPLICIT_CONFIRMATION".to_string(),
         })
+    }
+
+    /// Deletes exactly one H0-manifest-relative Torrent only after this same
+    /// Cookie session confirms the account and a positive remote task match.
+    /// The manifest and all other files remain untouched.
+    pub fn bt_delete_local_torrent_if_remote_task_found(
+        &self,
+        output_dir: &str,
+        relative_file: &str,
+        expected_info_hash: &str,
+        expected_account_id: &str,
+        target: &Cloud115BtFolderSelection,
+    ) -> Result<()> {
+        self.ensure_web_request_allowed()?;
+        let first_path = canonical_manifest_file(output_dir, relative_file)?;
+        let first_torrent = load_checked_torrent(output_dir, relative_file, expected_info_hash)?;
+        if !first_torrent
+            .info_hash
+            .eq_ignore_ascii_case(expected_info_hash)
+        {
+            bail!("本地 Torrent 与期望 Infohash 不一致，拒绝删除");
+        }
+
+        let account_id = super::user_id_from_cookie(&self.current_cookie())
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| anyhow!("无法从当前 115 Cookie 会话确认账号标识"))?;
+        if account_id != expected_account_id {
+            bail!("当前 115 账号与批次账本账号不一致，拒绝删除本地 Torrent");
+        }
+
+        let (_, duplicate_status) =
+            self.resolve_target_and_check_task(&first_torrent.info_hash, target)?;
+        if duplicate_status != "found" {
+            bail!("远端未能正向确认相同 Infohash 任务，保留本地 Torrent");
+        }
+
+        // Revalidate the canonical path and content after the remote read. If
+        // a symlink/path was replaced during the request, it cannot redirect
+        // deletion outside the configured EH output directory.
+        let final_path = canonical_manifest_file(output_dir, relative_file)?;
+        if final_path != first_path {
+            bail!("Torrent 路径在远端核对期间发生变化，拒绝删除");
+        }
+        let final_torrent = load_checked_torrent(output_dir, relative_file, expected_info_hash)?;
+        if final_torrent.info_hash != first_torrent.info_hash {
+            bail!("Torrent 内容在远端核对期间发生变化，拒绝删除");
+        }
+        std::fs::remove_file(&final_path).context("删除已确认远端重复项的本地 Torrent 失败")?;
+        Ok(())
     }
 
     /// Uploads exactly one manifest-relative Torrent through the existing
@@ -589,7 +711,7 @@ impl Cloud115WebClient {
         output_dir: &str,
         relative_file: &str,
         expected_info_hash: &str,
-        expected_target_folder_id: &str,
+        target: &Cloud115BtFolderSelection,
     ) -> Result<Cloud115BtUploadParseResult> {
         self.ensure_web_request_allowed()?;
         let path = canonical_manifest_file(output_dir, relative_file)?;
@@ -601,14 +723,7 @@ impl Cloud115WebClient {
         if !parsed.info_hash.eq_ignore_ascii_case(expected_info_hash) {
             bail!("待上传 Torrent 的 infohash 与 H0 清单不一致");
         }
-        let (target_folder_id, duplicate_status) =
-            self.resolve_target_and_check_task(&parsed.info_hash)?;
-        if target_folder_id != expected_target_folder_id {
-            bail!("115 目标目录已变化，请重新执行只读核对");
-        }
-        if duplicate_status != "not_found" {
-            bail!("115 任务状态为 {duplicate_status}，不允许继续上传或提交");
-        }
+        let target_folder_id = self.validate_target_folder_selection(target)?;
 
         let torrent_name = path
             .file_name()
@@ -629,7 +744,7 @@ impl Cloud115WebClient {
         {
             return self.finish_uploaded_torrent(
                 &account_id,
-                &target_folder_id,
+                target,
                 &torrent_name,
                 torrent_size,
                 &parsed,
@@ -649,7 +764,7 @@ impl Cloud115WebClient {
                 "UNKNOWN_UPLOAD_RESULT",
                 "本进程已有一次上传请求结果未确认；本次只允许继续只读核对，不会再次上传。",
                 &account_id,
-                &target_folder_id,
+                target,
                 &torrent_name,
                 torrent_size,
                 &parsed,
@@ -668,6 +783,20 @@ impl Cloud115WebClient {
             true,
             &[],
         )?;
+        if let Some((state, message)) = bt_gate_status_result(status) {
+            return Ok(self.upload_result(
+                state,
+                message,
+                &account_id,
+                target,
+                &torrent_name,
+                torrent_size,
+                &parsed,
+                None,
+                false,
+                Vec::new(),
+            ));
+        }
         ensure_bt_read_status(self, status, "115 上传身份查询")?;
         let upload_info: serde_json::Value =
             serde_json::from_slice(&body).context("解析 115 上传身份响应失败")?;
@@ -689,7 +818,7 @@ impl Cloud115WebClient {
                         "UNKNOWN_UPLOAD_RESULT",
                         "本进程已有一次上传请求结果未确认；本次只允许继续只读核对，不会再次上传。",
                         &account_id,
-                        &target_folder_id,
+                        target,
                         &torrent_name,
                         torrent_size,
                         &parsed,
@@ -732,7 +861,7 @@ impl Cloud115WebClient {
                         "UNKNOWN_UPLOAD_RESULT",
                         "上传初始化请求已发出但响应未确认；请查询目标目录，不要再次上传。",
                         &account_id,
-                        &target_folder_id,
+                        target,
                         &torrent_name,
                         torrent_size,
                         &parsed,
@@ -742,11 +871,19 @@ impl Cloud115WebClient {
                     ));
                 }
             };
-            if status == 405 {
-                bail!("115 上传初始化返回 WAF 405；已停止 Cookie 会话后台请求");
-            }
-            if status == 429 {
-                bail!("115 上传初始化触发 HTTP 429 限流");
+            if let Some((state, message)) = bt_gate_status_result(status) {
+                return Ok(self.upload_result(
+                    state,
+                    message,
+                    &account_id,
+                    target,
+                    &torrent_name,
+                    torrent_size,
+                    &parsed,
+                    None,
+                    false,
+                    Vec::new(),
+                ));
             }
             if !(200..300).contains(&status) {
                 if status >= 500 || (300..400).contains(&status) {
@@ -754,7 +891,7 @@ impl Cloud115WebClient {
                         "UNKNOWN_UPLOAD_RESULT",
                         format!("上传初始化响应状态为 HTTP {status}；请先查询目标目录，不要重发。"),
                         &account_id,
-                        &target_folder_id,
+                        target,
                         &torrent_name,
                         torrent_size,
                         &parsed,
@@ -772,7 +909,7 @@ impl Cloud115WebClient {
                         "UNKNOWN_UPLOAD_RESULT",
                         "上传初始化已返回但响应解密或解析失败；请先查询目标目录，不要重发。",
                         &account_id,
-                        &target_folder_id,
+                        target,
                         &torrent_name,
                         torrent_size,
                         &parsed,
@@ -801,7 +938,7 @@ impl Cloud115WebClient {
         if init_response.status == 2 {
             return self.finish_uploaded_torrent(
                 &account_id,
-                &target_folder_id,
+                target,
                 &torrent_name,
                 torrent_size,
                 &parsed,
@@ -871,7 +1008,7 @@ impl Cloud115WebClient {
                     "UNKNOWN_UPLOAD_RESULT",
                     "Torrent 上传请求已发出但 OSS 响应未确认；请查询目标目录，不要再次上传。",
                     &account_id,
-                    &target_folder_id,
+                    target,
                     &torrent_name,
                     torrent_size,
                     &parsed,
@@ -887,7 +1024,7 @@ impl Cloud115WebClient {
                     "UNKNOWN_UPLOAD_RESULT",
                     format!("OSS 上传响应状态为 HTTP {oss_status}；请查询目标目录，不要重发。"),
                     &account_id,
-                    &target_folder_id,
+                    target,
                     &torrent_name,
                     torrent_size,
                     &parsed,
@@ -901,7 +1038,7 @@ impl Cloud115WebClient {
 
         match self.finish_uploaded_torrent(
             &account_id,
-            &target_folder_id,
+            target,
             &torrent_name,
             torrent_size,
             &parsed,
@@ -913,7 +1050,7 @@ impl Cloud115WebClient {
                 "UPLOADED_PARSE_PENDING",
                 "Torrent 已上传；115 解析结果暂不可用。可以重新查询解析结果，不会重传。",
                 &account_id,
-                &target_folder_id,
+                target,
                 &torrent_name,
                 torrent_size,
                 &parsed,
@@ -931,7 +1068,7 @@ impl Cloud115WebClient {
         output_dir: &str,
         relative_file: &str,
         expected_info_hash: &str,
-        expected_target_folder_id: &str,
+        target: &Cloud115BtFolderSelection,
         pick_code: Option<String>,
     ) -> Result<Cloud115BtUploadParseResult> {
         self.ensure_web_request_allowed()?;
@@ -940,10 +1077,7 @@ impl Cloud115WebClient {
         let account_id = super::user_id_from_cookie(&cookie)
             .filter(|id| !id.trim().is_empty())
             .ok_or_else(|| anyhow!("当前 115 Cookie 会话缺少账号标识"))?;
-        let (target_folder_id, _) = self.resolve_target_and_check_task(&parsed.info_hash)?;
-        if target_folder_id != expected_target_folder_id {
-            bail!("115 目标目录已变化，请重新执行只读核对");
-        }
+        let target_folder_id = self.validate_target_folder_selection(target)?;
         let torrent_name = Path::new(relative_file)
             .file_name()
             .and_then(|name| name.to_str())
@@ -958,7 +1092,7 @@ impl Cloud115WebClient {
         };
         self.finish_uploaded_torrent(
             &account_id,
-            &target_folder_id,
+            target,
             &torrent_name,
             size,
             &parsed,
@@ -975,29 +1109,13 @@ impl Cloud115WebClient {
         output_dir: &str,
         relative_file: &str,
         expected_info_hash: &str,
-        expected_target_folder_id: &str,
+        target: &Cloud115BtFolderSelection,
         wanted_indices: &[u32],
     ) -> Result<Cloud115BtSubmitResult> {
         self.ensure_web_request_allowed()?;
         let parsed = load_checked_torrent(output_dir, relative_file, expected_info_hash)?;
         let wanted = validate_wanted_indices(wanted_indices, parsed.files.len())?;
-        let (target_folder_id, duplicate_status) =
-            self.resolve_target_and_check_task(&parsed.info_hash)?;
-        if target_folder_id != expected_target_folder_id {
-            bail!("115 目标目录已变化，请重新执行只读核对");
-        }
-        match duplicate_status.as_str() {
-            "found" => {
-                return Ok(Cloud115BtSubmitResult {
-                    state: "ALREADY_PRESENT".into(),
-                    info_hash: parsed.info_hash,
-                    message: "远端已存在相同 Infohash 任务；没有发送 BT 写请求。".into(),
-                    target_folder_id,
-                });
-            }
-            "not_found" => {}
-            _ => bail!("115 任务去重结果未知，已阻止提交"),
-        }
+        let target_folder_id = self.validate_target_folder_selection(target)?;
 
         let cookie = self.current_cookie();
         let account_id = super::user_id_from_cookie(&cookie)
@@ -1013,7 +1131,7 @@ impl Cloud115WebClient {
             return Ok(Cloud115BtSubmitResult {
                 state: "UNKNOWN_REMOTE_STATE".into(),
                 info_hash: parsed.info_hash,
-                message: "本进程已有一次 BT 提交结果未确认；已完成只读去重核对，本次不会再次提交。"
+                message: "本进程此前的 BT 提交结果仍未确认；为避免重复写入，本次不会再次提交。"
                     .into(),
                 target_folder_id,
             });
@@ -1053,8 +1171,29 @@ impl Cloud115WebClient {
                 "RATE_LIMITED".into(),
                 "115 返回 HTTP 429；没有重试。".into(),
             ),
-            Ok((status, _)) if (200..300).contains(&status) => {
-                self.reconcile_bt_submit(&parsed.info_hash, &target_folder_id)
+            Ok((401, _)) => (
+                "AUTH_EXPIRED".into(),
+                "115 Cookie 会话鉴权失败（HTTP 401）；已停止本批次写入。".into(),
+            ),
+            Ok((403, _)) => (
+                "ACCESS_DENIED".into(),
+                "115 拒绝当前 Cookie 会话访问（HTTP 403）；已停止本批次写入。".into(),
+            ),
+            Ok((status, response_body)) if (200..300).contains(&status) => {
+                match parse_ssp_response(&response_body)
+                    .ok()
+                    .and_then(|response| response.get("state").and_then(serde_json::Value::as_bool))
+                {
+                    Some(true) => (
+                        "ACCEPTED".into(),
+                        "115 已接受 BT 提交请求；云端下载状态尚未确认。".into(),
+                    ),
+                    Some(false) => (
+                        "REJECTED".into(),
+                        "115 明确拒绝 BT 提交；本次不会重试。".into(),
+                    ),
+                    None => self.reconcile_bt_submit(&parsed.info_hash, &target_folder_id),
+                }
             }
             Ok((status, _)) if status >= 500 || (300..400).contains(&status) => {
                 self.reconcile_bt_submit(&parsed.info_hash, &target_folder_id)
@@ -1087,14 +1226,120 @@ impl Cloud115WebClient {
     pub fn bt_task_status(
         &self,
         info_hash: &str,
-        expected_target_folder_id: &str,
+        target: &Cloud115BtFolderSelection,
     ) -> Result<Cloud115BtTaskStatus> {
         self.ensure_web_request_allowed()?;
-        let (target_folder_id, _) = self.resolve_target_and_check_task(info_hash)?;
-        if target_folder_id != expected_target_folder_id {
-            bail!("115 目标目录已变化，请重新执行只读核对");
-        }
+        let target_folder_id = self.validate_target_folder_selection(target)?;
         self.read_task_status(info_hash, &target_folder_id)
+    }
+
+    /// Reads one stable, bounded task-list snapshot through the current Cookie
+    /// session and request/WAF gate. No write endpoint is reachable here.
+    pub fn bt_task_snapshot(&self) -> Result<Cloud115BtTaskSnapshot> {
+        self.ensure_web_request_allowed()?;
+        let account_id = super::user_id_from_cookie(&self.current_cookie())
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| anyhow!("无法从当前 115 Cookie 会话确认账号标识"))?;
+        let mut expected_count = None;
+        let mut expected_page_count = None;
+        let mut tasks = BTreeMap::<String, Cloud115BtTaskSnapshotItem>::new();
+        let mut pages_read = 0;
+
+        for page_number in 1..=BT_TASK_PAGE_BUDGET {
+            let query = vec![
+                ("ac", "task_lists".to_string()),
+                ("page", page_number.to_string()),
+                ("page_size", BT_TASK_PAGE_SIZE.to_string()),
+            ];
+            let (status, body) = self.bt_request(
+                "GET",
+                &self.bt_endpoints.task_list,
+                &query,
+                None,
+                "",
+                true,
+                &[],
+            )?;
+            pages_read += 1;
+            if let Some((state, message)) = bt_gate_status_result(status) {
+                return Ok(Cloud115BtTaskSnapshot {
+                    account_id,
+                    state: state.to_string(),
+                    complete: false,
+                    pages_read,
+                    error_class: Some(state.to_ascii_lowercase()),
+                    message: message.to_string(),
+                    tasks: tasks.into_values().collect(),
+                });
+            }
+            ensure_bt_read_status(self, status, "115 离线任务列表")?;
+            let response: serde_json::Value =
+                serde_json::from_slice(&body).context("解析 115 离线任务列表失败")?;
+            let page = match parse_task_list_page(&response, "") {
+                Ok(page) => page,
+                Err(error) => {
+                    return Ok(Cloud115BtTaskSnapshot {
+                        account_id,
+                        state: "unknown".into(),
+                        complete: false,
+                        pages_read,
+                        error_class: Some("malformed_response".into()),
+                        message: error.to_string().chars().take(180).collect(),
+                        tasks: tasks.into_values().collect(),
+                    });
+                }
+            };
+            if let (Some(count), Some(page_count)) = (expected_count, expected_page_count) {
+                if count != page.count || page_count != page.page_count {
+                    return Ok(Cloud115BtTaskSnapshot {
+                        account_id,
+                        state: "partial".into(),
+                        complete: false,
+                        pages_read,
+                        error_class: Some("pagination_unstable".into()),
+                        message: "任务列表翻页期间总数或总页数发生变化".into(),
+                        tasks: tasks.into_values().collect(),
+                    });
+                }
+            } else {
+                expected_count = Some(page.count);
+                expected_page_count = Some(page.page_count);
+            }
+            for task in page.tasks {
+                tasks.entry(task.info_hash.clone()).or_insert(task);
+            }
+            if page.page_count > BT_TASK_PAGE_BUDGET {
+                return Ok(Cloud115BtTaskSnapshot {
+                    account_id,
+                    state: "partial".into(),
+                    complete: false,
+                    pages_read,
+                    error_class: Some("query_budget_exhausted".into()),
+                    message: "任务列表超过 300 项安全查询上限，未读取页面不作缺失判断".into(),
+                    tasks: tasks.into_values().collect(),
+                });
+            }
+            if page.page_count == 0 || page_number >= page.page_count {
+                return Ok(Cloud115BtTaskSnapshot {
+                    account_id,
+                    state: "ok".into(),
+                    complete: true,
+                    pages_read,
+                    error_class: None,
+                    message: String::new(),
+                    tasks: tasks.into_values().collect(),
+                });
+            }
+        }
+        Ok(Cloud115BtTaskSnapshot {
+            account_id,
+            state: "partial".into(),
+            complete: false,
+            pages_read,
+            error_class: Some("query_budget_exhausted".into()),
+            message: "安全查询预算内未读完任务列表".into(),
+            tasks: tasks.into_values().collect(),
+        })
     }
 
     fn bt_request(
@@ -1165,13 +1410,27 @@ impl Cloud115WebClient {
                 true,
                 &[],
             )?;
+            if let Some((state, message)) = bt_gate_status_result(status) {
+                return Ok(Cloud115BtTaskStatus {
+                    state: state.to_string(),
+                    info_hash: info_hash.to_ascii_lowercase(),
+                    status_code: Some(i64::from(status)),
+                    status_text: message.to_string(),
+                    percent_done: None,
+                    target_folder_id: target_folder_id.to_string(),
+                });
+            }
             ensure_bt_read_status(self, status, "115 离线任务列表")?;
             let response: serde_json::Value =
                 serde_json::from_slice(&body).context("解析 115 离线任务列表失败")?;
             let page = parse_task_list_page(&response, info_hash)?;
             if let (Some(count), Some(page_count)) = (expected_count, expected_page_count) {
                 if count != page.count || page_count != page.page_count {
-                    return Ok(unknown_task_status(info_hash, target_folder_id));
+                    return Ok(unknown_task_status(
+                        info_hash,
+                        target_folder_id,
+                        "任务列表翻页期间总数或总页数发生变化，无法证明不存在同 Infohash 任务。",
+                    ));
                 }
             } else {
                 expected_count = Some(page.count);
@@ -1191,28 +1450,55 @@ impl Cloud115WebClient {
                 });
             }
             if page.page_count > BT_TASK_PAGE_BUDGET {
-                return Ok(unknown_task_status(info_hash, target_folder_id));
+                return Ok(unknown_task_status(
+                    info_hash,
+                    target_folder_id,
+                    "任务列表超过安全查询上限（最多 300 项），未读取的页面仍可能有同哈希任务。",
+                ));
             }
             if page_number >= page.page_count {
                 return Ok(not_found_task_status(info_hash, target_folder_id));
             }
         }
-        Ok(unknown_task_status(info_hash, target_folder_id))
+        Ok(unknown_task_status(
+            info_hash,
+            target_folder_id,
+            "在安全查询预算内未能读完整个任务列表，无法证明不存在同 Infohash 任务。",
+        ))
     }
 
     fn reconcile_bt_submit(&self, info_hash: &str, target_folder_id: &str) -> (String, String) {
         match self.read_task_status(info_hash, target_folder_id) {
             Ok(status) if status.state == "found" => (
-                "ACCEPTED".into(),
-                "已在远端任务列表核实该 Infohash；未发送第二次提交。".into(),
+                "REMOTE_TASK_FOUND".into(),
+                "只读核实到远端同 Infohash 任务；未发送第二次提交。".into(),
             ),
             Ok(status) if status.state == "not_found" => (
                 "UNKNOWN_REMOTE_STATE".into(),
                 "远端暂未找到任务；提交结果仍未确认，请稍后只读查询，不要重新提交。".into(),
             ),
-            _ => (
+            Ok(status)
+                if matches!(
+                    status.state.as_str(),
+                    "WAF_BLOCKED" | "RATE_LIMITED" | "AUTH_EXPIRED" | "ACCESS_DENIED"
+                ) =>
+            {
+                (status.state, status.status_text)
+            }
+            Ok(status) => (
                 "UNKNOWN_REMOTE_STATE".into(),
-                "提交结果尚未确认；系统将只读核对远端，禁止再次提交。".into(),
+                if status.status_text.trim().is_empty() {
+                    "提交结果尚未确认；任务列表无法给出确定结论，禁止再次提交。".into()
+                } else {
+                    format!(
+                        "提交结果尚未确认：{}；禁止再次提交。",
+                        status.status_text.trim()
+                    )
+                },
+            ),
+            Err(_) => (
+                "UNKNOWN_REMOTE_STATE".into(),
+                "提交结果尚未确认；只读任务查询失败，禁止再次提交。".into(),
             ),
         }
     }
@@ -1220,14 +1506,30 @@ impl Cloud115WebClient {
     fn finish_uploaded_torrent(
         &self,
         account_id: &str,
-        target_folder_id: &str,
+        target: &Cloud115BtFolderSelection,
         torrent_name: &str,
         torrent_size: u64,
         parsed: &ParsedTorrent,
         pick_code: &str,
         upload_reused: bool,
     ) -> Result<Cloud115BtUploadParseResult> {
-        let files = self.parse_uploaded_torrent(parsed)?;
+        let files = match self.parse_uploaded_torrent(parsed)? {
+            BtUploadParseOutcome::Parsed(files) => files,
+            BtUploadParseOutcome::Blocked(state, message) => {
+                return Ok(self.upload_result(
+                    state,
+                    message,
+                    account_id,
+                    target,
+                    torrent_name,
+                    torrent_size,
+                    parsed,
+                    Some(pick_code.to_string()),
+                    upload_reused,
+                    Vec::new(),
+                ));
+            }
+        };
         Ok(self.upload_result(
             "PARSED",
             if upload_reused {
@@ -1236,7 +1538,7 @@ impl Cloud115WebClient {
                 "Torrent 上传完成，远端解析与本地 infohash/文件清单一致。"
             },
             account_id,
-            target_folder_id,
+            target,
             torrent_name,
             torrent_size,
             parsed,
@@ -1246,7 +1548,7 @@ impl Cloud115WebClient {
         ))
     }
 
-    fn parse_uploaded_torrent(&self, parsed: &ParsedTorrent) -> Result<Vec<Cloud115BtFile>> {
+    fn parse_uploaded_torrent(&self, parsed: &ParsedTorrent) -> Result<BtUploadParseOutcome> {
         let query = vec![
             ("ac", "torrent".to_string()),
             ("sha1", parsed.torrent_sha1.clone()),
@@ -1260,10 +1562,14 @@ impl Cloud115WebClient {
             true,
             &[],
         )?;
+        if let Some((state, message)) = bt_gate_status_result(status) {
+            return Ok(BtUploadParseOutcome::Blocked(state, message));
+        }
         ensure_bt_read_status(self, status, "115 Torrent 解析")?;
         let response: serde_json::Value =
             serde_json::from_slice(&body).context("解析 115 Torrent 响应失败")?;
         parse_remote_torrent_parse(&response, &parsed.info_hash, &parsed.files)
+            .map(BtUploadParseOutcome::Parsed)
     }
 
     fn upload_result(
@@ -1271,7 +1577,7 @@ impl Cloud115WebClient {
         state: &str,
         message: impl Into<String>,
         account_id: &str,
-        target_folder_id: &str,
+        target: &Cloud115BtFolderSelection,
         torrent_name: &str,
         torrent_size: u64,
         parsed: &ParsedTorrent,
@@ -1283,8 +1589,8 @@ impl Cloud115WebClient {
             state: state.to_string(),
             message: message.into(),
             account_id: account_id.to_string(),
-            target_folder_path: "/漫画/EH订阅".to_string(),
-            target_folder_id: target_folder_id.to_string(),
+            target_folder_path: target.path.clone(),
+            target_folder_id: target.id.clone(),
             torrent_name: torrent_name.to_string(),
             torrent_size,
             torrent_sha1: parsed.torrent_sha1.clone(),
@@ -1362,23 +1668,59 @@ impl Cloud115WebClient {
         Ok(matches.into_iter().next())
     }
 
-    fn resolve_target_and_check_task(&self, info_hash: &str) -> Result<(String, String)> {
-        let mut parent_id = "0".to_string();
-        for component in ["漫画", "EH订阅"] {
-            let candidates = self.read_folder_candidates(&parent_id, component)?;
-            parent_id = select_exact_folder(&candidates, component)?.id;
-        }
-
+    fn resolve_target_and_check_task(
+        &self,
+        info_hash: &str,
+        target: &Cloud115BtFolderSelection,
+    ) -> Result<(String, String)> {
+        let target_folder_id = self.validate_target_folder_selection(target)?;
         let duplicate_status = self.read_task_by_info_hash(info_hash)?;
-        Ok((parent_id, duplicate_status))
+        Ok((target_folder_id, duplicate_status))
     }
 
-    fn read_folder_candidates(
+    fn validate_target_folder_selection(
         &self,
-        parent_id: &str,
-        expected_name: &str,
-    ) -> Result<Vec<FolderCandidate>> {
-        let mut matches = Vec::new();
+        target: &Cloud115BtFolderSelection,
+    ) -> Result<String> {
+        if target.id == "0"
+            && target.parent_id.is_empty()
+            && target.name.is_empty()
+            && target.path == "/"
+        {
+            return Ok("0".to_string());
+        }
+        if target.id.is_empty()
+            || !target.id.bytes().all(|byte| byte.is_ascii_digit())
+            || target.id == "0"
+            || target.parent_id.is_empty()
+            || !target.parent_id.bytes().all(|byte| byte.is_ascii_digit())
+            || target.name.trim().is_empty()
+            || !target.path.starts_with('/')
+            || target.path.len() < 2
+            || target.path.ends_with('/')
+            || target.path.rsplit('/').next() != Some(target.name.as_str())
+            || target
+                .path
+                .split('/')
+                .skip(1)
+                .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            bail!("所选 115 目录信息无效，请重新浏览并选择目录");
+        }
+
+        let candidates = self.read_folder_children(&target.parent_id)?;
+        let selected = select_exact_folder(&candidates, &target.name)?;
+        if selected.id != target.id {
+            bail!("所选 115 目录已变化，请重新浏览并选择目录");
+        }
+        Ok(selected.id)
+    }
+
+    fn read_folder_children(&self, parent_id: &str) -> Result<Vec<FolderCandidate>> {
+        if parent_id.is_empty() || !parent_id.bytes().all(|byte| byte.is_ascii_digit()) {
+            bail!("115 目录浏览的父目录 ID 无效");
+        }
+        let mut folders = Vec::new();
         let mut offset = 0i64;
         for _ in 0..BT_FOLDER_PAGE_BUDGET {
             let query = vec![
@@ -1414,10 +1756,17 @@ impl Cloud115WebClient {
                     page.errno.max(page.code)
                 );
             }
+            if page.count < 0 {
+                bail!("115 文件夹列表返回无效的目录数量");
+            }
             let page_len = page.data.len() as i64;
-            matches.extend(page.data.into_iter().filter_map(|item| {
+            folders.extend(page.data.into_iter().filter_map(|item| {
                 let is_dir = item.fid.is_empty();
-                (is_dir && item.name == expected_name).then_some(FolderCandidate {
+                (is_dir
+                    && !item.name.trim().is_empty()
+                    && !item.cid.is_empty()
+                    && item.cid.bytes().all(|byte| byte.is_ascii_digit()))
+                .then_some(FolderCandidate {
                     name: item.name,
                     id: item.cid,
                     is_dir,
@@ -1431,7 +1780,8 @@ impl Cloud115WebClient {
                 bail!("115 目录项超过有界查询预算，无法安全确认目标目录唯一性");
             }
         }
-        Ok(matches)
+        folders.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+        Ok(folders)
     }
 
     fn read_task_by_info_hash(&self, info_hash: &str) -> Result<String> {
@@ -1446,6 +1796,7 @@ struct ParsedTaskPage {
     matched_status_code: Option<i64>,
     matched_status_text: String,
     matched_percent_done: Option<f64>,
+    tasks: Vec<Cloud115BtTaskSnapshotItem>,
 }
 
 fn parse_task_list_page(
@@ -1474,16 +1825,27 @@ fn parse_task_list_page(
     let mut matched_status_code = None;
     let mut matched_status_text = String::new();
     let mut matched_percent_done = None;
+    let mut parsed_tasks = Vec::with_capacity(tasks.len());
     for task in tasks {
         let Some(task_hash) = task.get("info_hash").and_then(serde_json::Value::as_str) else {
             bail!("115 离线任务项缺少 info_hash，不能安全完成去重");
         };
-        if task_hash.eq_ignore_ascii_case(expected_info_hash) {
+        let status_code = task
+            .get("status")
+            .or_else(|| task.get("status_code"))
+            .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()));
+        let percent_done = task
+            .get("percent_done")
+            .or_else(|| task.get("progress"))
+            .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()));
+        parsed_tasks.push(Cloud115BtTaskSnapshotItem {
+            info_hash: task_hash.to_ascii_lowercase(),
+            status_code,
+            percent_done,
+        });
+        if !expected_info_hash.is_empty() && task_hash.eq_ignore_ascii_case(expected_info_hash) {
             matched_info_hash = true;
-            matched_status_code = task
-                .get("status")
-                .or_else(|| task.get("status_code"))
-                .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()));
+            matched_status_code = status_code;
             matched_status_text = task
                 .get("status_text")
                 .or_else(|| task.get("status_name"))
@@ -1497,10 +1859,7 @@ fn parse_task_list_page(
                 .chars()
                 .take(256)
                 .collect();
-            matched_percent_done = task
-                .get("percent_done")
-                .or_else(|| task.get("progress"))
-                .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()));
+            matched_percent_done = percent_done;
         }
     }
     Ok(ParsedTaskPage {
@@ -1510,6 +1869,7 @@ fn parse_task_list_page(
         matched_status_code,
         matched_status_text,
         matched_percent_done,
+        tasks: parsed_tasks,
     })
 }
 
@@ -2112,6 +2472,7 @@ mod tests {
     const MOCK_COOKIE: &str = "UID=12345_mock; SEID=unchanged";
     const MOCK_INFO_HASH: &str = "11d1d5c5e4ec0a7eae563fe0a6c3673283bac3ac";
     const MOCK_TORRENT: &[u8] = b"d4:infod6:lengthi3e4:name4:testee";
+    static TEST_TORRENT_DIR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
     #[derive(Clone, Debug)]
     struct CapturedRequest {
@@ -2124,9 +2485,14 @@ mod tests {
     #[derive(Clone, Copy, Default)]
     struct MockBehavior {
         drop_upload_init_response: bool,
+        upload_init_status: Option<u16>,
+        task_list_status: Option<u16>,
+        submit_status: Option<u16>,
         drop_submit_response: bool,
         make_task_visible_after_submit: bool,
         first_folder_request_is_waf: bool,
+        task_count_override: Option<u64>,
+        task_page_count_override: Option<u64>,
     }
 
     struct MockState {
@@ -2166,6 +2532,9 @@ mod tests {
                 while !server_stop.load(Ordering::SeqCst) {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
+                            stream.set_nonblocking(false).expect(
+                                "accepted mock streams must support bounded blocking reads",
+                            );
                             let Some(request) = read_mock_request(&mut stream) else {
                                 continue;
                             };
@@ -2217,16 +2586,19 @@ mod tests {
 
     impl TestTorrentDir {
         fn new() -> Self {
-            let unique = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let root = std::env::temp_dir().join(format!(
-                "rch_cookie_bt_http_mock_{}_{}",
-                std::process::id(),
-                unique
-            ));
-            std::fs::create_dir_all(&root).unwrap();
+            let root = loop {
+                let sequence = TEST_TORRENT_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+                let candidate = std::env::temp_dir().join(format!(
+                    "rch_cookie_bt_http_mock_{}_{}",
+                    std::process::id(),
+                    sequence
+                ));
+                match std::fs::create_dir(&candidate) {
+                    Ok(()) => break candidate,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("create isolated mock Torrent directory: {error}"),
+                }
+            };
             std::fs::write(root.join("one.torrent"), MOCK_TORRENT).unwrap();
             Self(root)
         }
@@ -2254,6 +2626,15 @@ mod tests {
         client.bt_endpoints = server.endpoints.clone();
         client.gate = crate::source::RateGate::fixed_interval("115web.test", 0.0);
         client
+    }
+
+    fn test_target() -> Cloud115BtFolderSelection {
+        Cloud115BtFolderSelection {
+            id: "20".to_string(),
+            parent_id: "10".to_string(),
+            name: "EH订阅".to_string(),
+            path: "/漫画/EH订阅".to_string(),
+        }
     }
 
     fn read_mock_request(stream: &mut TcpStream) -> Option<CapturedRequest> {
@@ -2302,6 +2683,14 @@ mod tests {
         let url = reqwest::Url::parse(&format!("http://localhost{}", request.target)).ok()?;
         let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
         let path = url.path();
+        if request.method == "GET"
+            && path == "/web/"
+            && query.get("ac").map(String::as_str) == Some("task_lists")
+        {
+            if let Some(status) = state.behavior.task_list_status {
+                return Some((status, b"mock task-list status".to_vec()));
+            }
+        }
         if state.behavior.first_folder_request_is_waf
             && path == "/files"
             && state.requests.lock().unwrap().is_empty()
@@ -2311,8 +2700,12 @@ mod tests {
         let json = match (request.method.as_str(), path) {
             ("GET", "/files") if path == "/files" => match query.get("cid").map(String::as_str) {
                 Some("0") => serde_json::json!({
-                    "state": true, "code": 0, "errno": 0, "count": 1,
-                    "data": [{"fid":"", "cid":"10", "n":"漫画", "s":"0", "t":"", "pc":""}]
+                    "state": true, "code": 0, "errno": 0, "count": 3,
+                    "data": [
+                        {"fid":"", "cid":"10", "n":"漫画", "s":"0", "t":"", "pc":""},
+                        {"fid":"", "cid":"30", "n":"自定义目录", "s":"0", "t":"", "pc":""},
+                        {"fid":"file-1", "cid":"", "n":"ignore.cbz", "s":"123", "t":"", "pc":"pick-file"}
+                    ]
                 }),
                 Some("10") => serde_json::json!({
                     "state": true, "code": 0, "errno": 0, "count": 1,
@@ -2321,17 +2714,39 @@ mod tests {
                 Some("20") => serde_json::json!({
                     "state": true, "code": 0, "errno": 0, "count": 0, "data": []
                 }),
+                Some("30") => serde_json::json!({
+                    "state": true, "code": 0, "errno": 0, "count": 0, "data": []
+                }),
                 _ => return Some((400, b"unexpected folder id".to_vec())),
             },
             ("GET", "/web/") if query.get("ac").map(String::as_str) == Some("task_lists") => {
-                if state.task_visible.load(Ordering::SeqCst) {
-                    serde_json::json!({
-                        "state": true, "count": 1, "page_count": 1,
-                        "tasks": [{"info_hash": MOCK_INFO_HASH, "status": 12, "status_text": "downloading", "progress": 0.25}]
-                    })
+                let visible = state.task_visible.load(Ordering::SeqCst);
+                let count =
+                    state
+                        .behavior
+                        .task_count_override
+                        .unwrap_or(if visible { 1 } else { 0 });
+                let page_count = state
+                    .behavior
+                    .task_page_count_override
+                    .unwrap_or(if visible {
+                        1
+                    } else if count == 0 {
+                        0
+                    } else {
+                        1
+                    });
+                let tasks = if visible {
+                    serde_json::json!([{"info_hash": MOCK_INFO_HASH, "status": 12, "status_text": "downloading", "progress": 0.25}])
                 } else {
-                    serde_json::json!({"state": true, "count": 0, "page_count": 0, "tasks": []})
-                }
+                    serde_json::json!([])
+                };
+                serde_json::json!({
+                    "state": true,
+                    "count": count,
+                    "page_count": page_count,
+                    "tasks": tasks
+                })
             }
             ("GET", "/files/uploadinfo") => serde_json::json!({
                 "state": true,
@@ -2339,6 +2754,9 @@ mod tests {
             }),
             ("POST", "/4.0/initupload.php") => {
                 state.upload_init_count.fetch_add(1, Ordering::SeqCst);
+                if let Some(status) = state.behavior.upload_init_status {
+                    return Some((status, b"mock upload init status".to_vec()));
+                }
                 if state.behavior.drop_upload_init_response {
                     return None;
                 }
@@ -2382,6 +2800,9 @@ mod tests {
             }
             ("POST", "/lixianssp/") => {
                 state.submit_count.fetch_add(1, Ordering::SeqCst);
+                if let Some(status) = state.behavior.submit_status {
+                    return Some((status, b"mock submit status".to_vec()));
+                }
                 if state.behavior.make_task_visible_after_submit {
                     state.task_visible.store(true, Ordering::SeqCst);
                 }
@@ -2813,11 +3234,14 @@ mod tests {
             make_task_visible_after_submit: true,
             ..MockBehavior::default()
         });
+        // A matching task in the task list must not block an explicitly
+        // confirmed submission. 115 owns duplicate handling at submit time.
+        server.state.task_visible.store(true, Ordering::SeqCst);
         let dir = TestTorrentDir::new();
         let client = test_bt_client(&server);
 
         let uploaded = client
-            .bt_upload_and_parse(&dir.path(), "one.torrent", MOCK_INFO_HASH, "20")
+            .bt_upload_and_parse(&dir.path(), "one.torrent", MOCK_INFO_HASH, &test_target())
             .unwrap();
         assert_eq!(uploaded.state, "PARSED");
         assert_eq!(uploaded.target_folder_id, "20");
@@ -2827,15 +3251,34 @@ mod tests {
         assert!(!uploaded.upload_reused);
 
         let submitted = client
-            .bt_submit_once(&dir.path(), "one.torrent", MOCK_INFO_HASH, "20", &[0])
+            .bt_submit_once(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                &test_target(),
+                &[0],
+            )
             .unwrap();
         assert_eq!(submitted.state, "ACCEPTED");
         let repeated = client
-            .bt_submit_once(&dir.path(), "one.torrent", MOCK_INFO_HASH, "20", &[0])
+            .bt_submit_once(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                &test_target(),
+                &[0],
+            )
             .unwrap();
-        assert_eq!(repeated.state, "ALREADY_PRESENT");
+        assert_eq!(repeated.state, "UNKNOWN_REMOTE_STATE");
 
-        let status = client.bt_task_status(MOCK_INFO_HASH, "20").unwrap();
+        let requests_before_status = server.requests();
+        assert!(requests_before_status
+            .iter()
+            .all(|request| { !request.target.contains("ac=task_lists") }));
+
+        let status = client
+            .bt_task_status(MOCK_INFO_HASH, &test_target())
+            .unwrap();
         assert_eq!(status.state, "found");
         assert_eq!(status.status_text, "downloading");
         assert_eq!(status.percent_done, Some(0.25));
@@ -2845,6 +3288,14 @@ mod tests {
         assert_eq!(server.state.upload_init_count.load(Ordering::SeqCst), 1);
         assert_eq!(server.state.upload_object_count.load(Ordering::SeqCst), 1);
         assert_eq!(server.state.submit_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.target.contains("ac=task_lists"))
+                .count(),
+            1,
+            "only the explicit post-submit status query may scan tasks"
+        );
         assert_eq!(
             requests
                 .iter()
@@ -2918,6 +3369,113 @@ mod tests {
     }
 
     #[test]
+    fn bt_task_snapshot_reads_all_tasks_in_one_bounded_read_only_cycle() {
+        let server = MockHttpServer::start(MockBehavior::default());
+        server.state.task_visible.store(true, Ordering::SeqCst);
+        let client = test_bt_client(&server);
+        let snapshot = client.bt_task_snapshot().unwrap();
+        assert_eq!(snapshot.account_id, "12345");
+        assert_eq!(snapshot.state, "ok");
+        assert!(snapshot.complete);
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].info_hash, MOCK_INFO_HASH);
+        assert_eq!(snapshot.tasks[0].status_code, Some(12));
+        assert_eq!(snapshot.tasks[0].percent_done, Some(0.25));
+        let requests = server.requests();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.target.contains("ac=task_lists"))
+                .count(),
+            1
+        );
+        assert_eq!(server.state.upload_init_count.load(Ordering::SeqCst), 0);
+        assert_eq!(server.state.submit_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn bt_task_snapshot_marks_over_budget_listing_partial_without_absence_claims() {
+        let server = MockHttpServer::start(MockBehavior {
+            task_count_override: Some(301),
+            task_page_count_override: Some(11),
+            ..MockBehavior::default()
+        });
+        server.state.task_visible.store(true, Ordering::SeqCst);
+        let client = test_bt_client(&server);
+        let snapshot = client.bt_task_snapshot().unwrap();
+        assert_eq!(snapshot.state, "partial");
+        assert!(!snapshot.complete);
+        assert_eq!(
+            snapshot.error_class.as_deref(),
+            Some("query_budget_exhausted")
+        );
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(
+            server
+                .requests()
+                .iter()
+                .filter(|request| request.target.contains("ac=task_lists"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn task_page_parser_returns_multiple_hashes_for_single_snapshot_matching() {
+        let response = serde_json::json!({
+            "state": true,
+            "count": 2,
+            "page_count": 1,
+            "tasks": [
+                {"info_hash": MOCK_INFO_HASH, "status": 12, "progress": 0.4},
+                {"info_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "status": 77}
+            ]
+        });
+        let parsed = parse_task_list_page(&response, "").unwrap();
+        assert_eq!(parsed.tasks.len(), 2);
+        assert_eq!(parsed.tasks[0].info_hash, MOCK_INFO_HASH);
+        assert_eq!(parsed.tasks[1].status_code, Some(77));
+    }
+
+    #[test]
+    fn submit_waf_rate_limit_and_auth_failures_are_structured() {
+        let dir = TestTorrentDir::new();
+        for (http_status, expected_state) in [
+            (405, "WAF_BLOCKED"),
+            (429, "RATE_LIMITED"),
+            (401, "AUTH_EXPIRED"),
+            (403, "ACCESS_DENIED"),
+        ] {
+            let server = MockHttpServer::start(MockBehavior {
+                submit_status: Some(http_status),
+                ..MockBehavior::default()
+            });
+            let client = test_bt_client(&server);
+            let result = client
+                .bt_submit_once(
+                    &dir.path(),
+                    "one.torrent",
+                    MOCK_INFO_HASH,
+                    &test_target(),
+                    &[0],
+                )
+                .unwrap();
+
+            assert_eq!(result.state, expected_state);
+            assert_eq!(server.state.submit_count.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                server
+                    .requests()
+                    .iter()
+                    .filter(|request| request.target.contains("ac=task_lists"))
+                    .count(),
+                0,
+                "a definitive gate response must not trigger reconciliation"
+            );
+        }
+    }
+
+    #[test]
     fn uncertain_upload_and_submit_are_not_reposted_in_the_same_session() {
         let upload_server = MockHttpServer::start(MockBehavior {
             drop_upload_init_response: true,
@@ -2926,11 +3484,11 @@ mod tests {
         let dir = TestTorrentDir::new();
         let client = test_bt_client(&upload_server);
         let first = client
-            .bt_upload_and_parse(&dir.path(), "one.torrent", MOCK_INFO_HASH, "20")
+            .bt_upload_and_parse(&dir.path(), "one.torrent", MOCK_INFO_HASH, &test_target())
             .unwrap();
         assert_eq!(first.state, "UNKNOWN_UPLOAD_RESULT");
         let second = client
-            .bt_upload_and_parse(&dir.path(), "one.torrent", MOCK_INFO_HASH, "20")
+            .bt_upload_and_parse(&dir.path(), "one.torrent", MOCK_INFO_HASH, &test_target())
             .unwrap();
         assert_eq!(second.state, "UNKNOWN_UPLOAD_RESULT");
         assert_eq!(
@@ -2952,15 +3510,80 @@ mod tests {
         });
         let submit_client = test_bt_client(&submit_server);
         let first = submit_client
-            .bt_submit_once(&dir.path(), "one.torrent", MOCK_INFO_HASH, "20", &[0])
+            .bt_submit_once(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                &test_target(),
+                &[0],
+            )
             .unwrap();
         assert_eq!(first.state, "UNKNOWN_REMOTE_STATE");
         let second = submit_client
-            .bt_submit_once(&dir.path(), "one.torrent", MOCK_INFO_HASH, "20", &[0])
+            .bt_submit_once(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                &test_target(),
+                &[0],
+            )
             .unwrap();
         assert_eq!(second.state, "UNKNOWN_REMOTE_STATE");
-        assert_eq!(submit_server.state.submit_count.load(Ordering::SeqCst), 1);
+        let captured: Vec<_> = submit_server
+            .requests()
+            .iter()
+            .map(|request| {
+                format!(
+                    "{} {}",
+                    request.method,
+                    request.target.split('?').next().unwrap_or("/")
+                )
+            })
+            .collect();
+        assert_eq!(
+            submit_server.state.submit_count.load(Ordering::SeqCst),
+            1,
+            "captured mock requests: {captured:?}"
+        );
         assert_eq!(submit_client.cookie(), MOCK_COOKIE);
+    }
+
+    #[test]
+    fn upload_init_waf_and_rate_limit_are_structured_batch_stop_states() {
+        let dir = TestTorrentDir::new();
+        for (status, expected_state) in [(405, "WAF_BLOCKED"), (429, "RATE_LIMITED")] {
+            let server = MockHttpServer::start(MockBehavior {
+                upload_init_status: Some(status),
+                ..MockBehavior::default()
+            });
+            let client = test_bt_client(&server);
+            let result = client
+                .bt_upload_and_parse(&dir.path(), "one.torrent", MOCK_INFO_HASH, &test_target())
+                .unwrap();
+
+            assert_eq!(result.state, expected_state);
+            assert_eq!(server.state.upload_init_count.load(Ordering::SeqCst), 1);
+            assert_eq!(server.state.upload_object_count.load(Ordering::SeqCst), 0);
+            assert_eq!(server.state.submit_count.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn task_list_waf_and_rate_limit_return_structured_statuses() {
+        for (http_status, expected_state) in [(405, "WAF_BLOCKED"), (429, "RATE_LIMITED")] {
+            let server = MockHttpServer::start(MockBehavior {
+                task_list_status: Some(http_status),
+                ..MockBehavior::default()
+            });
+            let client = test_bt_client(&server);
+            let result = client
+                .bt_task_status(MOCK_INFO_HASH, &test_target())
+                .unwrap();
+            assert_eq!(result.state, expected_state);
+            assert_eq!(result.status_code, Some(i64::from(http_status)));
+            assert_eq!(server.state.upload_init_count.load(Ordering::SeqCst), 0);
+            assert_eq!(server.state.submit_count.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[test]
@@ -2972,14 +3595,231 @@ mod tests {
         let dir = TestTorrentDir::new();
         let client = test_bt_client(&server);
         assert!(client
-            .bt_readonly_preflight(&dir.path(), "one.torrent", MOCK_INFO_HASH)
+            .bt_readonly_preflight(&dir.path(), "one.torrent", MOCK_INFO_HASH, &test_target())
             .is_err());
         let request_count = server.requests().len();
         assert_eq!(request_count, 1);
         assert!(client
-            .bt_readonly_preflight(&dir.path(), "one.torrent", MOCK_INFO_HASH)
+            .bt_readonly_preflight(&dir.path(), "one.torrent", MOCK_INFO_HASH, &test_target())
             .is_err());
         assert_eq!(server.requests().len(), request_count);
         assert_eq!(client.cookie(), MOCK_COOKIE);
+    }
+
+    #[test]
+    fn folder_picker_lists_only_directories_without_recording_open_time() {
+        let server = MockHttpServer::start(MockBehavior::default());
+        let client = test_bt_client(&server);
+
+        let folders = client.bt_list_child_folders("0").unwrap();
+
+        assert_eq!(
+            folders
+                .iter()
+                .map(|folder| (folder.name.as_str(), folder.id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("漫画", "10"), ("自定义目录", "30")]
+        );
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "GET");
+        let url = reqwest::Url::parse(&format!("http://localhost{}", requests[0].target)).unwrap();
+        let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
+        assert_eq!(query.get("cid").map(String::as_str), Some("0"));
+        assert_eq!(query.get("record_open_time").map(String::as_str), Some("0"));
+        assert_eq!(
+            requests[0].headers.get("cookie").map(String::as_str),
+            Some(MOCK_COOKIE)
+        );
+    }
+
+    #[test]
+    fn test_torrent_directories_are_unique_when_created_concurrently() {
+        let workers: Vec<_> = (0..32)
+            .map(|_| thread::spawn(TestTorrentDir::new))
+            .collect();
+        let directories: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        let unique_paths: std::collections::HashSet<_> =
+            directories.iter().map(|directory| &directory.0).collect();
+
+        assert_eq!(unique_paths.len(), directories.len());
+        assert!(directories
+            .iter()
+            .all(|directory| directory.0.join("one.torrent").is_file()));
+    }
+
+    #[test]
+    fn preflight_uses_the_user_selected_existing_folder() {
+        let server = MockHttpServer::start(MockBehavior::default());
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+
+        let result = client
+            .bt_readonly_preflight(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                &Cloud115BtFolderSelection {
+                    id: "30".to_string(),
+                    parent_id: "0".to_string(),
+                    name: "自定义目录".to_string(),
+                    path: "/自定义目录".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.target_folder_id, "30");
+        assert_eq!(result.target_folder_path, "/自定义目录");
+        assert_eq!(result.duplicate_status, "submit_first");
+        let requests = server.requests();
+        assert!(requests.iter().any(|request| {
+            request.target.contains("cid=0") && request.target.contains("record_open_time=0")
+        }));
+        assert!(requests
+            .iter()
+            .all(|request| !request.target.contains("ac=task_lists")));
+    }
+
+    #[test]
+    fn preflight_does_not_scan_task_pages_before_user_confirmed_submission() {
+        let server = MockHttpServer::start(MockBehavior {
+            task_count_override: Some(301),
+            task_page_count_override: Some(11),
+            ..MockBehavior::default()
+        });
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+
+        let result = client
+            .bt_readonly_preflight(&dir.path(), "one.torrent", MOCK_INFO_HASH, &test_target())
+            .unwrap();
+
+        assert_eq!(result.duplicate_status, "submit_first");
+        assert!(result.duplicate_detail.is_empty());
+        assert!(server.requests().iter().all(|request| {
+            request.method == "GET"
+                && !request.target.contains("initupload")
+                && !request.target.contains("lixianssp")
+                && !request.target.contains("ac=task_lists")
+        }));
+    }
+
+    #[test]
+    fn upload_recovery_does_not_scan_task_list() {
+        let server = MockHttpServer::start(MockBehavior {
+            task_count_override: Some(301),
+            task_page_count_override: Some(11),
+            ..MockBehavior::default()
+        });
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+
+        let result = client
+            .bt_confirm_upload_parse(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                &test_target(),
+                Some("mock-pickcode".into()),
+            )
+            .unwrap();
+
+        assert_eq!(result.state, "PARSED");
+        assert!(server
+            .requests()
+            .iter()
+            .all(|request| !request.target.contains("ac=task_lists")));
+    }
+
+    #[test]
+    fn preflight_rejects_a_stale_or_mismatched_selected_folder_before_task_lookup() {
+        let server = MockHttpServer::start(MockBehavior::default());
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+
+        let result = client.bt_readonly_preflight(
+            &dir.path(),
+            "one.torrent",
+            MOCK_INFO_HASH,
+            &Cloud115BtFolderSelection {
+                id: "99".to_string(),
+                parent_id: "0".to_string(),
+                name: "自定义目录".to_string(),
+                path: "/自定义目录".to_string(),
+            },
+        );
+
+        assert!(result.is_err());
+        assert!(server
+            .requests()
+            .iter()
+            .all(|request| !request.target.contains("ac=task_lists")));
+    }
+
+    #[test]
+    fn local_torrent_is_deleted_only_after_same_account_remote_task_is_confirmed() {
+        let server = MockHttpServer::start(MockBehavior::default());
+        server.state.task_visible.store(true, Ordering::SeqCst);
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+
+        client
+            .bt_delete_local_torrent_if_remote_task_found(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                "12345",
+                &test_target(),
+            )
+            .unwrap();
+
+        assert!(!dir.0.join("one.torrent").exists());
+        assert!(server.requests().iter().all(|request| {
+            request.method == "GET"
+                && !request.target.contains("upload")
+                && !request.target.contains("lixianssp")
+        }));
+        assert_eq!(client.cookie(), MOCK_COOKIE);
+    }
+
+    #[test]
+    fn local_torrent_is_retained_when_remote_task_is_not_confirmed() {
+        let server = MockHttpServer::start(MockBehavior::default());
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+
+        let result = client.bt_delete_local_torrent_if_remote_task_found(
+            &dir.path(),
+            "one.torrent",
+            MOCK_INFO_HASH,
+            "12345",
+            &test_target(),
+        );
+
+        assert!(result.is_err());
+        assert!(dir.0.join("one.torrent").is_file());
+    }
+
+    #[test]
+    fn local_torrent_is_retained_when_cookie_account_changed() {
+        let server = MockHttpServer::start(MockBehavior::default());
+        server.state.task_visible.store(true, Ordering::SeqCst);
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+
+        let result = client.bt_delete_local_torrent_if_remote_task_found(
+            &dir.path(),
+            "one.torrent",
+            MOCK_INFO_HASH,
+            "99999",
+            &test_target(),
+        );
+
+        assert!(result.is_err());
+        assert!(dir.0.join("one.torrent").is_file());
+        assert!(server.requests().is_empty());
     }
 }

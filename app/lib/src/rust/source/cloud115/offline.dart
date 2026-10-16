@@ -30,6 +30,54 @@ class Cloud115BtFile {
           size == other.size;
 }
 
+class Cloud115BtFolder {
+  final String id;
+  final String name;
+
+  const Cloud115BtFolder({required this.id, required this.name});
+
+  @override
+  int get hashCode => id.hashCode ^ name.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtFolder &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name;
+}
+
+/// A directory chosen by the user in the read-only folder picker. The backend
+/// rechecks the final folder against its parent before every BT operation.
+class Cloud115BtFolderSelection {
+  final String id;
+  final String parentId;
+  final String name;
+  final String path;
+
+  const Cloud115BtFolderSelection({
+    required this.id,
+    required this.parentId,
+    required this.name,
+    required this.path,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ parentId.hashCode ^ name.hashCode ^ path.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtFolderSelection &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          parentId == other.parentId &&
+          name == other.name &&
+          path == other.path;
+}
+
 class Cloud115BtPreflight {
   final String accountId;
   final String targetFolderPath;
@@ -42,6 +90,9 @@ class Cloud115BtPreflight {
 
   /// `found`, `not_found`, or `unknown`. Unknown blocks any future submit.
   final String duplicateStatus;
+
+  /// Safe local explanation when the task list cannot prove absence.
+  final String duplicateDetail;
   final String writeGate;
 
   const Cloud115BtPreflight({
@@ -54,6 +105,7 @@ class Cloud115BtPreflight {
     required this.infoHash,
     required this.files,
     required this.duplicateStatus,
+    required this.duplicateDetail,
     required this.writeGate,
   });
 
@@ -68,6 +120,7 @@ class Cloud115BtPreflight {
       infoHash.hashCode ^
       files.hashCode ^
       duplicateStatus.hashCode ^
+      duplicateDetail.hashCode ^
       writeGate.hashCode;
 
   @override
@@ -84,6 +137,7 @@ class Cloud115BtPreflight {
           infoHash == other.infoHash &&
           files == other.files &&
           duplicateStatus == other.duplicateStatus &&
+          duplicateDetail == other.duplicateDetail &&
           writeGate == other.writeGate;
 }
 
@@ -116,6 +170,77 @@ class Cloud115BtSubmitResult {
           infoHash == other.infoHash &&
           message == other.message &&
           targetFolderId == other.targetFolderId;
+}
+
+class Cloud115BtTaskSnapshot {
+  final String accountId;
+  final String state;
+  final bool complete;
+  final int pagesRead;
+  final String? errorClass;
+  final String message;
+  final List<Cloud115BtTaskSnapshotItem> tasks;
+
+  const Cloud115BtTaskSnapshot({
+    required this.accountId,
+    required this.state,
+    required this.complete,
+    required this.pagesRead,
+    this.errorClass,
+    required this.message,
+    required this.tasks,
+  });
+
+  @override
+  int get hashCode =>
+      accountId.hashCode ^
+      state.hashCode ^
+      complete.hashCode ^
+      pagesRead.hashCode ^
+      errorClass.hashCode ^
+      message.hashCode ^
+      tasks.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtTaskSnapshot &&
+          runtimeType == other.runtimeType &&
+          accountId == other.accountId &&
+          state == other.state &&
+          complete == other.complete &&
+          pagesRead == other.pagesRead &&
+          errorClass == other.errorClass &&
+          message == other.message &&
+          tasks == other.tasks;
+}
+
+/// One task row from a complete, bounded account task-list snapshot. The
+/// provider's status code is retained as evidence; undocumented values are not
+/// translated into terminal states.
+class Cloud115BtTaskSnapshotItem {
+  final String infoHash;
+  final PlatformInt64? statusCode;
+  final double? percentDone;
+
+  const Cloud115BtTaskSnapshotItem({
+    required this.infoHash,
+    this.statusCode,
+    this.percentDone,
+  });
+
+  @override
+  int get hashCode =>
+      infoHash.hashCode ^ statusCode.hashCode ^ percentDone.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Cloud115BtTaskSnapshotItem &&
+          runtimeType == other.runtimeType &&
+          infoHash == other.infoHash &&
+          statusCode == other.statusCode &&
+          percentDone == other.percentDone;
 }
 
 class Cloud115BtTaskStatus {

@@ -1,4 +1,33 @@
-# 全局设置 — 退出应用行为选择（彻底退出/后台运行/每次询问）
+# Active scope — Conditional exit prompt for long-running work (approved 2026-10-14)
+
+## Goal
+
+When the user requests application exit while RCH has active local work or resumable RCH monitoring, show a concise confirmation that explains what will pause and what continues remotely. With no active/resumable work, exit immediately without prompting.
+
+## Requirements
+
+- Cover all long-running RCH work after an implementation-time inventory: EH scans, Cloud115 batch writes and read-only monitoring, remote scans, sync/automation, AI tasks, cover work, and other existing import/export or update jobs that can remain active beyond a short UI action.
+- Use an in-memory task registry for currently executing work and read each subsystem's existing persisted state for resumable work. The exit UI is an aggregation only; it must not become a second task-state database.
+- Show the active task names and phases. Explain that closing RCH pauses local work and 115 status polling while accepted 115 cloud jobs continue remotely and can be checked again after the next launch.
+- Offer only “Continue using RCH” and “Exit and pause local work” for this scope. If no work is active or resumable, preserve silent normal exit.
+- Exit through the normal Flutter/Windows lifecycle after existing task cancellation/flush handling. Do not kill unrelated processes or erase durable work state.
+- No system tray, background service, Windows Task Scheduler job, or promise of continued local work while the app is closed.
+- Do not change Daily scheduling, 115 write authorization, or existing task retry/idempotency behavior.
+
+## Acceptance
+
+- With no active task and no resumable monitor, a close request exits without a dialog.
+- With one or more active/resumable tasks, a close request shows accurate task summaries; continuing cancels the exit request and leaves work running.
+- Choosing exit pauses local work through its existing cancellation/flush path, retains durable monitor state, and accurately says accepted remote 115 work continues.
+- A relaunch restores persisted monitoring without repeating any upload/submit write.
+- The prompt appears once per close request, handles a second close request while visible, and remains readable at normal and narrow Windows window sizes.
+- Tests cover registry lease lifecycle and all inventoried task categories; Windows GUI verification uses an isolated configuration and creates no real network work.
+
+## Deferred historical proposal (not part of this implementation)
+
+The original three-mode exit setting, system-tray residency, and per-close choice behavior are retained below as historical context only. They are not approved scope for this follow-up.
+
+### Original proposal
 
 ## Goal
 

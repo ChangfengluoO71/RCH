@@ -280,8 +280,7 @@ fn manual_collection_blocks_cross_process_daily_claim_without_replacing_manual_s
         )
         .expect("manual completion must remain writable");
         drop(lease);
-        std::fs::write(ready.with_extension("done"), b"done")
-            .expect("signal manual completion");
+        std::fs::write(ready.with_extension("done"), b"done").expect("signal manual completion");
         return;
     }
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:app/store/models.dart';
+import 'package:app/store/long_task_registry.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -68,6 +69,85 @@ void main() {
 
     await coordinator.ensureForSession(source, BigInt.one);
     expect(modes, ['full', 'incremental']);
+  });
+
+  test('remote scan owns one lease until terminal status', () async {
+    final pending = Completer<RemoteScanStatus>();
+    final registry = LongTaskRegistry();
+    final coordinator = RemoteScanCoordinator(
+      taskRegistry: registry,
+      start:
+          ({
+            required source,
+            required session,
+            required rootPath,
+            required mode,
+          }) => pending.future,
+    );
+    final source = BookSource(
+      id: 'lease-scan',
+      type: 'webdav',
+      name: 'lease-scan',
+      path: '/',
+    );
+
+    final scan = coordinator.rescanFull(source, BigInt.one);
+    expect(registry.snapshot(), hasLength(1));
+    expect(registry.snapshot().single.kind, 'remote_source_scan');
+    pending.complete(
+      const RemoteScanStatus(
+        sourceId: 'lease-scan',
+        status: 'complete',
+        mode: 'full',
+        generation: 1,
+      ),
+    );
+    await scan;
+    expect(registry.snapshot(), isEmpty);
+    await coordinator.dispose();
+  });
+
+  test('exit preparation uses existing remote scan cancellation', () async {
+    final pending = Completer<RemoteScanStatus>();
+    final registry = LongTaskRegistry();
+    var cancelCalls = 0;
+    final coordinator = RemoteScanCoordinator(
+      taskRegistry: registry,
+      cancelCall: (_) async => cancelCalls++,
+      start:
+          ({
+            required source,
+            required session,
+            required rootPath,
+            required mode,
+          }) => pending.future,
+    );
+    final source = BookSource(
+      id: 'exit-scan',
+      type: 'webdav',
+      name: 'exit-scan',
+      path: '/',
+    );
+
+    final scan = coordinator.rescanFull(source, BigInt.one);
+    final result = await registry.prepareForExit(
+      registry.snapshot(),
+      timeout: const Duration(seconds: 1),
+    );
+
+    expect(result.completed, isTrue);
+    expect(cancelCalls, 1);
+    expect(registry.snapshot(), isEmpty);
+    pending.complete(
+      const RemoteScanStatus(
+        sourceId: 'exit-scan',
+        status: 'cancelled',
+        mode: 'full',
+        generation: 1,
+      ),
+    );
+    await scan;
+    await coordinator.dispose();
   });
 
   test(

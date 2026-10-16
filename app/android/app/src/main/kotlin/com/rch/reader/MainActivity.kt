@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
@@ -26,6 +27,10 @@ class MainActivity : FlutterActivity() {
                     "openAllFilesAccessSettings" -> {
                         openAllFilesAccessSettings()
                         result.success(null)
+                    }
+                    "openEhOutputDirectory" -> {
+                        val path = call.argument<String>("path")
+                        result.success(openEhOutputDirectory(path))
                     }
                     else -> result.notImplemented()
                 }
@@ -129,6 +134,40 @@ class MainActivity : FlutterActivity() {
                 arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE),
                 1001,
             )
+        }
+    }
+
+    /** Opens the system folder picker at an existing primary shared-storage directory. */
+    private fun openEhOutputDirectory(path: String?): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || path.isNullOrBlank()) {
+            return false
+        }
+        return try {
+            val target = File(path).canonicalFile
+            if (!target.exists() || !target.isDirectory) return false
+
+            val storageRoot = Environment.getExternalStorageDirectory().canonicalFile
+            val rootPath = storageRoot.path.trimEnd(File.separatorChar)
+            val targetPath = target.path
+            if (targetPath != rootPath && !targetPath.startsWith(rootPath + File.separator)) {
+                return false
+            }
+            val relative = storageRoot.toPath().relativize(target.toPath())
+                .toString()
+                .replace(File.separatorChar, '/')
+            val documentId = if (relative.isEmpty()) "primary:" else "primary:$relative"
+            val initialUri = DocumentsContract.buildDocumentUri(
+                "com.android.externalstorage.documents",
+                documentId,
+            )
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri)
+            }
+            if (intent.resolveActivity(packageManager) == null) return false
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 }

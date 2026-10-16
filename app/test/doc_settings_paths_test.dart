@@ -17,8 +17,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// 维护方式：UI 改名时本测试会先因"漂移守卫"失败，再更新词表即可。
 void main() {
   const groups = <String>[
-    "书源与网络",
-    "EH 订阅",
+    "书源与采集",
+    "EH 订阅与自动化",
+    "网络",
     "同步与备份",
     "外观与布局",
     "关于与更新",

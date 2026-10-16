@@ -171,6 +171,15 @@ class _HomePageState extends State<HomePage> {
     _globalMode = false;
   });
 
+  Future<void> _add115SourceFromEhWorkflow() async {
+    _select('source');
+    if (!mounted) return;
+    await showRchDialog<void>(
+      context: context,
+      builder: (context) => const AddSourceDialog(initialType: '115'),
+    );
+  }
+
   // ============================================================
   // 统一搜索解析（筛选模式和全局模式共用）
   // ============================================================
@@ -1877,7 +1886,7 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           _settingsCategory(
-            title: '书源与网络',
+            title: '书源与采集',
             icon: Icons.cloud_outlined,
             children: [
               _remoteSources(s),
@@ -1888,9 +1897,16 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           _settingsCategory(
-            title: 'EH 订阅（可选插件）',
+            title: 'EH 订阅与自动化',
             icon: Icons.rss_feed_outlined,
-            children: [const EhSubscriptionPanel()],
+            children: [
+              EhSubscriptionPanel(onAdd115Source: _add115SourceFromEhWorkflow),
+            ],
+          ),
+          _settingsCategory(
+            title: '网络',
+            icon: Icons.wifi_tethering_outlined,
+            children: [const EhNetworkSettingsPanel()],
           ),
           _settingsCategory(
             title: '缓存与存储',
@@ -2894,7 +2910,10 @@ Future<Cloud115FolderChoice?> _pick115RootFolder({
 }
 
 class AddSourceDialog extends StatefulWidget {
-  const AddSourceDialog({super.key});
+  const AddSourceDialog({super.key, this.initialType = 'webdav'});
+
+  final String initialType;
+
   @override
   State<AddSourceDialog> createState() => _AddDialogState();
 }
@@ -2915,6 +2934,12 @@ class _AddDialogState extends State<AddSourceDialog> {
       _rootId = TextEditingController(),
       _cookie = TextEditingController(),
       _cookie115 = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _type = widget.initialType;
+  }
 
   /// 115 扫码设备（默认 wechatmini 等冷门设备，避免挤掉网页端/App 旧登录）。
   String _qrApp = 'wechatmini';

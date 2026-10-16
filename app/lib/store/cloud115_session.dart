@@ -161,6 +161,7 @@ cloud115CookieBtReadonlyPreflightFor(
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
+  required cloud115_offline.Cloud115BtFolderSelection target,
 }) async {
   if (!source.is115 || (source.cookie ?? '').trim().isEmpty) {
     throw StateError('请选择已有的 115 Cookie 书源');
@@ -171,8 +172,34 @@ cloud115CookieBtReadonlyPreflightFor(
     outputDir: outputDir,
     relativeFile: relativeFile,
     expectedInfoHash: expectedInfoHash,
+    target: target,
   );
 }
+
+Future<void> cloud115CookieBtDeleteLocalIfRemoteTaskFoundFor(
+  BookSource source, {
+  required String outputDir,
+  required String relativeFile,
+  required String expectedInfoHash,
+  required String expectedAccountId,
+  required cloud115_offline.Cloud115BtFolderSelection target,
+}) => cloud115CookieBtDeleteLocalIfRemoteTaskFound(
+  session: _cachedCookieSessionForBt(source),
+  outputDir: outputDir,
+  relativeFile: relativeFile,
+  expectedInfoHash: expectedInfoHash,
+  expectedAccountId: expectedAccountId,
+  target: target,
+);
+
+Future<List<cloud115_offline.Cloud115BtFolder>>
+cloud115CookieBtListChildFoldersFor(
+  BookSource source, {
+  required String parentId,
+}) => cloud115CookieBtListChildFolders(
+  session: _cachedCookieSessionForBt(source),
+  parentId: parentId,
+);
 
 BigInt _cachedCookieSessionForBt(BookSource source) {
   if (!source.is115 || (source.cookie ?? '').trim().isEmpty) {
@@ -180,9 +207,32 @@ BigInt _cachedCookieSessionForBt(BookSource source) {
   }
   final session = _cloud115CookieSessions[source.id];
   if (session == null) {
-    throw StateError('当前没有已连接的 115 Cookie 会话。请先通过现有书源连接；此实验入口不会重新登录或刷新 Cookie。');
+    throw StateError(
+      '当前没有已连接的 115 Cookie 会话。请先通过现有书源连接；此实验入口不会重新登录或刷新 Cookie。',
+    );
   }
   return session;
+}
+
+/// Returns whether BT operations can reuse the source's already cached Cookie
+/// session. This is an in-memory check only and never reconnects or refreshes.
+bool hasCachedCloud115CookieSession(BookSource source) =>
+    source.is115 &&
+    (source.cookie ?? '').trim().isNotEmpty &&
+    _cloud115CookieSessions.containsKey(source.id);
+
+/// Reads the stable account number encoded in the configured Cookie without
+/// opening a client, refreshing the Cookie, or issuing a request. Used only to
+/// ensure monitoring rows are never queried under a different account.
+String? cloud115CookieAccountIdHint(BookSource source) {
+  if (!source.is115) return null;
+  for (final part in (source.cookie ?? '').split(';')) {
+    final value = part.trim();
+    if (!value.startsWith('UID=')) continue;
+    final id = value.substring(4).split('_').first;
+    if (RegExp(r'^\d+$').hasMatch(id)) return id;
+  }
+  return null;
 }
 
 Future<cloud115_offline.Cloud115BtUploadParseResult>
@@ -191,13 +241,13 @@ cloud115CookieBtUploadAndParseFor(
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
-  required String expectedTargetFolderId,
+  required cloud115_offline.Cloud115BtFolderSelection target,
 }) => cloud115CookieBtUploadAndParse(
   session: _cachedCookieSessionForBt(source),
   outputDir: outputDir,
   relativeFile: relativeFile,
   expectedInfoHash: expectedInfoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
 );
 
 Future<cloud115_offline.Cloud115BtUploadParseResult>
@@ -206,14 +256,14 @@ cloud115CookieBtConfirmUploadParseFor(
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
-  required String expectedTargetFolderId,
+  required cloud115_offline.Cloud115BtFolderSelection target,
   String? pickCode,
 }) => cloud115CookieBtConfirmUploadParse(
   session: _cachedCookieSessionForBt(source),
   outputDir: outputDir,
   relativeFile: relativeFile,
   expectedInfoHash: expectedInfoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
   pickCode: pickCode,
 );
 
@@ -222,26 +272,30 @@ Future<cloud115_offline.Cloud115BtSubmitResult> cloud115CookieBtSubmitOnceFor(
   required String outputDir,
   required String relativeFile,
   required String expectedInfoHash,
-  required String expectedTargetFolderId,
+  required cloud115_offline.Cloud115BtFolderSelection target,
   required List<int> wantedIndices,
 }) => cloud115CookieBtSubmitOnce(
   session: _cachedCookieSessionForBt(source),
   outputDir: outputDir,
   relativeFile: relativeFile,
   expectedInfoHash: expectedInfoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
   wantedIndices: wantedIndices,
 );
 
 Future<cloud115_offline.Cloud115BtTaskStatus> cloud115CookieBtTaskStatusFor(
   BookSource source, {
   required String infoHash,
-  required String expectedTargetFolderId,
+  required cloud115_offline.Cloud115BtFolderSelection target,
 }) => cloud115CookieBtTaskStatus(
   session: _cachedCookieSessionForBt(source),
   infoHash: infoHash,
-  expectedTargetFolderId: expectedTargetFolderId,
+  target: target,
 );
+
+Future<cloud115_offline.Cloud115BtTaskSnapshot> cloud115CookieBtTaskSnapshotFor(
+  BookSource source,
+) => cloud115CookieBtTaskSnapshot(session: _cachedCookieSessionForBt(source));
 
 /// 书源被编辑/删除后使会话失效（下次自动重连）。
 void clearCloud115Session(String sourceId) {

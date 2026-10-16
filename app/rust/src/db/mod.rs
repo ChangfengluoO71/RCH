@@ -482,6 +482,71 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_book_tags_book ON book_tags(book_key);
         ",
     )?;
+    // Operational, non-library projection for RCH-attributed Cloud115 BT
+    // status checks. These tables are deliberately independent from the
+    // library import marker and never authorize upload/submit writes.
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS cloud115_bt_monitor_run (
+            id TEXT PRIMARY KEY,
+            batch_id TEXT NOT NULL DEFAULT '',
+            account_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            target_folder_id TEXT NOT NULL,
+            trigger TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            ended_at INTEGER,
+            lease_owner TEXT,
+            lease_expires_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_cloud115_monitor_run_account
+            ON cloud115_bt_monitor_run(account_id, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_cloud115_monitor_run_lease
+            ON cloud115_bt_monitor_run(account_id, lease_expires_at);
+
+        CREATE TABLE IF NOT EXISTS cloud115_bt_task_monitor (
+            account_id TEXT NOT NULL,
+            info_hash TEXT NOT NULL,
+            target_folder_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            relative_file TEXT NOT NULL,
+            ledger_state TEXT NOT NULL,
+            batch_id TEXT NOT NULL DEFAULT '',
+            remote_state TEXT NOT NULL DEFAULT 'unknown',
+            found_in_snapshot INTEGER,
+            remote_status_code INTEGER,
+            percent_done REAL,
+            target_folder_evidence TEXT NOT NULL DEFAULT 'unknown',
+            last_checked_at INTEGER,
+            next_check_at INTEGER NOT NULL,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_error_class TEXT,
+            ledger_updated_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY(account_id, info_hash, target_folder_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cloud115_monitor_due
+            ON cloud115_bt_task_monitor(account_id, source_id, next_check_at);
+        CREATE INDEX IF NOT EXISTS idx_cloud115_monitor_hash
+            ON cloud115_bt_task_monitor(account_id, info_hash);
+        CREATE INDEX IF NOT EXISTS idx_cloud115_monitor_batch
+            ON cloud115_bt_task_monitor(batch_id);
+
+        CREATE TABLE IF NOT EXISTS cloud115_bt_task_event (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT NOT NULL,
+            info_hash TEXT NOT NULL,
+            target_folder_id TEXT NOT NULL,
+            from_state TEXT,
+            to_state TEXT NOT NULL,
+            error_class TEXT,
+            observed_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cloud115_monitor_event_task
+            ON cloud115_bt_task_event(account_id, info_hash, target_folder_id, observed_at);
+        ",
+    )?;
     crate::remote_scan::persistence::migrate(conn)?;
     // 旧库升级：补 rotations 列（每页旋转，JSON 文本，如 {"0":90}）。
     let meta_cols: Vec<String> = conn
@@ -4808,6 +4873,399 @@ pub(crate) fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+/// Non-authoritative batch-ledger projection used only for read-only 115 task
+/// monitoring. It never grants permission to issue a write request.
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorLedgerEntry {
+    pub batch_id: String,
+    pub account_id: String,
+    pub source_id: String,
+    pub target_folder_id: String,
+    pub info_hash: String,
+    pub relative_file: String,
+    pub ledger_state: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorTaskRow {
+    pub account_id: String,
+    pub source_id: String,
+    pub target_folder_id: String,
+    pub info_hash: String,
+    pub relative_file: String,
+    pub ledger_state: String,
+    pub batch_id: String,
+    pub attempt_count: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorClaim {
+    pub run_id: String,
+    pub tasks: Vec<Cloud115BtMonitorTaskRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorObservation {
+    pub account_id: String,
+    pub info_hash: String,
+    pub target_folder_id: String,
+    /// `Some(false)` means absent from one complete page snapshot, not proven
+    /// absent remotely. `None` preserves the last positive observation.
+    pub found_in_snapshot: Option<bool>,
+    /// Retained as evidence only; no undocumented code is normalized to a
+    /// terminal state.
+    pub status_code: Option<i64>,
+    pub percent_done: Option<f64>,
+    pub error_class: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cloud115BtMonitorSummary {
+    pub tracked_count: u32,
+    pub found_count: u32,
+    pub unknown_count: u32,
+    pub due_count: u32,
+    pub last_checked_at: Option<i64>,
+    pub next_check_at: Option<i64>,
+    pub last_error_class: Option<String>,
+}
+
+fn monitorable_ledger_state(state: &str) -> bool {
+    matches!(
+        state,
+        "submit_started"
+            | "submitted"
+            | "local_torrent_removed"
+            | "duplicate_found"
+            | "duplicate_found_delete_failed"
+            | "unknown_remote_state"
+            | "duplicate_lookup_unknown"
+    )
+}
+
+fn valid_info_hash(hash: &str) -> bool {
+    hash.len() == 40 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub fn reconcile_cloud115_bt_monitor_entries(
+    conn: &Connection,
+    entries: &[Cloud115BtMonitorLedgerEntry],
+    now: i64,
+) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
+    let mut inserted = 0usize;
+    for entry in entries {
+        if !monitorable_ledger_state(&entry.ledger_state)
+            || entry.account_id.trim().is_empty()
+            || entry.source_id.trim().is_empty()
+            || entry.target_folder_id.trim().is_empty()
+            || !valid_info_hash(&entry.info_hash)
+            || entry.relative_file.trim().is_empty()
+        {
+            continue;
+        }
+        let hash = entry.info_hash.to_ascii_lowercase();
+        let existed: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM cloud115_bt_task_monitor
+             WHERE account_id=?1 AND info_hash=?2 AND target_folder_id=?3)",
+            params![entry.account_id, hash, entry.target_folder_id],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO cloud115_bt_task_monitor
+                (account_id, info_hash, target_folder_id, source_id, relative_file,
+                 ledger_state, batch_id, remote_state, next_check_at, ledger_updated_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'unknown', ?8, ?9, ?8)
+             ON CONFLICT(account_id, info_hash, target_folder_id) DO UPDATE SET
+                source_id=excluded.source_id,
+                relative_file=excluded.relative_file,
+                ledger_state=excluded.ledger_state,
+                batch_id=excluded.batch_id,
+                ledger_updated_at=MAX(cloud115_bt_task_monitor.ledger_updated_at, excluded.ledger_updated_at),
+                updated_at=excluded.updated_at",
+            params![
+                entry.account_id,
+                hash,
+                entry.target_folder_id,
+                entry.source_id,
+                entry.relative_file,
+                entry.ledger_state,
+                entry.batch_id,
+                now,
+                entry.updated_at,
+            ],
+        )?;
+        if !existed {
+            tx.execute(
+                "INSERT INTO cloud115_bt_task_event
+                    (account_id, info_hash, target_folder_id, from_state, to_state, observed_at)
+                 VALUES (?1, ?2, ?3, NULL, 'unknown', ?4)",
+                params![entry.account_id, hash, entry.target_folder_id, now],
+            )?;
+            inserted += 1;
+        }
+    }
+    tx.commit()?;
+    Ok(inserted)
+}
+
+pub fn claim_cloud115_bt_monitor_due(
+    conn: &Connection,
+    account_id: &str,
+    source_id: &str,
+    owner: &str,
+    now: i64,
+    lease_expires_at: i64,
+    limit: u32,
+) -> Result<Option<Cloud115BtMonitorClaim>> {
+    if account_id.trim().is_empty() || source_id.trim().is_empty() || owner.trim().is_empty() {
+        anyhow::bail!("Cloud115 monitor claim identity is empty");
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE cloud115_bt_monitor_run
+         SET status='interrupted_unknown', ended_at=?1, lease_owner=NULL, lease_expires_at=NULL
+         WHERE account_id=?2 AND status='running' AND lease_expires_at<=?1",
+        params![now, account_id],
+    )?;
+    let due: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM cloud115_bt_task_monitor
+         WHERE account_id=?1 AND (source_id=?2 OR ?2='*') AND next_check_at<=?3)",
+        params![account_id, source_id, now],
+        |row| row.get(0),
+    )?;
+    if !due {
+        tx.commit()?;
+        return Ok(None);
+    }
+    let leased: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM cloud115_bt_monitor_run
+         WHERE account_id=?1 AND status='running' AND lease_expires_at>?2)",
+        params![account_id, now],
+        |row| row.get(0),
+    )?;
+    if leased {
+        tx.commit()?;
+        return Ok(None);
+    }
+    let sequence: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM cloud115_bt_monitor_run WHERE account_id=?1",
+        [account_id],
+        |row| row.get(0),
+    )?;
+    let run_id = format!("monitor:{account_id}:{now}:{sequence}");
+    let target_folder_id: String = tx.query_row(
+        "SELECT target_folder_id FROM cloud115_bt_task_monitor
+         WHERE account_id=?1 AND (source_id=?2 OR ?2='*') AND next_check_at<=?3
+         ORDER BY next_check_at, info_hash LIMIT 1",
+        params![account_id, source_id, now],
+        |row| row.get(0),
+    )?;
+    tx.execute(
+        "INSERT INTO cloud115_bt_monitor_run
+            (id, batch_id, account_id, source_id, target_folder_id, trigger, status,
+             started_at, lease_owner, lease_expires_at)
+         VALUES (?1, '', ?2, ?3, ?4, 'monitor', 'running', ?5, ?6, ?7)",
+        params![
+            run_id,
+            account_id,
+            source_id,
+            target_folder_id,
+            now,
+            owner,
+            lease_expires_at
+        ],
+    )?;
+    let tasks = {
+        let mut statement = tx.prepare(
+            "SELECT account_id, source_id, target_folder_id, info_hash, relative_file,
+                    ledger_state, batch_id, attempt_count
+             FROM cloud115_bt_task_monitor
+             WHERE account_id=?1 AND (source_id=?2 OR ?2='*') AND next_check_at<=?3
+             ORDER BY next_check_at, info_hash LIMIT ?4",
+        )?;
+        let rows = statement.query_map(
+            params![account_id, source_id, now, i64::from(limit.min(300))],
+            |row| {
+                Ok(Cloud115BtMonitorTaskRow {
+                    account_id: row.get(0)?,
+                    source_id: row.get(1)?,
+                    target_folder_id: row.get(2)?,
+                    info_hash: row.get(3)?,
+                    relative_file: row.get(4)?,
+                    ledger_state: row.get(5)?,
+                    batch_id: row.get(6)?,
+                    attempt_count: row.get(7)?,
+                })
+            },
+        )?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    tx.commit()?;
+    Ok(Some(Cloud115BtMonitorClaim { run_id, tasks }))
+}
+
+pub fn finish_cloud115_bt_monitor_poll(
+    conn: &Connection,
+    run_id: &str,
+    account_id: &str,
+    owner: &str,
+    observations: &[Cloud115BtMonitorObservation],
+    poll_error_class: Option<&str>,
+    next_check_at: i64,
+    now: i64,
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let run_owner: Option<String> = tx
+        .query_row(
+            "SELECT lease_owner FROM cloud115_bt_monitor_run WHERE id=?1 AND account_id=?2 AND status='running'",
+            params![run_id, account_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    if run_owner.as_deref() != Some(owner) {
+        anyhow::bail!("Cloud115 monitor lease is not owned by this process");
+    }
+    for observation in observations {
+        if observation.account_id != account_id || !valid_info_hash(&observation.info_hash) {
+            anyhow::bail!("Cloud115 monitor observation identity is invalid");
+        }
+        let hash = observation.info_hash.to_ascii_lowercase();
+        let previous: Option<(String, Option<String>)> = tx
+            .query_row(
+                "SELECT remote_state, last_error_class FROM cloud115_bt_task_monitor
+                 WHERE account_id=?1 AND info_hash=?2 AND target_folder_id=?3",
+                params![account_id, hash, observation.target_folder_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((previous_state, previous_error)) = previous else {
+            continue;
+        };
+        let error_class = poll_error_class.or(observation.error_class.as_deref());
+        let next_state = match observation.found_in_snapshot {
+            Some(true) => "found",
+            Some(false) => "unknown",
+            None => previous_state.as_str(),
+        };
+        let percent = observation
+            .percent_done
+            .filter(|value| value.is_finite() && (0.0..=1.0).contains(value));
+        tx.execute(
+            "UPDATE cloud115_bt_task_monitor SET
+                remote_state=?1,
+                found_in_snapshot=COALESCE(?2, found_in_snapshot),
+                remote_status_code=COALESCE(?3, remote_status_code),
+                percent_done=COALESCE(?4, percent_done),
+                target_folder_evidence='unknown',
+                last_checked_at=?5,
+                next_check_at=?6,
+                attempt_count=attempt_count+1,
+                last_error_class=?7,
+                updated_at=?5
+             WHERE account_id=?8 AND info_hash=?9 AND target_folder_id=?10",
+            params![
+                next_state,
+                observation.found_in_snapshot.map(i64::from),
+                observation.status_code,
+                percent,
+                now,
+                next_check_at,
+                error_class,
+                account_id,
+                hash,
+                observation.target_folder_id,
+            ],
+        )?;
+        if previous_state != next_state || previous_error.as_deref() != error_class {
+            tx.execute(
+                "INSERT INTO cloud115_bt_task_event
+                    (account_id, info_hash, target_folder_id, from_state, to_state,
+                     error_class, observed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    account_id,
+                    hash,
+                    observation.target_folder_id,
+                    previous_state,
+                    next_state,
+                    error_class,
+                    now,
+                ],
+            )?;
+        }
+    }
+    tx.execute(
+        "UPDATE cloud115_bt_monitor_run SET status=?1, ended_at=?2,
+            lease_owner=NULL, lease_expires_at=NULL WHERE id=?3 AND account_id=?4",
+        params![
+            if poll_error_class.is_some() {
+                "waiting"
+            } else {
+                "completed"
+            },
+            now,
+            run_id,
+            account_id
+        ],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn cloud115_bt_monitor_summary(
+    conn: &Connection,
+    source_id: Option<&str>,
+    now: i64,
+) -> Result<Cloud115BtMonitorSummary> {
+    let mut statement = conn.prepare(
+        "SELECT COUNT(*),
+            SUM(CASE WHEN remote_state='found' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN remote_state!='found' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN next_check_at<=?1 THEN 1 ELSE 0 END),
+            MAX(last_checked_at), MIN(next_check_at)
+         FROM cloud115_bt_task_monitor
+         WHERE (?2 IS NULL OR source_id=?2)",
+    )?;
+    let (tracked, found, unknown, due, last_checked, next_check): (
+        i64,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+    ) = statement.query_row(params![now, source_id], |row| {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+        ))
+    })?;
+    let last_error_class = conn
+        .query_row(
+            "SELECT last_error_class FROM cloud115_bt_task_monitor
+             WHERE (?1 IS NULL OR source_id=?1) AND last_error_class IS NOT NULL
+             ORDER BY updated_at DESC LIMIT 1",
+            [source_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(Cloud115BtMonitorSummary {
+        tracked_count: tracked.max(0) as u32,
+        found_count: found.unwrap_or(0).max(0) as u32,
+        unknown_count: unknown.unwrap_or(0).max(0) as u32,
+        due_count: due.unwrap_or(0).max(0) as u32,
+        last_checked_at: last_checked,
+        next_check_at: next_check,
+        last_error_class,
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct AiTaskRow {
     pub id: String,
@@ -5008,6 +5466,168 @@ mod tests {
         ] {
             assert!(job_columns.iter().any(|candidate| candidate == column));
         }
+    }
+
+    #[test]
+    fn init_tables_creates_cloud115_monitor_storage_without_library_migration_marker() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        init_tables(&conn).unwrap();
+
+        for table in [
+            "cloud115_bt_monitor_run",
+            "cloud115_bt_task_monitor",
+            "cloud115_bt_task_event",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "missing operational table {table}");
+        }
+        let library_migration_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(library_migration_rows, 0);
+    }
+
+    fn monitor_entry(state: &str) -> Cloud115BtMonitorLedgerEntry {
+        Cloud115BtMonitorLedgerEntry {
+            batch_id: "batch-1".into(),
+            account_id: "account-1".into(),
+            source_id: "source-1".into(),
+            target_folder_id: "42".into(),
+            info_hash: "0123456789012345678901234567890123456789".into(),
+            relative_file: "test.torrent".into(),
+            ledger_state: state.into(),
+            updated_at: 10,
+        }
+    }
+
+    #[test]
+    fn cloud115_monitor_reconcile_is_idempotent_and_only_imports_write_stage_items() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        let eligible = monitor_entry("submitted");
+        let ineligible = monitor_entry("upload_outcome_unknown");
+        assert_eq!(
+            reconcile_cloud115_bt_monitor_entries(&conn, &[eligible.clone(), ineligible], 100)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            reconcile_cloud115_bt_monitor_entries(&conn, &[eligible], 101).unwrap(),
+            0
+        );
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cloud115_bt_task_monitor", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 1);
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cloud115_bt_task_event", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(events, 1);
+    }
+
+    #[test]
+    fn cloud115_monitor_lease_excludes_second_process_and_expiry_recovers() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        reconcile_cloud115_bt_monitor_entries(&conn, &[monitor_entry("submitted")], 100).unwrap();
+        let first =
+            claim_cloud115_bt_monitor_due(&conn, "account-1", "source-1", "p1", 100, 200, 300)
+                .unwrap()
+                .unwrap();
+        assert_eq!(first.tasks.len(), 1);
+        assert!(
+            claim_cloud115_bt_monitor_due(&conn, "account-1", "source-1", "p2", 150, 250, 300)
+                .unwrap()
+                .is_none()
+        );
+        let recovered =
+            claim_cloud115_bt_monitor_due(&conn, "account-1", "source-1", "p2", 201, 301, 300)
+                .unwrap()
+                .unwrap();
+        assert_ne!(first.run_id, recovered.run_id);
+        let interrupted: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cloud115_bt_monitor_run WHERE status='interrupted_unknown'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(interrupted, 1);
+    }
+
+    #[test]
+    fn cloud115_monitor_events_only_record_meaningful_state_changes() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        reconcile_cloud115_bt_monitor_entries(&conn, &[monitor_entry("submitted")], 100).unwrap();
+        let claim =
+            claim_cloud115_bt_monitor_due(&conn, "account-1", "source-1", "p1", 100, 200, 300)
+                .unwrap()
+                .unwrap();
+        let observation = Cloud115BtMonitorObservation {
+            account_id: "account-1".into(),
+            info_hash: "0123456789012345678901234567890123456789".into(),
+            target_folder_id: "42".into(),
+            found_in_snapshot: Some(true),
+            status_code: Some(12),
+            percent_done: Some(0.5),
+            error_class: None,
+        };
+        finish_cloud115_bt_monitor_poll(
+            &conn,
+            &claim.run_id,
+            "account-1",
+            "p1",
+            std::slice::from_ref(&observation),
+            None,
+            200,
+            120,
+        )
+        .unwrap();
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cloud115_bt_task_event", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(event_count, 2);
+
+        let claim =
+            claim_cloud115_bt_monitor_due(&conn, "account-1", "source-1", "p1", 200, 300, 300)
+                .unwrap()
+                .unwrap();
+        finish_cloud115_bt_monitor_poll(
+            &conn,
+            &claim.run_id,
+            "account-1",
+            "p1",
+            &[observation],
+            None,
+            300,
+            220,
+        )
+        .unwrap();
+        let event_count_after_repeat: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cloud115_bt_task_event", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(event_count_after_repeat, 2);
+        let summary = cloud115_bt_monitor_summary(&conn, Some("source-1"), 220).unwrap();
+        assert_eq!(summary.tracked_count, 1);
+        assert_eq!(summary.found_count, 1);
+        assert_eq!(summary.unknown_count, 0);
+        assert_eq!(summary.due_count, 0);
     }
 
     #[test]

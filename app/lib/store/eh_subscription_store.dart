@@ -3,11 +3,16 @@ import 'dart:convert';
 
 import 'package:app/store/eh_daily_coordinator.dart';
 import 'package:app/src/rust/api/eh_subscription.dart' as eh_api;
+import 'package:app/store/long_task_registry.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 typedef EhRulesWriter = Future<void> Function(String rulesJson);
 typedef EhCollectRunner = Future<String> Function(String rulesJson);
+typedef EhDailyCloudStageRunner =
+    Future<EhDailyCloudStageResult> Function(
+      List<EhCheckedManifestEntry> entries,
+    );
 
 /// 一条已保存的种子（对应 Rust 侧 `EhSavedItem` 的 JSON 形状）。
 class EhSavedItem {
@@ -188,6 +193,7 @@ class EhManifestReport {
 }
 
 typedef EhCheckedManifestLoader = Future<String> Function(String outDir);
+typedef EhTorrentDirectoryLoader = Future<String> Function(String outDir);
 
 /// 连通性预检结果（对应 Rust 侧 `EhProbe`）。
 class EhProbe {
@@ -248,6 +254,8 @@ class EhProgress {
     this.page = 0,
     this.pages = 0,
     this.candidates = 0,
+    this.processed = 0,
+    this.workTotal = 0,
     this.checked = 0,
     this.saved = 0,
     this.noRating = 0,
@@ -255,6 +263,7 @@ class EhProgress {
     this.noTorrent = 0,
     this.noDownloads = 0,
     this.unmapped = 0,
+    this.activityStartedAtUnixMs = 0,
     this.error,
   });
 
@@ -264,6 +273,8 @@ class EhProgress {
   final int page;
   final int pages;
   final int candidates;
+  final int processed;
+  final int workTotal;
   final int checked;
   final int saved;
   final int noRating;
@@ -271,6 +282,7 @@ class EhProgress {
   final int noTorrent;
   final int noDownloads;
   final int unmapped;
+  final int activityStartedAtUnixMs;
   final String? error;
 
   static EhProgress fromJson(Map<String, dynamic> j) => EhProgress(
@@ -280,6 +292,8 @@ class EhProgress {
     page: (j['page'] as num?)?.toInt() ?? 0,
     pages: (j['pages'] as num?)?.toInt() ?? 0,
     candidates: (j['candidates'] as num?)?.toInt() ?? 0,
+    processed: (j['processed'] as num?)?.toInt() ?? 0,
+    workTotal: (j['work_total'] as num?)?.toInt() ?? 0,
     checked: (j['checked'] as num?)?.toInt() ?? 0,
     saved: (j['saved'] as num?)?.toInt() ?? 0,
     noRating: (j['no_rating'] as num?)?.toInt() ?? 0,
@@ -287,17 +301,47 @@ class EhProgress {
     noTorrent: (j['no_torrent'] as num?)?.toInt() ?? 0,
     noDownloads: (j['no_downloads'] as num?)?.toInt() ?? 0,
     unmapped: (j['unmapped'] as num?)?.toInt() ?? 0,
+    activityStartedAtUnixMs:
+        (j['activity_started_at_unix_ms'] as num?)?.toInt() ?? 0,
     error: j['error'] as String?,
+  );
+
+  EhProgress copyWith({
+    bool? running,
+    String? stage,
+    String? message,
+    String? error,
+  }) => EhProgress(
+    running: running ?? this.running,
+    stage: stage ?? this.stage,
+    message: message ?? this.message,
+    page: page,
+    pages: pages,
+    candidates: candidates,
+    processed: processed,
+    workTotal: workTotal,
+    checked: checked,
+    saved: saved,
+    noRating: noRating,
+    noMarker: noMarker,
+    noTorrent: noTorrent,
+    noDownloads: noDownloads,
+    unmapped: unmapped,
+    activityStartedAtUnixMs: activityStartedAtUnixMs,
+    error: error ?? this.error,
   );
 
   /// 规则明细里"是否被挡住"的可读标签。
   String get stageLabel => switch (stage) {
+    'preparing' => '准备扫描',
     'searching' => '搜索候选',
     'metadata' => '拉取元数据',
     'filtering' => '筛选与保存',
     'probing' => '查询下载数',
     'done' => '已完成',
     'failed' => '已失败',
+    'cancelled' => '已取消',
+    'downloading_torrent' => '下载 Torrent',
     _ => '待运行',
   };
 }
@@ -318,12 +362,18 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     Map<String, dynamic> rules = const {},
     List<EhSavedItem> manifest = const [],
     EhManifestReport? manifestReport,
+    EhManifestReport? torrentDirectoryReport,
     EhCheckedManifestLoader? checkedManifestLoader,
+    EhTorrentDirectoryLoader? torrentDirectoryLoader,
+    bool autoRefreshTorrentDirectory = false,
     VoidCallback? onScanRequested,
     EhRulesWriter? rulesWriter,
     EhCollectRunner? collectRunner,
     EhProgress progress = const EhProgress(),
     String? rulesPath,
+    bool dailyWorkflowReady = true,
+    String dailyWorkflowGateMessage = 'P0_REAL_PASS required',
+    EhDailyCloudStageRunner? dailyCloudStageRunner,
   }) {
     final store = EhSubscriptionStore._();
     if (rules.isNotEmpty) {
@@ -333,6 +383,9 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     }
     store.manifestReport =
         manifestReport ?? EhManifestReport.fromItems(manifest.reversed);
+    store.torrentDirectoryReport =
+        torrentDirectoryReport ??
+        const EhManifestReport(status: EhManifestReadStatus.unconfigured);
     store.manifest = manifestReport == null
         ? manifest
         : manifestReport.entries
@@ -341,9 +394,14 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
               .reversed
               .toList();
     store._checkedManifestLoader = checkedManifestLoader;
+    store._torrentDirectoryLoader = torrentDirectoryLoader;
+    store.autoRefreshTorrentDirectory = autoRefreshTorrentDirectory;
     store._onScanRequested = onScanRequested;
     store._rulesWriter = rulesWriter;
     store._collectRunner = collectRunner;
+    store._dailyWorkflowReadyOverride = dailyWorkflowReady;
+    store._dailyWorkflowGateMessageOverride = dailyWorkflowGateMessage;
+    store._dailyCloudStageRunner = dailyCloudStageRunner;
     store.progress = progress;
     if (rulesPath != null) {
       store._rulesPath = rulesPath;
@@ -367,7 +425,15 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   EhManifestReport manifestReport = const EhManifestReport(
     status: EhManifestReadStatus.unconfigured,
   );
+
+  /// Direct inventory of top-level `.torrent` files under the configured
+  /// output directory. It is independent of `manifest.json`.
+  EhManifestReport torrentDirectoryReport = const EhManifestReport(
+    status: EhManifestReadStatus.unconfigured,
+  );
   bool refreshingManifest = false;
+  bool refreshingTorrentDirectory = false;
+  bool autoRefreshTorrentDirectory = true;
   EhProgress progress = const EhProgress();
   EhProbe? probe;
   bool probing = false;
@@ -375,10 +441,16 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   bool busy = false;
   String? loadError;
   EhCheckedManifestLoader? _checkedManifestLoader;
+  EhTorrentDirectoryLoader? _torrentDirectoryLoader;
   VoidCallback? _onScanRequested;
   EhRulesWriter? _rulesWriter;
   EhCollectRunner? _collectRunner;
   bool _cancelRequested = false;
+  bool? _dailyWorkflowReadyOverride;
+  String? _dailyWorkflowGateMessageOverride;
+  bool Function()? _dailyWorkflowReadiness;
+  String Function()? _dailyWorkflowBlockedMessage;
+  EhDailyCloudStageRunner? _dailyCloudStageRunner;
 
   Timer? _poll;
 
@@ -413,6 +485,27 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
 
   @override
   bool get dailyReady => _initialized && loadError == null;
+
+  @override
+  bool get dailyWorkflowReady =>
+      _dailyWorkflowReadiness?.call() ?? _dailyWorkflowReadyOverride ?? false;
+
+  @override
+  String get dailyWorkflowGateMessage =>
+      _dailyWorkflowBlockedMessage?.call() ??
+      _dailyWorkflowGateMessageOverride ??
+      '115 每日自动写入仍被 P0_REAL_PASS 门禁锁定。';
+
+  void configureDailyWorkflowGate({
+    required bool Function() isReady,
+    required String Function() blockedMessage,
+    required EhDailyCloudStageRunner runCloudStage,
+  }) {
+    _dailyWorkflowReadiness = isReady;
+    _dailyWorkflowBlockedMessage = blockedMessage;
+    _dailyCloudStageRunner = runCloudStage;
+    notifyListeners();
+  }
 
   @override
   EhDailyAutomationState get dailyAutomation {
@@ -542,6 +635,9 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
 
   @override
   Future<void> setDailyEnabled(bool enabled) async {
+    if (enabled && !dailyWorkflowReady) {
+      throw StateError(dailyWorkflowGateMessage);
+    }
     final path = _rulesPath;
     if (path == null || _rulesWriter != null) {
       await saveDailyAutomation(
@@ -558,6 +654,7 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
 
   @override
   Future<bool> claimDailyRun(String date) async {
+    if (!dailyWorkflowReady) return false;
     final path = _rulesPath;
     if (path == null || _rulesWriter != null) {
       final current = dailyAutomation;
@@ -737,6 +834,38 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     notifyListeners();
   }
 
+  /// Enumerate actual top-level Torrent files under the configured output
+  /// directory. This read never parses or depends on `manifest.json`.
+  Future<void> refreshTorrentDirectory() async {
+    if (!hasOutDir) {
+      torrentDirectoryReport = const EhManifestReport(
+        status: EhManifestReadStatus.unconfigured,
+      );
+      notifyListeners();
+      return;
+    }
+    if (refreshingTorrentDirectory) return;
+    refreshingTorrentDirectory = true;
+    notifyListeners();
+    try {
+      final loader = _torrentDirectoryLoader;
+      final raw = loader == null
+          ? await eh_api.ehTorrentsChecked(outDir: outDir)
+          : await loader(outDir);
+      torrentDirectoryReport = EhManifestReport.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
+    } catch (_) {
+      torrentDirectoryReport = const EhManifestReport(
+        status: EhManifestReadStatus.unreadable,
+        errorCode: 'torrent_directory_check_failed',
+      );
+    } finally {
+      refreshingTorrentDirectory = false;
+    }
+    notifyListeners();
+  }
+
   /// 连通性预检（主站 / tracker 分别判定，便于定位"到底是哪一段不通"）。
   Future<EhProbe?> runProbe() async {
     if (probing) return probe;
@@ -772,12 +901,27 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     EhDailyRunSource source = EhDailyRunSource.manual,
   }) async {
     if (busy || !hasOutDir) return EhRunOutcome.busy;
+    if (source == EhDailyRunSource.dailyAuto && !dailyWorkflowReady) {
+      return EhRunOutcome(
+        started: false,
+        status: EhDailyRunStatus.failed,
+        error: dailyWorkflowGateMessage,
+      );
+    }
     final initialAutomation = dailyAutomation;
     if (source == EhDailyRunSource.manual &&
         initialAutomation.lastRun?.source == EhDailyRunSource.dailyAuto &&
         initialAutomation.lastRun?.status == EhDailyRunStatus.claimed) {
       return EhRunOutcome.busy;
     }
+    final longTask = LongTaskRegistry.instance.register(
+      kind: source == EhDailyRunSource.dailyAuto
+          ? 'eh_daily_subscription'
+          : 'eh_subscription_scan',
+      label: source == EhDailyRunSource.dailyAuto ? 'EH 每日订阅扫描' : 'EH 订阅扫描',
+      phase: '准备扫描',
+      prepareForExit: _cancelAndWaitForScan,
+    );
     _onScanRequested?.call();
     _normalizeHost();
     _encodeRules();
@@ -790,6 +934,8 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     notifyListeners();
     var started = false;
     var outcome = EhRunOutcome.busy;
+    var cloudStage = const EhDailyCloudStageResult();
+    var manifestRefreshed = false;
     EhDailyRunRecord? activeRun;
     try {
       final previous = dailyAutomation;
@@ -805,6 +951,7 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
       );
       await updateDailyRun(activeRun);
       started = true;
+      longTask.update(phase: '检索 EH 订阅');
       _startPolling();
       final runner = _collectRunner;
       final raw = runner == null
@@ -829,20 +976,81 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
         saved: progress.saved,
         error: progress.error,
       );
+      longTask.update(phase: '核对本地 Torrent 清单');
+      if (source == EhDailyRunSource.dailyAuto &&
+          status == EhDailyRunStatus.completed) {
+        await refreshManifest();
+        manifestRefreshed = true;
+        if (manifestReport.status != EhManifestReadStatus.ready &&
+            manifestReport.status != EhManifestReadStatus.empty) {
+          cloudStage = EhDailyCloudStageResult(
+            status: EhDailyCloudStageStatus.failed,
+            message: 'EH 清单未通过检查，115 阶段未启动（${manifestReport.status.name}）。',
+          );
+        } else {
+          final cloudRunner = _dailyCloudStageRunner;
+          if (cloudRunner == null) {
+            cloudStage = EhDailyCloudStageResult(
+              status: EhDailyCloudStageStatus.p0Blocked,
+              message: dailyWorkflowGateMessage,
+            );
+          } else {
+            // The batch processor owns the durable Cloud115 portion. Release
+            // the scan lease before handing work to it so the exit prompt
+            // reports one active owner at a time.
+            longTask.dispose();
+            try {
+              cloudStage = await cloudRunner(manifestReport.entries);
+            } catch (error) {
+              cloudStage = EhDailyCloudStageResult(
+                status: EhDailyCloudStageStatus.failed,
+                total: manifestReport.entries.length,
+                message: _safeDailyError(error),
+              );
+            }
+          }
+          if (cloudStage.status != EhDailyCloudStageStatus.completed) {
+            outcome = EhRunOutcome(
+              started: true,
+              status: EhDailyRunStatus.partial,
+              saved: progress.saved,
+              error: cloudStage.message,
+            );
+          }
+        }
+      }
     } catch (e) {
-      progress = EhProgress(stage: 'failed', message: '$e', error: '$e');
+      var latest = progress;
+      if (_collectRunner == null) {
+        try {
+          final rawProgress = await eh_api.ehProgress();
+          latest = EhProgress.fromJson(
+            Map<String, dynamic>.from(jsonDecode(rawProgress) as Map),
+          );
+        } catch (_) {
+          // Preserve the last polled counters if the final snapshot is unavailable.
+        }
+      }
+      final safeError = _safeDailyError(e);
+      progress = latest.copyWith(
+        running: false,
+        stage: _cancelRequested ? 'cancelled' : 'failed',
+        message: safeError,
+        error: safeError,
+      );
       outcome = EhRunOutcome(
         started: started,
         status: _cancelRequested
             ? EhDailyRunStatus.cancelled
             : EhDailyRunStatus.failed,
         saved: progress.saved,
-        error: '$e',
+        error: safeError,
       );
     } finally {
+      longTask.dispose();
       _stopPolling();
       busy = false;
-      await refreshManifest();
+      if (!manifestRefreshed) await refreshManifest();
       if (started) {
         try {
           await updateDailyRun(
@@ -850,6 +1058,7 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
               status: outcome.status,
               saved: outcome.saved,
               error: outcome.error,
+              cloudStage: cloudStage,
             ),
           );
         } catch (e) {
@@ -862,6 +1071,38 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
       notifyListeners();
     }
     return outcome;
+  }
+
+  Future<void> _cancelAndWaitForScan() async {
+    if (!busy) return;
+    await cancel();
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (busy && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    if (busy) {
+      throw TimeoutException(
+        'EH cancellation did not reach a saved checkpoint',
+      );
+    }
+  }
+
+  String _safeDailyError(Object error) {
+    final value = error.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    final redacted = value
+        .replaceAll(
+          RegExp(r'cookie\s*[:=]\s*[^ ]+', caseSensitive: false),
+          'Cookie=[redacted]',
+        )
+        .replaceAll(
+          RegExp(r'authorization\s*[:=]\s*[^ ]+', caseSensitive: false),
+          'Authorization=[redacted]',
+        )
+        .replaceAll(
+          RegExp(r'token\s*[:=]\s*[^ ]+', caseSensitive: false),
+          'token=[redacted]',
+        );
+    return redacted.length <= 240 ? redacted : '${redacted.substring(0, 240)}…';
   }
 
   Future<void> cancel() async {

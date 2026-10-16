@@ -1325,6 +1325,21 @@ pub async fn cloud115_cookie_list(session: u64, path: String) -> Result<Vec<DirE
         .collect())
 }
 
+/// Lists one level of existing target folders for the Cookie BT destination
+/// picker. This is a bounded read-only request on the already cached session.
+pub async fn cloud115_cookie_bt_list_child_folders(
+    session: u64,
+    parent_id: String,
+) -> Result<Vec<cloud115_source::Cloud115BtFolder>> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
+    tokio::task::spawn_blocking(move || client.bt_list_child_folders(&parent_id)).await?
+}
+
 /// Validate one checked EH Torrent and query the existing Cookie session for
 /// the exact target directory and duplicate-task state. This operation is
 /// read-only and reuses the reader's Cookie client, rate gate, and WAF cooldown.
@@ -1333,6 +1348,7 @@ pub async fn cloud115_cookie_bt_readonly_preflight(
     output_dir: String,
     relative_file: String,
     expected_info_hash: String,
+    target: cloud115_source::Cloud115BtFolderSelection,
 ) -> Result<cloud115_source::Cloud115BtPreflight> {
     let client = cloud115_cookie_sessions()
         .lock()
@@ -1341,7 +1357,35 @@ pub async fn cloud115_cookie_bt_readonly_preflight(
         .cloned()
         .ok_or_else(|| anyhow!("115 Cookie 会话不存在，请重新连接"))?;
     tokio::task::spawn_blocking(move || {
-        client.bt_readonly_preflight(&output_dir, &relative_file, &expected_info_hash)
+        client.bt_readonly_preflight(&output_dir, &relative_file, &expected_info_hash, &target)
+    })
+    .await?
+}
+
+/// Remove only the checked local Torrent, and only after this existing Cookie
+/// session confirms that the expected account has a positive same-hash task.
+pub async fn cloud115_cookie_bt_delete_local_if_remote_task_found(
+    session: u64,
+    output_dir: String,
+    relative_file: String,
+    expected_info_hash: String,
+    expected_account_id: String,
+    target: cloud115_source::Cloud115BtFolderSelection,
+) -> Result<()> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
+    tokio::task::spawn_blocking(move || {
+        client.bt_delete_local_torrent_if_remote_task_found(
+            &output_dir,
+            &relative_file,
+            &expected_info_hash,
+            &expected_account_id,
+            &target,
+        )
     })
     .await?
 }
@@ -1354,7 +1398,7 @@ pub async fn cloud115_cookie_bt_upload_and_parse(
     output_dir: String,
     relative_file: String,
     expected_info_hash: String,
-    expected_target_folder_id: String,
+    target: cloud115_source::Cloud115BtFolderSelection,
 ) -> Result<cloud115_source::Cloud115BtUploadParseResult> {
     let client = cloud115_cookie_sessions()
         .lock()
@@ -1363,12 +1407,7 @@ pub async fn cloud115_cookie_bt_upload_and_parse(
         .cloned()
         .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
     tokio::task::spawn_blocking(move || {
-        client.bt_upload_and_parse(
-            &output_dir,
-            &relative_file,
-            &expected_info_hash,
-            &expected_target_folder_id,
-        )
+        client.bt_upload_and_parse(&output_dir, &relative_file, &expected_info_hash, &target)
     })
     .await?
 }
@@ -1380,7 +1419,7 @@ pub async fn cloud115_cookie_bt_confirm_upload_parse(
     output_dir: String,
     relative_file: String,
     expected_info_hash: String,
-    expected_target_folder_id: String,
+    target: cloud115_source::Cloud115BtFolderSelection,
     pick_code: Option<String>,
 ) -> Result<cloud115_source::Cloud115BtUploadParseResult> {
     let client = cloud115_cookie_sessions()
@@ -1394,7 +1433,7 @@ pub async fn cloud115_cookie_bt_confirm_upload_parse(
             &output_dir,
             &relative_file,
             &expected_info_hash,
-            &expected_target_folder_id,
+            &target,
             pick_code,
         )
     })
@@ -1408,7 +1447,7 @@ pub async fn cloud115_cookie_bt_submit_once(
     output_dir: String,
     relative_file: String,
     expected_info_hash: String,
-    expected_target_folder_id: String,
+    target: cloud115_source::Cloud115BtFolderSelection,
     wanted_indices: Vec<u32>,
 ) -> Result<cloud115_source::Cloud115BtSubmitResult> {
     let client = cloud115_cookie_sessions()
@@ -1422,7 +1461,7 @@ pub async fn cloud115_cookie_bt_submit_once(
             &output_dir,
             &relative_file,
             &expected_info_hash,
-            &expected_target_folder_id,
+            &target,
             &wanted_indices,
         )
     })
@@ -1434,7 +1473,7 @@ pub async fn cloud115_cookie_bt_submit_once(
 pub async fn cloud115_cookie_bt_task_status(
     session: u64,
     info_hash: String,
-    expected_target_folder_id: String,
+    target: cloud115_source::Cloud115BtFolderSelection,
 ) -> Result<cloud115_source::Cloud115BtTaskStatus> {
     let client = cloud115_cookie_sessions()
         .lock()
@@ -1442,10 +1481,21 @@ pub async fn cloud115_cookie_bt_task_status(
         .get(&session)
         .cloned()
         .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
-    tokio::task::spawn_blocking(move || {
-        client.bt_task_status(&info_hash, &expected_target_folder_id)
-    })
-    .await?
+    tokio::task::spawn_blocking(move || client.bt_task_status(&info_hash, &target)).await?
+}
+
+/// One bounded read-only task-list snapshot through the already-owned Cookie
+/// session. This path has no upload or submit call.
+pub async fn cloud115_cookie_bt_task_snapshot(
+    session: u64,
+) -> Result<cloud115_source::Cloud115BtTaskSnapshot> {
+    let client = cloud115_cookie_sessions()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .cloned()
+        .ok_or_else(|| anyhow!("115 Cookie 会话不存在；为避免影响登录状态，本操作不会重新连接"))?;
+    tokio::task::spawn_blocking(move || client.bt_task_snapshot()).await?
 }
 
 /// 打开 115 上的书籍（path 为 pickcode，三态策略）。

@@ -131,3 +131,10 @@ Future<String> ehManifestChecked({required String outDir}) => RustLib
     .instance
     .api
     .crateApiEhSubscriptionEhManifestChecked(outDir: outDir);
+
+/// Enumerate only immediate `.torrent` files in the configured output folder.
+/// This local read is independent of `manifest.json` and never recurses.
+Future<String> ehTorrentsChecked({required String outDir}) => RustLib
+    .instance
+    .api
+    .crateApiEhSubscriptionEhTorrentsChecked(outDir: outDir);

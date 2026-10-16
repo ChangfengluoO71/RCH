@@ -8,6 +8,7 @@ import 'package:app/src/rust/api/db.dart';
 import 'package:app/src/rust/api/package.dart';
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/credential_vault.dart';
+import 'package:app/store/long_task_registry.dart';
 import 'package:flutter/foundation.dart';
 
 const _kWebdavUrl = 'sync_webdav_url';
@@ -177,6 +178,11 @@ class SyncManager extends ChangeNotifier {
   /// 从任意 `.rchpkg` 文件恢复（保留本地书源凭据）。
   Future<String> restoreFrom(String path) async {
     if (busy) return '正在处理，请稍候';
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'backup_restore',
+      label: '恢复 RCH 备份',
+      phase: '读取备份并写入本地资料库',
+    );
     busy = true;
     notifyListeners();
     try {
@@ -191,6 +197,7 @@ class SyncManager extends ChangeNotifier {
       await _finish(msg);
       return msg;
     } finally {
+      taskLease.dispose();
       busy = false;
       notifyListeners();
     }
@@ -202,6 +209,11 @@ class SyncManager extends ChangeNotifier {
     String passphrase,
   ) async {
     if (busy) return '正在处理，请稍候';
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'backup_restore',
+      label: '恢复 RCH 备份',
+      phase: '恢复备份并应用加密凭据',
+    );
     busy = true;
     notifyListeners();
     try {
@@ -218,6 +230,7 @@ class SyncManager extends ChangeNotifier {
       await _finish(msg);
       return msg;
     } finally {
+      taskLease.dispose();
       busy = false;
       notifyListeners();
     }
@@ -226,6 +239,11 @@ class SyncManager extends ChangeNotifier {
   /// 导出标准 `.rchpkg` 备份包（全量快照；`passphrase` 非空时附带加密书源凭据）。
   Future<String> exportToFile(String path, {String passphrase = ''}) async {
     if (busy) return '正在处理，请稍候';
+    final taskLease = LongTaskRegistry.instance.register(
+      kind: 'backup_export',
+      label: '导出 RCH 备份',
+      phase: '生成本地备份文件',
+    );
     busy = true;
     notifyListeners();
     try {
@@ -243,6 +261,7 @@ class SyncManager extends ChangeNotifier {
       await _finish(msg);
       return msg;
     } finally {
+      taskLease.dispose();
       busy = false;
       notifyListeners();
     }

@@ -1154,8 +1154,9 @@ pub struct Cloud115WebClient {
 pub mod offline;
 
 pub use offline::{
-    Cloud115BtFile, Cloud115BtPreflight, Cloud115BtSubmitResult, Cloud115BtTaskStatus,
-    Cloud115BtUploadParseResult,
+    Cloud115BtFile, Cloud115BtFolder, Cloud115BtFolderSelection, Cloud115BtPreflight,
+    Cloud115BtSubmitResult, Cloud115BtTaskSnapshot, Cloud115BtTaskSnapshotItem,
+    Cloud115BtTaskStatus, Cloud115BtUploadParseResult,
 };
 
 const WEB_DOWNLOAD_URL_CACHE_TTL: Duration = Duration::from_secs(300);

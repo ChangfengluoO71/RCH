@@ -37,7 +37,8 @@ EhSubscriptionStore _store() => EhSubscriptionStore.forTest(
   manifest: [
     EhSavedItem(
       infohash: 'ea29160bfbebedfaa8c818310548ead6432c49ce',
-      titleJpn: '[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4〜長女レミィ編(前編)〜 [中国翻訳] [無修正] [DL版]',
+      titleJpn:
+          '[赤月屋 (赤月みゅうと)] 僕にしか触れないサキュバス三姉妹に搾られる話4〜長女レミィ編(前編)〜 [中国翻訳] [無修正] [DL版]',
       rating: 4.8,
       downloads: 926,
       requiredDl: 0,
@@ -61,7 +62,11 @@ EhSubscriptionStore _store() => EhSubscriptionStore.forTest(
       category: 'Doujinshi',
       filecount: 59,
       filesize: 87241523,
-      tags: const ['language:chinese', 'other:uncensored', 'female:big breasts'],
+      tags: const [
+        'language:chinese',
+        'other:uncensored',
+        'female:big breasts',
+      ],
       file: '2b34b49b065e0c7e5441b3cd4db9262aacfd2b30-....torrent',
       bytes: 6927,
     ),
@@ -88,7 +93,10 @@ void main() {
   // 这里加载系统中文字体（微软雅黑/等线），让预览图能真实反映排版与文案。
   setUpAll(() async {
     for (final entry in {
-      'Microsoft YaHei': [r'C:\Windows\Fonts\msyh.ttc', r'C:\Windows\Fonts\msyhbd.ttc'],
+      'Microsoft YaHei': [
+        r'C:\Windows\Fonts\msyh.ttc',
+        r'C:\Windows\Fonts\msyhbd.ttc',
+      ],
       'DengXian': [r'C:\Windows\Fonts\Deng.ttf'],
     }.entries) {
       for (final path in entry.value) {
@@ -138,7 +146,8 @@ void main() {
     // 会在 fake 时钟里永远不完成（表现为测试 hang）。`runAsync` 是标准解法。
     late Uint8List png;
     await tester.runAsync(() async {
-      final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 1.0);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       expect(data, isNotNull, reason: '面板应能渲染出图像');
@@ -153,14 +162,21 @@ void main() {
 
     // 兜底断言：确认面板确实渲染了关键控件（防止"截了个空白图"）。
     // 注意主按钮文案随状态变化（运行中为「扫描中…」，空闲为「开始扫描」）。
-    expect(find.text('EH 订阅'), findsOneWidget);
-    final primary = tester.widget<FilledButton>(find.byType(FilledButton).first);
-    expect(find.text(primary.onPressed == null ? '扫描中…' : '开始扫描'), findsOneWidget);
-    expect(find.text('搜索语法'), findsOneWidget);
+    expect(find.text('EH 订阅与自动化'), findsOneWidget);
+    final primary = tester.widget<FilledButton>(
+      find.byType(FilledButton).first,
+    );
+    expect(
+      find.text(primary.onPressed == null ? '扫描中…' : '立即运行完整工作流'),
+      findsOneWidget,
+    );
+    expect(find.text('高级选项'), findsOneWidget);
+    expect(find.text('搜索语法'), findsNothing);
     expect(find.text('已保存种子'), findsOneWidget);
-    expect(find.text('分时间段下载数要求'), findsOneWidget);
 
-    stdout.writeln('PREVIEW_WRITTEN ${file.absolute.path} bytes=${file.lengthSync()}');
+    stdout.writeln(
+      'PREVIEW_WRITTEN ${file.absolute.path} bytes=${file.lengthSync()}',
+    );
     expect(jsonEncode({'ok': true}), contains('ok'));
   }, timeout: const Timeout(Duration(seconds: 90)));
 }

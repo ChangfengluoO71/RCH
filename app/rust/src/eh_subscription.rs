@@ -321,6 +321,10 @@ pub struct EhProgress {
     pub page: usize,
     pub pages: usize,
     pub candidates: usize,
+    /// Metadata candidates visited so far (includes the item currently being processed).
+    pub processed: usize,
+    /// Number of metadata rows available for local filtering once each batch returns.
+    pub work_total: usize,
     pub checked: usize,
     pub saved: usize,
     /// 拒绝分项（规则可编辑，必须能看出是哪条规则挡住的）
@@ -329,6 +333,8 @@ pub struct EhProgress {
     pub no_torrent: usize,
     pub no_downloads: usize,
     pub unmapped: usize,
+    /// Unix milliseconds when the currently displayed activity began.
+    pub activity_started_at_unix_ms: u128,
     pub error: Option<String>,
 }
 
@@ -554,6 +560,12 @@ pub fn posted_of(v: &serde_json::Value) -> Option<i64> {
     int_field(v, "posted").filter(|t| *t > 0)
 }
 
+fn required_downloads_for_posted(rules: &EhRules, posted: Option<i64>, now: i64) -> Option<i64> {
+    let posted = posted.filter(|timestamp| *timestamp > 0)?;
+    let age_years = (now - posted) as f64 / 365.25 / 86400.0;
+    Some(rules.required_dl(age_years))
+}
+
 /// unix 秒 → `YYYY-MM-DD HH:MM UTC`（手算 civil date，不引额外依赖）。
 pub fn fmt_utc(secs: i64) -> String {
     if secs <= 0 {
@@ -659,24 +671,35 @@ pub fn parse_gid_token(url: &str) -> Option<(String, String)> {
 }
 
 /// 种子页统计：实测文本形如 `Seeds: 124 Peers: 4 Downloads: 924`。
-pub fn parse_torrent_stats(html: &str) -> Vec<(i64, i64, i64)> {
+pub fn parse_torrent_stats(html: &str) -> Vec<Option<(i64, i64, i64)>> {
     let flat = strip_tags(html);
     let mut out = Vec::new();
     let mut rest = flat.as_str();
     while let Some(i) = rest.find("Seeds:") {
         rest = &rest[i..];
-        let seg: String = rest.chars().take(160).collect();
-        let nums: Vec<i64> = seg
-            .split(|c: char| !c.is_ascii_digit())
-            .filter(|s| !s.is_empty())
-            .filter_map(|s| s.parse().ok())
-            .collect();
-        if nums.len() >= 3 {
-            out.push((nums[0], nums[1], nums[2]));
-        }
-        rest = &rest[(6).min(rest.len())..];
+        let block_end = rest[6..]
+            .find("Seeds:")
+            .map(|next| next + 6)
+            .unwrap_or(rest.len());
+        let block = &rest[..block_end];
+        let stats = parse_stat_value(block, "Seeds:")
+            .zip(parse_stat_value(block, "Peers:"))
+            .zip(parse_stat_value(block, "Downloads:"))
+            .map(|((seeds, peers), downloads)| (seeds, peers, downloads));
+        out.push(stats);
+        rest = &rest[block_end..];
     }
     out
+}
+
+fn parse_stat_value(block: &str, label: &str) -> Option<i64> {
+    let value = block.split_once(label)?.1.trim_start();
+    let digits: String = value.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
 }
 
 fn between(hay: &str, start: &str, end: &str) -> Option<String> {
@@ -1202,7 +1225,7 @@ impl Drop for ManifestTempGuard {
 }
 
 fn create_manifest_temp(target: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
-    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let parent = rules_config_parent(target);
     let base = target
         .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("manifest.json"))
@@ -1440,6 +1463,12 @@ fn acquire_named_rules_mutex(
 }
 
 fn acquire_rules_config_lock(target: &Path) -> Result<RulesConfigLock, String> {
+    // The first rules read also needs this lock, but the rules loader creates
+    // the file's parent only after acquiring it. Create the app-owned config
+    // directory first so a clean Android install can acquire the lock.
+    let parent = rules_config_parent(target);
+    std::fs::create_dir_all(parent).map_err(|error| format!("创建 EH 配置目录失败：{error}"))?;
+
     #[cfg(windows)]
     {
         let handle = acquire_named_rules_mutex(target, "Rules", 5_000)?
@@ -1450,7 +1479,6 @@ fn acquire_rules_config_lock(target: &Path) -> Result<RulesConfigLock, String> {
     #[cfg(unix)]
     {
         use fs2::FileExt as _;
-        let parent = target.parent().unwrap_or_else(|| Path::new("."));
         let directory = std::fs::File::open(parent)
             .map_err(|error| format!("打开 EH 配置目录互斥锁失败：{error}"))?;
         for _ in 0..500 {
@@ -1474,6 +1502,13 @@ fn acquire_rules_config_lock(target: &Path) -> Result<RulesConfigLock, String> {
         let _ = target;
         Err("当前平台不支持 EH 规则跨进程互斥".into())
     }
+}
+
+fn rules_config_parent(target: &Path) -> &Path {
+    target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 pub fn with_rules_config_lock<T>(
@@ -1615,9 +1650,11 @@ pub fn claim_daily(target: &Path, date: &str) -> Result<(bool, String), String> 
     }
     let _lock = acquire_rules_config_lock(target)?;
     let mut rules = read_rules_for_update(target)?;
-    let active_run = rules.automation.last_run.as_ref().is_some_and(|run| {
-        matches!(run.status.as_str(), "claimed" | "running")
-    });
+    let active_run = rules
+        .automation
+        .last_run
+        .as_ref()
+        .is_some_and(|run| matches!(run.status.as_str(), "claimed" | "running"));
     if active_run || collection_is_active(target)? {
         return Ok((false, rules.to_json()));
     }
@@ -1890,6 +1927,205 @@ pub fn read_manifest_checked(out_dir: &Path) -> EhManifestCheck {
         report.status = EhManifestReadStatus::Empty;
     }
     report
+}
+
+/// Enumerate and validate only immediate `.torrent` files in the configured
+/// output directory. This is intentionally independent of `manifest.json` so
+/// files saved before an interrupted manifest commit remain discoverable.
+/// Subdirectories are never traversed and symlinks are never followed.
+pub fn read_torrent_directory_checked(out_dir: &Path) -> EhManifestCheck {
+    if out_dir.as_os_str().is_empty() {
+        return EhManifestCheck::new(EhManifestReadStatus::Unconfigured);
+    }
+
+    let root = match out_dir.canonicalize() {
+        Ok(root) if root.is_dir() => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return EhManifestCheck::new(EhManifestReadStatus::Missing);
+        }
+        _ => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("output_directory_unreadable".into());
+            return report;
+        }
+    };
+
+    let directory = match std::fs::read_dir(&root) {
+        Ok(directory) => directory,
+        Err(_) => {
+            let mut report = EhManifestCheck::new(EhManifestReadStatus::Unreadable);
+            report.error_code = Some("output_directory_unreadable".into());
+            return report;
+        }
+    };
+
+    let mut report = EhManifestCheck::new(EhManifestReadStatus::Empty);
+    for item in directory {
+        let item = match item {
+            Ok(item) => item,
+            Err(_) => {
+                report.status = EhManifestReadStatus::Unreadable;
+                report.error_code = Some("output_directory_entry_unreadable".into());
+                report.entries.clear();
+                return report;
+            }
+        };
+        let path = item.path();
+        if !path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("torrent"))
+        {
+            continue;
+        }
+
+        let file_name = match item.file_name().into_string() {
+            Ok(file_name) => file_name,
+            Err(_) => {
+                report.status = EhManifestReadStatus::Unreadable;
+                report.error_code = Some("torrent_filename_not_unicode".into());
+                report.entries.clear();
+                return report;
+            }
+        };
+        let file_type = match item.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => {
+                report.status = EhManifestReadStatus::Unreadable;
+                report.error_code = Some("torrent_file_metadata_unreadable".into());
+                report.entries.clear();
+                return report;
+            }
+        };
+
+        let title = Path::new(&file_name)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(&file_name)
+            .to_string();
+
+        if file_type.is_symlink() {
+            report.entries.push(EhCheckedManifestEntry {
+                item: directory_torrent_item(&file_name, 0, "", &title, "未知".into()),
+                file_status: EhSavedFileStatus::UnsafePath,
+                validation_status: EhTorrentValidationStatus::NotChecked,
+                full_path: None,
+            });
+            continue;
+        }
+        if !file_type.is_file() {
+            report.entries.push(EhCheckedManifestEntry {
+                item: directory_torrent_item(&file_name, 0, "", &title, "未知".into()),
+                file_status: EhSavedFileStatus::NotRegularFile,
+                validation_status: EhTorrentValidationStatus::NotChecked,
+                full_path: None,
+            });
+            continue;
+        }
+
+        let canonical = match path.canonicalize() {
+            Ok(canonical) if canonical.starts_with(&root) && canonical.parent() == Some(&root) => {
+                canonical
+            }
+            _ => {
+                report.entries.push(EhCheckedManifestEntry {
+                    item: directory_torrent_item(&file_name, 0, "", &title, "未知".into()),
+                    file_status: EhSavedFileStatus::UnsafePath,
+                    validation_status: EhTorrentValidationStatus::NotChecked,
+                    full_path: None,
+                });
+                continue;
+            }
+        };
+        let metadata = match std::fs::metadata(&canonical) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => {
+                report.entries.push(EhCheckedManifestEntry {
+                    item: directory_torrent_item(&file_name, 0, "", &title, "未知".into()),
+                    file_status: EhSavedFileStatus::Unreadable,
+                    validation_status: EhTorrentValidationStatus::Unreadable,
+                    full_path: None,
+                });
+                continue;
+            }
+        };
+        let modified_at = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+            .map(fmt_utc)
+            .unwrap_or_else(|| "未知".into());
+        let bytes = if metadata.len() > MAX_TORRENT_METADATA_BYTES {
+            None
+        } else {
+            std::fs::read(&canonical).ok()
+        };
+        let hash = bytes.as_deref().and_then(torrent_v1_infohash);
+        let validation_status = match (&bytes, &hash) {
+            (None, _) => {
+                if metadata.len() > MAX_TORRENT_METADATA_BYTES {
+                    EhTorrentValidationStatus::TooLarge
+                } else {
+                    EhTorrentValidationStatus::Unreadable
+                }
+            }
+            (Some(_), None) => EhTorrentValidationStatus::InvalidTorrent,
+            (Some(_), Some(_)) => EhTorrentValidationStatus::Valid,
+        };
+        report.entries.push(EhCheckedManifestEntry {
+            item: directory_torrent_item(
+                &file_name,
+                i64::try_from(metadata.len()).unwrap_or(i64::MAX),
+                hash.as_deref().unwrap_or_default(),
+                &title,
+                modified_at,
+            ),
+            file_status: EhSavedFileStatus::Present,
+            validation_status,
+            full_path: Some(canonical.to_string_lossy().into_owned()),
+        });
+    }
+
+    report
+        .entries
+        .sort_by(|left, right| left.item.file.cmp(&right.item.file));
+    if !report.entries.is_empty() {
+        report.status = EhManifestReadStatus::Ready;
+    }
+    report
+}
+
+fn directory_torrent_item(
+    file: &str,
+    bytes: i64,
+    infohash: &str,
+    title: &str,
+    saved_at_utc: String,
+) -> EhSavedItem {
+    EhSavedItem {
+        infohash: infohash.into(),
+        gid: String::new(),
+        title: title.into(),
+        title_jpn: title.into(),
+        rating: 0.0,
+        downloads: 0,
+        required_dl: 0,
+        posted: None,
+        posted_utc: String::new(),
+        age_years: None,
+        tags: Vec::new(),
+        category: String::new(),
+        filecount: None,
+        filesize: None,
+        uploader: String::new(),
+        torrent_name: file.into(),
+        file: file.into(),
+        bytes,
+        source_url: String::new(),
+        saved_at_utc,
+        semantic: EhSemantic::default(),
+    }
 }
 
 fn check_saved_item(root: &Path, item: EhSavedItem) -> EhCheckedManifestEntry {
@@ -2421,6 +2657,13 @@ pub fn collect(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Err("已有一次扫描正在进行".into());
     }
+    set_progress(EhProgress {
+        running: true,
+        stage: "preparing".into(),
+        message: "正在准备 EH 扫描".into(),
+        activity_started_at_unix_ms: unix_ms(),
+        ..Default::default()
+    });
     let result = collect_inner(rules, terminal);
     RUNNING.store(false, Ordering::SeqCst);
     match &result {
@@ -2429,6 +2672,7 @@ pub fn collect(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> {
             let mut p = progress();
             p.running = false;
             p.stage = "failed".into();
+            p.message = e.clone();
             p.error = Some(e.clone());
             set_progress(p);
         }
@@ -2443,6 +2687,7 @@ fn emit(terminal: bool, stage: &str, message: String, p: &EhProgress) {
     let mut snapshot = p.clone();
     snapshot.stage = stage.to_string();
     snapshot.message = message;
+    snapshot.activity_started_at_unix_ms = unix_ms();
     set_progress(snapshot);
 }
 
@@ -2469,6 +2714,7 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         running: true,
         stage: "searching".into(),
         pages: rules.pages.clamp(1, MAX_PAGES),
+        activity_started_at_unix_ms: unix_ms(),
         ..Default::default()
     };
     set_progress(progress.clone());
@@ -2481,9 +2727,24 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         urlencode(&rules.search)
     );
     for page in 1..=rules.pages.clamp(1, MAX_PAGES) {
+        if !RUNNING.load(Ordering::SeqCst) {
+            return Err("已取消".into());
+        }
         if page > 1 {
+            emit(
+                terminal,
+                "searching",
+                format!("等待请求间隔后查询搜索第 {page}/{} 页", progress.pages),
+                &progress,
+            );
             std::thread::sleep(client.interval);
         }
+        emit(
+            terminal,
+            "searching",
+            format!("正在请求搜索第 {page}/{} 页", progress.pages),
+            &progress,
+        );
         let html = client.get(&url)?;
         for p in parse_gallery_pairs(&html, &client.host) {
             if !pairs.iter().any(|(u, _)| u == &p.0) {
@@ -2519,13 +2780,39 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         &progress,
     );
     let mut items: Vec<serde_json::Value> = Vec::new();
-    for chunk in pairs.chunks(25) {
+    let metadata_batches = pairs.chunks(25).len();
+    for (batch_index, chunk) in pairs.chunks(25).enumerate() {
+        if !RUNNING.load(Ordering::SeqCst) {
+            return Err("已取消".into());
+        }
+        emit(
+            terminal,
+            "metadata",
+            format!(
+                "正在拉取元数据：第 {}/{} 批，每批最多 25 项",
+                batch_index + 1,
+                metadata_batches
+            ),
+            &progress,
+        );
         std::thread::sleep(client.interval);
         let reqs: Vec<(String, String)> = chunk
             .iter()
             .filter_map(|(u, _)| parse_gid_token(u))
             .collect();
         items.extend(client.gdata(&reqs)?);
+        progress.work_total = items.len();
+        emit(
+            terminal,
+            "metadata",
+            format!(
+                "元数据已完成 {}/{} 批（{} 项）",
+                batch_index + 1,
+                metadata_batches,
+                items.len()
+            ),
+            &progress,
+        );
     }
 
     // 3) 本地筛选（评分/标记/有无种子；EH 搜索做不到这些）
@@ -2534,17 +2821,34 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
         + rules.now_offset_days * 86400;
-    let mut new_items = Vec::new();
     let mut saved = 0usize;
+    progress.work_total = items.len();
 
     for item in items.iter() {
         if !RUNNING.load(Ordering::SeqCst) {
             return Err("已取消".into());
         }
+        progress.processed += 1;
         let gid = item.get("gid").map(|g| g.to_string()).unwrap_or_default();
         let token = text_field(item, "token").to_string();
         let title = text_field(item, "title").to_string();
         let title_jpn = text_field(item, "title_jpn").to_string();
+        progress.stage = "filtering".into();
+        emit(
+            terminal,
+            "filtering",
+            format!(
+                "正在筛选第 {}/{} 项：{}",
+                progress.processed,
+                items.len(),
+                if title_jpn.is_empty() {
+                    &title
+                } else {
+                    &title_jpn
+                }
+            ),
+            &progress,
+        );
         let rating = rating_of(item);
         if rating < rules.min_rating {
             progress.no_rating += 1;
@@ -2562,6 +2866,12 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         // 4) 下载数（每画廊一次种子页请求）
         progress.stage = "probing".into();
         progress.checked += 1;
+        emit(
+            terminal,
+            "probing",
+            format!("正在查询 Torrent 下载数：{}", title_jpn),
+            &progress,
+        );
         std::thread::sleep(client.interval);
         let stats_html = client.get(&format!(
             "https://{}/gallerytorrents.php?gid={}&t={}",
@@ -2570,43 +2880,149 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
         let stats = parse_torrent_stats(&stats_html);
         let posted = posted_of(item);
         let age_years = posted.map(|t| (now - t) as f64 / 365.25 / 86400.0);
-        let need = rules.required_dl(age_years.unwrap_or(0.0));
         let torrents = item
             .get("torrents")
             .and_then(|t| t.as_array())
             .cloned()
             .unwrap_or_default();
 
+        let Some(need) = required_downloads_for_posted(&rules, posted, now) else {
+            progress.no_downloads += torrents.len();
+            emit(
+                terminal,
+                "filtering",
+                format!(
+                    "发布时间缺失或无效，无法应用分龄下载数门槛，已跳过该画廊全部种子：{title_jpn}"
+                ),
+                &progress,
+            );
+            continue;
+        };
+
+        // The stats page and gdata list are paired by row order. Never compact
+        // a missing stats row and accidentally assign the next torrent's count.
+        if stats.len() != torrents.len() {
+            progress.no_downloads += torrents.len();
+            emit(
+                terminal,
+                "filtering",
+                format!(
+                    "Torrent 统计行数与 gdata 列表不匹配（{} / {}），已跳过该画廊全部种子",
+                    stats.len(),
+                    torrents.len()
+                ),
+                &progress,
+            );
+            continue;
+        }
+
         for (idx, t) in torrents.iter().enumerate() {
+            if !RUNNING.load(Ordering::SeqCst) {
+                return Err("已取消".into());
+            }
             let hash = text_field(t, "hash").to_string();
             let tname = text_field(t, "name").to_string();
-            if hash.is_empty() {
+            if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                progress.unmapped += 1;
+                emit(
+                    terminal,
+                    "filtering",
+                    format!("Torrent Infohash 格式无效，已跳过：{tname}"),
+                    &progress,
+                );
                 continue;
             }
-            let dl = stats.get(idx).map(|s| s.2).unwrap_or(-1);
+            let dl = stats
+                .get(idx)
+                .and_then(Option::as_ref)
+                .map(|s| s.2)
+                .unwrap_or(-1);
             if dl < need {
                 progress.no_downloads += 1;
+                emit(
+                    terminal,
+                    "filtering",
+                    format!("Torrent 下载数未达标，已跳过：{tname}"),
+                    &progress,
+                );
                 continue;
             }
             if !maps_to_gallery(&title_jpn, &tname, &[]) {
                 progress.unmapped += 1;
+                emit(
+                    terminal,
+                    "filtering",
+                    format!("Torrent 与画廊标题映射未确认，已跳过：{tname}"),
+                    &progress,
+                );
                 continue;
             }
             if known.contains(&hash.to_ascii_lowercase()) {
-                continue;
-            }
-            std::thread::sleep(client.interval);
-            let bytes = client
-                .get_bytes(&format!("https://ehtracker.org/get/{gid}/{hash}.torrent"))
-                .map_err(|e| format!("下载种子失败：{e}"))?;
-            if bytes.first() != Some(&b'd') {
-                progress.unmapped += 1;
+                emit(
+                    terminal,
+                    "filtering",
+                    format!("Infohash 已在本地 manifest，跳过重复 Torrent：{tname}"),
+                    &progress,
+                );
                 continue;
             }
             let file_name = format!("{hash}-{}.torrent", sanitize_filename(&title_jpn));
             let path = Path::new(&rules.out_dir).join(&file_name);
-            std::fs::write(&path, &bytes).map_err(|e| format!("写入种子失败：{e}"))?;
-            new_items.push(EhSavedItem {
+            let existing_bytes = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(format!("Torrent 保存路径不能是符号链接：{file_name}"));
+                }
+                Ok(metadata) if !metadata.is_file() => {
+                    return Err(format!("Torrent 保存路径不是普通文件：{file_name}"));
+                }
+                Ok(_) => {
+                    let bytes = std::fs::read(&path)
+                        .map_err(|error| format!("读取已有 Torrent 失败：{error}"))?;
+                    torrent_v1_infohash(&bytes)
+                        .filter(|actual| actual.eq_ignore_ascii_case(&hash))
+                        .map(|_| bytes)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(format!("检查已有 Torrent 失败：{error}")),
+            };
+            let bytes = if let Some(bytes) = existing_bytes {
+                emit(
+                    terminal,
+                    "filtering",
+                    format!("复用已校验的本地 Torrent：{file_name}"),
+                    &progress,
+                );
+                bytes
+            } else {
+                if !RUNNING.load(Ordering::SeqCst) {
+                    return Err("已取消".into());
+                }
+                emit(
+                    terminal,
+                    "downloading_torrent",
+                    format!("正在从 Tracker 获取 Torrent：{file_name}"),
+                    &progress,
+                );
+                std::thread::sleep(client.interval);
+                let bytes = client
+                    .get_bytes(&format!("https://ehtracker.org/get/{gid}/{hash}.torrent"))
+                    .map_err(|e| format!("下载种子失败：{e}"))?;
+                if !torrent_v1_infohash(&bytes)
+                    .is_some_and(|actual| actual.eq_ignore_ascii_case(&hash))
+                {
+                    progress.unmapped += 1;
+                    emit(
+                        terminal,
+                        "filtering",
+                        format!("Torrent 数据无效或 infohash 不匹配，已跳过：{file_name}"),
+                        &progress,
+                    );
+                    continue;
+                }
+                std::fs::write(&path, &bytes).map_err(|e| format!("写入种子失败：{e}"))?;
+                bytes
+            };
+            let saved_item = EhSavedItem {
                 infohash: hash.clone(),
                 gid: gid.clone(),
                 title: title.clone(),
@@ -2636,21 +3052,26 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
                 source_url: format!("https://{}/g/{}/{}", client.host, gid, token),
                 saved_at_utc: fmt_utc(now),
                 semantic: derive_semantic(item, true, &rules.out_dir),
-            });
+            };
+            // Each validated Torrent is committed before moving to another candidate.
+            // A later network error or cancellation can no longer orphan earlier results.
+            let added = commit_manifest_additions(
+                Path::new(&rules.out_dir),
+                std::slice::from_ref(&saved_item),
+            )
+            .map_err(|error| error.to_string())?;
             known.insert(hash.to_ascii_lowercase());
-            saved += 1;
+            saved += added;
             progress.saved = saved;
             emit(
                 terminal,
                 "filtering",
-                format!("已保存 {saved} 个（dl={dl} ≥ {need}）"),
+                format!("已校验并保存 {saved} 个 Torrent；当前下载数 {dl}，要求至少 {need}"),
                 &progress,
             );
         }
     }
 
-    saved = commit_manifest_additions(Path::new(&rules.out_dir), &new_items)
-        .map_err(|error| error.to_string())?;
     progress.saved = saved;
 
     progress.running = false;
@@ -2913,6 +3334,17 @@ mod tests {
     }
 
     #[test]
+    fn missing_posted_date_does_not_use_the_youngest_download_tier() {
+        let rules = EhRules::default();
+        let now = 1_800_000_000;
+        assert_eq!(required_downloads_for_posted(&rules, None, now), None);
+        assert_eq!(
+            required_downloads_for_posted(&rules, Some(now - 10 * 86400), now),
+            Some(200)
+        );
+    }
+
+    #[test]
     fn next_page_cursor_comes_from_script_variable() {
         let html = r#"<script>var prevurl=""; var nexturl="https://e-hentai.org/?f_search=a&amp;next=4201693";</script>"#;
         assert_eq!(
@@ -2937,7 +3369,19 @@ mod tests {
     #[test]
     fn torrent_stats_parse_seeds_peers_downloads() {
         let html = "<div>Seeds: 124 Peers: 4 Downloads: 924</div><div>Seeds: 0 Peers: 7 Downloads: 5</div>";
-        assert_eq!(parse_torrent_stats(html), vec![(124, 4, 924), (0, 7, 5)]);
+        assert_eq!(
+            parse_torrent_stats(html),
+            vec![Some((124, 4, 924)), Some((0, 7, 5))]
+        );
+    }
+
+    #[test]
+    fn malformed_torrent_stats_row_does_not_borrow_numbers_from_next_row() {
+        let html = "<div>Seeds: 12 Peers: 3 Downloads: 321</div><div>Seeds: n/a Peers: 0 Downloads: 4000</div><div>Seeds: 5 Peers: 6 Downloads: 123</div>";
+        assert_eq!(
+            parse_torrent_stats(html),
+            vec![Some((12, 3, 321)), None, Some((5, 6, 123))]
+        );
     }
 
     #[test]
@@ -3461,6 +3905,68 @@ mod tests {
             EhTorrentValidationStatus::Valid
         );
         assert!(report.entries[0].full_path.is_some());
+    }
+
+    #[test]
+    fn checked_torrent_directory_uses_top_level_files_without_manifest() {
+        let root = TestDir::new();
+        let valid_path = root.path().join("有效 & [测试].torrent");
+        std::fs::write(&valid_path, HANDOFF_TORRENT).unwrap();
+        std::fs::write(root.path().join("损坏.torrent"), b"not bencoded").unwrap();
+        std::fs::write(root.path().join("ignore.txt"), b"not a torrent").unwrap();
+        let nested = root.path().join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("nested.torrent"), HANDOFF_TORRENT).unwrap();
+
+        let report = read_torrent_directory_checked(root.path());
+
+        assert_eq!(report.status, EhManifestReadStatus::Ready);
+        assert_eq!(report.entries.len(), 2);
+        assert!(
+            report.entries.iter().any(|entry| {
+                entry.item.file == "有效 & [测试].torrent"
+                    && entry.item.infohash == HANDOFF_INFOHASH
+                    && entry.file_status == EhSavedFileStatus::Present
+                    && entry.validation_status == EhTorrentValidationStatus::Valid
+            }),
+            "valid top-level torrent should be discovered and checked"
+        );
+        assert!(
+            report.entries.iter().any(|entry| {
+                entry.item.file == "损坏.torrent"
+                    && entry.file_status == EhSavedFileStatus::Present
+                    && entry.validation_status == EhTorrentValidationStatus::InvalidTorrent
+            }),
+            "invalid top-level torrent should remain visible as invalid"
+        );
+        assert!(!root.path().join("manifest.json").exists());
+    }
+
+    #[test]
+    fn checked_torrent_directory_rejects_symlink_entries() {
+        let root = TestDir::new();
+        let outside = root.path().parent().unwrap().join(format!(
+            "{}-outside-directory.torrent",
+            root.path().file_name().unwrap().to_string_lossy()
+        ));
+        let link = root.path().join("outside.torrent");
+        std::fs::write(&outside, HANDOFF_TORRENT).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside, &link).unwrap();
+
+        let report = read_torrent_directory_checked(root.path());
+
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].file_status, EhSavedFileStatus::UnsafePath);
+        assert_eq!(
+            report.entries[0].validation_status,
+            EhTorrentValidationStatus::NotChecked
+        );
+        assert_eq!(report.entries[0].full_path, None);
+        std::fs::remove_file(outside).unwrap();
     }
 
     #[test]

@@ -743,3 +743,24 @@ Committed and archived mobile wide-page splitting, prepared v0.6.4 version metad
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: v0.6.6 release prep
+
+**Date**: 2026-10-16
+**Task**: v0.6.6 release prep
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+Updated EH filter migration to preserve saved tiers, prepared v0.6.6 metadata and release notes, verified focused Flutter test, Dart analysis, Rust -D warnings check, and archived the exit-behavior task with its remaining GUI acceptance limits recorded.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5d45f16` | (see git log) |
+
+### Status
+
+[OK] **Completed**

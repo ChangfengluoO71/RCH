@@ -764,3 +764,24 @@ Updated EH filter migration to preserve saved tiers, prepared v0.6.6 metadata an
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: v0.6.6 CI gate remediation
+
+**Date**: 2026-10-16
+**Task**: v0.6.6 CI gate remediation
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+The first master CI exposed 10 pre-existing Color channel deprecation infos that made full flutter analyze fail under Flutter 3.44. Updated theme channel conversion and its color regression assertion; full flutter analyze and focused Mica widget test now pass locally. Waiting for the clean master CI rerun before tagging v0.6.6.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ed0652` | (see git log) |
+
+### Status
+
+[OK] **Completed**

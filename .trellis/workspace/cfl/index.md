@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-10-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~766 | Active |
+| `journal-1.md` | ~787 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-10-16 | v0.6.6 CI gate remediation | `5ed0652` | `local-ai/cover-quark-debug` |
 | 23 | 2026-10-16 | v0.6.6 release prep | `5d45f16` | `local-ai/cover-quark-debug` |
 | 22 | 2026-10-12 | 阅读器与后台工作流更新 | `a4952d3` | `local-ai/cover-quark-debug` |
 | 21 | 2026-10-11 | 修复 Windows 云母浅色背景并归档外观任务 | `5f91441` | `local-ai/cover-quark-debug` |

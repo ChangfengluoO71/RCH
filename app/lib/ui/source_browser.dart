@@ -1779,6 +1779,123 @@ class _SourceBrowserState extends State<SourceBrowser>
     );
   }
 
+  void _onCompactToolbarAction(String action) {
+    switch (action) {
+      case 'sort_alpha':
+        _safeSetState(() => _sort = 'alpha');
+        return;
+      case 'sort_added':
+        _safeSetState(() => _sort = 'added');
+        return;
+      case 'rebuild_full':
+        _rebuildIndexFull();
+        return;
+      case 'refresh_index':
+        _refreshIndex();
+        return;
+      case 'refresh_baidu_token':
+        if (!_refreshingToken) _refreshBaiduToken();
+        return;
+      case 'toggle_view':
+        _safeSetState(() => _posterMode = !_posterMode);
+        return;
+      case 'refresh':
+        _refresh();
+        return;
+      case 'exit_offline':
+        _exitOffline();
+        return;
+      case 'selection_clear':
+        _safeSetState(_selectedPaths.clear);
+        return;
+      case 'selection_all':
+        _safeSetState(() {
+          for (final entry in _filtered) {
+            _selectedPaths.add(entry.path);
+          }
+        });
+        return;
+      case 'selection_tag':
+        _batchTagFromSelection();
+        return;
+      case 'selection_exit':
+        _safeSetState(() {
+          _selectedPaths.clear();
+          _selectMode = false;
+        });
+        return;
+    }
+  }
+
+  List<PopupMenuEntry<String>> _compactToolbarMenuItems() {
+    if (_selectMode) {
+      return [
+        PopupMenuItem(value: 'selection_all', child: const Text('全选')),
+        PopupMenuItem(
+          value: 'selection_clear',
+          enabled: _selectedPaths.isNotEmpty,
+          child: const Text('取消全选'),
+        ),
+        PopupMenuItem(
+          value: 'selection_tag',
+          enabled: _selectedPaths.isNotEmpty,
+          child: const Text('批量打标签'),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'selection_exit', child: Text('退出选择')),
+      ];
+    }
+
+    return [
+      if (_offlineMode)
+        const PopupMenuItem(value: 'exit_offline', child: Text('退出离线浏览')),
+      const PopupMenuItem(value: 'refresh', child: Text('刷新')),
+      PopupMenuItem(
+        value: 'toggle_view',
+        child: Text(_posterMode ? '切换为简略列表' : '切换为海报墙'),
+      ),
+      CheckedPopupMenuItem(
+        value: 'sort_alpha',
+        checked: _sort == 'alpha',
+        child: const Text('按字母排序'),
+      ),
+      CheckedPopupMenuItem(
+        value: 'sort_added',
+        checked: _sort == 'added',
+        child: const Text('按加入时间排序'),
+      ),
+      if (!widget.source.isLocalFs) ...[
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'refresh_index', child: Text('生成离线索引')),
+        const PopupMenuItem(value: 'rebuild_full', child: Text('全量重建索引（联网）')),
+      ],
+      if (widget.source.isBaidu)
+        PopupMenuItem(
+          value: 'refresh_baidu_token',
+          enabled: !_refreshingToken,
+          child: Text(_refreshingToken ? '正在刷新令牌…' : '重新连接百度网盘'),
+        ),
+    ];
+  }
+
+  Widget _buildCompactToolbarActions() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (!_selectMode)
+        IconButton(
+          icon: const Icon(Icons.checklist),
+          tooltip: '进入选择模式',
+          onPressed: () => _safeSetState(() => _selectMode = true),
+        ),
+      PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert),
+        tooltip: _selectMode ? '选择操作' : '其他操作',
+        onSelected: _onCompactToolbarAction,
+        itemBuilder: (_) => _compactToolbarMenuItems(),
+      ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1821,108 +1938,113 @@ class _SourceBrowserState extends State<SourceBrowser>
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // 离线索引浏览 → 切回在线浏览（本地源同样适用）
-                          if (_offlineMode)
-                            IconButton(
-                              icon: const Icon(Icons.cloud_outlined),
-                              tooltip: '退出离线浏览（切换在线）',
-                              onPressed: _exitOffline,
-                            ),
-                          if (_selectMode) ...[
-                            TextButton(
-                              onPressed: () => _safeSetState(() {
-                                _selectedPaths.clear();
-                              }),
-                              child: const Text('取消全选'),
-                            ),
-                            TextButton(
-                              onPressed: () => _safeSetState(() {
-                                for (var e in _filtered) {
-                                  _selectedPaths.add(e.path);
-                                }
-                              }),
-                              child: const Text('全选'),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.label),
-                              tooltip: '批量打标签',
-                              onPressed: _batchTagFromSelection,
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.close),
-                              tooltip: '退出选择',
-                              onPressed: () => _safeSetState(() {
-                                _selectedPaths.clear();
-                                _selectMode = false;
-                              }),
-                            ),
-                          ] else ...[
-                            IconButton(
-                              icon: const Icon(Icons.checklist),
-                              tooltip: '进入选择模式',
-                              onPressed: () =>
-                                  _safeSetState(() => _selectMode = true),
-                            ),
-                          ],
-                          PopupMenuButton<String>(
-                            icon: const Icon(Icons.sort),
-                            tooltip: '更多',
-                            initialValue: _sort,
-                            onSelected: (v) {
-                              if (v == 'rebuild_full') {
-                                _rebuildIndexFull();
-                                return;
-                              }
-                              _safeSetState(() => _sort = v);
-                            },
-                            itemBuilder: (c) => [
-                              const PopupMenuItem(
-                                value: 'alpha',
-                                child: Text('按字母'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'added',
-                                child: Text('按加入时间'),
-                              ),
-                              if (!widget.source.isLocalFs)
-                                const PopupMenuItem(
-                                  value: 'rebuild_full',
-                                  child: Text('全量重建索引（联网）'),
+                      trailing: isCompact(context)
+                          ? _buildCompactToolbarActions()
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // 离线索引浏览 → 切回在线浏览（本地源同样适用）
+                                if (_offlineMode)
+                                  IconButton(
+                                    icon: const Icon(Icons.cloud_outlined),
+                                    tooltip: '退出离线浏览（切换在线）',
+                                    onPressed: _exitOffline,
+                                  ),
+                                if (_selectMode) ...[
+                                  TextButton(
+                                    onPressed: () => _safeSetState(() {
+                                      _selectedPaths.clear();
+                                    }),
+                                    child: const Text('取消全选'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => _safeSetState(() {
+                                      for (var e in _filtered) {
+                                        _selectedPaths.add(e.path);
+                                      }
+                                    }),
+                                    child: const Text('全选'),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.label),
+                                    tooltip: '批量打标签',
+                                    onPressed: _batchTagFromSelection,
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close),
+                                    tooltip: '退出选择',
+                                    onPressed: () => _safeSetState(() {
+                                      _selectedPaths.clear();
+                                      _selectMode = false;
+                                    }),
+                                  ),
+                                ] else ...[
+                                  IconButton(
+                                    icon: const Icon(Icons.checklist),
+                                    tooltip: '进入选择模式',
+                                    onPressed: () =>
+                                        _safeSetState(() => _selectMode = true),
+                                  ),
+                                ],
+                                PopupMenuButton<String>(
+                                  icon: const Icon(Icons.sort),
+                                  tooltip: '更多',
+                                  initialValue: _sort,
+                                  onSelected: (v) {
+                                    if (v == 'rebuild_full') {
+                                      _rebuildIndexFull();
+                                      return;
+                                    }
+                                    _safeSetState(() => _sort = v);
+                                  },
+                                  itemBuilder: (c) => [
+                                    const PopupMenuItem(
+                                      value: 'alpha',
+                                      child: Text('按字母'),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'added',
+                                      child: Text('按加入时间'),
+                                    ),
+                                    if (!widget.source.isLocalFs)
+                                      const PopupMenuItem(
+                                        value: 'rebuild_full',
+                                        child: Text('全量重建索引（联网）'),
+                                      ),
+                                  ],
                                 ),
-                            ],
-                          ),
-                          if (!widget.source.isLocalFs)
-                            IconButton(
-                              icon: const Icon(Icons.auto_fix_high),
-                              tooltip: '生成离线索引（本地快照，不联网）',
-                              onPressed: _refreshIndex,
+                                if (!widget.source.isLocalFs)
+                                  IconButton(
+                                    icon: const Icon(Icons.auto_fix_high),
+                                    tooltip: '生成离线索引（本地快照，不联网）',
+                                    onPressed: _refreshIndex,
+                                  ),
+                                if (widget.source.isBaidu)
+                                  IconButton(
+                                    icon: const Icon(Icons.vpn_key),
+                                    tooltip: '重新连接并刷新 refresh_token',
+                                    onPressed: _refreshingToken
+                                        ? null
+                                        : _refreshBaiduToken,
+                                  ),
+                                IconButton(
+                                  icon: Icon(
+                                    _posterMode
+                                        ? Icons.view_list
+                                        : Icons.grid_view,
+                                  ),
+                                  tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙',
+                                  onPressed: () => _safeSetState(
+                                    () => _posterMode = !_posterMode,
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.refresh),
+                                  tooltip: '刷新',
+                                  onPressed: _refresh,
+                                ),
+                              ],
                             ),
-                          if (widget.source.isBaidu)
-                            IconButton(
-                              icon: const Icon(Icons.vpn_key),
-                              tooltip: '重新连接并刷新 refresh_token',
-                              onPressed: _refreshingToken
-                                  ? null
-                                  : _refreshBaiduToken,
-                            ),
-                          IconButton(
-                            icon: Icon(
-                              _posterMode ? Icons.view_list : Icons.grid_view,
-                            ),
-                            tooltip: _posterMode ? '切换为简略列表' : '切换为海报墙',
-                            onPressed: () =>
-                                _safeSetState(() => _posterMode = !_posterMode),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.refresh),
-                            tooltip: '刷新',
-                            onPressed: _refresh,
-                          ),
-                        ],
-                      ),
                     ),
                   ),
                   if (_error != null)

@@ -1857,7 +1857,13 @@ class _HomePageState extends State<HomePage> {
     title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
     tilePadding: const EdgeInsets.symmetric(horizontal: 4),
     childrenPadding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
-    children: children,
+    // ExpansionTile lays out children with loose constraints. Give each setting
+    // the same available width so intrinsic-width controls don't drift toward
+    // the center on wide layouts, and can use the full content width on phones.
+    children: [
+      for (final child in children)
+        SizedBox(width: double.infinity, child: child),
+    ],
   );
 
   Widget _buildSettings() {
@@ -1865,7 +1871,7 @@ class _HomePageState extends State<HomePage> {
     return ListenableBuilder(
       listenable: LibraryStore.instance,
       builder: (c, _) => ListView(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(isCompact(c) ? 16 : 24),
         children: [
           const Text(
             '设置',

@@ -262,6 +262,7 @@ class EhProgress {
     this.noMarker = 0,
     this.noTorrent = 0,
     this.noDownloads = 0,
+    this.tooRecent = 0,
     this.unmapped = 0,
     this.activityStartedAtUnixMs = 0,
     this.error,
@@ -281,6 +282,7 @@ class EhProgress {
   final int noMarker;
   final int noTorrent;
   final int noDownloads;
+  final int tooRecent;
   final int unmapped;
   final int activityStartedAtUnixMs;
   final String? error;
@@ -300,6 +302,7 @@ class EhProgress {
     noMarker: (j['no_marker'] as num?)?.toInt() ?? 0,
     noTorrent: (j['no_torrent'] as num?)?.toInt() ?? 0,
     noDownloads: (j['no_downloads'] as num?)?.toInt() ?? 0,
+    tooRecent: (j['too_recent'] as num?)?.toInt() ?? 0,
     unmapped: (j['unmapped'] as num?)?.toInt() ?? 0,
     activityStartedAtUnixMs:
         (j['activity_started_at_unix_ms'] as num?)?.toInt() ?? 0,
@@ -326,6 +329,7 @@ class EhProgress {
     noMarker: noMarker,
     noTorrent: noTorrent,
     noDownloads: noDownloads,
+    tooRecent: tooRecent,
     unmapped: unmapped,
     activityStartedAtUnixMs: activityStartedAtUnixMs,
     error: error ?? this.error,
@@ -352,6 +356,7 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   EhSubscriptionStore._();
 
   static const officialHost = 'e-hentai.org';
+  static const minimumRating = 4.4;
 
   static final EhSubscriptionStore instance = EhSubscriptionStore._();
 
@@ -411,6 +416,32 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     return store;
   }
 
+  @visibleForTesting
+  static Map<String, dynamic> migrateFilterPolicyRules({
+    required Map<String, dynamic> oldRules,
+    required Map<String, dynamic> defaultRules,
+  }) {
+    final defaultTiers = defaultRules['age_tiers'];
+    if (defaultTiers is! List) {
+      throw StateError('EH 默认下载阶梯无效，未迁移现有规则。');
+    }
+
+    final savedRating = oldRules['min_rating'];
+    final configuredRating = savedRating is num
+        ? savedRating.toDouble()
+        : minimumRating;
+    final savedTiers = oldRules['age_tiers'];
+    return {
+      ...oldRules,
+      'filter_policy_version': 1,
+      'min_rating': configuredRating < minimumRating
+          ? minimumRating
+          : configuredRating,
+      // Upgrade the policy without overwriting a user's existing ladder.
+      'age_tiers': savedTiers is List ? savedTiers : defaultTiers,
+    };
+  }
+
   static const _pollInterval = Duration(milliseconds: 600);
 
   String? _rulesPath;
@@ -458,7 +489,11 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
 
   /// 规则字段（UI 直接读写这几个键）。
   String get search => _str('search');
-  double get minRating => _num('min_rating', 4.0).toDouble();
+  double get minRating {
+    final configured = _num('min_rating', minimumRating).toDouble();
+    return configured < minimumRating ? minimumRating : configured;
+  }
+
   String get titleMarkers => _str('title_markers');
   List<String> get excludeMarkers =>
       (_rules['exclude_markers'] as List?)?.map((e) => e.toString()).toList() ??
@@ -555,7 +590,22 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
         _rulesJson = await eh_api.ehLoadRules(path: path);
         _persistedRulesJson = _rulesJson;
         _rules = Map<String, dynamic>.from(jsonDecode(_rulesJson) as Map);
-        if (_normalizeHost()) await saveRules();
+        var needsSave = false;
+        final policyVersion =
+            (_rules['filter_policy_version'] as num?)?.toInt() ?? 0;
+        if (policyVersion < 1) {
+          final defaults = Map<String, dynamic>.from(
+            jsonDecode(await eh_api.ehDefaultRules()) as Map,
+          );
+          _rules = migrateFilterPolicyRules(
+            oldRules: _rules,
+            defaultRules: defaults,
+          );
+          _encodeRules();
+          needsSave = true;
+        }
+        final hostNormalized = _normalizeHost();
+        if (needsSave || hostNormalized) await saveRules();
         loadError = null;
       } catch (e) {
         loadError = '$e';

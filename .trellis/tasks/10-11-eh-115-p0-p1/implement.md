@@ -108,6 +108,13 @@ P0 result and does not authorize assistant-issued real 115 writes.
 
 Commit: NO / Push: NO / Merge: NO / Rebase: NO / Tag: NO / Release: NO / Delete: NO / Cleanup: NO.
 
+## v0.6.6 filter policy update — 2026-10-16
+
+- The EH filter now enforces a minimum rating of `4.4` and rejects galleries posted within or exactly three days before the scan time. Missing/invalid posting time is skipped because the age threshold cannot be proven.
+- The trial download ladder is applied to fresh default configurations. The one-time legacy policy migration preserves an existing user's `age_tiers` while raising an older rating below `4.4`; it only uses defaults if no valid tier list was saved.
+- Regression coverage: `app/test/eh_subscription_filter_policy_test.dart` verifies that an existing ladder survives the policy migration.
+- No real EH request or 115 write was performed for this update. `P0_WEB_WRITE_AUTH_BLOCKED`, `P0_REAL_PASS=NO`, and `P1=NOT_STARTED` remain unchanged.
+
 ## Approved follow-up plan: persistent Cloud115 task monitoring
 
 **Goal:** Resume bounded, read-only monitoring of RCH-attributed 115 BT tasks across app restarts and show trustworthy batch/task counts without authorizing any new write.

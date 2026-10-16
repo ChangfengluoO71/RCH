@@ -2511,19 +2511,36 @@ class _RulesEditor extends StatefulWidget {
 
 class _TierRow {
   _TierRow(double years, int downloads)
-    : yearsCtrl = TextEditingController(text: _fmtNum(years)),
+    : useDays = years < 1,
+      ageCtrl = TextEditingController(
+        text: _fmtNum(years < 1 ? years * 365.25 : years),
+      ),
       downloadsCtrl = TextEditingController(text: '$downloads');
 
-  final TextEditingController yearsCtrl;
+  bool useDays;
+  final TextEditingController ageCtrl;
   final TextEditingController downloadsCtrl;
 
+  double get minAgeYears {
+    final value = double.tryParse(ageCtrl.text.trim()) ?? 0;
+    return useDays ? value / 365.25 : value;
+  }
+
+  void setAgeUnit(bool days) {
+    if (useDays == days) return;
+    final years = minAgeYears;
+    useDays = days;
+    ageCtrl.text = _fmtNum(days ? years * 365.25 : years);
+  }
+
   void dispose() {
-    yearsCtrl.dispose();
+    ageCtrl.dispose();
     downloadsCtrl.dispose();
   }
 }
 
-String _fmtNum(double v) => v == v.roundToDouble() ? '${v.toInt()}' : '$v';
+String _fmtNum(double v) =>
+    v.toStringAsFixed(3).replaceFirst(RegExp(r'\.?0+$'), '');
 
 class _RulesEditorState extends State<_RulesEditor> {
   late final TextEditingController _search;
@@ -2532,7 +2549,7 @@ class _RulesEditorState extends State<_RulesEditor> {
   late final TextEditingController _interval;
   List<_TierRow> _tiers = [];
 
-  double _minRating = 4;
+  double _minRating = EhSubscriptionStore.minimumRating;
   Timer? _debounce;
 
   EhSubscriptionStore get store => widget.store;
@@ -2594,7 +2611,7 @@ class _RulesEditorState extends State<_RulesEditor> {
     final rows = _tiers
         .map(
           (t) => {
-            'min_age_years': double.tryParse(t.yearsCtrl.text.trim()) ?? 0,
+            'min_age_years': t.minAgeYears,
             'min_downloads': int.tryParse(t.downloadsCtrl.text.trim()) ?? 0,
           },
         )
@@ -2646,14 +2663,16 @@ class _RulesEditorState extends State<_RulesEditor> {
         ),
         const SizedBox(height: 16),
         _FieldLabel(
-          '评分下限：${_minRating.toStringAsFixed(1)}',
-          '0 票的画廊评分为 0.00，会被自动排除',
+          '评分下限：≥${_minRating.toStringAsFixed(1)}',
+          '最低评分固定为 4.4；可提高门槛，低于 4.4 的作品不会下载',
         ),
         Slider(
-          value: _minRating.clamp(0, 5),
-          min: 0,
+          value: _minRating
+              .clamp(EhSubscriptionStore.minimumRating, 5)
+              .toDouble(),
+          min: EhSubscriptionStore.minimumRating,
           max: 5,
-          divisions: 50,
+          divisions: 6,
           label: _minRating.toStringAsFixed(1),
           onChanged: (v) => setState(() => _minRating = v),
           onChangeEnd: (_) => flush(),
@@ -2689,14 +2708,17 @@ class _RulesEditorState extends State<_RulesEditor> {
             final addTierButton = TextButton.icon(
               onPressed: () {
                 setState(() {
-                  _tiers.insert(0, _TierRow(5, 800));
+                  _tiers.insert(0, _TierRow(7 / 365.25, 100));
                 });
                 flush();
               },
               icon: const Icon(Icons.add, size: 18),
               label: const Text('添加档位'),
             );
-            const label = _FieldLabel('分时间段下载数要求', '画龄越久要求越高；新发不设门槛，靠重复扫描累积达标');
+            const label = _FieldLabel(
+              '分时间段下载数要求',
+              '画龄越久要求越高；发布时间不超过 3 天（含）一律跳过，小于 1 年的档位按天显示',
+            );
             if (constraints.maxWidth < 500) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2723,7 +2745,7 @@ class _RulesEditorState extends State<_RulesEditor> {
                   children: [
                     Expanded(
                       flex: 4,
-                      child: Text('画龄 ≥（年）', style: theme.textTheme.bodySmall),
+                      child: Text('画龄 ≥', style: theme.textTheme.bodySmall),
                     ),
                     Expanded(
                       flex: 4,
@@ -2741,14 +2763,35 @@ class _RulesEditorState extends State<_RulesEditor> {
                       Expanded(
                         flex: 4,
                         child: TextField(
-                          controller: _tiers[i].yearsCtrl,
+                          controller: _tiers[i].ageCtrl,
                           onChanged: (_) => _debouncedFlush(),
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             isDense: true,
-                            border: OutlineInputBorder(),
+                            border: const OutlineInputBorder(),
+                            suffix: DropdownButtonHideUnderline(
+                              child: DropdownButton<bool>(
+                                value: _tiers[i].useDays,
+                                isDense: true,
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: true,
+                                    child: Text('天'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: false,
+                                    child: Text('年'),
+                                  ),
+                                ],
+                                onChanged: (days) {
+                                  if (days == null) return;
+                                  setState(() => _tiers[i].setAgeUnit(days));
+                                  _debouncedFlush();
+                                },
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -3203,6 +3246,11 @@ class _ProgressBlock extends StatelessWidget {
                 style: theme.textTheme.bodySmall,
               ),
             Text('本轮新增 ${p.saved} 个', style: theme.textTheme.bodySmall),
+            if (p.tooRecent > 0)
+              Text(
+                '3 天内跳过 ${p.tooRecent} 个种子',
+                style: theme.textTheme.bodySmall,
+              ),
           ],
         ),
         if (p.running && p.activityStartedAtUnixMs > 0)

@@ -33,6 +33,8 @@ use crate::eh_tag_translation;
 pub const DEFAULT_HOST: &str = "e-hentai.org";
 /// 页数安全上限。单查询总量约 440 页；这里给足够大的上限，避免误操作把一轮跑成几小时。
 pub const MAX_PAGES: usize = 500;
+const MINIMUM_RATING: f64 = 4.4;
+const MINIMUM_STABLE_AGE_SECS: i64 = 3 * 24 * 60 * 60;
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                   (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
@@ -169,6 +171,8 @@ impl Default for AgeTier {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct EhRules {
+    /// One-time migration marker for the rating and age-tier policy.
+    pub filter_policy_version: u32,
     /// EH 搜索语法，例如 `language:chinese$ uncensored`、`other:"full color"$`。
     pub search: String,
     /// 评分下限。注意 EH 搜索**不支持** `rating>=4`，只能在本地过滤。
@@ -205,34 +209,41 @@ pub struct EhRules {
 impl Default for EhRules {
     fn default() -> Self {
         Self {
+            filter_policy_version: 1,
             search: "language:chinese$ uncensored".into(),
-            min_rating: 4.0,
+            min_rating: MINIMUM_RATING,
             title_markers: "Digital|DL版|DL".into(),
             exclude_markers: vec!["AI Generated".into()],
-            // 用户口径：时间越久要求越高（五年前 800）；最年轻一档不设门槛，
-            // 由"重复扫描 + manifest 去重"自然实现"累积到达标线再保存"。
+            // Trial ladder: items up to and including 3 days old are rejected
+            // before this ladder is consulted. Just over 3 days starts at 20.
             age_tiers: vec![
-                // 用户口径（2026-09-22）：分时间段，时间越久要求越高；
-                // 在首版（800/500/300/100/0）基础上各档 +200。
                 AgeTier {
                     min_age_years: 5.0,
-                    min_downloads: 1000,
+                    min_downloads: 2000,
                 },
                 AgeTier {
                     min_age_years: 2.0,
-                    min_downloads: 700,
+                    min_downloads: 900,
                 },
                 AgeTier {
                     min_age_years: 0.5,
                     min_downloads: 500,
                 },
                 AgeTier {
-                    min_age_years: 0.083,
+                    min_age_years: 30.0 / 365.25,
                     min_downloads: 300,
                 },
                 AgeTier {
-                    min_age_years: 0.0,
+                    min_age_years: 14.0 / 365.25,
                     min_downloads: 200,
+                },
+                AgeTier {
+                    min_age_years: 7.0 / 365.25,
+                    min_downloads: 100,
+                },
+                AgeTier {
+                    min_age_years: 3.0 / 365.25,
+                    min_downloads: 20,
                 },
             ],
             out_dir: String::new(),
@@ -332,6 +343,8 @@ pub struct EhProgress {
     pub no_marker: usize,
     pub no_torrent: usize,
     pub no_downloads: usize,
+    /// Rejected before any torrent-stat request because the gallery is <= 3 days old.
+    pub too_recent: usize,
     pub unmapped: usize,
     /// Unix milliseconds when the currently displayed activity began.
     pub activity_started_at_unix_ms: u128,
@@ -562,7 +575,11 @@ pub fn posted_of(v: &serde_json::Value) -> Option<i64> {
 
 fn required_downloads_for_posted(rules: &EhRules, posted: Option<i64>, now: i64) -> Option<i64> {
     let posted = posted.filter(|timestamp| *timestamp > 0)?;
-    let age_years = (now - posted) as f64 / 365.25 / 86400.0;
+    let age_seconds = now.saturating_sub(posted);
+    if age_seconds <= MINIMUM_STABLE_AGE_SECS {
+        return None;
+    }
+    let age_years = age_seconds as f64 / 365.25 / 86400.0;
     Some(rules.required_dl(age_years))
 }
 
@@ -2850,7 +2867,7 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
             &progress,
         );
         let rating = rating_of(item);
-        if rating < rules.min_rating {
+        if rating < rules.min_rating.max(MINIMUM_RATING) {
             progress.no_rating += 1;
             continue;
         }
@@ -2863,7 +2880,39 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
             continue;
         }
 
-        // 4) 下载数（每画廊一次种子页请求）
+        let posted = posted_of(item);
+        let age_seconds = posted.map(|timestamp| now.saturating_sub(timestamp));
+        let torrents = item
+            .get("torrents")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        if age_seconds.is_some_and(|age| age <= MINIMUM_STABLE_AGE_SECS) {
+            progress.too_recent += torrents.len();
+            emit(
+                terminal,
+                "filtering",
+                format!("发布时间不超过 3 天，按规则跳过全部种子且不查询下载数：{title_jpn}"),
+                &progress,
+            );
+            continue;
+        }
+        let Some(need) = required_downloads_for_posted(&rules, posted, now) else {
+            progress.no_downloads += torrents.len();
+            emit(
+                terminal,
+                "filtering",
+                format!(
+                    "发布时间缺失或无效，无法应用分龄下载数门槛，已跳过该画廊全部种子：{title_jpn}"
+                ),
+                &progress,
+            );
+            continue;
+        };
+        let age_years = age_seconds.map(|age| age as f64 / 365.25 / 86400.0);
+
+        // 4) 下载数（每画廊一次种子页请求）；三天内作品已在上方排除。
         progress.stage = "probing".into();
         progress.checked += 1;
         emit(
@@ -2878,26 +2927,6 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
             client.host, gid, token
         ))?;
         let stats = parse_torrent_stats(&stats_html);
-        let posted = posted_of(item);
-        let age_years = posted.map(|t| (now - t) as f64 / 365.25 / 86400.0);
-        let torrents = item
-            .get("torrents")
-            .and_then(|t| t.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        let Some(need) = required_downloads_for_posted(&rules, posted, now) else {
-            progress.no_downloads += torrents.len();
-            emit(
-                terminal,
-                "filtering",
-                format!(
-                    "发布时间缺失或无效，无法应用分龄下载数门槛，已跳过该画廊全部种子：{title_jpn}"
-                ),
-                &progress,
-            );
-            continue;
-        };
 
         // The stats page and gdata list are paired by row order. Never compact
         // a missing stats row and accidentally assign the next torrent's count.
@@ -3077,10 +3106,11 @@ fn collect_inner(rules: &EhRules, terminal: bool) -> Result<EhProgress, String> 
     progress.running = false;
     progress.stage = "done".into();
     progress.message = format!(
-        "本轮新增 {saved} 个；评分不足 {}｜标记排除 {}｜无种子 {}｜下载数不达标 {}｜映射未确认 {}",
+        "本轮新增 {saved} 个；评分不足 {}｜标记排除 {}｜无种子 {}｜3 天内跳过 {}｜下载数不达标 {}｜映射未确认 {}",
         progress.no_rating,
         progress.no_marker,
         progress.no_torrent,
+        progress.too_recent,
         progress.no_downloads,
         progress.unmapped
     );
@@ -3301,11 +3331,11 @@ mod tests {
     #[test]
     fn required_dl_matches_declared_tiers() {
         let r = EhRules::default();
-        assert_eq!(r.required_dl(10.0), 1000, "五年前应要求 1000");
-        assert_eq!(r.required_dl(3.0), 700, "3 年应要求 700");
+        assert_eq!(r.required_dl(10.0), 2000, "五年前应要求 2000");
+        assert_eq!(r.required_dl(3.0), 900, "3 年应要求 900");
         assert_eq!(r.required_dl(1.0), 500, "1 年应要求 500");
-        assert_eq!(r.required_dl(0.2), 300, "2 个月应要求 300");
-        assert_eq!(r.required_dl(0.01), 200, "刚发布应要求 200");
+        assert_eq!(r.required_dl(0.2), 300, "约 2 个月应要求 300");
+        assert_eq!(r.required_dl(0.01), 20, "超过 3 天的最年轻档要求 20");
     }
 
     #[test]
@@ -3340,7 +3370,7 @@ mod tests {
         assert_eq!(required_downloads_for_posted(&rules, None, now), None);
         assert_eq!(
             required_downloads_for_posted(&rules, Some(now - 10 * 86400), now),
-            Some(200)
+            Some(100)
         );
     }
 

@@ -18,9 +18,9 @@ void main() {
     final expected = standardTheme.colorScheme.surface;
     final actual = micaTheme.scaffoldBackgroundColor;
 
-    expect(actual.alpha, 224);
-    expect(actual.red, expected.red);
-    expect(actual.green, expected.green);
-    expect(actual.blue, expected.blue);
+    final actualArgb = actual.toARGB32();
+    final expectedArgb = expected.toARGB32();
+    expect((actualArgb >> 24) & 0xff, 224);
+    expect(actualArgb & 0x00ffffff, expectedArgb & 0x00ffffff);
   });
 }

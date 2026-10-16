@@ -45,9 +45,9 @@ abstract final class AppTheme {
     final scaffoldBackgroundColor = transparentWindowBackdrop
         ? Color.fromARGB(
             224,
-            scheme.surface.red,
-            scheme.surface.green,
-            scheme.surface.blue,
+            (scheme.surface.r * 255.0).round().clamp(0, 255).toInt(),
+            (scheme.surface.g * 255.0).round().clamp(0, 255).toInt(),
+            (scheme.surface.b * 255.0).round().clamp(0, 255).toInt(),
           )
         : scheme.surface;
 

@@ -785,3 +785,24 @@ The first master CI exposed 10 pre-existing Color channel deprecation infos that
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: v0.6.7 发布准备与书源卡片收尾
+
+**Date**: 2026-10-17
+**Task**: v0.6.7 发布准备与书源卡片收尾
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+完成 EH Daily 交付模式与书源漫画计数卡片收尾；版本升级到 v0.6.7 并准备 GitHub Release。Flutter 349 项与 Rust 串行全量测试通过，归档 source-comic-count-cards Trellis 任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b0baf8f` | (see git log) |
+
+### Status
+
+[OK] **Completed**

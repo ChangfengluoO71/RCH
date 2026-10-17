@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:app/store/eh_subscription_store.dart';
 import 'package:app/ui/eh_subscription_panel.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, dynamic> _checkedManifest({
@@ -183,62 +182,28 @@ void main() {
     expect(find.textContaining('校验通过'), findsOneWidget);
   });
 
-  testWidgets(
-    'handoff can select one Torrent, copy its path, and show manual instructions',
-    (tester) async {
-      final store = EhSubscriptionStore.forTest(
-        rules: {'out_dir': r'D:\EhTorrents'},
-        manifestReport: EhManifestReport.fromJson(_checkedManifest()),
-      );
-      String? copiedText;
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
-        (call) async {
-          if (call.method == 'Clipboard.setData') {
-            copiedText =
-                (call.arguments as Map<Object?, Object?>)['text'] as String;
-          }
-          return null;
-        },
-      );
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          SystemChannels.platform,
-          null,
-        ),
-      );
+  testWidgets('handoff removes path-copy and manual-submit controls', (
+    tester,
+  ) async {
+    final store = EhSubscriptionStore.forTest(
+      rules: {'out_dir': r'D:\EhTorrents'},
+      manifestReport: EhManifestReport.fromJson(_checkedManifest()),
+    );
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SingleChildScrollView(
-              child: EhSubscriptionPanel(storeOverride: store),
-            ),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: EhSubscriptionPanel(storeOverride: store),
           ),
         ),
-      );
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('eh-handoff-select-0')),
-      );
-      await tester.tap(find.byKey(const ValueKey('eh-handoff-select-0')));
-      await tester.pump();
-
-      await tester.tap(find.byKey(const ValueKey('eh-handoff-copy-path')));
-      await tester.pump();
-      expect(copiedText, contains('漫画 & [测试].torrent'));
-
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('eh-handoff-instructions')),
-      );
-      await tester.tap(find.byKey(const ValueKey('eh-handoff-instructions')));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('RCH 不会自动上传'), findsOneWidget);
-      expect(
-        find.textContaining('\u4e0d\u8bc1\u660e\u5df2\u4e0a\u4f20'),
-        findsOneWidget,
-      );
-    },
-  );
+      ),
+    );
+    expect(find.byKey(const ValueKey('eh-handoff-copy-path')), findsNothing);
+    expect(find.byKey(const ValueKey('eh-handoff-instructions')), findsNothing);
+    expect(find.textContaining('非 115 云下载'), findsOneWidget);
+    expect(find.textContaining('本地清单状态不代表已上传'), findsOneWidget);
+  });
 
   testWidgets('saved Torrent list defaults to the newest entry only', (
     tester,

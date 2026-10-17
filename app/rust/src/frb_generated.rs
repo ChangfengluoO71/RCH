@@ -10493,6 +10493,7 @@ impl SseDecode for crate::api::library::SourceAvailabilityDto {
         let mut var_deviceId = <String>::sse_decode(deserializer);
         let mut var_deviceName = <String>::sse_decode(deserializer);
         let mut var_isRemote = <bool>::sse_decode(deserializer);
+        let mut var_comicCount = <i64>::sse_decode(deserializer);
         let mut var_offlineIndexCount = <i64>::sse_decode(deserializer);
         let mut var_canBrowseOffline = <bool>::sse_decode(deserializer);
         let mut var_requiresNetwork = <bool>::sse_decode(deserializer);
@@ -10509,6 +10510,7 @@ impl SseDecode for crate::api::library::SourceAvailabilityDto {
             device_id: var_deviceId,
             device_name: var_deviceName,
             is_remote: var_isRemote,
+            comic_count: var_comicCount,
             offline_index_count: var_offlineIndexCount,
             can_browse_offline: var_canBrowseOffline,
             requires_network: var_requiresNetwork,
@@ -12980,6 +12982,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::library::SourceAvailabilityDt
             self.device_id.into_into_dart().into_dart(),
             self.device_name.into_into_dart().into_dart(),
             self.is_remote.into_into_dart().into_dart(),
+            self.comic_count.into_into_dart().into_dart(),
             self.offline_index_count.into_into_dart().into_dart(),
             self.can_browse_offline.into_into_dart().into_dart(),
             self.requires_network.into_into_dart().into_dart(),
@@ -14678,6 +14681,7 @@ impl SseEncode for crate::api::library::SourceAvailabilityDto {
         <String>::sse_encode(self.device_id, serializer);
         <String>::sse_encode(self.device_name, serializer);
         <bool>::sse_encode(self.is_remote, serializer);
+        <i64>::sse_encode(self.comic_count, serializer);
         <i64>::sse_encode(self.offline_index_count, serializer);
         <bool>::sse_encode(self.can_browse_offline, serializer);
         <bool>::sse_encode(self.requires_network, serializer);

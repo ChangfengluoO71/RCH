@@ -20,13 +20,19 @@ void main() {
   });
 
   test(
-    'closed P0 gate does not touch preferences or call the batch runner',
+    'local-only delivery stops after EH saving without reading 115 session',
     () async {
       var batchCalls = 0;
-      final ledgerFile = File('${tempDir.path}/ledger.jsonl');
+      final ledger = Cloud115BtBatchLedger(
+        File('${tempDir.path}/ledger.jsonl'),
+      );
+      await ledger.setSelectionPreferences(
+        sourceId: null,
+        target: null,
+        mode: Cloud115BtDeliveryMode.localTorrentOnly,
+      );
       final workflow = Cloud115BtDailyWorkflow(
-        p0RealPass: false,
-        ledger: Cloud115BtBatchLedger(ledgerFile),
+        ledger: ledger,
         sources: () => throw StateError('source lookup must not run'),
         cookieSessionIsCached: (_) =>
             throw StateError('session lookup must not run'),
@@ -41,10 +47,14 @@ void main() {
         outputDir: tempDir.path,
       );
 
-      expect(result.status, EhDailyCloudStageStatus.p0Blocked);
+      expect(result.status, EhDailyCloudStageStatus.notRun);
       expect(result.total, 1);
+      expect(result.message, contains('非 115 云下载'));
       expect(batchCalls, 0);
-      expect(await ledgerFile.exists(), isFalse);
+      expect(
+        (await ledger.selectionPreferences()).mode,
+        Cloud115BtDeliveryMode.localTorrentOnly,
+      );
     },
   );
 
@@ -54,7 +64,6 @@ void main() {
       var sourceReads = 0;
       var sessionReads = 0;
       final workflow = Cloud115BtDailyWorkflow(
-        p0RealPass: true,
         ledger: Cloud115BtBatchLedger(File('${tempDir.path}/ledger.jsonl')),
         sources: () {
           sourceReads++;
@@ -95,7 +104,6 @@ void main() {
         ),
       );
       final workflow = Cloud115BtDailyWorkflow(
-        p0RealPass: true,
         ledger: ledger,
         sources: () => [
           BookSource(

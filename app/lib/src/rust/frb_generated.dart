@@ -10502,8 +10502,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SourceAvailabilityDto dco_decode_source_availability_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 15)
-      throw Exception('unexpected arr length: expect 15 but see ${arr.length}');
+    if (arr.length != 16)
+      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
     return SourceAvailabilityDto(
       sourceId: dco_decode_String(arr[0]),
       fingerprint: dco_decode_String(arr[1]),
@@ -10516,10 +10516,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deviceId: dco_decode_String(arr[8]),
       deviceName: dco_decode_String(arr[9]),
       isRemote: dco_decode_bool(arr[10]),
-      offlineIndexCount: dco_decode_i_64(arr[11]),
-      canBrowseOffline: dco_decode_bool(arr[12]),
-      requiresNetwork: dco_decode_bool(arr[13]),
-      status: dco_decode_String(arr[14]),
+      comicCount: dco_decode_i_64(arr[11]),
+      offlineIndexCount: dco_decode_i_64(arr[12]),
+      canBrowseOffline: dco_decode_bool(arr[13]),
+      requiresNetwork: dco_decode_bool(arr[14]),
+      status: dco_decode_String(arr[15]),
     );
   }
 
@@ -12979,6 +12980,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_deviceId = sse_decode_String(deserializer);
     var var_deviceName = sse_decode_String(deserializer);
     var var_isRemote = sse_decode_bool(deserializer);
+    var var_comicCount = sse_decode_i_64(deserializer);
     var var_offlineIndexCount = sse_decode_i_64(deserializer);
     var var_canBrowseOffline = sse_decode_bool(deserializer);
     var var_requiresNetwork = sse_decode_bool(deserializer);
@@ -12995,6 +12997,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deviceId: var_deviceId,
       deviceName: var_deviceName,
       isRemote: var_isRemote,
+      comicCount: var_comicCount,
       offlineIndexCount: var_offlineIndexCount,
       canBrowseOffline: var_canBrowseOffline,
       requiresNetwork: var_requiresNetwork,
@@ -15074,6 +15077,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.deviceId, serializer);
     sse_encode_String(self.deviceName, serializer);
     sse_encode_bool(self.isRemote, serializer);
+    sse_encode_i_64(self.comicCount, serializer);
     sse_encode_i_64(self.offlineIndexCount, serializer);
     sse_encode_bool(self.canBrowseOffline, serializer);
     sse_encode_bool(self.requiresNetwork, serializer);

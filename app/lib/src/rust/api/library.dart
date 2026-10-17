@@ -252,6 +252,9 @@ class SourceAvailabilityDto {
   final String deviceName;
   final bool isRemote;
 
+  /// 当前有效索引中符合漫画阅读条件的去重资源数。
+  final PlatformInt64 comicCount;
+
   /// 离线索引条目数（可离线浏览）。
   final PlatformInt64 offlineIndexCount;
   final bool canBrowseOffline;
@@ -272,6 +275,7 @@ class SourceAvailabilityDto {
     required this.deviceId,
     required this.deviceName,
     required this.isRemote,
+    required this.comicCount,
     required this.offlineIndexCount,
     required this.canBrowseOffline,
     required this.requiresNetwork,
@@ -291,6 +295,7 @@ class SourceAvailabilityDto {
       deviceId.hashCode ^
       deviceName.hashCode ^
       isRemote.hashCode ^
+      comicCount.hashCode ^
       offlineIndexCount.hashCode ^
       canBrowseOffline.hashCode ^
       requiresNetwork.hashCode ^
@@ -312,6 +317,7 @@ class SourceAvailabilityDto {
           deviceId == other.deviceId &&
           deviceName == other.deviceName &&
           isRemote == other.isRemote &&
+          comicCount == other.comicCount &&
           offlineIndexCount == other.offlineIndexCount &&
           canBrowseOffline == other.canBrowseOffline &&
           requiresNetwork == other.requiresNetwork &&

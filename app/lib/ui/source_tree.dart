@@ -9,18 +9,12 @@ import 'package:app/src/rust/api/library.dart' as frb;
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
-import 'package:app/store/remote_scan_coordinator.dart';
-import 'package:app/ui/book_detail_page.dart';
-import 'package:app/ui/book_navigation.dart';
-import 'package:app/ui/common.dart';
-import 'package:app/ui/opener.dart';
-import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:flutter/material.dart';
 
 typedef SourceAction = void Function(frb.SourceAvailabilityDto source);
 
-bool _needsRemoteScanStatus(frb.SourceAvailabilityDto source) =>
+bool needsRemoteScanStatusFor(frb.SourceAvailabilityDto source) =>
     source.isRemote ||
     const {'webdav', 'sftp', 'baidu', '115', 'quark'}.contains(source.type);
 
@@ -152,7 +146,7 @@ class _DeviceTile extends StatelessWidget {
   }
 }
 
-class _SourceTile extends StatefulWidget {
+class _SourceTile extends StatelessWidget {
   final frb.SourceAvailabilityDto source;
 
   /// 是否与其它书源同名（同名时标题补短 id 以区分）。
@@ -170,99 +164,59 @@ class _SourceTile extends StatefulWidget {
   });
 
   @override
-  State<_SourceTile> createState() => _SourceTileState();
-}
-
-class _SourceTileState extends State<_SourceTile> {
-  bool _expanded = false;
-
-  @override
   Widget build(BuildContext context) {
-    final source = widget.source;
     final hasMenu =
-        widget.onEditSource != null ||
-        widget.onDeleteSource != null ||
-        widget.onShowDetail != null;
-    return Column(
-      children: [
-        ListTile(
-          dense: true,
-          key: PageStorageKey('source-${source.sourceId}'),
-          leading: const Icon(Icons.folder_outlined, size: 18),
-          title: Text(
-            '${LibraryCatalogStore.statusEmoji(source.status)} ${source.name}'
-            '${widget.duplicatedName ? ' ·#${_shortSourceId(source.sourceId)}' : ''}',
-            style: const TextStyle(fontSize: 13),
-          ),
-          subtitle: Text(
-            '${LibraryCatalogStore.statusLabel(source.status)} · ${source.offlineIndexCount} 本'
-            '${source.isRemote ? ' · 远端' : ''}',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          // 点开书源 = 打开浏览器（在线浏览或离线索引），恢复"点开书源看漫画"。
-          onTap: () => _openBrowser(context),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-                tooltip: '离线书目',
-                visualDensity: VisualDensity.compact,
-                onPressed: () => setState(() => _expanded = !_expanded),
-              ),
-              if (hasMenu)
-                PopupMenuButton<String>(
-                  itemBuilder: (c) => [
-                    if (widget.onShowDetail != null)
-                      const PopupMenuItem(value: 'detail', child: Text('书源详情')),
-                    if (widget.onEditSource != null)
-                      const PopupMenuItem(value: 'edit', child: Text('编辑书源')),
-                    if (widget.onDeleteSource != null)
-                      const PopupMenuItem(value: 'delete', child: Text('删除书源')),
-                  ],
-                  onSelected: (act) {
-                    if (act == 'edit') {
-                      widget.onEditSource?.call(source);
-                    } else if (act == 'detail') {
-                      widget.onShowDetail?.call(source);
-                    } else if (act == 'delete') {
-                      widget.onDeleteSource?.call(source);
-                    }
-                  },
-                ),
-            ],
-          ),
+        onEditSource != null || onDeleteSource != null || onShowDetail != null;
+    return ListTile(
+      dense: true,
+      key: PageStorageKey('source-${source.sourceId}'),
+      leading: Icon(
+        _isLocalFileSource(source.type)
+            ? Icons.folder_outlined
+            : Icons.cloud_outlined,
+        size: 19,
+        color: _isLocalFileSource(source.type)
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.tertiary,
+      ),
+      title: Text(
+        '${source.name}${duplicatedName ? ' ·#${_shortSourceId(source.sourceId)}' : ''}',
+        style: const TextStyle(fontSize: 13),
+      ),
+      subtitle: Text(
+        '${source.comicCount} 本漫画',
+        style: TextStyle(
+          fontSize: 11,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
-        if (_needsRemoteScanStatus(source))
-          Padding(
-            padding: const EdgeInsets.only(left: 16, right: 8),
-            child: RemoteScanStatusPanel(
-              sourceName: source.name,
-              compact: true,
-              idleMessage: remoteScanIdleMessageFor(
-                source,
-                backgroundScanEnabled:
-                    LibraryStore.instance.settings.remoteBackgroundScanEnabled,
-              ),
-              stateListenable: RemoteScanCoordinator.instance.viewStateFor(
-                source.sourceId,
-              ),
-            ),
-          ),
-        if (_expanded)
-          Padding(
-            padding: const EdgeInsets.only(left: 16),
-            child: _SourceBooksList(source: source),
-          ),
-      ],
+      ),
+      // 点开书源 = 打开浏览器（在线浏览或离线索引）。
+      onTap: () => _openBrowser(context),
+      trailing: hasMenu
+          ? PopupMenuButton<String>(
+              itemBuilder: (c) => [
+                if (onShowDetail != null)
+                  const PopupMenuItem(value: 'detail', child: Text('书源详情')),
+                if (onEditSource != null)
+                  const PopupMenuItem(value: 'edit', child: Text('编辑书源')),
+                if (onDeleteSource != null)
+                  const PopupMenuItem(value: 'delete', child: Text('删除书源')),
+              ],
+              onSelected: (act) {
+                if (act == 'edit') {
+                  onEditSource?.call(source);
+                } else if (act == 'detail') {
+                  onShowDetail?.call(source);
+                } else if (act == 'delete') {
+                  onDeleteSource?.call(source);
+                }
+              },
+            )
+          : null,
     );
   }
 
   void _openBrowser(BuildContext context) {
-    final source = widget.source;
     final src =
         LibraryStore.instance.sourceById(source.sourceId) ??
         BookSource(
@@ -281,170 +235,7 @@ class _SourceTileState extends State<_SourceTile> {
   }
 }
 
-/// 书源下漫画：分页懒加载。
-class _SourceBooksList extends StatefulWidget {
-  final frb.SourceAvailabilityDto source;
-
-  const _SourceBooksList({required this.source});
-
-  @override
-  State<_SourceBooksList> createState() => _SourceBooksListState();
-}
-
-class _SourceBooksListState extends State<_SourceBooksList> {
-  final List<frb.BookSearchDto> _books = [];
-  bool _loading = false;
-  bool _hasMore = true;
-  int _offset = 0;
-  static const _page = 100;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadMore();
-  }
-
-  Future<void> _loadMore() async {
-    if (_loading || !_hasMore) return;
-    setState(() => _loading = true);
-    try {
-      final page = await LibraryCatalogStore.instance.sourceBooks(
-        sourceId: widget.source.sourceId,
-        limit: _page,
-        offset: _offset,
-      );
-      if (!mounted) return;
-      setState(() {
-        _books.addAll(page);
-        _offset += page.length;
-        _hasMore = page.length == _page;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _hasMore = false);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_books.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(12),
-        child: Text(
-          _loading ? '加载中…' : '暂无漫画索引',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-      );
-    }
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: _books.length + (_hasMore ? 1 : 0),
-      itemBuilder: (c, i) {
-        if (i >= _books.length) {
-          return Padding(
-            padding: const EdgeInsets.all(8),
-            child: _loading
-                ? const Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : Center(
-                    child: TextButton(
-                      onPressed: _loadMore,
-                      child: const Text('加载更多', style: TextStyle(fontSize: 12)),
-                    ),
-                  ),
-          );
-        }
-        final b = _books[i];
-        return comicDetailContextMenu(
-          context,
-          onDetails: () => _openBookDetails(context, b),
-          child: ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            title: Text(
-              '${LibraryCatalogStore.statusEmoji(b.status)} ${b.title}',
-              style: const TextStyle(fontSize: 13),
-            ),
-            subtitle: Text(
-              b.path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-            onTap: () => _openBook(context, b),
-            onLongPress: isCompact(context)
-                ? () => showComicDetailPrompt(
-                    context,
-                    onDetails: () => _openBookDetails(context, b),
-                  )
-                : null,
-          ),
-        );
-      },
-    );
-  }
-
-  void _openBook(BuildContext context, frb.BookSearchDto b) {
-    final local = LibraryStore.instance.sourceById(b.sourceId);
-    final canRead =
-        b.status != 'index_only' && local != null && !local.remoteOnly;
-    void details() => _openBookDetails(context, b);
-    comicTapHandler(
-      context,
-      canRead: canRead,
-      onRead: canRead
-          ? () => openBook(context, local, b.path, b.title)
-          : details,
-      onDetails: details,
-      onDesktopTap: () => _openBookAsBefore(context, b, local),
-    )();
-  }
-
-  void _openBookAsBefore(
-    BuildContext context,
-    frb.BookSearchDto b,
-    BookSource? local,
-  ) {
-    if (b.status == 'index_only' || local == null) {
-      _openBookDetails(context, b);
-      return;
-    }
-    openBook(context, local, b.path, b.title);
-  }
-
-  void _openBookDetails(BuildContext context, frb.BookSearchDto b) {
-    final local = LibraryStore.instance.sourceById(b.sourceId);
-    final source = b.status != 'index_only' && local != null
-        ? local
-        : BookSource(
-            id: b.sourceId,
-            type: b.sourceType,
-            name: b.sourceName,
-            path: b.path,
-            remoteOnly: b.isRemote,
-            originDeviceId: b.deviceId,
-          );
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) =>
-            BookDetailPage(source: source, path: b.path, title: b.title),
-      ),
-    );
-  }
-}
+bool _isLocalFileSource(String type) => type == 'local' || type == 'smb';
 
 /// 书源 id 的短标识（用于同名书源的标题消歧）。
 /// 形如 `sync_62556ad8_1786286465729` → `17862864`；`115_1789360028897` → `17893600`。

@@ -19,47 +19,28 @@ typedef Cloud115BtDailyBatchRunner =
     );
 
 /// Daily adapter over the same per-item processor used by the foreground UI.
-/// The release-controlled P0 gate is deliberately closed until the project
-/// records a complete authorized real-write acceptance.
+/// The persisted delivery mode can stop the workflow after local Torrent
+/// validation without contacting 115.
 class Cloud115BtDailyWorkflow {
   Cloud115BtDailyWorkflow({
-    bool? p0RealPass,
     this.ledger,
     List<BookSource> Function()? sources,
     bool Function(BookSource source)? cookieSessionIsCached,
     this.batchRunner,
-  }) : _p0RealPass = p0RealPass ?? productionP0RealPass,
-       _sources = sources ?? (() => LibraryStore.instance.sources),
+  }) : _sources = sources ?? (() => LibraryStore.instance.sources),
        _cookieSessionIsCached =
            cookieSessionIsCached ?? hasCachedCloud115CookieSession;
 
-  /// Flip only after `research/p0-gate.md` contains independently verified
-  /// `P0_REAL_PASS` evidence. This is not a user-editable setting.
-  static const bool productionP0RealPass = false;
-  static const String p0BlockedMessage =
-      '115 Daily 自动写入等待 P0_REAL_PASS 完整真实闭环验收；本轮不会调用 115。';
-
-  final bool _p0RealPass;
   final Cloud115BtBatchLedger? ledger;
   Cloud115BtBatchLedger? _resolvedLedger;
   final List<BookSource> Function() _sources;
   final bool Function(BookSource source) _cookieSessionIsCached;
   final Cloud115BtDailyBatchRunner? batchRunner;
 
-  bool get ready => _p0RealPass;
-  String get blockedMessage => _p0RealPass ? '' : p0BlockedMessage;
-
   Future<EhDailyCloudStageResult> run({
     required List<EhCheckedManifestEntry> entries,
     required String outputDir,
   }) async {
-    if (!_p0RealPass) {
-      return EhDailyCloudStageResult(
-        status: EhDailyCloudStageStatus.p0Blocked,
-        total: entries.length,
-        message: p0BlockedMessage,
-      );
-    }
     if (entries.isEmpty) {
       return const EhDailyCloudStageResult(
         status: EhDailyCloudStageStatus.completed,
@@ -69,6 +50,13 @@ class Cloud115BtDailyWorkflow {
     try {
       final ledger = await _getLedger();
       final preferences = await ledger.selectionPreferences();
+      if (preferences.mode == Cloud115BtDeliveryMode.localTorrentOnly) {
+        return EhDailyCloudStageResult(
+          status: EhDailyCloudStageStatus.notRun,
+          total: entries.length,
+          message: '已选择非 115 云下载；Torrent 保存在本地目录，本轮未访问 115。',
+        );
+      }
       final sourceId = preferences.sourceId;
       final target = preferences.target;
       if (sourceId == null || target == null) {

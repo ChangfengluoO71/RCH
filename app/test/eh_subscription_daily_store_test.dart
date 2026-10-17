@@ -211,13 +211,9 @@ void main() {
       },
     );
 
-    testWidgets('P0 gate prevents enabling the complete Daily workflow', (
-      tester,
-    ) async {
+    testWidgets('Daily workflow setting has no P0 code gate', (tester) async {
       final store = EhSubscriptionStore.forTest(
         rules: {'search': 'query', 'out_dir': 'C:/EH output'},
-        dailyWorkflowReady: false,
-        dailyWorkflowGateMessage: '115 Daily 等待 P0_REAL_PASS',
       );
       await tester.pumpWidget(
         MaterialApp(
@@ -228,15 +224,9 @@ void main() {
           ),
         ),
       );
-      final toggle = tester.widget<Switch>(
-        find.byKey(const ValueKey('eh-daily-toggle')),
-      );
-      expect(toggle.value, isFalse);
-      expect(toggle.onChanged, isNull);
-      expect(find.textContaining('完整自动工作流尚未开放'), findsOneWidget);
-      await expectLater(store.setDailyEnabled(true), throwsStateError);
-      expect(store.dailyAutomation.dailyEnabled, isFalse);
-      expect(find.textContaining('等待 P0_REAL_PASS'), findsWidgets);
+      expect(find.textContaining('完整自动工作流尚未开放'), findsNothing);
+      await store.setDailyEnabled(true);
+      expect(store.dailyAutomation.dailyEnabled, isTrue);
 
       await tester.pumpWidget(const SizedBox.shrink());
       store.dispose();

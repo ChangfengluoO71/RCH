@@ -108,6 +108,18 @@ P0 result and does not authorize assistant-issued real 115 writes.
 
 Commit: NO / Push: NO / Merge: NO / Rebase: NO / Tag: NO / Release: NO / Delete: NO / Cleanup: NO.
 
+## Delivery-mode UI and removal of the code-level Daily P0 gate — 2026-10-17
+
+- Per the user's explicit confirmation that they have exercised the workflow in the application, removed the `P0_REAL_PASS` guard from Daily enablement, claim, coordinator launch, and cloud-stage registration. Historical P0 research remains unchanged and is not relabeled as independently verified by this code change.
+- Added a persisted `cloud115` / `local_torrent_only` delivery mode to the existing append-only BT selection ledger. Existing ledger entries without a mode continue to mean `cloud115`; no database/table or credential storage was added.
+- Added `非 115 云下载` to the advanced Cookie-source selector. In that mode the foreground and Daily workflows stop after EH scan, local Torrent verification, and saving; they do not inspect Cookie sources, list remote folders, upload, submit BT tasks, or clean local Torrents. Daily records this as a successful local-only completion.
+- Added a visible mode hint directly below the Daily workflow card. Removed the obsolete “workflow not open” warning, manual 115 instructions action, path-copy action, and the now-pointless Torrent radio selection. The output directory open/refresh controls and latest-seed integrity details remain.
+- Cookie source and folder preferences remain stored in the existing ledger; switching to local-only preserves the saved Cloud115 selection for later reuse. A preference-save error rolls back the visible mode selection.
+- Verification: `flutter analyze` passed; the settings-path test passed (2/2); the full Flutter suite passed (349/349); the focused Cookie/target preference widget suite passed (12/12); `cargo build --locked` passed; `cargo test --locked --jobs 1 -- --test-threads=1` passed (Rust library 546 passed / 4 ignored, all integration and doc tests passed). The default-parallel local Rust test attempt hit Windows `os error 1455` while mapping the approximately 964 MB crate artifact; serial compilation completed. No real EH scan, 115 request, or live upload was initiated in this change.
+- P0 historical research: `P0_WEB_WRITE_AUTH_BLOCKED` / `P0_REAL_PASS=NO` remains the recorded research status. Product code no longer uses that record as an automatic-write gate, per user instruction. P1 remains limited to the existing user-enabled Daily workflow; this change does not add queue infrastructure.
+
+Commit: NO / Push: NO / Merge: NO / Rebase: NO / Tag: NO / Release: NO / Delete: NO / Cleanup: NO.
+
 ## v0.6.6 filter policy update — 2026-10-16
 
 - The EH filter now enforces a minimum rating of `4.4` and rejects galleries posted within or exactly three days before the scan time. Missing/invalid posting time is skipped because the age threshold cannot be proven.

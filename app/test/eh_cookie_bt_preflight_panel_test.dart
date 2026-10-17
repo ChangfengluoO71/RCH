@@ -17,7 +17,6 @@ void main() {
       var batchCalls = 0;
       final store = EhSubscriptionStore.forTest(
         rules: const {'out_dir': r'C:\isolated\eh'},
-        dailyWorkflowReady: false,
         collectRunner: (_) async {
           collectCalls++;
           return '{"stage":"done","saved":1}';
@@ -68,7 +67,6 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(store.dailyWorkflowReady, isFalse);
       expect(collectCalls, 0);
       expect(batchCalls, 0);
       await tester.tap(find.byKey(const ValueKey('eh-full-workflow-run')));
@@ -100,7 +98,6 @@ void main() {
       var batchCalls = 0;
       final store = EhSubscriptionStore.forTest(
         rules: const {'out_dir': r'C:\isolated\eh'},
-        dailyWorkflowReady: false,
         collectRunner: (_) async =>
             '{"stage":"failed","saved":1,"error":"EH network timeout"}',
         checkedManifestLoader: (_) async => jsonEncode({
@@ -373,10 +370,11 @@ void main() {
             storeOverride: _store(),
             btSourcesOverride: [first, second],
             btBatchPreferencesLoader: () async => savedPreferences,
-            btBatchPreferencesSaver: (sourceId, target) async {
+            btBatchPreferencesSaver: (sourceId, target, mode) async {
               savedPreferences = Cloud115BtBatchSelectionPreferences(
                 sourceId: sourceId,
                 target: target,
+                mode: mode,
               );
             },
             btBatchRunner:
@@ -400,7 +398,7 @@ void main() {
     expect(folderReads, 0, reason: 'Restoring settings must not query 115.');
 
     final firstSourceDropdown = find.byKey(
-      const ValueKey('eh115-bt-source-cookie-source-1'),
+      const ValueKey('eh115-bt-source-cloud115-cookie-source-1'),
     );
     await tester.ensureVisible(firstSourceDropdown);
     expect(
@@ -438,7 +436,7 @@ void main() {
     expect(folderReads, 2, reason: 'Restoring settings must remain offline.');
 
     final secondSourceDropdown = find.byKey(
-      const ValueKey('eh115-bt-source-cookie-source-2'),
+      const ValueKey('eh115-bt-source-cloud115-cookie-source-2'),
     );
     await tester.ensureVisible(secondSourceDropdown);
     await tester.tap(secondSourceDropdown);
@@ -705,7 +703,7 @@ void main() {
               btSourcesOverride: [source],
               btBatchPreferencesLoader: () async =>
                   const Cloud115BtBatchSelectionPreferences(),
-              btBatchPreferencesSaver: (sourceId, target) async {},
+              btBatchPreferencesSaver: (sourceId, target, mode) async {},
               btFolderListRunner: (source, parentId) async {
                 parentsRead.add(parentId);
                 if (parentId == '0') {

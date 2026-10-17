@@ -376,8 +376,6 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     EhCollectRunner? collectRunner,
     EhProgress progress = const EhProgress(),
     String? rulesPath,
-    bool dailyWorkflowReady = true,
-    String dailyWorkflowGateMessage = 'P0_REAL_PASS required',
     EhDailyCloudStageRunner? dailyCloudStageRunner,
   }) {
     final store = EhSubscriptionStore._();
@@ -404,8 +402,6 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     store._onScanRequested = onScanRequested;
     store._rulesWriter = rulesWriter;
     store._collectRunner = collectRunner;
-    store._dailyWorkflowReadyOverride = dailyWorkflowReady;
-    store._dailyWorkflowGateMessageOverride = dailyWorkflowGateMessage;
     store._dailyCloudStageRunner = dailyCloudStageRunner;
     store.progress = progress;
     if (rulesPath != null) {
@@ -477,10 +473,6 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   EhRulesWriter? _rulesWriter;
   EhCollectRunner? _collectRunner;
   bool _cancelRequested = false;
-  bool? _dailyWorkflowReadyOverride;
-  String? _dailyWorkflowGateMessageOverride;
-  bool Function()? _dailyWorkflowReadiness;
-  String Function()? _dailyWorkflowBlockedMessage;
   EhDailyCloudStageRunner? _dailyCloudStageRunner;
 
   Timer? _poll;
@@ -521,23 +513,9 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   @override
   bool get dailyReady => _initialized && loadError == null;
 
-  @override
-  bool get dailyWorkflowReady =>
-      _dailyWorkflowReadiness?.call() ?? _dailyWorkflowReadyOverride ?? false;
-
-  @override
-  String get dailyWorkflowGateMessage =>
-      _dailyWorkflowBlockedMessage?.call() ??
-      _dailyWorkflowGateMessageOverride ??
-      '115 每日自动写入仍被 P0_REAL_PASS 门禁锁定。';
-
-  void configureDailyWorkflowGate({
-    required bool Function() isReady,
-    required String Function() blockedMessage,
+  void configureDailyCloudStageRunner({
     required EhDailyCloudStageRunner runCloudStage,
   }) {
-    _dailyWorkflowReadiness = isReady;
-    _dailyWorkflowBlockedMessage = blockedMessage;
     _dailyCloudStageRunner = runCloudStage;
     notifyListeners();
   }
@@ -685,9 +663,6 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
 
   @override
   Future<void> setDailyEnabled(bool enabled) async {
-    if (enabled && !dailyWorkflowReady) {
-      throw StateError(dailyWorkflowGateMessage);
-    }
     final path = _rulesPath;
     if (path == null || _rulesWriter != null) {
       await saveDailyAutomation(
@@ -704,7 +679,6 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
 
   @override
   Future<bool> claimDailyRun(String date) async {
-    if (!dailyWorkflowReady) return false;
     final path = _rulesPath;
     if (path == null || _rulesWriter != null) {
       final current = dailyAutomation;
@@ -951,13 +925,6 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     EhDailyRunSource source = EhDailyRunSource.manual,
   }) async {
     if (busy || !hasOutDir) return EhRunOutcome.busy;
-    if (source == EhDailyRunSource.dailyAuto && !dailyWorkflowReady) {
-      return EhRunOutcome(
-        started: false,
-        status: EhDailyRunStatus.failed,
-        error: dailyWorkflowGateMessage,
-      );
-    }
     final initialAutomation = dailyAutomation;
     if (source == EhDailyRunSource.manual &&
         initialAutomation.lastRun?.source == EhDailyRunSource.dailyAuto &&
@@ -1041,8 +1008,8 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
           final cloudRunner = _dailyCloudStageRunner;
           if (cloudRunner == null) {
             cloudStage = EhDailyCloudStageResult(
-              status: EhDailyCloudStageStatus.p0Blocked,
-              message: dailyWorkflowGateMessage,
+              status: EhDailyCloudStageStatus.failed,
+              message: '每日云下载处理器未初始化；已保存的 Torrent 保留在本地。',
             );
           } else {
             // The batch processor owns the durable Cloud115 portion. Release
@@ -1059,7 +1026,8 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
               );
             }
           }
-          if (cloudStage.status != EhDailyCloudStageStatus.completed) {
+          if (cloudStage.status != EhDailyCloudStageStatus.completed &&
+              cloudStage.status != EhDailyCloudStageStatus.notRun) {
             outcome = EhRunOutcome(
               started: true,
               status: EhDailyRunStatus.partial,

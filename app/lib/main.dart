@@ -86,9 +86,7 @@ Future<void> main() async {
   final pending = await pendingMigration(root: root);
   final ehStore = EhSubscriptionStore.instance;
   final dailyCloudWorkflow = Cloud115BtDailyWorkflow();
-  ehStore.configureDailyWorkflowGate(
-    isReady: () => dailyCloudWorkflow.ready,
-    blockedMessage: () => dailyCloudWorkflow.blockedMessage,
+  ehStore.configureDailyCloudStageRunner(
     runCloudStage: (entries) =>
         dailyCloudWorkflow.run(entries: entries, outputDir: ehStore.outDir),
   );

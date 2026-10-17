@@ -27,6 +27,8 @@ const _persistedBatchStates = {
   'rejected',
 };
 
+enum Cloud115BtDeliveryMode { cloud115, localTorrentOnly }
+
 bool _isSafeRelativeTorrent(String value) {
   if (value.isEmpty ||
       value.startsWith('/') ||
@@ -107,10 +109,12 @@ class Cloud115BtBatchLedger {
   Future<void> setSelectionPreferences({
     required String? sourceId,
     required cloud115.Cloud115BtFolderSelection? target,
+    Cloud115BtDeliveryMode mode = Cloud115BtDeliveryMode.cloud115,
   }) => withExclusiveLock((transaction) async {
     await transaction.setSelectionPreferences(
       sourceId: sourceId,
       target: target,
+      mode: mode,
     );
   });
 
@@ -209,6 +213,7 @@ class Cloud115BtBatchLedgerTransaction {
   Future<void> setSelectionPreferences({
     required String? sourceId,
     required cloud115.Cloud115BtFolderSelection? target,
+    Cloud115BtDeliveryMode mode = Cloud115BtDeliveryMode.cloud115,
   }) async {
     final normalizedSourceId = sourceId?.trim();
     if (normalizedSourceId != null && normalizedSourceId.isEmpty) {
@@ -221,10 +226,12 @@ class Cloud115BtBatchLedgerTransaction {
     final preferences = Cloud115BtBatchSelectionPreferences(
       sourceId: normalizedSourceId,
       target: target,
+      mode: mode,
     );
     await _append({
       'type': 'selection',
       'sourceId': normalizedSourceId,
+      'mode': _deliveryModeToJson(mode),
       'target': target == null
           ? null
           : {
@@ -353,10 +360,12 @@ class Cloud115BtBatchLedgerTransaction {
           if (rawTarget != null && sourceId == null) {
             throw const FormatException('115 BT 目标目录缺少来源绑定');
           }
+          final mode = _deliveryModeFromJson(decoded['mode']);
           final target = _decodeSavedTarget(rawTarget);
           selectionPreferences = Cloud115BtBatchSelectionPreferences(
             sourceId: sourceId as String?,
             target: target,
+            mode: mode,
           );
         case 'item':
           final accountId = decoded['accountId'];
@@ -470,11 +479,27 @@ class Cloud115BtBatchLedgerTransaction {
 }
 
 class Cloud115BtBatchSelectionPreferences {
-  const Cloud115BtBatchSelectionPreferences({this.sourceId, this.target});
+  const Cloud115BtBatchSelectionPreferences({
+    this.sourceId,
+    this.target,
+    this.mode = Cloud115BtDeliveryMode.cloud115,
+  });
 
   final String? sourceId;
   final cloud115.Cloud115BtFolderSelection? target;
+  final Cloud115BtDeliveryMode mode;
 }
+
+String _deliveryModeToJson(Cloud115BtDeliveryMode mode) => switch (mode) {
+  Cloud115BtDeliveryMode.cloud115 => 'cloud115',
+  Cloud115BtDeliveryMode.localTorrentOnly => 'local_torrent_only',
+};
+
+Cloud115BtDeliveryMode _deliveryModeFromJson(Object? value) => switch (value) {
+  null || 'cloud115' => Cloud115BtDeliveryMode.cloud115,
+  'local_torrent_only' => Cloud115BtDeliveryMode.localTorrentOnly,
+  _ => throw const FormatException('115 BT 下载方式设置无效'),
+};
 
 class Cloud115BtBatchLedgerSnapshot {
   const Cloud115BtBatchLedgerSnapshot({

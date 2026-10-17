@@ -32,6 +32,8 @@ pub struct SourceAvailabilityDto {
     pub device_id: String,
     pub device_name: String,
     pub is_remote: bool,
+    /// 当前有效索引中符合漫画阅读条件的去重资源数。
+    pub comic_count: i64,
     /// 离线索引条目数（可离线浏览）。
     pub offline_index_count: i64,
     pub can_browse_offline: bool,
@@ -187,7 +189,7 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
         .map(|d| d.device_name)
         .unwrap_or_else(|| "本机".to_string());
 
-    // 离线索引计数（一次分组查询）
+    // 离线索引计数（保留现有浏览能力语义）。
     let mut index_counts: HashMap<String, i64> = HashMap::new();
     if let Ok(mut stmt) = conn.prepare(
         "SELECT source_id, COUNT(*) FROM library_index WHERE deleted = 0 GROUP BY source_id",
@@ -198,6 +200,38 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
                 index_counts.insert(r.0, r.1);
             }
         }
+    }
+
+    // 漫画数只统计当前有效索引中的可阅读候选，不把普通目录、散图或远端
+    // 尚未完整发布的列表算作漫画。路径键复用随机阅读的别名归一化规则。
+    let comic_key = random_book_key_sql("li.path");
+    let comic_predicate = readable_comic_candidate_predicate_sql();
+    let comic_count_sql = format!(
+        "WITH eligible AS (
+            SELECT li.source_id, {comic_key} AS comic_key
+            FROM library_index li
+            JOIN book_sources s ON s.id = li.source_id
+                               AND s.deleted = 0
+                               AND s.remote_only = 0
+            WHERE li.deleted = 0
+              AND ({comic_predicate})
+        )
+        SELECT source_id, COUNT(DISTINCT comic_key)
+        FROM eligible
+        GROUP BY source_id"
+    );
+    let mut comic_counts: HashMap<String, i64> = HashMap::new();
+    let mut stmt = conn
+        .prepare(&comic_count_sql)
+        .map_err(|error| error.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|error| error.to_string())?;
+    for row in rows {
+        let (source_id, count) = row.map_err(|error| error.to_string())?;
+        comic_counts.insert(source_id, count);
     }
 
     let mut stmt = conn
@@ -300,6 +334,7 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
         };
         let idx = push(&mut devices, &mut by_device, device_id, device_name);
         let count = index_counts.get(&id).copied().unwrap_or(0);
+        let comic_count = comic_counts.get(&id).copied().unwrap_or(0);
         let device_id_out = devices[idx].device_id.clone();
         let device_name_out = devices[idx].device_name.clone();
         let status =
@@ -317,6 +352,7 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
             device_id: device_id_out,
             device_name: device_name_out,
             is_remote,
+            comic_count,
             offline_index_count: count,
             can_browse_offline: count > 0,
             requires_network,
@@ -387,6 +423,41 @@ fn local_archive_path_predicate_sql() -> String {
         })
         .collect::<Vec<_>>()
         .join(" OR ")
+}
+
+/// Shared comic eligibility rule for source counts and random reading.
+/// Local sources use recognized archive extensions as a legacy fallback;
+/// remote sources require complete listing proof for every counted resource.
+fn readable_comic_candidate_predicate_sql() -> String {
+    let local_archive = local_archive_path_predicate_sql();
+    format!(
+        "(s.type IN ('local', 'smb') AND (
+            (li.entry_type = 'file' AND (li.asset_kind = 'ArchiveFile' OR ({local_archive})))
+            OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder')
+         )) OR (s.type NOT IN ('local', 'smb') AND (
+            (li.entry_type = 'file' AND li.asset_kind = 'ArchiveFile' AND EXISTS (
+                SELECT 1
+                FROM library_index parent
+                JOIN remote_listing_state listing
+                  ON listing.source_id = parent.source_id
+                 AND listing.logical_path = parent.path
+                 AND listing.scan_generation = li.scan_generation
+                 AND listing.listing_complete = 1
+                WHERE parent.id = li.parent_id
+                  AND parent.source_id = li.source_id
+                  AND parent.entry_type = 'dir'
+                  AND parent.deleted = 0
+            ))
+            OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder'
+                AND li.listing_complete = 1 AND EXISTS (
+                    SELECT 1 FROM remote_listing_state listing
+                    WHERE listing.source_id = li.source_id
+                      AND listing.logical_path = li.path
+                      AND listing.scan_generation = li.scan_generation
+                      AND listing.listing_complete = 1
+                ))
+         ))"
+    )
 }
 
 /// Resolve an indexed logical path to the current provider-facing identifier.
@@ -492,7 +563,7 @@ pub fn db_random_library_candidates(
         "(s.type || '|' || s.id || '|' || {})",
         random_book_key_sql("li.path")
     );
-    let local_archive = local_archive_path_predicate_sql();
+    let comic_predicate = readable_comic_candidate_predicate_sql();
     let sql = format!(
         "WITH eligible AS (
             SELECT {book_key} AS book_key, s.id AS source_id, s.type AS source_type,
@@ -503,36 +574,7 @@ pub fn db_random_library_candidates(
             WHERE li.deleted = 0
               AND {book_key} NOT IN (SELECT value FROM json_each(?1))
               AND {book_key} NOT IN (SELECT value FROM json_each(?2))
-              AND (
-                (s.type IN ('local', 'smb') AND (
-                    (li.entry_type = 'file' AND (li.asset_kind = 'ArchiveFile' OR ({local_archive})))
-                    OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder')
-                ))
-                OR
-                (s.type NOT IN ('local', 'smb') AND (
-                    (li.entry_type = 'file' AND li.asset_kind = 'ArchiveFile' AND EXISTS (
-                        SELECT 1
-                        FROM library_index parent
-                        JOIN remote_listing_state listing
-                          ON listing.source_id = parent.source_id
-                         AND listing.logical_path = parent.path
-                         AND listing.scan_generation = li.scan_generation
-                         AND listing.listing_complete = 1
-                        WHERE parent.id = li.parent_id
-                          AND parent.source_id = li.source_id
-                          AND parent.entry_type = 'dir'
-                          AND parent.deleted = 0
-                    ))
-                    OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder'
-                        AND li.listing_complete = 1 AND EXISTS (
-                            SELECT 1 FROM remote_listing_state listing
-                            WHERE listing.source_id = li.source_id
-                              AND listing.logical_path = li.path
-                              AND listing.scan_generation = li.scan_generation
-                              AND listing.listing_complete = 1
-                        ))
-                ))
-              )
+              AND ({comic_predicate})
         ), unique_candidates AS (
             SELECT book_key, MIN(source_id) AS source_id, MIN(source_type) AS source_type,
                    MIN(path) AS path, MIN(title) AS title

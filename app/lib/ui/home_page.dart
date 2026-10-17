@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:app/src/rust/api/library.dart' as frb;
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/remote_cover.dart' as rust_cover;
@@ -35,6 +36,7 @@ import 'package:app/ui/eh_subscription_panel.dart';
 import 'package:app/ui/global_search.dart';
 import 'package:app/ui/opener.dart';
 import 'package:app/ui/poster_grid.dart';
+import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:app/ui/source_tree.dart';
 import 'package:app/ui/sync_panel.dart';
@@ -568,7 +570,7 @@ class _HomePageState extends State<HomePage> {
             },
             onShowDetail: (s) {
               final src = LibraryStore.instance.sourceById(s.sourceId);
-              if (src != null) _showSourceDetail(src);
+              if (src != null) _showSourceDetail(src, availability: s);
             },
             onDeleteSource: (s) {
               final src = LibraryStore.instance.sourceById(s.sourceId);
@@ -1426,41 +1428,100 @@ class _HomePageState extends State<HomePage> {
     ),
   );
 
-  void _showSourceDetail(BookSource src) {
+  void _showSourceDetail(
+    BookSource src, {
+    required frb.SourceAvailabilityDto availability,
+  }) {
     final ctrl = TextEditingController(text: src.note);
     showRchDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('书源详情: ${src.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _sourceTypeLabel(src),
-              style: Theme.of(context).textTheme.bodySmall,
+        content: SizedBox(
+          width: dialogMaxWidth(ctx),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(ctx).height * 0.68,
             ),
-            Text(
-              src.needsSession
-                  ? (src.isBaidu || src.is115 || src.isQuark
-                        ? src.path
-                        : (src.url ?? ''))
-                  : src.path,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
-            const Text('备注', style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: ctrl,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                isDense: true,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _sourceTypeLabel(src),
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    src.needsSession
+                        ? (src.isBaidu || src.is115 || src.isQuark
+                              ? src.path
+                              : (src.url ?? ''))
+                        : src.path,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _sourceMetricCard(
+                        ctx,
+                        label: '可阅读漫画',
+                        value: '${availability.comicCount}',
+                        icon: Icons.menu_book_outlined,
+                      ),
+                      _sourceMetricCard(
+                        ctx,
+                        label: '离线索引条目',
+                        value: '${availability.offlineIndexCount}',
+                        icon: Icons.storage_outlined,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '漫画数基于现有有效索引，按可阅读格式和图片漫画文件夹去重；云端仅统计完整确认的目录索引，此处不会触发扫描。',
+                    style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (needsRemoteScanStatusFor(availability)) ...[
+                    const SizedBox(height: 12),
+                    RemoteScanStatusPanel(
+                      sourceName: src.name,
+                      idleMessage: remoteScanIdleMessageFor(
+                        availability,
+                        backgroundScanEnabled: LibraryStore
+                            .instance
+                            .settings
+                            .remoteBackgroundScanEnabled,
+                      ),
+                      stateListenable: RemoteScanCoordinator.instance
+                          .viewStateFor(availability.sourceId),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  const Text(
+                    '备注',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: ctrl,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
         actions: [
           TextButton(
@@ -1475,6 +1536,50 @@ class _HomePageState extends State<HomePage> {
               Navigator.of(ctx).pop();
             },
             child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sourceMetricCard(
+    BuildContext context, {
+    required String label,
+    required String value,
+    required IconData icon,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: 170,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withAlpha(120),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 19, color: colors.primary),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                Text(
+                  value,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
           ),
         ],
       ),

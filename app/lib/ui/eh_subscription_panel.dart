@@ -15,13 +15,14 @@ import 'package:app/ui/common.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 typedef EhHandoffProcessRunner =
     Future<ProcessResult> Function(String executable, List<String> arguments);
 typedef EhAndroidDirectoryOpener = Future<bool> Function(String directory);
 
 enum _Missing115SourceChoice { addSource, saveSeedsOnly }
+
+const _localTorrentOnlyValue = '__local_torrent_only__';
 
 /// Opens only the configured output directory. Tests can inject the platform
 /// and process boundary without starting Explorer.
@@ -149,6 +150,16 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
     await EhDailyCoordinator.maybeInstance?.settingsChanged();
   }
 
+  Future<bt_batch.Cloud115BtBatchSelectionPreferences>
+  _loadBatchSelectionPreferences() async {
+    final loader = widget.btBatchPreferencesLoader;
+    if (loader != null) return loader();
+    final ledger =
+        widget.btBatchLedgerOverride ??
+        await bt_batch.Cloud115BtBatchLedger.inApplicationSupportDirectory();
+    return ledger.selectionPreferences();
+  }
+
   Future<void> _runFullWorkflowNow() async {
     final currentStore = store;
     if (_fullWorkflowBusy) return;
@@ -160,29 +171,43 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
       _snack('EH 收集任务正在运行，请等待或使用现有取消入口', error: true);
       return;
     }
+    if (_cookieBtKey.currentState?.processing == true) {
+      _snack('115 下载方式或批次设置正在保存，请稍后再运行', error: true);
+      return;
+    }
 
-    final sources = widget.btSourcesOverride ?? LibraryStore.instance.sources;
-    final hasCookie115Source = sources.any(
-      (source) =>
-          source.is115 &&
-          !source.remoteOnly &&
-          (source.cookie ?? '').trim().isNotEmpty,
-    );
-    var runCloudStage = true;
-    if (!hasCookie115Source) {
-      final choice = await _showMissing115SourceChoices();
-      if (!mounted) return;
-      if (choice == _Missing115SourceChoice.addSource) {
-        final onAdd115Source = widget.onAdd115Source;
-        if (onAdd115Source == null) {
-          _snack('请先在“书源”中添加 115 Cookie 书源', error: true);
-        } else {
-          await onAdd115Source();
+    bool runCloudStage;
+    try {
+      final preferences = await _loadBatchSelectionPreferences();
+      runCloudStage =
+          preferences.mode == bt_batch.Cloud115BtDeliveryMode.cloud115;
+    } catch (error) {
+      _snack('读取云下载方式失败：$error', error: true);
+      return;
+    }
+    if (runCloudStage) {
+      final sources = widget.btSourcesOverride ?? LibraryStore.instance.sources;
+      final hasCookie115Source = sources.any(
+        (source) =>
+            source.is115 &&
+            !source.remoteOnly &&
+            (source.cookie ?? '').trim().isNotEmpty,
+      );
+      if (!hasCookie115Source) {
+        final choice = await _showMissing115SourceChoices();
+        if (!mounted) return;
+        if (choice == _Missing115SourceChoice.addSource) {
+          final onAdd115Source = widget.onAdd115Source;
+          if (onAdd115Source == null) {
+            _snack('请先在“书源”中添加 115 Cookie 书源', error: true);
+          } else {
+            await onAdd115Source();
+          }
+          return;
         }
-        return;
+        if (choice != _Missing115SourceChoice.saveSeedsOnly) return;
+        runCloudStage = false;
       }
-      if (choice != _Missing115SourceChoice.saveSeedsOnly) return;
-      runCloudStage = false;
     }
 
     _pageCountKey.currentState?.flush();
@@ -492,35 +517,6 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
     }
   }
 
-  Future<void> _showManualSubmitInstructions() async {
-    await showRchDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('115 手动提交说明'),
-        content: const SingleChildScrollView(
-          child: Text(
-            '1. 选择并核对本地已保存的 .torrent 文件。\n'
-            '2. 仅使用你当前账号可用的 115 官方客户端或网页功能手动操作。\n'
-            '3. 若官方界面没有 Torrent 文件提交入口，请停止，不要改用未公开接口。\n'
-            '4. 本地 Infohash 和文件校验只证明本地种子状态，不证明已上传或已创建云下载任务。\n\n'
-            'RCH 不会自动上传、提交任务、打开第三方 BT 客户端或验证云端结果。',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _copyTorrentPath(String path) async {
-    await Clipboard.setData(ClipboardData(text: path));
-    _snack('已复制 Torrent 完整路径');
-  }
-
   @override
   Widget build(BuildContext context) {
     final store = this.store;
@@ -566,14 +562,39 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
               pageCountKey: _pageCountKey,
             ),
             const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.45,
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 18,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      '非 115 云下载：在下方“高级选项”将“115 Cookie 书源”设为“非 115 云下载”。工作流只扫描、校验并保存 Torrent 到 EH 保存目录，不连接 115。',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             KeyedSubtree(
               key: const ValueKey('eh-seed-handoff'),
               child: _ManifestBlock(
                 store: store,
                 onOpenDir: _openOutDir,
                 onRefresh: store.refreshManifest,
-                onShowInstructions: _showManualSubmitInstructions,
-                onCopyPath: _copyTorrentPath,
               ),
             ),
             const SizedBox(height: 12),
@@ -717,6 +738,7 @@ typedef Eh115BtBatchPreferencesSaver =
     Future<void> Function(
       String? sourceId,
       cloud115_offline.Cloud115BtFolderSelection? target,
+      bt_batch.Cloud115BtDeliveryMode mode,
     );
 
 /// Experimental one-item Cookie-mode preflight. The card is intentionally
@@ -768,6 +790,8 @@ class _CookieBtPreflightBlock extends StatefulWidget {
 
 class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
   String? _selectedSourceId;
+  bt_batch.Cloud115BtDeliveryMode _deliveryMode =
+      bt_batch.Cloud115BtDeliveryMode.cloud115;
   cloud115_offline.Cloud115BtFolderSelection? _targetFolder;
   bool _busy = false;
   bool _confirmingWrite = false;
@@ -862,6 +886,7 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
       setState(() {
         _cleanupAfterSubmit = enabled;
         _selectedSourceId = savedSourceId;
+        _deliveryMode = preferences.mode;
         _targetFolder =
             widget.targetSelectionOverride ??
             (savedSourceId == null ? null : preferences.target);
@@ -894,30 +919,36 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
     }
   }
 
-  Future<void> _saveSelectionPreferences({
+  Future<bool> _saveSelectionPreferences({
     required String? sourceId,
     required cloud115_offline.Cloud115BtFolderSelection? target,
+    bt_batch.Cloud115BtDeliveryMode? mode,
   }) async {
-    if (_preferenceSaving || _batchBusy) return;
+    if (_preferenceSaving || _batchBusy) return false;
     setState(() {
       _preferenceSaving = true;
       _batchError = null;
     });
+    var saved = false;
     try {
       final saver = widget.batchPreferencesSaver;
+      final selectedMode = mode ?? _deliveryMode;
       if (saver != null) {
-        await saver(sourceId, target);
+        await saver(sourceId, target, selectedMode);
       } else {
         await (await _getBatchLedger()).setSelectionPreferences(
           sourceId: sourceId,
           target: target,
+          mode: selectedMode,
         );
       }
+      saved = true;
     } catch (error) {
       if (mounted) setState(() => _batchError = _safeBtError(error));
     } finally {
       if (mounted) setState(() => _preferenceSaving = false);
     }
+    return saved;
   }
 
   List<EhCheckedManifestEntry> get _eligibleEntries => widget
@@ -963,6 +994,7 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
     String? confirmationNotice,
   }) async {
     await _ensureBatchPreferencesLoaded();
+    if (_deliveryMode != bt_batch.Cloud115BtDeliveryMode.cloud115) return null;
     final source = _sourceFor(_cookieSources);
     final target = _targetFolder;
     final entries = _eligibleEntries;
@@ -997,14 +1029,53 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
     return sources.first;
   }
 
-  Future<void> _selectSource(String? sourceId) async {
-    if (sourceId == null || _preferenceSaving || _batchBusy) return;
+  Future<void> _selectDeliveryOption(String? value) async {
+    if (value == null || _preferenceSaving || _batchBusy) return;
+    final oldMode = _deliveryMode;
+    final oldSourceId = _selectedSourceId;
+    final oldTarget = _targetFolder;
+    if (value == _localTorrentOnlyValue) {
+      if (_deliveryMode == bt_batch.Cloud115BtDeliveryMode.localTorrentOnly) {
+        return;
+      }
+      setState(() {
+        _deliveryMode = bt_batch.Cloud115BtDeliveryMode.localTorrentOnly;
+        _resetOperationForSelection();
+      });
+      final saved = await _saveSelectionPreferences(
+        sourceId: _selectedSourceId,
+        target: _targetFolder,
+        mode: bt_batch.Cloud115BtDeliveryMode.localTorrentOnly,
+      );
+      if (!saved && mounted) {
+        setState(() {
+          _deliveryMode = oldMode;
+          _selectedSourceId = oldSourceId;
+          _targetFolder = oldTarget;
+        });
+      }
+      return;
+    }
+
+    final sameSource = value == _selectedSourceId;
     setState(() {
-      _selectedSourceId = sourceId;
-      _targetFolder = null;
+      _deliveryMode = bt_batch.Cloud115BtDeliveryMode.cloud115;
+      _selectedSourceId = value;
+      if (!sameSource) _targetFolder = null;
       _resetOperationForSelection();
     });
-    await _saveSelectionPreferences(sourceId: sourceId, target: null);
+    final saved = await _saveSelectionPreferences(
+      sourceId: value,
+      target: sameSource ? _targetFolder : null,
+      mode: bt_batch.Cloud115BtDeliveryMode.cloud115,
+    );
+    if (!saved && mounted) {
+      setState(() {
+        _deliveryMode = oldMode;
+        _selectedSourceId = oldSourceId;
+        _targetFolder = oldTarget;
+      });
+    }
   }
 
   void _resetOperationForSelection() {
@@ -1430,47 +1501,21 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('115 云端下载', style: theme.textTheme.titleSmall),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '保存目录实存 Torrent：${entries.length} 个有效，'
-                    '${widget.store.torrentDirectoryReport.entries.length - entries.length} 个未通过校验。批次以此目录为准，不依赖 manifest。',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-                IconButton(
-                  key: const ValueKey('eh115-bt-refresh-directory'),
-                  tooltip: '重新检查保存目录',
-                  onPressed:
-                      _batchBusy || widget.store.refreshingTorrentDirectory
-                      ? null
-                      : refreshTorrentInventory,
-                  icon: widget.store.refreshingTorrentDirectory
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh),
-                ),
-              ],
-            ),
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: const EdgeInsets.only(bottom: 8),
-              title: const Text('实验与安全说明'),
-              subtitle: const Text('Cookie Web 写入路线尚未完成真实兼容性验收'),
-              children: const [
-                Text(
-                  '此入口复用已有 Cookie 会话，不新建登录、不扫码、不刷新 Cookie，也不使用 Open API。目录浏览和预检只读；批量或单项写入均使用持久化幂等账本，并在开始前由你确认一次。SSP 及上传协议仍需单次真实验收，结果不确定时只读核对，不会自动重发。',
-                ),
-              ],
+            Text(
+              _deliveryMode == bt_batch.Cloud115BtDeliveryMode.localTorrentOnly
+                  ? '下载方式'
+                  : '115 云端下载',
+              style: theme.textTheme.titleSmall,
             ),
             DropdownButtonFormField<String>(
-              key: ValueKey('eh115-bt-source-${selectedSource?.id ?? "none"}'),
-              initialValue: selectedSource?.id,
+              key: ValueKey(
+                'eh115-bt-source-${_deliveryMode.name}-${selectedSource?.id ?? "none"}',
+              ),
+              initialValue:
+                  _deliveryMode ==
+                      bt_batch.Cloud115BtDeliveryMode.localTorrentOnly
+                  ? _localTorrentOnlyValue
+                  : selectedSource?.id,
               isExpanded: true,
               decoration: const InputDecoration(
                 labelText: '115 Cookie 书源',
@@ -1478,6 +1523,10 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
                 isDense: true,
               ),
               items: [
+                const DropdownMenuItem(
+                  value: _localTorrentOnlyValue,
+                  child: Text('非 115 云下载'),
+                ),
                 for (final source in sources)
                   DropdownMenuItem(
                     value: source.id,
@@ -1485,339 +1534,393 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
                   ),
               ],
               onChanged:
-                  sources.isEmpty ||
-                      !_cleanupPreferenceLoaded ||
+                  !_cleanupPreferenceLoaded ||
                       _preferenceSaving ||
+                      widget.store.busy ||
                       _busy ||
                       _batchBusy ||
                       _confirmingWrite
                   ? null
-                  : _selectSource,
+                  : _selectDeliveryOption,
             ),
             const SizedBox(height: 4),
             Text(
-              '所选 Cookie 书源和目标目录会保存在本机设置中，不保存 Cookie。',
+              '下载方式、115 Cookie 书源和目标目录保存在本机；Cookie 本身不保存。',
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 10),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.folder_outlined,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('115 保存目录', style: theme.textTheme.labelMedium),
-                      Text(
-                        targetFolder == null
-                            ? '未选择；打开目录选择器浏览已有文件夹'
-                            : '${targetFolder.path}（ID ${targetFolder.id}）',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed:
-                      selectedSource == null ||
-                          _busy ||
-                          _confirmingWrite ||
-                          _batchBusy ||
-                          !_cleanupPreferenceLoaded ||
-                          _preferenceSaving
-                      ? null
-                      : () => _chooseTargetFolder(selectedSource),
-                  icon: const Icon(Icons.folder_open_outlined),
-                  label: const Text('选择目录'),
-                ),
-              ],
-            ),
-            if (targetFolder == null)
+            if (_deliveryMode ==
+                bt_batch.Cloud115BtDeliveryMode.localTorrentOnly)
               Padding(
-                padding: const EdgeInsets.only(top: 6),
+                padding: const EdgeInsets.only(top: 10),
                 child: Text(
-                  '从当前账号的已有目录中选择；RCH 不会自动创建云端文件夹。',
-                  style: theme.textTheme.bodySmall,
+                  '当前模式只执行 EH 扫描、本地校验并保存 Torrent；不会向 115 发请求、查询目录、上传文件、创建 BT 任务或清理本地种子。',
+                  style: theme.textTheme.bodyMedium,
                 ),
-              ),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              value: _cleanupAfterSubmit,
-              title: const Text('确认远端任务后删除本地 .torrent'),
-              subtitle: const Text(
-                '默认关闭；只删除已校验的种子文件。115 已接受请求不代表任务已核实；无法只读确认时保留种子。',
-              ),
-              onChanged:
-                  !_cleanupPreferenceLoaded ||
-                      _preferenceSaving ||
-                      _busy ||
-                      _confirmingWrite
-                  ? null
-                  : _setCleanupAfterSubmit,
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.icon(
-                key: const ValueKey('eh115-bt-batch-run'),
-                onPressed:
-                    _busy ||
-                        _confirmingWrite ||
-                        _preferenceSaving ||
-                        !_cleanupPreferenceLoaded ||
-                        entries.isEmpty ||
-                        selectedSource == null ||
-                        targetFolder == null
-                    ? null
-                    : () async {
-                        await _runBatch(selectedSource, entries, targetFolder);
-                      },
-                icon: _batchBusy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.playlist_add_check_circle_outlined),
-                label: Text(
-                  _batchBusy ? '批次处理中…' : '批量上传并提交 BT 任务（${entries.length}）',
-                ),
-              ),
-            ),
-            if (_batchBusy && _batchProgress != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  _batchProgress!,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall,
-                ),
-              ),
-            AnimatedBuilder(
-              animation: Cloud115BtMonitor.instance,
-              builder: (context, _) {
-                final monitor = Cloud115BtMonitor.instance;
-                final summary = monitor.summaryValue;
-                if (summary.trackedCount == 0 &&
-                    monitor.lastLocalError == null) {
-                  return const SizedBox.shrink();
-                }
-                final next = summary.nextCheckAt;
-                final nextText = next == null
-                    ? '等待可用的现有 Cookie 会话'
-                    : '下次只读核对：${next.toLocal().toString().substring(0, 16)}';
-                return Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        monitor.lastLocalError == null
-                            ? '115 任务监视：关联 ${summary.trackedCount} 项 · '
-                                  '任务列表发现 ${summary.foundCount} 项 · '
-                                  '状态待确认 ${summary.unknownCount} 项'
-                            : '115 任务监视暂不可用：${monitor.lastLocalError}',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                      if (monitor.lastLocalError == null)
-                        Text(
-                          '$nextText。目标目录和下载完成状态未经验证；监视不会上传、提交或删种子。',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            if (_batchError != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _batchError!,
-                  style: TextStyle(color: theme.colorScheme.error),
-                ),
-              ),
-            if (_batchReport case final report?) ...[
-              const SizedBox(height: 8),
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                initiallyExpanded: report.stopped,
-                title: Text('批次结果：${report.results.length} 项'),
-                subtitle: Text(
-                  report.stopped
-                      ? '已停止；未完成项保留本地种子'
-                      : report.hasPendingRecovery
-                      ? '本轮已遍历；未确认项保留本地 Torrent，后续只读恢复且不重传'
-                      : report.results.any(
-                          (result) =>
-                              result.state == 'rejected' ||
-                              result.state == 'torrent_invalid' ||
-                              result.state == 'local_validation_failed',
-                        )
-                      ? '已遍历全部种子；有拒绝或无效项，请查看明细'
-                      : '批次处理完成',
-                ),
+              )
+            else ...[
+              const SizedBox(height: 10),
+              Row(
                 children: [
-                  for (final result in report.results)
-                    ListTile(
-                      dense: true,
-                      leading: Icon(
-                        result.state == 'submitted' ||
-                                result.state == 'local_torrent_removed'
-                            ? Icons.check_circle_outline
-                            : Icons.info_outline,
-                      ),
-                      title: Text(
-                        result.relativeFile.isEmpty
-                            ? result.infoHash
-                            : result.relativeFile,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        '${_batchStateLabel(result.state)}'
-                        '${result.message.isEmpty ? '' : ' · ${result.message}'}',
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                  Expanded(
+                    child: Text(
+                      '保存目录实存 Torrent：${entries.length} 个有效，'
+                      '${widget.store.torrentDirectoryReport.entries.length - entries.length} 个未通过校验。批次以此目录为准，不依赖 manifest。',
+                      style: theme.textTheme.bodySmall,
                     ),
+                  ),
+                  IconButton(
+                    key: const ValueKey('eh115-bt-refresh-directory'),
+                    tooltip: '重新检查保存目录',
+                    onPressed:
+                        _batchBusy || widget.store.refreshingTorrentDirectory
+                        ? null
+                        : refreshTorrentInventory,
+                    icon: widget.store.refreshingTorrentDirectory
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
+                  ),
                 ],
               ),
-            ],
-            const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.icon(
-                onPressed:
-                    _busy ||
-                        _confirmingWrite ||
-                        _batchBusy ||
-                        selectedEntry == null ||
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                title: const Text('115 写入与安全说明'),
+                subtitle: const Text('每批需确认；不确定的结果只读核对，不自动重发'),
+                children: const [
+                  Text(
+                    '此入口复用已有 Cookie 会话，不新建登录、不扫码、不刷新 Cookie，也不使用 Open API。手动批次开始前需要确认；Daily 自动处理由上方开关控制。每项写入使用持久化幂等账本，结果不确定时先只读核对，不会自动重发。',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.folder_outlined,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('115 保存目录', style: theme.textTheme.labelMedium),
+                        Text(
+                          targetFolder == null
+                              ? '未选择；打开目录选择器浏览已有文件夹'
+                              : '${targetFolder.path}（ID ${targetFolder.id}）',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed:
                         selectedSource == null ||
-                        targetFolder == null
+                            _busy ||
+                            _confirmingWrite ||
+                            _batchBusy ||
+                            !_cleanupPreferenceLoaded ||
+                            _preferenceSaving
+                        ? null
+                        : () => _chooseTargetFolder(selectedSource),
+                    icon: const Icon(Icons.folder_open_outlined),
+                    label: const Text('选择目录'),
+                  ),
+                ],
+              ),
+              if (targetFolder == null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '从当前账号的已有目录中选择；RCH 不会自动创建云端文件夹。',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: _cleanupAfterSubmit,
+                title: const Text('确认远端任务后删除本地 .torrent'),
+                subtitle: const Text(
+                  '默认关闭；只删除已校验的种子文件。115 已接受请求不代表任务已核实；无法只读确认时保留种子。',
+                ),
+                onChanged:
+                    !_cleanupPreferenceLoaded ||
+                        _preferenceSaving ||
+                        _busy ||
+                        _confirmingWrite
                     ? null
-                    : () => _preflight(selectedSource, selectedEntry),
-                icon: _busy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.fact_check_outlined),
-                label: Text(_busy ? busyLabel : '检查最新有效种子'),
+                    : _setCleanupAfterSubmit,
               ),
-            ),
-            if (entries.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text('没有通过 H0 文件存在性和 Torrent 校验的种子。'),
-              ),
-            if (sources.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text('没有可用的 115 Cookie 书源；不会改用 Open 模式。'),
-              ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: theme.colorScheme.error),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                  key: const ValueKey('eh115-bt-batch-run'),
+                  onPressed:
+                      _busy ||
+                          _confirmingWrite ||
+                          _preferenceSaving ||
+                          !_cleanupPreferenceLoaded ||
+                          entries.isEmpty ||
+                          selectedSource == null ||
+                          targetFolder == null
+                      ? null
+                      : () async {
+                          await _runBatch(
+                            selectedSource,
+                            entries,
+                            targetFolder,
+                          );
+                        },
+                  icon: _batchBusy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.playlist_add_check_circle_outlined),
+                  label: Text(
+                    _batchBusy ? '批次处理中…' : '批量上传并提交 BT 任务（${entries.length}）',
+                  ),
                 ),
               ),
-            if (preflight case final result?) ...[
-              const Divider(height: 24),
-              _BtPreflightFact(label: '115 账号标识', value: result.accountId),
-              _BtPreflightFact(
-                label: '目标目录',
-                value:
-                    '${result.targetFolderPath}（ID ${result.targetFolderId}）',
-              ),
-              _BtPreflightFact(
-                label: 'Torrent',
-                value:
-                    '${result.torrentName} · ${fmtSize(result.torrentSize)} · SHA-1 ${result.torrentSha1}',
-              ),
-              _BtPreflightFact(label: 'Infohash', value: result.infoHash),
-              _BtPreflightFact(
-                label: '重复任务处理',
-                value: '不扫描完整离线任务列表；按 115 BT 提交结果处理重复项。结果未知时不重发并保留本地种子。',
-              ),
-              if (files.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Text('本地校验文件清单', style: theme.textTheme.titleSmall),
-                const SizedBox(height: 4),
-                Text(
-                  '通过远端解析校验后，将把全部文件加入 BT 任务。',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ],
-              for (final file in files)
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    '${file.index} · ${file.path}',
+              if (_batchBusy && _batchProgress != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _batchProgress!,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall,
                   ),
-                  subtitle: Text(fmtSize(file.size)),
                 ),
-              if (_taskStatus case final status?) ...[
-                const Divider(height: 24),
-                Text('远端 BT 任务', style: theme.textTheme.titleSmall),
-                _BtPreflightFact(
-                  label: '任务状态',
-                  value: status.state == 'found'
-                      ? status.statusText
-                      : status.state == 'not_found'
-                      ? '任务列表未找到'
-                      : status.statusText.trim().isEmpty
-                      ? '无法确认'
-                      : '无法确认：${status.statusText.trim()}',
-                ),
-                if (status.statusCode != null)
-                  _BtPreflightFact(
-                    label: '状态码',
-                    value: status.statusCode.toString(),
-                  ),
-                if (status.percentDone != null)
-                  _BtPreflightFact(
-                    label: '远端进度',
-                    value: '${(status.percentDone! * 100).toStringAsFixed(0)}%',
-                  ),
-              ],
-              const SizedBox(height: 8),
-              if (canProcessSelected)
-                FilledButton.icon(
-                  onPressed: () => _runBatch(
-                    selectedSource,
-                    [selectedEntry],
-                    targetFolder,
-                    confirmationNotice:
-                        '这是单项操作。上传、解析、查重恢复和 BT 提交均使用同一持久化幂等账本；已有未知结果时先只读核对，不重复发送写请求。',
-                  ),
-                  icon: const Icon(Icons.cloud_upload_outlined),
-                  label: Text(_batchBusy ? '正在处理…' : '幂等处理此 Torrent'),
-                ),
-              OutlinedButton.icon(
-                onPressed:
-                    _busy ||
-                        _batchBusy ||
-                        _confirmingWrite ||
-                        selectedSource == null
-                    ? null
-                    : () => _queryTask(selectedSource, result),
-                icon: const Icon(Icons.search),
-                label: Text(_busy ? '正在查询…' : '查询 BT 任务'),
+              AnimatedBuilder(
+                animation: Cloud115BtMonitor.instance,
+                builder: (context, _) {
+                  final monitor = Cloud115BtMonitor.instance;
+                  final summary = monitor.summaryValue;
+                  if (summary.trackedCount == 0 &&
+                      monitor.lastLocalError == null) {
+                    return const SizedBox.shrink();
+                  }
+                  final next = summary.nextCheckAt;
+                  final nextText = next == null
+                      ? '等待可用的现有 Cookie 会话'
+                      : '下次只读核对：${next.toLocal().toString().substring(0, 16)}';
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          monitor.lastLocalError == null
+                              ? '115 任务监视：关联 ${summary.trackedCount} 项 · '
+                                    '任务列表发现 ${summary.foundCount} 项 · '
+                                    '状态待确认 ${summary.unknownCount} 项'
+                              : '115 任务监视暂不可用：${monitor.lastLocalError}',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        if (monitor.lastLocalError == null)
+                          Text(
+                            '$nextText。目标目录和下载完成状态未经验证；监视不会上传、提交或删种子。',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                      ],
+                    ),
+                  );
+                },
               ),
+              if (_batchError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    _batchError!,
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
+                ),
+              if (_batchReport case final report?) ...[
+                const SizedBox(height: 8),
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  initiallyExpanded: report.stopped,
+                  title: Text('批次结果：${report.results.length} 项'),
+                  subtitle: Text(
+                    report.stopped
+                        ? '已停止；未完成项保留本地种子'
+                        : report.hasPendingRecovery
+                        ? '本轮已遍历；未确认项保留本地 Torrent，后续只读恢复且不重传'
+                        : report.results.any(
+                            (result) =>
+                                result.state == 'rejected' ||
+                                result.state == 'torrent_invalid' ||
+                                result.state == 'local_validation_failed',
+                          )
+                        ? '已遍历全部种子；有拒绝或无效项，请查看明细'
+                        : '批次处理完成',
+                  ),
+                  children: [
+                    for (final result in report.results)
+                      ListTile(
+                        dense: true,
+                        leading: Icon(
+                          result.state == 'submitted' ||
+                                  result.state == 'local_torrent_removed'
+                              ? Icons.check_circle_outline
+                              : Icons.info_outline,
+                        ),
+                        title: Text(
+                          result.relativeFile.isEmpty
+                              ? result.infoHash
+                              : result.relativeFile,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${_batchStateLabel(result.state)}'
+                          '${result.message.isEmpty ? '' : ' · ${result.message}'}',
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.icon(
+                  onPressed:
+                      _busy ||
+                          _confirmingWrite ||
+                          _batchBusy ||
+                          selectedEntry == null ||
+                          selectedSource == null ||
+                          targetFolder == null
+                      ? null
+                      : () => _preflight(selectedSource, selectedEntry),
+                  icon: _busy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fact_check_outlined),
+                  label: Text(_busy ? busyLabel : '检查最新有效种子'),
+                ),
+              ),
+              if (entries.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('没有通过 H0 文件存在性和 Torrent 校验的种子。'),
+                ),
+              if (sources.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('没有可用的 115 Cookie 书源；不会改用 Open 模式。'),
+                ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: theme.colorScheme.error),
+                  ),
+                ),
+              if (preflight case final result?) ...[
+                const Divider(height: 24),
+                _BtPreflightFact(label: '115 账号标识', value: result.accountId),
+                _BtPreflightFact(
+                  label: '目标目录',
+                  value:
+                      '${result.targetFolderPath}（ID ${result.targetFolderId}）',
+                ),
+                _BtPreflightFact(
+                  label: 'Torrent',
+                  value:
+                      '${result.torrentName} · ${fmtSize(result.torrentSize)} · SHA-1 ${result.torrentSha1}',
+                ),
+                _BtPreflightFact(label: 'Infohash', value: result.infoHash),
+                _BtPreflightFact(
+                  label: '重复任务处理',
+                  value: '不扫描完整离线任务列表；按 115 BT 提交结果处理重复项。结果未知时不重发并保留本地种子。',
+                ),
+                if (files.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text('本地校验文件清单', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  Text(
+                    '通过远端解析校验后，将把全部文件加入 BT 任务。',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ],
+                for (final file in files)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      '${file.index} · ${file.path}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(fmtSize(file.size)),
+                  ),
+                if (_taskStatus case final status?) ...[
+                  const Divider(height: 24),
+                  Text('远端 BT 任务', style: theme.textTheme.titleSmall),
+                  _BtPreflightFact(
+                    label: '任务状态',
+                    value: status.state == 'found'
+                        ? status.statusText
+                        : status.state == 'not_found'
+                        ? '任务列表未找到'
+                        : status.statusText.trim().isEmpty
+                        ? '无法确认'
+                        : '无法确认：${status.statusText.trim()}',
+                  ),
+                  if (status.statusCode != null)
+                    _BtPreflightFact(
+                      label: '状态码',
+                      value: status.statusCode.toString(),
+                    ),
+                  if (status.percentDone != null)
+                    _BtPreflightFact(
+                      label: '远端进度',
+                      value:
+                          '${(status.percentDone! * 100).toStringAsFixed(0)}%',
+                    ),
+                ],
+                const SizedBox(height: 8),
+                if (canProcessSelected)
+                  FilledButton.icon(
+                    onPressed: () => _runBatch(
+                      selectedSource,
+                      [selectedEntry],
+                      targetFolder,
+                      confirmationNotice:
+                          '这是单项操作。上传、解析、查重恢复和 BT 提交均使用同一持久化幂等账本；已有未知结果时先只读核对，不重复发送写请求。',
+                    ),
+                    icon: const Icon(Icons.cloud_upload_outlined),
+                    label: Text(_batchBusy ? '正在处理…' : '幂等处理此 Torrent'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed:
+                      _busy ||
+                          _batchBusy ||
+                          _confirmingWrite ||
+                          selectedSource == null
+                      ? null
+                      : () => _queryTask(selectedSource, result),
+                  icon: const Icon(Icons.search),
+                  label: Text(_busy ? '正在查询…' : '查询 BT 任务'),
+                ),
+              ],
             ],
           ],
         ),
@@ -2150,7 +2253,6 @@ class _DailyAutomationBlock extends StatelessWidget {
         final run = state.lastRun;
         final runError = run?.error;
         final supported = Platform.isWindows;
-        final workflowReady = store.dailyWorkflowReady;
         final isCollecting = store.busy || store.progress.running;
         return Card(
           key: const ValueKey('eh-daily-workflow-card'),
@@ -2171,8 +2273,7 @@ class _DailyAutomationBlock extends StatelessWidget {
                     Switch.adaptive(
                       key: const ValueKey('eh-daily-toggle'),
                       value: state.dailyEnabled,
-                      onChanged:
-                          supported && (workflowReady || state.dailyEnabled)
+                      onChanged: supported
                           ? (enabled) async {
                               try {
                                 await store.setDailyEnabled(enabled);
@@ -2199,26 +2300,6 @@ class _DailyAutomationBlock extends StatelessWidget {
                       : '自动每日检查仅支持 Windows。',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                if (!workflowReady) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.errorContainer.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '完整自动工作流尚未开放：${store.dailyWorkflowGateMessage}。手动 EH 检查仍可运行。',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 12),
                 LayoutBuilder(
                   builder: (context, constraints) {
@@ -2287,13 +2368,16 @@ class _DailyAutomationBlock extends StatelessWidget {
                 ),
                 if (state.dailyEnabled)
                   Text(
-                    '下次自动条件：${_nextDailyEligibility(state, store.hasOutDir, supported, workflowReady)}',
+                    '下次自动条件：${_nextDailyEligibility(state, store.hasOutDir, supported)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 if (run != null &&
-                    run.cloudStage.status != EhDailyCloudStageStatus.notRun)
+                    (run.cloudStage.status != EhDailyCloudStageStatus.notRun ||
+                        run.cloudStage.message?.trim().isNotEmpty == true))
                   Text(
-                    '115：${_dailyCloudStageSummary(run.cloudStage)}',
+                    run.cloudStage.status == EhDailyCloudStageStatus.notRun
+                        ? '保存模式：${_dailyCloudStageSummary(run.cloudStage)}'
+                        : '115：${_dailyCloudStageSummary(run.cloudStage)}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 if (workflowBusy && !store.busy && workflowProgress != null)
@@ -2346,11 +2430,9 @@ String _nextDailyEligibility(
   EhDailyAutomationState state,
   bool hasOutDir,
   bool supported,
-  bool workflowReady,
 ) {
   if (!state.dailyEnabled) return '未启用';
   if (!supported) return '仅 Windows 支持';
-  if (!workflowReady) return '等待 P0_REAL_PASS；不会领取或启动任务';
   if (!hasOutDir) return '等待选择 Torrent 保存目录';
   final today = ehLocalDateKey(DateTime.now());
   final lastAttempt = state.lastAutoAttemptDate;
@@ -2387,9 +2469,13 @@ String _dailyRunLabel(EhDailyRunStatus status) => switch (status) {
 };
 
 String _dailyCloudStageSummary(EhDailyCloudStageResult result) {
+  final message = result.message?.trim();
+  if (result.status == EhDailyCloudStageStatus.notRun) {
+    return message == null || message.isEmpty ? '本轮未运行云端阶段' : message;
+  }
   final status = switch (result.status) {
     EhDailyCloudStageStatus.notRun => '未运行',
-    EhDailyCloudStageStatus.p0Blocked => '等待 P0_REAL_PASS',
+    EhDailyCloudStageStatus.p0Blocked => '旧版门禁记录',
     EhDailyCloudStageStatus.needsConfiguration => '等待配置',
     EhDailyCloudStageStatus.sessionUnavailable => '等待现有书源会话',
     EhDailyCloudStageStatus.completed => '本轮提交已处理',
@@ -2400,7 +2486,6 @@ String _dailyCloudStageSummary(EhDailyCloudStageResult result) {
       '${result.submitted} 已确认 · ${result.skipped} 跳过 · '
       '${result.pending} 待核对 · ${result.removed} 已清理本地种子 · '
       '${result.failed} 失败';
-  final message = result.message?.trim();
   return '$status（${result.total} 项；$counts）'
       '${message == null || message.isEmpty ? '' : ' · $message'}';
 }
@@ -3276,130 +3361,90 @@ class _ManifestBlock extends StatefulWidget {
     required this.store,
     required this.onOpenDir,
     required this.onRefresh,
-    required this.onShowInstructions,
-    required this.onCopyPath,
   });
 
   final EhSubscriptionStore store;
   final Future<void> Function() onOpenDir;
   final Future<void> Function() onRefresh;
-  final Future<void> Function() onShowInstructions;
-  final Future<void> Function(String path) onCopyPath;
 
   @override
   State<_ManifestBlock> createState() => _ManifestBlockState();
 }
 
 class _ManifestBlockState extends State<_ManifestBlock> {
-  String? _selectedFile;
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final report = widget.store.manifestReport;
     final entries = report.entries.reversed.toList();
     final shown = entries.take(1).toList();
-    EhCheckedManifestEntry? selected;
-    for (final entry in entries) {
-      if (entry.item.file == _selectedFile) {
-        selected = entry;
-        break;
-      }
-    }
-    final selectedPath = selected?.fullPath;
-    return RadioGroup<String>(
-      groupValue: _selectedFile,
-      onChanged: (value) => setState(() => _selectedFile = value),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text(
-                '已保存种子',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-              ),
-              const SizedBox(width: 8),
-              Text('共 ${entries.length} 个', style: theme.textTheme.bodySmall),
-              const Spacer(),
-              TextButton.icon(
-                key: const ValueKey('eh-manifest-refresh'),
-                onPressed: widget.store.refreshingManifest
-                    ? null
-                    : () => widget.onRefresh(),
-                icon: widget.store.refreshingManifest
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh, size: 16),
-                label: const Text('刷新清单'),
-              ),
-              TextButton.icon(
-                onPressed: widget.store.hasOutDir
-                    ? () => widget.onOpenDir()
-                    : null,
-                icon: const Icon(Icons.folder_open, size: 16),
-                label: const Text('打开保存目录'),
-              ),
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              '已保存种子',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            const SizedBox(width: 8),
+            Text('共 ${entries.length} 个', style: theme.textTheme.bodySmall),
+            const Spacer(),
+            TextButton.icon(
+              key: const ValueKey('eh-manifest-refresh'),
+              onPressed: widget.store.refreshingManifest
+                  ? null
+                  : () => widget.onRefresh(),
+              icon: widget.store.refreshingManifest
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 16),
+              label: const Text('刷新清单'),
+            ),
+            TextButton.icon(
+              onPressed: widget.store.hasOutDir
+                  ? () => widget.onOpenDir()
+                  : null,
+              icon: const Icon(Icons.folder_open, size: 16),
+              label: const Text('打开保存目录'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _manifestReadStatusLabel(report),
+          style: theme.textTheme.bodySmall,
+        ),
+        if (report.invalidEntries > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '有 ${report.invalidEntries} 条清单记录无法解析；可读取记录仍显示，原 manifest 未修改。',
+              style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+            ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            _manifestReadStatusLabel(report),
-            style: theme.textTheme.bodySmall,
+        if (shown.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              _manifestEmptyStateLabel(report),
+              style: theme.textTheme.bodySmall,
+            ),
           ),
-          if (report.invalidEntries > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '有 ${report.invalidEntries} 条清单记录无法解析；可读取记录仍显示，原 manifest 未修改。',
-                style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
-              ),
-            ),
-          if (shown.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                _manifestEmptyStateLabel(report),
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
-          for (var index = 0; index < shown.length; index++)
-            _ManifestHandoffTile(
-              key: ValueKey('eh-handoff-select-$index'),
-              entry: shown[index],
-              selected: shown[index].item.file == _selectedFile,
-            ),
-          if (entries.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text('仅显示最近 1 个', style: theme.textTheme.bodySmall),
-            ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              OutlinedButton.icon(
-                key: const ValueKey('eh-handoff-copy-path'),
-                onPressed: selectedPath == null
-                    ? null
-                    : () => widget.onCopyPath(selectedPath),
-                icon: const Icon(Icons.content_copy, size: 16),
-                label: const Text('复制 Torrent 完整路径'),
-              ),
-              TextButton.icon(
-                key: const ValueKey('eh-handoff-instructions'),
-                onPressed: () => widget.onShowInstructions(),
-                icon: const Icon(Icons.info_outline, size: 16),
-                label: const Text('查看 115 手动提交说明'),
-              ),
-            ],
+        for (var index = 0; index < shown.length; index++)
+          _ManifestHandoffTile(
+            key: ValueKey('eh-handoff-select-$index'),
+            entry: shown[index],
           ),
-        ],
-      ),
+        if (entries.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text('仅显示最近 1 个', style: theme.textTheme.bodySmall),
+          ),
+      ],
     );
   }
 }
@@ -3445,14 +3490,9 @@ String _torrentValidationLabel(EhTorrentValidationStatus status) =>
     };
 
 class _ManifestHandoffTile extends StatelessWidget {
-  const _ManifestHandoffTile({
-    super.key,
-    required this.entry,
-    required this.selected,
-  });
+  const _ManifestHandoffTile({super.key, required this.entry});
 
   final EhCheckedManifestEntry entry;
-  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -3477,22 +3517,13 @@ class _ManifestHandoffTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            child: RadioListTile<String>(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              value: item.file,
-              title: Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              subtitle: Text('${item.file} · $torrentSize'),
-            ),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Text('${item.file} · $torrentSize'),
           ),
           Padding(
             padding: const EdgeInsets.only(left: 12, bottom: 3),
@@ -3532,16 +3563,13 @@ class _ManifestHandoffTile extends StatelessWidget {
               ],
             ),
           ),
-          if (selected)
-            Padding(
-              padding: const EdgeInsets.only(left: 12, top: 4),
-              child: Text(
-                '本地清单状态不代表已上传或已提交 115。',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.outline,
-                ),
-              ),
+          Padding(
+            padding: const EdgeInsets.only(left: 12, top: 4),
+            child: Text(
+              '本地清单状态不代表已上传或已提交 115。',
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.outline),
             ),
+          ),
         ],
       ),
     );

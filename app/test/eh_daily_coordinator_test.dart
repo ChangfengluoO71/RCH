@@ -19,27 +19,6 @@ void main() {
       coordinator.dispose();
     });
 
-    test(
-      'full-workflow gate prevents claims and EH requests until P0 passes',
-      () async {
-        final timer = _FakeWakeTimer();
-        final host = _FakeHost(
-          state: const EhDailyAutomationState(dailyEnabled: true),
-          dailyWorkflowReady: false,
-        );
-        final coordinator = _coordinator(host, wakeTimer: timer);
-
-        await coordinator.start();
-
-        expect(host.runCalls, 0);
-        expect(host.dailyAutomation.lastAutoAttemptDate, isNull);
-        expect(coordinator.status, EhDailyCoordinatorStatus.waitingForP0Gate);
-        expect(coordinator.error, contains('P0_REAL_PASS'));
-        expect(timer.callback, isNull);
-        coordinator.dispose();
-      },
-    );
-
     test('non-Windows platform never starts the Daily collect lane', () async {
       final host = _FakeHost(
         state: const EhDailyAutomationState(dailyEnabled: true),
@@ -404,7 +383,6 @@ class _FakeHost extends ChangeNotifier implements EhDailyHost {
       status: EhDailyRunStatus.completed,
       saved: 2,
     ),
-    this.dailyWorkflowReady = true,
   }) : dailyAutomation = state;
 
   @override
@@ -412,11 +390,6 @@ class _FakeHost extends ChangeNotifier implements EhDailyHost {
 
   @override
   bool busy;
-  @override
-  bool dailyWorkflowReady;
-  @override
-  String get dailyWorkflowGateMessage => 'P0_REAL_PASS required';
-
   bool failNextSave;
   final EhDailyRunRecord? claimConflictRun;
   int runCalls = 0;

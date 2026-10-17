@@ -22,7 +22,6 @@ enum EhDailyCoordinatorStatus {
   disabled,
   waitingForOutputDirectory,
   waitingForCurrentRun,
-  waitingForP0Gate,
   waitingForNextDate,
   persistenceFailed,
   claimed,
@@ -213,8 +212,6 @@ abstract interface class EhDailyHost implements Listenable {
   bool get dailyReady;
   bool get hasOutDir;
   bool get busy;
-  bool get dailyWorkflowReady;
-  String get dailyWorkflowGateMessage;
 
   Future<void> setDailyEnabled(bool enabled);
   Future<bool> claimDailyRun(String date);
@@ -368,13 +365,6 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       _pendingClaimDate = null;
       _waitingForCurrentRun = false;
       _setStatus(EhDailyCoordinatorStatus.disabled);
-      return;
-    }
-    if (!host.dailyWorkflowReady) {
-      _setStatus(
-        EhDailyCoordinatorStatus.waitingForP0Gate,
-        host.dailyWorkflowGateMessage,
-      );
       return;
     }
     if (!host.hasOutDir) {
@@ -587,10 +577,7 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _armNextLocalDay() {
-    if (!_started ||
-        !_isWindows ||
-        !host.dailyAutomation.dailyEnabled ||
-        !host.dailyWorkflowReady) {
+    if (!_started || !_isWindows || !host.dailyAutomation.dailyEnabled) {
       _wakeTimer.cancel();
       return;
     }

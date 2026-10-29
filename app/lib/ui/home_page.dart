@@ -102,6 +102,7 @@ class _HomePageState extends State<HomePage> {
       LibraryStore.instance,
       TagRepository.instance,
     ]);
+    LibraryStore.instance.addListener(_onLayoutSettingsChanged);
     LibraryStore.instance.load();
     _scheduleUpdateCheck();
   }
@@ -136,29 +137,25 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  bool _portraitLocked = false;
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _syncOrientation();
   }
 
-  /// 手机（紧凑布局）锁定竖屏；平板（桌面布局）允许旋转，随布局切换自动调整。
+  void _onLayoutSettingsChanged() {
+    if (mounted) _syncOrientation();
+  }
+
+  /// Rotation follows the selected device experience, not split-screen width.
   void _syncOrientation() {
     if (defaultTargetPlatform != TargetPlatform.android) return;
-    final compact = isCompact(context);
-    if (compact && !_portraitLocked) {
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-      _portraitLocked = true;
-    } else if (!compact && _portraitLocked) {
-      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-      _portraitLocked = false;
-    }
+    appOrientationCoordinator.updateHome(resolveLayoutProfile(context));
   }
 
   @override
   void dispose() {
+    LibraryStore.instance.removeListener(_onLayoutSettingsChanged);
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -2059,7 +2056,7 @@ class _HomePageState extends State<HomePage> {
       ),
       const SizedBox(height: 4),
       Text(
-        '横屏建议"桌面风格"（与 PC 相同，侧栏导航）；竖屏建议"手机风格"（底部导航）。手机（宽度 <600dp）始终为手机风格。',
+        '平板风格适合触屏大屏并允许旋转；分屏变窄时自动使用紧凑导航，仍保留平板模式。',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       const SizedBox(height: 10),
@@ -2069,6 +2066,7 @@ class _HomePageState extends State<HomePage> {
           segments: const [
             ButtonSegment(value: 'auto', label: Text('自动')),
             ButtonSegment(value: 'desktop', label: Text('桌面风格')),
+            ButtonSegment(value: 'tablet', label: Text('平板风格')),
             ButtonSegment(value: 'mobile', label: Text('手机风格')),
           ],
           selected: {s.tabletLayout},
@@ -2768,6 +2766,55 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ],
+          ]),
+        if (isAndroidPlatform && resolveLayoutProfile(context).tablet)
+          section('平板弹窗材质', [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('标准'),
+                  selected: s.tabletOverlayMaterial == 'standard',
+                  onSelected: (_) {
+                    s.tabletOverlayMaterial = 'standard';
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+                ChoiceChip(
+                  avatar: const Icon(Icons.blur_on_outlined, size: 18),
+                  label: const Text('磨砂'),
+                  selected: s.tabletOverlayMaterial == 'frosted',
+                  onSelected: (_) {
+                    s.tabletOverlayMaterial = 'frosted';
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+                OutlinedButton(
+                  onPressed: () => showRchDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('弹窗材质预览'),
+                      content: const Text('预览应用弹窗的背景和文字。'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          child: const Text('关闭'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  child: const Text('预览效果'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '磨砂仅作用于应用弹窗。高对比度或减少动画时使用标准材质；如果设备卡顿，可选择标准。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
           ]),
       ],
     );

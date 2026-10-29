@@ -56,6 +56,170 @@ void main() {
     },
   );
 
+  test(
+    'new torrent submits local preflight file indices without upload',
+    () async {
+      var uploads = 0;
+      var recoveries = 0;
+      var submits = 0;
+      final report =
+          await Cloud115BtBatchProcessor(
+            ledger: Cloud115BtBatchLedger(File('${tempDir.path}/direct.jsonl')),
+          ).run(
+            entries: [_entry()],
+            target: _target,
+            preflight: (_) async => _preflight(),
+            upload: (_) async {
+              uploads++;
+              return _upload();
+            },
+            recoverUpload: (_, _) async {
+              recoveries++;
+              return _upload();
+            },
+            submit: (_, wanted) async {
+              submits++;
+              expect(wanted, [0, 1]);
+              return _submitted();
+            },
+            queryTask: (_) async => _task('not_found'),
+            deleteTorrent: (_, _, _) async {},
+          );
+      expect(report.results.single.state, 'submitted');
+      expect(uploads, 0);
+      expect(recoveries, 0);
+      expect(submits, 1);
+    },
+  );
+
+  test(
+    'rejected submission with a task in another folder cannot authorize cleanup',
+    () async {
+      var deletes = 0;
+      final report =
+          await Cloud115BtBatchProcessor(
+            ledger: Cloud115BtBatchLedger(
+              File('${tempDir.path}/wrong-folder.jsonl'),
+            ),
+          ).run(
+            entries: [_entry()],
+            target: _target,
+            cleanupAfterSubmit: true,
+            preflight: (_) async => _preflight(),
+            upload: (_) async => _upload(),
+            recoverUpload: (_, _) async => _upload(),
+            submit: (_, _) async => const Cloud115BtSubmitResult(
+              state: 'REJECTED',
+              infoHash: _hash,
+              message: 'rejected',
+              targetFolderId: '30',
+            ),
+            queryTask: (_) async => const Cloud115BtTaskStatus(
+              state: 'found',
+              infoHash: _hash,
+              statusText: 'found',
+              targetFolderId: '99',
+            ),
+            deleteTorrent: (_, _, _) async {
+              deletes++;
+            },
+          );
+      expect(report.results.single.state, 'duplicate_lookup_unknown');
+      expect(deletes, 0);
+    },
+  );
+
+  test(
+    'rejection code survives an inconclusive duplicate check without provider secrets',
+    () async {
+      final report =
+          await Cloud115BtBatchProcessor(
+            ledger: Cloud115BtBatchLedger(
+              File('${tempDir.path}/reject-code.jsonl'),
+            ),
+          ).run(
+            entries: [_entry()],
+            target: _target,
+            preflight: (_) async => _preflight(),
+            upload: (_) async => _upload(),
+            recoverUpload: (_, _) async => _upload(),
+            submit: (_, _) async => const Cloud115BtSubmitResult(
+              state: 'REJECTED',
+              infoHash: _hash,
+              message: 'error code 1234 Cookie=secret',
+              targetFolderId: '30',
+            ),
+            queryTask: (_) async => const Cloud115BtTaskStatus(
+              state: 'unknown',
+              infoHash: _hash,
+              statusText: '',
+              targetFolderId: '',
+            ),
+            deleteTorrent: (_, _, _) async {},
+          );
+      expect(report.results.single.state, 'duplicate_lookup_unknown');
+      expect(report.results.single.message, contains('1234'));
+      expect(report.results.single.message, isNot(contains('secret')));
+    },
+  );
+
+  test(
+    'already-present response without destination proof stays unknown',
+    () async {
+      var deletes = 0;
+      final report =
+          await Cloud115BtBatchProcessor(
+            ledger: Cloud115BtBatchLedger(
+              File('${tempDir.path}/unverified-duplicate.jsonl'),
+            ),
+          ).run(
+            entries: [_entry()],
+            target: _target,
+            cleanupAfterSubmit: true,
+            preflight: (_) async => _preflight(),
+            upload: (_) async => _upload(),
+            recoverUpload: (_, _) async => _upload(),
+            submit: (_, _) async => const Cloud115BtSubmitResult(
+              state: 'ALREADY_PRESENT',
+              infoHash: _hash,
+              message: 'already exists',
+              targetFolderId: '30',
+            ),
+            queryTask: (_) async => const Cloud115BtTaskStatus(
+              state: 'unknown',
+              infoHash: _hash,
+              statusText: 'destination unknown',
+              targetFolderId: '',
+            ),
+            deleteTorrent: (_, _, _) async {
+              deletes++;
+            },
+          );
+      expect(report.results.single.state, 'duplicate_lookup_unknown');
+      expect(deletes, 0);
+    },
+  );
+
+  test('failed preflight does not expose provider credentials', () async {
+    final report =
+        await Cloud115BtBatchProcessor(
+          ledger: Cloud115BtBatchLedger(File('${tempDir.path}/private.jsonl')),
+        ).run(
+          entries: [_entry()],
+          target: _target,
+          preflight: (_) async =>
+              throw StateError('UID=secret; SEID=secret; token=secret'),
+          upload: (_) async => _upload(),
+          recoverUpload: (_, _) async => _upload(),
+          submit: (_, _) async => _submitted(),
+          queryTask: (_) async => _task('not_found'),
+          deleteTorrent: (_, _, _) async {},
+        );
+    expect(report.stopped, isTrue);
+    expect(report.error, isNot(contains('secret')));
+    expect(report.results.single.message, isNot(contains('secret')));
+  });
+
   test('legacy duplicate preflight state does not block 115 submit', () async {
     var uploadCalls = 0;
     var submitCalls = 0;
@@ -85,13 +249,13 @@ void main() {
 
     expect(report.stopped, isFalse);
     expect(report.results.single.state, 'submitted');
-    expect(uploadCalls, 1);
+    expect(uploadCalls, 0);
     expect(submitCalls, 1);
     expect(deleteCalls, 0);
   });
 
   test(
-    'submit-first preflight uploads and submits without task-list query',
+    'submit-first preflight submits directly without task-list query',
     () async {
       var uploadCalls = 0;
       var submitCalls = 0;
@@ -123,7 +287,7 @@ void main() {
 
       expect(report.stopped, isFalse);
       expect(report.results.single.state, 'submitted');
-      expect(uploadCalls, 1);
+      expect(uploadCalls, 0);
       expect(submitCalls, 1);
       expect(taskQueries, 0);
     },
@@ -164,7 +328,7 @@ void main() {
       deleteTorrent: callbacks.deleteTorrent,
     );
     expect(first.results.single.state, 'submitted');
-    expect(uploadCalls, 1);
+    expect(uploadCalls, 0);
     expect(submitCalls, 1);
 
     final restarted = Cloud115BtBatchProcessor(
@@ -182,7 +346,7 @@ void main() {
       deleteTorrent: callbacks.deleteTorrent,
     );
     expect(second.results.single.state, 'submitted');
-    expect(uploadCalls, 1);
+    expect(uploadCalls, 0);
     expect(submitCalls, 1);
   });
 
@@ -247,7 +411,7 @@ void main() {
       ]);
       expect(taskQueries, 1);
       expect(deleteCalls, 2);
-      expect(uploadCalls, 2);
+      expect(uploadCalls, 0);
       expect(submitCalls, 2);
     },
   );
@@ -370,7 +534,8 @@ void main() {
               throw StateError('remote task not visible yet');
             },
           );
-      expect(first.results.single.state, 'submitted');
+      expect(first.results.single.state, 'submitted_cleanup_pending');
+      expect(first.hasPendingRecovery, isTrue);
       expect(deleteCalls, 1);
 
       final second =
@@ -395,11 +560,30 @@ void main() {
           );
 
       expect(second.results.single.state, 'local_torrent_removed');
-      expect(uploadCalls, 1);
+      expect(uploadCalls, 0);
       expect(submitCalls, 1);
       expect(deleteCalls, 2);
     },
   );
+
+  test('persisted submission keeps cleanup pending when read-only confirmation still fails', () async {
+    final ledger = Cloud115BtBatchLedger(File('${tempDir.path}/submitted-pending.jsonl'));
+    await _seedLegacyUpload(ledger, 'submitted');
+    var submits = 0;
+    final report = await Cloud115BtBatchProcessor(ledger: ledger).run(
+      entries: [_entry()], target: _target, cleanupAfterSubmit: true,
+      preflight: (_) async => _preflight(), upload: (_) async => _upload(),
+      recoverUpload: (_, _) async => _upload(),
+      submit: (_, _) async { submits++; return _submitted(); },
+      queryTask: (_) async => _task('unknown'),
+      deleteTorrent: (_, _, _) async => throw StateError('destination not proven'),
+    );
+    expect(report.results.single.state, 'submitted_cleanup_pending');
+    expect(report.hasPendingRecovery, isTrue);
+    expect(submits, 0);
+    final snapshot = await ledger.snapshotForMonitoring();
+    expect(snapshot.records.single.state, 'submitted');
+  });
 
   test(
     'unknown submit outcome is reconciled read-only and never reposted',
@@ -468,376 +652,156 @@ void main() {
       expect(second.results.single.state, 'unknown_remote_state');
       expect(second.results.single.message, contains('无法证明任务不存在'));
       expect(submitCalls, 1);
-      expect(uploadCalls, 1);
+      expect(uploadCalls, 0);
       expect(taskQueries, 1);
     },
   );
 
   test(
-    'interrupted upload is recovered read-only instead of uploaded again',
+    'legacy upload states recover read-only without another upload',
     () async {
-      var uploadCalls = 0;
-      var recoveryCalls = 0;
-      var submitCalls = 0;
-      final ledgerFile = File('${tempDir.path}/upload-recovery.jsonl');
-
-      final first =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(ledgerFile),
-          ).run(
-            entries: [_entry()],
-            target: _target,
-            preflight: (_) async => _preflight(),
-            upload: (_) async {
-              uploadCalls += 1;
-              throw StateError('connection lost after upload request');
-            },
-            recoverUpload: (_, _) async => _upload(),
-            submit: (_, _) async {
-              submitCalls += 1;
-              return _submitted();
-            },
-            queryTask: (_) async => _task('found'),
-            deleteTorrent: (_, _, _) async {},
-          );
-      expect(first.stopped, isFalse);
-      expect(first.results.single.state, 'upload_outcome_unknown');
-
-      final resumed =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(ledgerFile),
-          ).run(
-            entries: [_entry()],
-            target: _target,
-            preflight: (_) async => _preflight(),
-            upload: (_) async {
-              uploadCalls += 1;
-              return _upload();
-            },
-            recoverUpload: (_, _) async {
-              recoveryCalls += 1;
-              return _upload();
-            },
-            submit: (_, _) async {
-              submitCalls += 1;
-              return _submitted();
-            },
-            queryTask: (_) async => _task('found'),
-            deleteTorrent: (_, _, _) async {},
-          );
-
-      expect(resumed.results.single.state, 'submitted');
-      expect(uploadCalls, 1);
-      expect(recoveryCalls, 1);
-      expect(submitCalls, 1);
-    },
-  );
-
-  test(
-    'uploaded torrent with pending parse remains recoverable without reupload',
-    () async {
-      var uploadCalls = 0;
-      var recoveryCalls = 0;
-      var submitCalls = 0;
-      final ledgerFile = File('${tempDir.path}/upload-parse-pending.jsonl');
-
-      final first =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(ledgerFile),
-          ).run(
-            entries: [_entry()],
-            target: _target,
-            preflight: (_) async => _preflight(),
-            upload: (_) async {
-              uploadCalls += 1;
-              return _upload(
-                state: 'UPLOADED_PARSE_PENDING',
-                message: 'Torrent 已上传；115 解析结果暂不可用。可以重新查询解析结果，不会重传。',
-              );
-            },
-            recoverUpload: (_, _) async => _upload(),
-            submit: (_, _) async {
-              submitCalls += 1;
-              return _submitted();
-            },
-            queryTask: (_) async => _task('not_found'),
-            deleteTorrent: (_, _, _) async {},
-          );
-
-      expect(first.stopped, isFalse);
-      expect(first.results.single.state, 'upload_parse_pending');
-      expect(first.results.single.message, contains('Torrent 已上传'));
-      expect(uploadCalls, 1);
-      expect(submitCalls, 0);
-
-      final recoveryFailed =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(ledgerFile),
-          ).run(
-            entries: [_entry()],
-            target: _target,
-            preflight: (_) async => _preflight(),
-            upload: (_) async {
-              uploadCalls += 1;
-              return _upload();
-            },
-            recoverUpload: (_, _) async {
-              recoveryCalls += 1;
-              throw StateError('read-only parse is not ready');
-            },
-            submit: (_, _) async {
-              submitCalls += 1;
-              return _submitted();
-            },
-            queryTask: (_) async => _task('not_found'),
-            deleteTorrent: (_, _, _) async {},
-          );
-
-      expect(recoveryFailed.results.single.state, 'upload_parse_pending');
-      expect(recoveryFailed.results.single.message, contains('只读解析恢复失败'));
-      expect(uploadCalls, 1);
-      expect(submitCalls, 0);
-
-      final recovered =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(ledgerFile),
-          ).run(
-            entries: [_entry()],
-            target: _target,
-            preflight: (_) async => _preflight(),
-            upload: (_) async {
-              uploadCalls += 1;
-              return _upload();
-            },
-            recoverUpload: (_, _) async {
-              recoveryCalls += 1;
-              return _upload();
-            },
-            submit: (_, _) async {
-              submitCalls += 1;
-              return _submitted();
-            },
-            queryTask: (_) async => _task('not_found'),
-            deleteTorrent: (_, _, _) async {},
-          );
-
-      expect(recovered.results.single.state, 'submitted');
-      expect(uploadCalls, 1);
-      expect(recoveryCalls, 2);
-      expect(submitCalls, 1);
-    },
-  );
-
-  test(
-    'unknown upload result is isolated and later torrent is processed',
-    () async {
-      final ledgerFile = File('${tempDir.path}/unknown-upload-continues.jsonl');
-      const secondHash = '1123456789012345678901234567890123456789';
-      final entries = [
-        _entry(),
-        _entry(infoHash: secondHash, file: 'two.torrent'),
-      ];
-      var uploadCalls = 0;
-      var recoveryCalls = 0;
-      var submitCalls = 0;
-
-      final report =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(ledgerFile),
-          ).run(
-            entries: entries,
-            target: _target,
-            preflight: (entry) async => _preflight(
-              infoHash: entry.item.infohash,
-              torrentName: entry.item.file,
-            ),
-            upload: (entry) async {
-              uploadCalls += 1;
-              if (entry.item.infohash == _hash) {
-                return _upload(
-                  state: 'UNKNOWN_UPLOAD_RESULT',
-                  message: 'upload init response could not be decoded',
-                );
-              }
-              return _upload(
-                infoHash: entry.item.infohash,
-                torrentName: entry.item.file,
-              );
-            },
-            recoverUpload: (entry, _) async {
-              recoveryCalls += 1;
-              return _upload(
-                state: 'UNKNOWN_UPLOAD_RESULT',
-                message: 'still unknown; do not upload again',
-                infoHash: entry.item.infohash,
-                torrentName: entry.item.file,
-              );
-            },
-            submit: (entry, _) async {
-              submitCalls += 1;
-              return _submitted(infoHash: entry.item.infohash);
-            },
-            queryTask: (hash) async => _task('not_found', infoHash: hash),
-            deleteTorrent: (_, _, _) async {},
-          );
-
-      expect(report.stopped, isFalse);
-      expect(report.results.map((result) => result.state), [
+      for (final legacyState in [
+        'upload_started',
         'upload_outcome_unknown',
-        'submitted',
-      ]);
-      expect(uploadCalls, 2);
-      expect(submitCalls, 1);
-
-      final resumed =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(ledgerFile),
-          ).run(
-            entries: entries,
-            target: _target,
-            preflight: (entry) async => _preflight(
-              infoHash: entry.item.infohash,
-              torrentName: entry.item.file,
-            ),
-            upload: (entry) async {
-              uploadCalls += 1;
-              return _upload(
-                infoHash: entry.item.infohash,
-                torrentName: entry.item.file,
-              );
-            },
-            recoverUpload: (entry, _) async {
-              recoveryCalls += 1;
-              return _upload(
-                state: 'UNKNOWN_UPLOAD_RESULT',
-                infoHash: entry.item.infohash,
-                torrentName: entry.item.file,
-              );
-            },
-            submit: (entry, _) async {
-              submitCalls += 1;
-              return _submitted(infoHash: entry.item.infohash);
-            },
-            queryTask: (hash) async => _task('not_found', infoHash: hash),
-            deleteTorrent: (_, _, _) async {},
-          );
-
-      expect(resumed.stopped, isFalse);
-      expect(resumed.results.map((result) => result.state), [
-        'upload_outcome_unknown',
-        'submitted',
-      ]);
-      expect(
-        uploadCalls,
-        2,
-        reason: 'the uncertain first torrent is never re-uploaded',
-      );
-      expect(recoveryCalls, 1);
-      expect(
-        submitCalls,
-        1,
-        reason: 'the submitted second torrent is never resubmitted',
-      );
-    },
-  );
-
-  test(
-    'upload parse pending does not stop later independent torrents',
-    () async {
-      const secondHash = '2123456789012345678901234567890123456789';
-      final entries = [
-        _entry(),
-        _entry(infoHash: secondHash, file: 'two.torrent'),
-      ];
-      var uploadCalls = 0;
-      var submitCalls = 0;
-
-      final report =
-          await Cloud115BtBatchProcessor(
-            ledger: Cloud115BtBatchLedger(
-              File('${tempDir.path}/parse-pending-continues.jsonl'),
-            ),
-          ).run(
-            entries: entries,
-            target: _target,
-            preflight: (entry) async => _preflight(
-              infoHash: entry.item.infohash,
-              torrentName: entry.item.file,
-            ),
-            upload: (entry) async {
-              uploadCalls += 1;
-              if (entry.item.infohash == _hash) {
-                return _upload(
-                  state: 'UPLOADED_PARSE_PENDING',
-                  message: 'Torrent uploaded; parsing pending',
-                );
-              }
-              return _upload(
-                infoHash: entry.item.infohash,
-                torrentName: entry.item.file,
-              );
-            },
-            recoverUpload: (_, _) async => _upload(),
-            submit: (entry, _) async {
-              submitCalls += 1;
-              return _submitted(infoHash: entry.item.infohash);
-            },
-            queryTask: (hash) async => _task('not_found', infoHash: hash),
-            deleteTorrent: (_, _, _) async {},
-          );
-
-      expect(report.stopped, isFalse);
-      expect(report.results.map((result) => result.state), [
         'upload_parse_pending',
-        'submitted',
-      ]);
-      expect(uploadCalls, 2);
-      expect(submitCalls, 1);
+        'torrent_parsed',
+      ]) {
+        final file = File('${tempDir.path}/$legacyState.jsonl');
+        final ledger = Cloud115BtBatchLedger(file);
+        await _seedLegacyUpload(ledger, legacyState);
+        var uploads = 0;
+        var recoveries = 0;
+        var submits = 0;
+        Future<Cloud115BtBatchReport> run() =>
+            Cloud115BtBatchProcessor(ledger: ledger).run(
+              entries: [_entry()],
+              target: _target,
+              preflight: (_) async => _preflight(),
+              upload: (_) async {
+                uploads++;
+                return _upload();
+              },
+              recoverUpload: (_, _) async {
+                recoveries++;
+                if (recoveries == 1) {
+                  throw StateError('read-only recovery failed');
+                }
+                return _upload();
+              },
+              submit: (_, wanted) async {
+                submits++;
+                expect(wanted, [0, 1]);
+                return _submitted();
+              },
+              queryTask: (_) async => _task('not_found'),
+              deleteTorrent: (_, _, _) async {},
+            );
+        final first = await run();
+        expect(
+          first.results.single.state,
+          legacyState == 'upload_parse_pending'
+              ? 'upload_parse_pending'
+              : 'upload_outcome_unknown',
+        );
+        expect(submits, 0);
+        final recovered = await run();
+        expect(recovered.results.single.state, 'submitted');
+        expect(uploads, 0);
+        expect(recoveries, 2);
+        expect(submits, 1);
+      }
     },
   );
 
-  test('upload WAF state stops before the next Torrent write', () async {
-    const secondHash = '4123456789012345678901234567890123456789';
-    var uploadCalls = 0;
-    var submitCalls = 0;
-    final report =
-        await Cloud115BtBatchProcessor(
-          ledger: Cloud115BtBatchLedger(
-            File('${tempDir.path}/upload-waf.jsonl'),
-          ),
-        ).run(
-          entries: [
-            _entry(),
-            _entry(infoHash: secondHash, file: 'two.torrent'),
-          ],
-          target: _target,
-          preflight: (entry) async => _preflight(
-            infoHash: entry.item.infohash,
-            torrentName: entry.item.file,
-          ),
-          upload: (entry) async {
-            uploadCalls++;
-            return _upload(
-              state: entry.item.infohash == _hash ? 'WAF_BLOCKED' : 'PARSED',
-              message: 'HTTP 405',
+  test(
+    'unknown legacy upload is isolated while the next torrent is submitted directly',
+    () async {
+      final ledger = Cloud115BtBatchLedger(
+        File('${tempDir.path}/legacy-continues.jsonl'),
+      );
+      await _seedLegacyUpload(ledger, 'upload_outcome_unknown');
+      const secondHash = '1123456789012345678901234567890123456789';
+      var uploads = 0;
+      var recoveries = 0;
+      var submits = 0;
+      Future<Cloud115BtBatchReport> run() =>
+          Cloud115BtBatchProcessor(ledger: ledger).run(
+            entries: [
+              _entry(),
+              _entry(infoHash: secondHash, file: 'two.torrent'),
+            ],
+            target: _target,
+            preflight: (entry) async => _preflight(
               infoHash: entry.item.infohash,
               torrentName: entry.item.file,
-            );
-          },
-          recoverUpload: (_, _) async => _upload(),
-          submit: (entry, _) async {
-            submitCalls++;
-            return _submitted(infoHash: entry.item.infohash);
-          },
-          queryTask: (hash) async => _task('not_found', infoHash: hash),
-          deleteTorrent: (_, _, _) async {},
-        );
+            ),
+            upload: (_) async {
+              uploads++;
+              return _upload();
+            },
+            recoverUpload: (_, _) async {
+              recoveries++;
+              return _upload(state: 'UNKNOWN_UPLOAD_RESULT');
+            },
+            submit: (entry, _) async {
+              submits++;
+              return _submitted(infoHash: entry.item.infohash);
+            },
+            queryTask: (hash) async => _task('not_found', infoHash: hash),
+            deleteTorrent: (_, _, _) async {},
+          );
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final report = await run();
+        expect(report.results.map((r) => r.state), [
+          'upload_outcome_unknown',
+          'submitted',
+        ]);
+      }
+      expect(uploads, 0);
+      expect(recoveries, 2);
+      expect(submits, 1);
+    },
+  );
 
-    expect(report.stopped, isTrue);
-    expect(report.results.single.state, 'waf_blocked');
-    expect(uploadCalls, 1);
-    expect(submitCalls, 0);
-  });
+  test(
+    'WAF on legacy upload recovery stops before the next torrent write',
+    () async {
+      final ledger = Cloud115BtBatchLedger(
+        File('${tempDir.path}/legacy-waf.jsonl'),
+      );
+      await _seedLegacyUpload(ledger, 'upload_started');
+      const secondHash = '4123456789012345678901234567890123456789';
+      var uploads = 0;
+      var submits = 0;
+      final report = await Cloud115BtBatchProcessor(ledger: ledger).run(
+        entries: [
+          _entry(),
+          _entry(infoHash: secondHash, file: 'two.torrent'),
+        ],
+        target: _target,
+        preflight: (entry) async => _preflight(
+          infoHash: entry.item.infohash,
+          torrentName: entry.item.file,
+        ),
+        upload: (_) async {
+          uploads++;
+          return _upload();
+        },
+        recoverUpload: (_, _) async =>
+            _upload(state: 'WAF_BLOCKED', message: 'HTTP 405'),
+        submit: (entry, _) async {
+          submits++;
+          return _submitted(infoHash: entry.item.infohash);
+        },
+        queryTask: (hash) async => _task('not_found', infoHash: hash),
+        deleteTorrent: (_, _, _) async {},
+      );
+      expect(report.stopped, isTrue);
+      expect(report.results.single.state, 'waf_blocked');
+      expect(uploads, 0);
+      expect(submits, 0);
+    },
+  );
 
   test(
     'submit authentication failure stops before the next Torrent write',
@@ -883,7 +847,7 @@ void main() {
 
       expect(report.stopped, isTrue);
       expect(report.results.single.state, 'auth_expired');
-      expect(uploadCalls, 1);
+      expect(uploadCalls, 0);
       expect(submitCalls, 1);
     },
   );
@@ -935,7 +899,7 @@ void main() {
 
     expect(report.stopped, isTrue);
     expect(report.results.single.state, 'waf_blocked');
-    expect(uploadCalls, 1);
+    expect(uploadCalls, 0);
     expect(submitCalls, 1);
   });
 
@@ -999,7 +963,7 @@ void main() {
         );
     expect(restarted.stopped, isTrue);
     expect(restarted.results.single.state, 'waf_blocked');
-    expect(uploadCalls, 1);
+    expect(uploadCalls, 0);
     expect(submitCalls, 1);
   });
 
@@ -1170,6 +1134,17 @@ EhCheckedManifestEntry _entry({
   fullPath: '/isolated/$file',
 );
 
+Future<void> _seedLegacyUpload(Cloud115BtBatchLedger ledger, String state) =>
+    ledger.withExclusiveLock(
+      (transaction) => transaction.recordItem(
+        accountId: 'test-account',
+        infoHash: _hash,
+        targetFolderId: _target.id,
+        relativeFile: 'one.torrent',
+        state: state,
+      ),
+    );
+
 Cloud115BtPreflight _preflight({
   String duplicateStatus = 'submit_first',
   String duplicateDetail = '',
@@ -1184,7 +1159,10 @@ Cloud115BtPreflight _preflight({
   torrentSize: BigInt.from(10),
   torrentSha1: 'torrent-sha1',
   infoHash: infoHash,
-  files: const [],
+  files: [
+    Cloud115BtFile(index: 0, path: 'a.cbz', size: BigInt.one),
+    Cloud115BtFile(index: 1, path: 'b.cbz', size: BigInt.one),
+  ],
   duplicateStatus: duplicateStatus,
   duplicateDetail: duplicateDetail,
   writeGate: 'REQUIRES_EXPLICIT_CONFIRMATION',

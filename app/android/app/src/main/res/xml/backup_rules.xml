@@ -4,4 +4,5 @@
          device that cannot unwrap the original Android Keystore key. -->
     <exclude domain="file" path="rch_credentials_v1.enc" />
     <exclude domain="file" path="rch_credentials_v1.enc.bak" />
+    <exclude domain="file" path="rch_credentials_v1.enc.part" />
 </full-backup-content>

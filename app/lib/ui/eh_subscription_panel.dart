@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:app/store/eh_daily_coordinator.dart';
+import 'package:app/store/eh_daily_background.dart';
 import 'package:app/store/cloud115_bt_batch.dart' as bt_batch;
 import 'package:app/store/cloud115_bt_daily_workflow.dart' as bt_daily;
 import 'package:app/store/eh_subscription_store.dart';
@@ -220,6 +221,7 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
       _fullWorkflowBusy = true;
       _foregroundWorkflowProgress = '正在检查工作流设置';
     });
+    BigInt? workflowLease;
     try {
       if (runCloudStage) {
         final configuredBatch = batchState!;
@@ -236,13 +238,21 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
         }
       }
 
+      workflowLease = await currentStore.tryAcquireWorkflowLease();
+      if (workflowLease == null) {
+        if (mounted) _snack('另一个完整工作流正在运行，请等待结束', error: true);
+        return;
+      }
       _rulesKey.currentState?.flush();
       setState(
         () => _foregroundWorkflowProgress = runCloudStage
             ? 'EH 订阅扫描进行中'
             : '仅运行到保存种子：EH 订阅扫描进行中',
       );
-      final outcome = await currentStore.run(source: EhDailyRunSource.manual);
+      final outcome = await currentStore.run(
+        source: EhDailyRunSource.manual,
+        workflowLease: workflowLease,
+      );
       if (!mounted) return;
       if (!outcome.started) {
         _snack(outcome.error ?? 'EH 检查未启动，请查看当前任务状态', error: true);
@@ -391,6 +401,13 @@ class _EhSubscriptionPanelState extends State<EhSubscriptionPanel> {
     } catch (error) {
       if (mounted) _snack('完整工作流未完成：$error', error: true);
     } finally {
+      if (workflowLease != null) {
+        try {
+          await currentStore.releaseWorkflowLease(workflowLease);
+        } catch (error) {
+          if (mounted) _snack('释放工作流锁失败：$error', error: true);
+        }
+      }
       if (mounted) {
         setState(() {
           _fullWorkflowBusy = false;
@@ -1443,7 +1460,9 @@ class _CookieBtPreflightBlockState extends State<_CookieBtPreflightBlock> {
 
   String _batchStateLabel(String state) => switch (state) {
     'submitted' => '115 已接受提交请求',
+    'submitted_cleanup_pending' => '115 已受理，目录核验或本地清理待完成',
     'local_torrent_removed' => '远端同哈希任务存在，已删除本地种子',
+    'duplicate_found' => '所选目录已有同哈希任务',
     'duplicate_found_delete_failed' => '远端任务存在，本地种子删除失败',
     'duplicate_lookup_unknown' => '本项远端查重未确认，已保留种子并继续其他项',
     'unknown_remote_state' => '本项提交结果未知，禁止重试；已继续其他种子',
@@ -2252,7 +2271,7 @@ class _DailyAutomationBlock extends StatelessWidget {
         final state = store.dailyAutomation;
         final run = state.lastRun;
         final runError = run?.error;
-        final supported = Platform.isWindows;
+        final supported = Platform.isWindows || Platform.isAndroid;
         final isCollecting = store.busy || store.progress.running;
         return Card(
           key: const ValueKey('eh-daily-workflow-card'),
@@ -2295,9 +2314,11 @@ class _DailyAutomationBlock extends StatelessWidget {
                   ],
                 ),
                 Text(
-                  supported
+                  Platform.isAndroid
+                      ? 'Android 会在联网时由系统安排后台检查，省电策略或强行停止可能延迟运行。'
+                      : supported
                       ? 'Windows 运行期间每天自动检查一次；手动工作流可随时运行。'
-                      : '自动每日检查仅支持 Windows。',
+                      : '自动每日检查支持 Windows 和 Android。',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 12),
@@ -2366,10 +2387,57 @@ class _DailyAutomationBlock extends StatelessWidget {
                       : '最近运行：${_dailySourceLabel(run.source)} · ${_dailyRunLabel(run.status)} · 保存 ${run.saved} 个',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                if (state.effectiveLastAutoRun != null &&
+                    run?.source != EhDailyRunSource.dailyAuto)
+                  Text(
+                    '最近自动运行：${state.effectiveLastAutoRun!.date} · ${_dailyRunLabel(state.effectiveLastAutoRun!.status)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                if (state.effectiveLastAutoRun != null &&
+                    run?.source != EhDailyRunSource.dailyAuto &&
+                    state.effectiveLastAutoRun!.cloudStage.message
+                            ?.trim()
+                            .isNotEmpty ==
+                        true)
+                  Text(
+                    '自动运行提示：${state.effectiveLastAutoRun!.cloudStage.message}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 if (state.dailyEnabled)
                   Text(
                     '下次自动条件：${_nextDailyEligibility(state, store.hasOutDir, supported)}',
                     style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                if (Platform.isAndroid && state.dailyEnabled)
+                  FutureBuilder<EhDailyBackgroundStatus>(
+                    future: const AndroidEhDailyBackgroundScheduler().status(),
+                    builder: (context, snapshot) {
+                      final status = snapshot.data;
+                      if (snapshot.hasError) {
+                        return Text(
+                          '无法读取 Android 后台调度状态',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        );
+                      }
+                      if (status == null) return const SizedBox.shrink();
+                      final message = status.running
+                          ? 'Android 后台工作流正在运行'
+                          : !status.scheduled
+                          ? 'Android 后台调度尚未登记，请重新开启'
+                          : !status.networkConnected
+                          ? '等待网络连接后由系统调度'
+                          : switch (status.lastStatus) {
+                              'initialization_failed' => '后台初始化失败，请打开应用检查目录和书源',
+                              'system_blocked' => '系统暂未允许后台运行，将等待重试',
+                              'waitingForOutputDirectory' =>
+                                '后台保存目录不可用，请重新检查授权',
+                              _ => 'Android 后台调度已登记，等待系统执行',
+                            };
+                      return Text(
+                        message,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      );
+                    },
                   ),
                 if (run != null &&
                     (run.cloudStage.status != EhDailyCloudStageStatus.notRun ||
@@ -2432,12 +2500,30 @@ String _nextDailyEligibility(
   bool supported,
 ) {
   if (!state.dailyEnabled) return '未启用';
-  if (!supported) return '仅 Windows 支持';
+  if (!supported) return '仅 Windows 和 Android 支持';
   if (!hasOutDir) return '等待选择 Torrent 保存目录';
   final today = ehLocalDateKey(DateTime.now());
+  final autoRun = state.effectiveLastAutoRun;
+  final awaitingRetry =
+      autoRun != null &&
+      (autoRun.status == EhDailyRunStatus.interruptedUnknown ||
+          (autoRun.status == EhDailyRunStatus.failed &&
+              autoRun.cloudStage.status == EhDailyCloudStageStatus.notRun) ||
+          (autoRun.status == EhDailyRunStatus.partial &&
+              (autoRun.cloudStage.status ==
+                      EhDailyCloudStageStatus.needsConfiguration ||
+                  autoRun.cloudStage.status ==
+                      EhDailyCloudStageStatus.sessionUnavailable)));
+  if (autoRun?.date == today && awaitingRetry) {
+    return autoRun.resumeCount >= 2
+        ? '已达到安全恢复次数上限，请检查运行记录'
+        : '等待网络、配置或系统调度后安全恢复（${autoRun.resumeCount}/2）';
+  }
   final lastAttempt = state.lastAutoAttemptDate;
   if (lastAttempt == null || today.compareTo(lastAttempt) > 0) {
-    return '本地日期 $today 尚未尝试；运行期间首次满足条件时启动';
+    return Platform.isAndroid
+        ? '本地日期 $today 尚未尝试；等待 Android 系统调度'
+        : '本地日期 $today 尚未尝试；运行期间首次满足条件时启动';
   }
   if (today.compareTo(lastAttempt) < 0) {
     final next = DateTime.tryParse(lastAttempt)?.add(const Duration(days: 1));
@@ -2483,7 +2569,7 @@ String _dailyCloudStageSummary(EhDailyCloudStageResult result) {
     EhDailyCloudStageStatus.failed => '失败',
   };
   final counts =
-      '${result.submitted} 已确认 · ${result.skipped} 跳过 · '
+      '${result.submitted} 已受理或已存在 · ${result.skipped} 跳过 · '
       '${result.pending} 待核对 · ${result.removed} 已清理本地种子 · '
       '${result.failed} 失败';
   return '$status（${result.total} 项；$counts）'

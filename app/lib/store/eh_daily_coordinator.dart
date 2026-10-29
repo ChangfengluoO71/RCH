@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
+import 'package:app/store/eh_daily_background.dart';
 
 enum EhDailyRunSource { manual, dailyAuto, unknown }
 
@@ -93,6 +94,8 @@ class EhDailyRunRecord {
     required this.date,
     required this.source,
     required this.status,
+    this.runId,
+    this.resumeCount = 0,
     this.saved = 0,
     this.error,
     this.cloudStage = const EhDailyCloudStageResult(),
@@ -101,6 +104,8 @@ class EhDailyRunRecord {
   final String date;
   final EhDailyRunSource source;
   final EhDailyRunStatus status;
+  final String? runId;
+  final int resumeCount;
   final int saved;
   final String? error;
   final EhDailyCloudStageResult cloudStage;
@@ -109,6 +114,8 @@ class EhDailyRunRecord {
     String? date,
     EhDailyRunSource? source,
     EhDailyRunStatus? status,
+    String? runId,
+    int? resumeCount,
     int? saved,
     Object? error = _unchanged,
     EhDailyCloudStageResult? cloudStage,
@@ -116,6 +123,8 @@ class EhDailyRunRecord {
     date: date ?? this.date,
     source: source ?? this.source,
     status: status ?? this.status,
+    runId: runId ?? this.runId,
+    resumeCount: resumeCount ?? this.resumeCount,
     saved: saved ?? this.saved,
     error: identical(error, _unchanged) ? this.error : error as String?,
     cloudStage: cloudStage ?? this.cloudStage,
@@ -125,6 +134,8 @@ class EhDailyRunRecord {
     'date': date,
     'source': _sourceToJson(source),
     'status': _statusToJson(status),
+    'run_id': runId,
+    'resume_count': resumeCount,
     'saved': saved,
     'error': error,
     'cloud_stage': cloudStage.toJson(),
@@ -135,6 +146,8 @@ class EhDailyRunRecord {
         date: json['date'] as String? ?? '',
         source: _sourceFromJson(json['source']),
         status: _statusFromJson(json['status']),
+        runId: json['run_id'] as String?,
+        resumeCount: (json['resume_count'] as num?)?.toInt() ?? 0,
         saved: (json['saved'] as num?)?.toInt() ?? 0,
         error: json['error'] as String?,
         cloudStage: json['cloud_stage'] is Map
@@ -150,16 +163,26 @@ class EhDailyAutomationState {
     this.dailyEnabled = false,
     this.lastAutoAttemptDate,
     this.lastRun,
+    this.lastAutoRun,
   });
 
   final bool dailyEnabled;
   final String? lastAutoAttemptDate;
   final EhDailyRunRecord? lastRun;
 
+  /// Separate from the most recent manual run, which must not erase the
+  /// automatic run's recovery state.
+  final EhDailyRunRecord? lastAutoRun;
+
+  EhDailyRunRecord? get effectiveLastAutoRun =>
+      lastAutoRun ??
+      (lastRun?.source == EhDailyRunSource.dailyAuto ? lastRun : null);
+
   EhDailyAutomationState copyWith({
     bool? dailyEnabled,
     Object? lastAutoAttemptDate = _unchanged,
     Object? lastRun = _unchanged,
+    Object? lastAutoRun = _unchanged,
   }) => EhDailyAutomationState(
     dailyEnabled: dailyEnabled ?? this.dailyEnabled,
     lastAutoAttemptDate: identical(lastAutoAttemptDate, _unchanged)
@@ -168,21 +191,29 @@ class EhDailyAutomationState {
     lastRun: identical(lastRun, _unchanged)
         ? this.lastRun
         : lastRun as EhDailyRunRecord?,
+    lastAutoRun: identical(lastAutoRun, _unchanged)
+        ? this.lastAutoRun
+        : lastAutoRun as EhDailyRunRecord?,
   );
 
   Map<String, Object?> toJson() => {
     'daily_enabled': dailyEnabled,
     'last_auto_attempt_date': lastAutoAttemptDate,
     'last_run': lastRun?.toJson(),
+    'last_auto_run': lastAutoRun?.toJson(),
   };
 
   factory EhDailyAutomationState.fromJson(Map<String, Object?> json) {
     final rawRun = json['last_run'];
+    final rawAutoRun = json['last_auto_run'];
     return EhDailyAutomationState(
       dailyEnabled: json['daily_enabled'] as bool? ?? false,
       lastAutoAttemptDate: json['last_auto_attempt_date'] as String?,
       lastRun: rawRun is Map
           ? EhDailyRunRecord.fromJson(Map<String, Object?>.from(rawRun))
+          : null,
+      lastAutoRun: rawAutoRun is Map
+          ? EhDailyRunRecord.fromJson(Map<String, Object?>.from(rawAutoRun))
           : null,
     );
   }
@@ -217,7 +248,13 @@ abstract interface class EhDailyHost implements Listenable {
   Future<bool> claimDailyRun(String date);
   Future<void> updateDailyRun(EhDailyRunRecord run);
   Future<void> recoverDailyRun();
-  Future<EhRunOutcome> run({required EhDailyRunSource source});
+  Future<BigInt?> tryAcquireWorkflowLease();
+  Future<void> releaseWorkflowLease(BigInt lease);
+  Future<bool> resumeDailyRun(String date, BigInt lease);
+  Future<EhRunOutcome> run({
+    required EhDailyRunSource source,
+    BigInt? workflowLease,
+  });
 }
 
 abstract interface class EhDailyClock {
@@ -263,15 +300,21 @@ class _SystemEhDailyWakeTimer implements EhDailyWakeTimer {
   }
 }
 
-/// Runs at most one opted-in EH collection attempt for each advancing local
-/// calendar date while the Windows RCH process is alive.
+/// Evaluates the same durable daily eligibility from the app or an Android
+/// headless worker. Persistent Android wakeups are owned by WorkManager.
 class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   EhDailyCoordinator({
     required this.host,
     bool? isWindows,
+    bool? isAndroid,
+    this.headless = false,
+    EhDailyBackgroundScheduler? backgroundScheduler,
     this.clock = const SystemEhDailyClock(),
     EhDailyWakeTimer? wakeTimer,
   }) : _isWindows = isWindows ?? Platform.isWindows,
+       _isAndroid = isAndroid ?? Platform.isAndroid,
+       _backgroundScheduler =
+           backgroundScheduler ?? const AndroidEhDailyBackgroundScheduler(),
        _wakeTimer = wakeTimer ?? _SystemEhDailyWakeTimer();
 
   static EhDailyCoordinator? _instance;
@@ -288,6 +331,9 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   final EhDailyHost host;
   final bool _isWindows;
+  final bool _isAndroid;
+  final bool headless;
+  final EhDailyBackgroundScheduler _backgroundScheduler;
   final EhDailyClock clock;
   final EhDailyWakeTimer _wakeTimer;
 
@@ -302,7 +348,7 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
   String? _pendingClaimDate;
 
   Future<void> start() async {
-    if (!_isWindows) {
+    if (!_isWindows && !_isAndroid) {
       status = EhDailyCoordinatorStatus.unsupported;
       notifyListeners();
       return;
@@ -319,7 +365,9 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _started = true;
     _wasBusy = host.busy;
     host.addListener(_onHostChanged);
-    WidgetsBinding.instance.addObserver(this);
+    if (!headless) WidgetsBinding.instance.addObserver(this);
+
+    if (!await _syncBackgroundSchedule()) return;
 
     _armNextLocalDay();
     await wake();
@@ -327,7 +375,7 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Re-evaluates on app resume, rule/output changes, or the next local day.
   Future<void> wake() async {
-    if (!_started || !_isWindows) return;
+    if (!_started || (!_isWindows && !_isAndroid)) return;
     _armNextLocalDay();
     if (_evaluating) {
       _wakeQueued = true;
@@ -352,7 +400,24 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> settingsChanged() => _started ? wake() : start();
+  Future<void> settingsChanged() async {
+    if (!_started) return start();
+    if (await _syncBackgroundSchedule()) await wake();
+  }
+
+  Future<bool> _syncBackgroundSchedule() async {
+    if (!_isAndroid || headless) return true;
+    try {
+      await _backgroundScheduler.sync(host.dailyAutomation.dailyEnabled);
+      return true;
+    } catch (_) {
+      _setStatus(
+        EhDailyCoordinatorStatus.persistenceFailed,
+        '无法更新 Android 后台调度，请重试。',
+      );
+      return false;
+    }
+  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -373,7 +438,7 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (_pendingClaimDate != null) {
-      await _launchPendingClaim();
+      await _withWorkflowLease((lease) => _launchPendingClaim(lease));
       return;
     }
 
@@ -386,8 +451,39 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       );
       return;
     }
+    final interrupted = automation.effectiveLastAutoRun;
+    if (interrupted != null && _canResumeDailyRun(interrupted)) {
+      if (!_isValidDateKey(interrupted.date)) {
+        _setStatus(
+          EhDailyCoordinatorStatus.persistenceFailed,
+          'Daily 配置中的中断日期无效，已停止自动收集。',
+        );
+        return;
+      }
+      if (today == interrupted.date) {
+        if (host.busy) {
+          _waitingForCurrentRun = true;
+          _setStatus(EhDailyCoordinatorStatus.waitingForCurrentRun);
+          return;
+        }
+        await _withWorkflowLease((lease) async {
+          final resumed = await host.resumeDailyRun(interrupted.date, lease);
+          if (!resumed) {
+            _setStatus(
+              _statusFor(interrupted.status),
+              '本轮恢复次数已用尽或状态已变化，请检查运行记录。',
+            );
+            return;
+          }
+          _pendingClaimDate = interrupted.date;
+          _setStatus(EhDailyCoordinatorStatus.claimed);
+          await _launchPendingClaim(lease);
+        });
+        return;
+      }
+    }
     if (lastAttempt != null && today.compareTo(lastAttempt) <= 0) {
-      final currentStatus = automation.lastRun?.status;
+      final currentStatus = automation.effectiveLastAutoRun?.status;
       _setStatus(switch (currentStatus) {
         EhDailyRunStatus.interruptedUnknown =>
           EhDailyCoordinatorStatus.interruptedUnknown,
@@ -397,7 +493,7 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       });
       return;
     }
-    final previousRun = automation.lastRun;
+    final previousRun = automation.effectiveLastAutoRun ?? automation.lastRun;
     if ((previousRun?.status == EhDailyRunStatus.claimed ||
             previousRun?.status == EhDailyRunStatus.running) &&
         !_isValidDateKey(previousRun!.date)) {
@@ -432,40 +528,66 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    try {
-      if (!await host.claimDailyRun(today)) {
-        final current = host.dailyAutomation;
-        if (!current.dailyEnabled) {
-          _setStatus(EhDailyCoordinatorStatus.disabled);
-        } else if (current.lastAutoAttemptDate != null &&
-            today.compareTo(current.lastAutoAttemptDate!) <= 0) {
-          _setStatus(
-            current.lastRun?.status == EhDailyRunStatus.interruptedUnknown
-                ? EhDailyCoordinatorStatus.interruptedUnknown
-                : EhDailyCoordinatorStatus.waitingForNextDate,
-          );
-        } else if (current.lastRun?.status == EhDailyRunStatus.claimed ||
-            current.lastRun?.status == EhDailyRunStatus.running) {
-          _setStatus(EhDailyCoordinatorStatus.waitingForCurrentRun);
-        } else {
-          _setStatus(
-            EhDailyCoordinatorStatus.persistenceFailed,
-            '无法确认本轮 Daily 领取结果，已停止自动收集。',
-          );
+    await _withWorkflowLease((lease) async {
+      try {
+        if (!await host.claimDailyRun(today)) {
+          final current = host.dailyAutomation;
+          if (!current.dailyEnabled) {
+            _setStatus(EhDailyCoordinatorStatus.disabled);
+          } else if (current.lastAutoAttemptDate != null &&
+              today.compareTo(current.lastAutoAttemptDate!) <= 0) {
+            _setStatus(
+              current.effectiveLastAutoRun?.status ==
+                      EhDailyRunStatus.interruptedUnknown
+                  ? EhDailyCoordinatorStatus.interruptedUnknown
+                  : EhDailyCoordinatorStatus.waitingForNextDate,
+            );
+          } else if (current.lastRun?.status == EhDailyRunStatus.claimed ||
+              current.lastRun?.status == EhDailyRunStatus.running) {
+            _setStatus(EhDailyCoordinatorStatus.waitingForCurrentRun);
+          } else {
+            _setStatus(
+              EhDailyCoordinatorStatus.persistenceFailed,
+              '无法确认本轮 Daily 领取结果，已停止自动收集。',
+            );
+          }
+          return;
         }
+      } catch (e) {
+        _setStatus(EhDailyCoordinatorStatus.persistenceFailed, '$e');
         return;
       }
-    } catch (e) {
-      _setStatus(EhDailyCoordinatorStatus.persistenceFailed, '$e');
-      return;
-    }
-    _pendingClaimDate = today;
-    _waitingForCurrentRun = false;
-    _setStatus(EhDailyCoordinatorStatus.claimed);
-    await _launchPendingClaim();
+      _pendingClaimDate = today;
+      _waitingForCurrentRun = false;
+      _setStatus(EhDailyCoordinatorStatus.claimed);
+      await _launchPendingClaim(lease);
+    });
   }
 
-  Future<void> _launchPendingClaim() async {
+  Future<void> _withWorkflowLease(Future<void> Function(BigInt) work) async {
+    BigInt? lease;
+    try {
+      lease = await host.tryAcquireWorkflowLease();
+      if (lease == null) {
+        _waitingForCurrentRun = true;
+        _setStatus(EhDailyCoordinatorStatus.waitingForCurrentRun);
+        return;
+      }
+      await work(lease);
+    } catch (e) {
+      _setStatus(EhDailyCoordinatorStatus.persistenceFailed, '$e');
+    } finally {
+      if (lease != null) {
+        try {
+          await host.releaseWorkflowLease(lease);
+        } catch (e) {
+          _setStatus(EhDailyCoordinatorStatus.persistenceFailed, '$e');
+        }
+      }
+    }
+  }
+
+  Future<void> _launchPendingClaim(BigInt lease) async {
     final claimedDate = _pendingClaimDate;
     if (claimedDate == null || _launchingClaim) return;
     if (host.busy) {
@@ -483,7 +605,10 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _launchingClaim = true;
     _setStatus(EhDailyCoordinatorStatus.running);
     try {
-      final outcome = await host.run(source: EhDailyRunSource.dailyAuto);
+      final outcome = await host.run(
+        source: EhDailyRunSource.dailyAuto,
+        workflowLease: lease,
+      );
       if (outcome.started) {
         _pendingClaimDate = null;
         _waitingForCurrentRun = false;
@@ -503,9 +628,8 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
       await _markClaimUnknown(claimedDate, '收集结果未能确认：$e');
     } finally {
       _launchingClaim = false;
-      if (_pendingClaimDate != null && !host.busy) {
-        scheduleMicrotask(() => unawaited(_launchPendingClaim()));
-      }
+      // A pending claim will be re-evaluated after the current owner exits;
+      // do not start it again without reacquiring the cross-engine lease.
     }
   }
 
@@ -527,7 +651,7 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _markClaimFailed(String date, String reason) async {
     final current = host.dailyAutomation;
-    final run = current.lastRun;
+    final run = current.effectiveLastAutoRun;
     if (run == null ||
         run.date != date ||
         run.status != EhDailyRunStatus.claimed) {
@@ -546,7 +670,7 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _markClaimUnknown(String date, String reason) async {
     final current = host.dailyAutomation;
-    final run = current.lastRun;
+    final run = current.effectiveLastAutoRun;
     if (run == null || run.date != date) {
       _setStatus(EhDailyCoordinatorStatus.interruptedUnknown, reason);
       return;
@@ -598,11 +722,20 @@ class EhDailyCoordinator extends ChangeNotifier with WidgetsBindingObserver {
     _wakeTimer.cancel();
     if (_started) {
       host.removeListener(_onHostChanged);
-      WidgetsBinding.instance.removeObserver(this);
+      if (!headless) WidgetsBinding.instance.removeObserver(this);
     }
     super.dispose();
   }
 }
+
+bool _canResumeDailyRun(EhDailyRunRecord run) =>
+    run.status == EhDailyRunStatus.interruptedUnknown ||
+    (run.status == EhDailyRunStatus.failed &&
+        run.cloudStage.status == EhDailyCloudStageStatus.notRun) ||
+    (run.status == EhDailyRunStatus.partial &&
+        (run.cloudStage.status == EhDailyCloudStageStatus.needsConfiguration ||
+            run.cloudStage.status ==
+                EhDailyCloudStageStatus.sessionUnavailable));
 
 String ehLocalDateKey(DateTime value) => _dateKey(value);
 

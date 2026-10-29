@@ -26,6 +26,7 @@ class Cloud115BtDailyWorkflow {
     this.ledger,
     List<BookSource> Function()? sources,
     bool Function(BookSource source)? cookieSessionIsCached,
+    this.restoreCookieSession,
     this.batchRunner,
   }) : _sources = sources ?? (() => LibraryStore.instance.sources),
        _cookieSessionIsCached =
@@ -35,6 +36,10 @@ class Cloud115BtDailyWorkflow {
   Cloud115BtBatchLedger? _resolvedLedger;
   final List<BookSource> Function() _sources;
   final bool Function(BookSource source) _cookieSessionIsCached;
+
+  /// Only a background caller opts into restoring the saved Cookie. The
+  /// foreground path retains its existing explicit-session behavior.
+  final Future<void> Function(BookSource source)? restoreCookieSession;
   final Cloud115BtDailyBatchRunner? batchRunner;
 
   Future<EhDailyCloudStageResult> run({
@@ -76,12 +81,27 @@ class Cloud115BtDailyWorkflow {
       }
       if (source == null ||
           !source.is115 ||
+          source.remoteOnly ||
           (source.cookie ?? '').trim().isEmpty) {
         return EhDailyCloudStageResult(
           status: EhDailyCloudStageStatus.needsConfiguration,
           total: entries.length,
           message: '已保存的 115 Cookie 书源不可用；未发起云端请求。',
         );
+      }
+      if (!_cookieSessionIsCached(source)) {
+        final restore = restoreCookieSession;
+        if (restore != null) {
+          try {
+            await restore(source);
+          } catch (_) {
+            return EhDailyCloudStageResult(
+              status: EhDailyCloudStageStatus.sessionUnavailable,
+              total: entries.length,
+              message: '无法使用保存的 115 会话；请打开应用检查网络和登录状态。',
+            );
+          }
+        }
       }
       if (!_cookieSessionIsCached(source)) {
         return EhDailyCloudStageResult(
@@ -194,6 +214,7 @@ class Cloud115BtDailyWorkflow {
     for (final result in report.results) {
       switch (result.state) {
         case 'submitted':
+        case 'duplicate_found':
           submitted++;
         case 'local_torrent_removed':
           removed++;
@@ -202,6 +223,7 @@ class Cloud115BtDailyWorkflow {
         case 'upload_parse_pending':
         case 'duplicate_lookup_unknown':
         case 'duplicate_found_delete_failed':
+        case 'submitted_cleanup_pending':
           pending++;
         case 'local_validation_failed':
         case 'torrent_invalid':
@@ -222,6 +244,7 @@ class Cloud115BtDailyWorkflow {
         !report.stopped &&
         pending == 0 &&
         failed == 0 &&
+        skipped == 0 &&
         report.results.length == total;
     return EhDailyCloudStageResult(
       status: complete

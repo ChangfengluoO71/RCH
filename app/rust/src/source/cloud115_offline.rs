@@ -106,6 +106,8 @@ pub struct Cloud115BtTaskStatus {
 #[derive(Debug, Clone, Serialize)]
 pub struct Cloud115BtTaskSnapshotItem {
     pub info_hash: String,
+    /// Destination parent from the remote task; None means it was not proven.
+    pub target_folder_id: Option<String>,
     pub status_code: Option<i64>,
     pub percent_done: Option<f64>,
 }
@@ -542,29 +544,25 @@ fn bt_gate_status_result(status: u16) -> Option<(&'static str, &'static str)> {
     }
 }
 
-fn unknown_task_status(
-    info_hash: &str,
-    target_folder_id: &str,
-    reason: &str,
-) -> Cloud115BtTaskStatus {
+fn unknown_task_status(info_hash: &str, reason: &str) -> Cloud115BtTaskStatus {
     Cloud115BtTaskStatus {
         state: "unknown".into(),
         info_hash: info_hash.to_ascii_lowercase(),
         status_code: None,
         status_text: reason.to_string(),
         percent_done: None,
-        target_folder_id: target_folder_id.to_string(),
+        target_folder_id: String::new(),
     }
 }
 
-fn not_found_task_status(info_hash: &str, target_folder_id: &str) -> Cloud115BtTaskStatus {
+fn not_found_task_status(info_hash: &str) -> Cloud115BtTaskStatus {
     Cloud115BtTaskStatus {
         state: "not_found".into(),
         info_hash: info_hash.to_ascii_lowercase(),
         status_code: None,
         status_text: String::new(),
         percent_done: None,
-        target_folder_id: target_folder_id.to_string(),
+        target_folder_id: String::new(),
     }
 }
 
@@ -589,6 +587,22 @@ fn parse_ssp_response(body: &[u8]) -> Result<serde_json::Value> {
         }
     }
     Ok(response)
+}
+
+fn bt_rejection_message(response: &serde_json::Value) -> String {
+    let code = ["errno", "errcode", "code"]
+        .iter()
+        .filter_map(|key| response.get(key))
+        .find_map(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str()?.parse::<i64>().ok())
+        })
+        .filter(|code| *code != 0);
+    match code {
+        Some(code) => format!("115 明确拒绝 BT 提交（错误码 {code}）；本次不会重试。"),
+        None => "115 明确拒绝 BT 提交；本次不会重试。".into(),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1180,9 +1194,11 @@ impl Cloud115WebClient {
                 "115 拒绝当前 Cookie 会话访问（HTTP 403）；已停止本批次写入。".into(),
             ),
             Ok((status, response_body)) if (200..300).contains(&status) => {
-                match parse_ssp_response(&response_body)
-                    .ok()
-                    .and_then(|response| response.get("state").and_then(serde_json::Value::as_bool))
+                let response = parse_ssp_response(&response_body).ok();
+                match response
+                    .as_ref()
+                    .and_then(|value| value.get("state"))
+                    .and_then(serde_json::Value::as_bool)
                 {
                     Some(true) => (
                         "ACCEPTED".into(),
@@ -1190,7 +1206,10 @@ impl Cloud115WebClient {
                     ),
                     Some(false) => (
                         "REJECTED".into(),
-                        "115 明确拒绝 BT 提交；本次不会重试。".into(),
+                        response
+                            .as_ref()
+                            .map(bt_rejection_message)
+                            .unwrap_or_default(),
                     ),
                     None => self.reconcile_bt_submit(&parsed.info_hash, &target_folder_id),
                 }
@@ -1242,7 +1261,7 @@ impl Cloud115WebClient {
             .ok_or_else(|| anyhow!("无法从当前 115 Cookie 会话确认账号标识"))?;
         let mut expected_count = None;
         let mut expected_page_count = None;
-        let mut tasks = BTreeMap::<String, Cloud115BtTaskSnapshotItem>::new();
+        let mut tasks = BTreeMap::<(String, Option<String>), Cloud115BtTaskSnapshotItem>::new();
         let mut pages_read = 0;
 
         for page_number in 1..=BT_TASK_PAGE_BUDGET {
@@ -1306,7 +1325,9 @@ impl Cloud115WebClient {
                 expected_page_count = Some(page.page_count);
             }
             for task in page.tasks {
-                tasks.entry(task.info_hash.clone()).or_insert(task);
+                tasks
+                    .entry((task.info_hash.clone(), task.target_folder_id.clone()))
+                    .or_insert(task);
             }
             if page.page_count > BT_TASK_PAGE_BUDGET {
                 return Ok(Cloud115BtTaskSnapshot {
@@ -1395,6 +1416,7 @@ impl Cloud115WebClient {
     ) -> Result<Cloud115BtTaskStatus> {
         let mut expected_count = None;
         let mut expected_page_count = None;
+        let mut saw_unverified_match = false;
         for page_number in 1..=BT_TASK_PAGE_BUDGET {
             let query = vec![
                 ("ac", "task_lists".to_string()),
@@ -1417,7 +1439,7 @@ impl Cloud115WebClient {
                     status_code: Some(i64::from(status)),
                     status_text: message.to_string(),
                     percent_done: None,
-                    target_folder_id: target_folder_id.to_string(),
+                    target_folder_id: String::new(),
                 });
             }
             ensure_bt_read_status(self, status, "115 离线任务列表")?;
@@ -1428,7 +1450,6 @@ impl Cloud115WebClient {
                 if count != page.count || page_count != page.page_count {
                     return Ok(unknown_task_status(
                         info_hash,
-                        target_folder_id,
                         "任务列表翻页期间总数或总页数发生变化，无法证明不存在同 Infohash 任务。",
                     ));
                 }
@@ -1436,33 +1457,41 @@ impl Cloud115WebClient {
                 expected_count = Some(page.count);
                 expected_page_count = Some(page.page_count);
                 if page.count == 0 && page.page_count <= 1 {
-                    return Ok(not_found_task_status(info_hash, target_folder_id));
+                    return Ok(not_found_task_status(info_hash));
                 }
             }
-            if page.matched_info_hash {
-                return Ok(Cloud115BtTaskStatus {
-                    state: "found".into(),
-                    info_hash: info_hash.to_ascii_lowercase(),
-                    status_code: page.matched_status_code,
-                    status_text: page.matched_status_text,
-                    percent_done: page.matched_percent_done,
-                    target_folder_id: target_folder_id.to_string(),
-                });
+            for matched in page.matched_tasks {
+                if matched.target_folder_id.as_deref() == Some(target_folder_id) {
+                    return Ok(Cloud115BtTaskStatus {
+                        state: "found".into(),
+                        info_hash: info_hash.to_ascii_lowercase(),
+                        status_code: matched.status_code,
+                        status_text: matched.status_text,
+                        percent_done: matched.percent_done,
+                        target_folder_id: matched.target_folder_id.unwrap_or_default(),
+                    });
+                }
+                saw_unverified_match = true;
             }
             if page.page_count > BT_TASK_PAGE_BUDGET {
                 return Ok(unknown_task_status(
                     info_hash,
-                    target_folder_id,
                     "任务列表超过安全查询上限（最多 300 项），未读取的页面仍可能有同哈希任务。",
                 ));
             }
             if page_number >= page.page_count {
-                return Ok(not_found_task_status(info_hash, target_folder_id));
+                return Ok(if saw_unverified_match {
+                    unknown_task_status(
+                        info_hash,
+                        "发现同 Infohash 任务，但其目标目录缺失或与所选目录不一致。",
+                    )
+                } else {
+                    not_found_task_status(info_hash)
+                });
             }
         }
         Ok(unknown_task_status(
             info_hash,
-            target_folder_id,
             "在安全查询预算内未能读完整个任务列表，无法证明不存在同 Infohash 任务。",
         ))
     }
@@ -1674,7 +1703,7 @@ impl Cloud115WebClient {
         target: &Cloud115BtFolderSelection,
     ) -> Result<(String, String)> {
         let target_folder_id = self.validate_target_folder_selection(target)?;
-        let duplicate_status = self.read_task_by_info_hash(info_hash)?;
+        let duplicate_status = self.read_task_status(info_hash, &target_folder_id)?.state;
         Ok((target_folder_id, duplicate_status))
     }
 
@@ -1783,20 +1812,20 @@ impl Cloud115WebClient {
         folders.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
         Ok(folders)
     }
-
-    fn read_task_by_info_hash(&self, info_hash: &str) -> Result<String> {
-        Ok(self.read_task_status(info_hash, "")?.state)
-    }
 }
 
 struct ParsedTaskPage {
     count: u64,
     page_count: u64,
-    matched_info_hash: bool,
-    matched_status_code: Option<i64>,
-    matched_status_text: String,
-    matched_percent_done: Option<f64>,
+    matched_tasks: Vec<MatchedTask>,
     tasks: Vec<Cloud115BtTaskSnapshotItem>,
+}
+
+struct MatchedTask {
+    target_folder_id: Option<String>,
+    status_code: Option<i64>,
+    status_text: String,
+    percent_done: Option<f64>,
 }
 
 fn parse_task_list_page(
@@ -1821,10 +1850,7 @@ fn parse_task_list_page(
     if (count == 0 && (!tasks.is_empty() || page_count > 1)) || (count > 0 && page_count == 0) {
         bail!("115 离线任务列表分页信息不一致");
     }
-    let mut matched_info_hash = false;
-    let mut matched_status_code = None;
-    let mut matched_status_text = String::new();
-    let mut matched_percent_done = None;
+    let mut matched_tasks = Vec::new();
     let mut parsed_tasks = Vec::with_capacity(tasks.len());
     for task in tasks {
         let Some(task_hash) = task.get("info_hash").and_then(serde_json::Value::as_str) else {
@@ -1838,15 +1864,25 @@ fn parse_task_list_page(
             .get("percent_done")
             .or_else(|| task.get("progress"))
             .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()));
+        // wp_path_id identifies the task's parent; file_id identifies its
+        // output and cannot prove its parent folder.
+        let target_folder_id = task
+            .get("wp_path_id")
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .or_else(|| value.as_u64().map(|id| id.to_string()))
+            })
+            .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()));
         parsed_tasks.push(Cloud115BtTaskSnapshotItem {
             info_hash: task_hash.to_ascii_lowercase(),
+            target_folder_id: target_folder_id.clone(),
             status_code,
             percent_done,
         });
         if !expected_info_hash.is_empty() && task_hash.eq_ignore_ascii_case(expected_info_hash) {
-            matched_info_hash = true;
-            matched_status_code = status_code;
-            matched_status_text = task
+            let status_text = task
                 .get("status_text")
                 .or_else(|| task.get("status_name"))
                 .and_then(serde_json::Value::as_str)
@@ -1859,16 +1895,18 @@ fn parse_task_list_page(
                 .chars()
                 .take(256)
                 .collect();
-            matched_percent_done = percent_done;
+            matched_tasks.push(MatchedTask {
+                target_folder_id,
+                status_code,
+                status_text,
+                percent_done,
+            });
         }
     }
     Ok(ParsedTaskPage {
         count,
         page_count,
-        matched_info_hash,
-        matched_status_code,
-        matched_status_text,
-        matched_percent_done,
+        matched_tasks,
         tasks: parsed_tasks,
     })
 }
@@ -2487,7 +2525,11 @@ mod tests {
         drop_upload_init_response: bool,
         upload_init_status: Option<u16>,
         task_list_status: Option<u16>,
+        task_folder_id: Option<&'static str>,
+        omit_task_folder: bool,
+        multiple_matching_tasks: bool,
         submit_status: Option<u16>,
+        submit_rejected_with_code: bool,
         drop_submit_response: bool,
         make_task_visible_after_submit: bool,
         first_folder_request_is_waf: bool,
@@ -2721,11 +2763,15 @@ mod tests {
             },
             ("GET", "/web/") if query.get("ac").map(String::as_str) == Some("task_lists") => {
                 let visible = state.task_visible.load(Ordering::SeqCst);
-                let count =
-                    state
-                        .behavior
-                        .task_count_override
-                        .unwrap_or(if visible { 1 } else { 0 });
+                let count = state.behavior.task_count_override.unwrap_or(if visible {
+                    if state.behavior.multiple_matching_tasks {
+                        2
+                    } else {
+                        1
+                    }
+                } else {
+                    0
+                });
                 let page_count = state
                     .behavior
                     .task_page_count_override
@@ -2737,7 +2783,18 @@ mod tests {
                         1
                     });
                 let tasks = if visible {
-                    serde_json::json!([{"info_hash": MOCK_INFO_HASH, "status": 12, "status_text": "downloading", "progress": 0.25}])
+                    let mut task = serde_json::json!({"info_hash": MOCK_INFO_HASH, "status": 12, "status_text": "downloading", "progress": 0.25});
+                    if !state.behavior.omit_task_folder {
+                        task["wp_path_id"] =
+                            serde_json::json!(state.behavior.task_folder_id.unwrap_or("20"));
+                    }
+                    if state.behavior.multiple_matching_tasks {
+                        let mut other = task.clone();
+                        other["wp_path_id"] = serde_json::json!("30");
+                        serde_json::json!([task, other])
+                    } else {
+                        serde_json::json!([task])
+                    }
                 } else {
                     serde_json::json!([])
                 };
@@ -2802,6 +2859,13 @@ mod tests {
                 state.submit_count.fetch_add(1, Ordering::SeqCst);
                 if let Some(status) = state.behavior.submit_status {
                     return Some((status, b"mock submit status".to_vec()));
+                }
+                if state.behavior.submit_rejected_with_code {
+                    return Some((
+                        200,
+                        br#"{"state":false,"errno":1234,"error":"UID=secret; SEID=secret"}"#
+                            .to_vec(),
+                    ));
                 }
                 if state.behavior.make_task_visible_after_submit {
                     state.task_visible.store(true, Ordering::SeqCst);
@@ -3047,9 +3111,10 @@ mod tests {
             "tasks": [{"info_hash": "0123456789012345678901234567890123456789"}]
         });
         assert!(
-            parse_task_list_page(&matching, "0123456789012345678901234567890123456789")
+            !parse_task_list_page(&matching, "0123456789012345678901234567890123456789")
                 .unwrap()
-                .matched_info_hash
+                .matched_tasks
+                .is_empty()
         );
 
         let empty = serde_json::json!({
@@ -3059,9 +3124,10 @@ mod tests {
             "tasks": []
         });
         assert!(
-            !parse_task_list_page(&empty, "0123456789012345678901234567890123456789")
+            parse_task_list_page(&empty, "0123456789012345678901234567890123456789")
                 .unwrap()
-                .matched_info_hash
+                .matched_tasks
+                .is_empty()
         );
 
         let incomplete = serde_json::json!({"state": true, "tasks": []});
@@ -3394,6 +3460,21 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_preserves_matching_hashes_in_distinct_destinations() {
+        let server = MockHttpServer::start(MockBehavior {
+            multiple_matching_tasks: true,
+            ..MockBehavior::default()
+        });
+        server.state.task_visible.store(true, Ordering::SeqCst);
+        let client = test_bt_client(&server);
+        let snapshot = client.bt_task_snapshot().unwrap();
+        assert!(snapshot.complete);
+        assert_eq!(snapshot.tasks.len(), 2);
+        assert_eq!(snapshot.tasks[0].target_folder_id.as_deref(), Some("20"));
+        assert_eq!(snapshot.tasks[1].target_folder_id.as_deref(), Some("30"));
+    }
+
+    #[test]
     fn bt_task_snapshot_marks_over_budget_listing_partial_without_absence_claims() {
         let server = MockHttpServer::start(MockBehavior {
             task_count_override: Some(301),
@@ -3435,6 +3516,29 @@ mod tests {
         assert_eq!(parsed.tasks.len(), 2);
         assert_eq!(parsed.tasks[0].info_hash, MOCK_INFO_HASH);
         assert_eq!(parsed.tasks[1].status_code, Some(77));
+    }
+
+    #[test]
+    fn submit_rejection_reports_numeric_code_without_provider_secrets() {
+        let server = MockHttpServer::start(MockBehavior {
+            submit_rejected_with_code: true,
+            ..MockBehavior::default()
+        });
+        let dir = TestTorrentDir::new();
+        let client = test_bt_client(&server);
+        let result = client
+            .bt_submit_once(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                &test_target(),
+                &[0],
+            )
+            .unwrap();
+        assert_eq!(result.state, "REJECTED");
+        assert!(result.message.contains("1234"));
+        assert!(!result.message.contains("secret"));
+        assert_eq!(server.state.submit_count.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -3783,6 +3887,39 @@ mod tests {
                 && !request.target.contains("lixianssp")
         }));
         assert_eq!(client.cookie(), MOCK_COOKIE);
+    }
+
+    #[test]
+    fn matching_hash_without_matching_remote_destination_is_not_proof_for_cleanup() {
+        for behavior in [
+            MockBehavior {
+                omit_task_folder: true,
+                ..MockBehavior::default()
+            },
+            MockBehavior {
+                task_folder_id: Some("30"),
+                ..MockBehavior::default()
+            },
+        ] {
+            let server = MockHttpServer::start(behavior);
+            server.state.task_visible.store(true, Ordering::SeqCst);
+            let dir = TestTorrentDir::new();
+            let client = test_bt_client(&server);
+            let status = client
+                .bt_task_status(MOCK_INFO_HASH, &test_target())
+                .unwrap();
+            assert_eq!(status.state, "unknown");
+            assert_ne!(status.target_folder_id, "20");
+            let deleted = client.bt_delete_local_torrent_if_remote_task_found(
+                &dir.path(),
+                "one.torrent",
+                MOCK_INFO_HASH,
+                "12345",
+                &test_target(),
+            );
+            assert!(deleted.is_err());
+            assert!(dir.0.join("one.torrent").is_file());
+        }
     }
 
     #[test]

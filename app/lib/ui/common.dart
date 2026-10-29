@@ -3,19 +3,87 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:app/store/library_store.dart';
 
 /// 窄屏断点：逻辑宽度 < 600dp 视为紧凑（手机）布局。
 const double kCompactBreakpoint = 600;
 
-/// 当前是否使用紧凑（手机）布局：
-/// - 宽度 < 600dp 恒为紧凑（手机）；
-/// - 宽度 ≥ 600dp（平板/大屏）时遵循设置里的"平板布局"（auto/desktop = 桌面侧栏，mobile = 手机底部导航）。
-bool isCompact(BuildContext context) {
-  final w = MediaQuery.sizeOf(context).width;
-  if (w < kCompactBreakpoint) return true;
-  return LibraryStore.instance.settings.tabletLayout == 'mobile';
+class LayoutProfile {
+  const LayoutProfile({
+    required this.tablet,
+    required this.compact,
+    required this.lockPortrait,
+  });
+
+  final bool tablet;
+  final bool compact;
+  final bool lockPortrait;
 }
+
+/// The chosen experience is independent of the current window width. Android
+/// display size (rather than split-screen window size) identifies auto tablets.
+LayoutProfile resolveLayoutProfile(BuildContext context) {
+  final window = MediaQuery.sizeOf(context);
+  final selection = LibraryStore.instance.settings.tabletLayout;
+  final display = View.maybeOf(context)?.display;
+  final displaySize = display == null || display.devicePixelRatio <= 0
+      ? window
+      : display.size / display.devicePixelRatio;
+  final shortSide = displaySize.shortestSide > 0
+      ? displaySize.shortestSide
+      : window.shortestSide;
+  final androidTablet = isAndroidPlatform && shortSide >= kCompactBreakpoint;
+  final tablet =
+      selection == 'tablet' || (selection == 'auto' && androidTablet);
+  final compact = window.width < kCompactBreakpoint || selection == 'mobile';
+  final lockPortrait =
+      !tablet && (selection == 'auto' && isAndroidPlatform ? true : compact);
+  return LayoutProfile(
+    tablet: tablet,
+    compact: compact,
+    lockPortrait: lockPortrait,
+  );
+}
+
+bool isCompact(BuildContext context) => resolveLayoutProfile(context).compact;
+
+/// Keeps the home policy current while a reader temporarily permits rotation.
+class AppOrientationCoordinator {
+  bool _homePortrait = true;
+  bool? _appliedPortrait;
+  Object? _readerOwner;
+
+  bool get readerActive => _readerOwner != null;
+
+  void updateHome(LayoutProfile profile) {
+    if (!isAndroidPlatform) return;
+    _homePortrait = profile.lockPortrait;
+    if (!readerActive) _apply(_homePortrait);
+  }
+
+  void enterReader(Object owner) {
+    if (!isAndroidPlatform) return;
+    _readerOwner = owner;
+    _apply(false);
+  }
+
+  void leaveReader(Object owner) {
+    if (!isAndroidPlatform || !identical(_readerOwner, owner)) return;
+    _readerOwner = null;
+    _apply(_homePortrait);
+  }
+
+  void _apply(bool portrait) {
+    if (_appliedPortrait == portrait) return;
+    _appliedPortrait = portrait;
+    SystemChrome.setPreferredOrientations(
+      portrait ? [DeviceOrientation.portraitUp] : DeviceOrientation.values,
+    );
+  }
+}
+
+final appOrientationCoordinator = AppOrientationCoordinator();
 
 /// 对话框内容最大宽度：宽屏上限 420dp，窄屏自适应为屏宽减 48dp 边距。
 double dialogMaxWidth(BuildContext context) {

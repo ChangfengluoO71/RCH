@@ -390,6 +390,7 @@ class AppSettings {
   bool useSystemDynamicColors;
   String windowMaterial; // standard | mica
   String overlayMaterial; // standard | acrylic
+  String tabletOverlayMaterial; // standard | frosted (Android tablet)
   ReadMode readMode; // 阅读模式:日漫/美漫/条漫
   bool invertTap; // 日漫模式下点击区是否反向
   DualPageMode dualPageMode; // 双页拼接模式
@@ -402,8 +403,7 @@ class AppSettings {
   BookOpenStrategy bookOpenStrategy; // 远程书源打开策略（WebDAV/SFTP 共用）
   /// 整包下载模式下，阅读完成后自动删除 raw 整包（封面缓存保留）。
   bool deletePackageAfterReading;
-  String
-  tabletLayout; // 'auto' | 'desktop' | 'mobile'：平板布局模式（auto=按宽度，desktop=桌面侧栏，mobile=手机底部导航）
+  String tabletLayout; // auto | desktop | tablet | mobile
   String updateMirror; // GitHub 下载镜像前缀（''=官方直连；自定义镜像也存这里）
   String updateMirrorList; // 远程拉取的镜像列表 JSON（[{name,url}]），供自动更新
   int updateMirrorFetchedAt; // 镜像列表最后成功拉取时间（ms epoch，0=从未）
@@ -428,6 +428,7 @@ class AppSettings {
     this.useSystemDynamicColors = false,
     this.windowMaterial = 'standard',
     this.overlayMaterial = 'standard',
+    this.tabletOverlayMaterial = 'standard',
     this.readMode = ReadMode.manga,
     this.invertTap = false,
     this.dualPageMode = DualPageMode.off,
@@ -466,6 +467,7 @@ class AppSettings {
     'useSystemDynamicColors': useSystemDynamicColors,
     'windowMaterial': windowMaterial,
     'overlayMaterial': overlayMaterial,
+    'tabletOverlayMaterial': tabletOverlayMaterial,
     'readMode': readMode.name,
     'invertTap': invertTap,
     'dualPageMode': dualPageMode.name,
@@ -526,6 +528,10 @@ class AppSettings {
         const {'standard', 'acrylic'}.contains(j['overlayMaterial'])
         ? j['overlayMaterial'] as String
         : 'standard',
+    tabletOverlayMaterial:
+        const {'standard', 'frosted'}.contains(j['tabletOverlayMaterial'])
+        ? j['tabletOverlayMaterial'] as String
+        : 'standard',
     readMode: ReadMode.values.firstWhere(
       (r) => r.name == j['readMode'],
       orElse: () => ReadMode.manga,
@@ -550,7 +556,15 @@ class AppSettings {
     ),
     deletePackageAfterReading:
         (j['deletePackageAfterReading'] as bool?) ?? false,
-    tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
+    tabletLayout:
+        const {
+          'auto',
+          'desktop',
+          'tablet',
+          'mobile',
+        }.contains(j['tabletLayout'])
+        ? j['tabletLayout'] as String
+        : 'auto',
     updateMirror: (j['updateMirror'] as String?) ?? '',
     updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),
     updateMirrorFetchedAt: (j['updateMirrorFetchedAt'] as int?) ?? 0,

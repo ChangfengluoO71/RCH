@@ -89,6 +89,90 @@ void main() {
   );
 
   test(
+    'background restores an existing cookie session before submitting',
+    () async {
+      final ledger = Cloud115BtBatchLedger(
+        File('${tempDir.path}/ledger.jsonl'),
+      );
+      await ledger.setSelectionPreferences(
+        sourceId: 'cookie-115',
+        target: const cloud115.Cloud115BtFolderSelection(
+          id: '123',
+          parentId: '10',
+          name: 'target',
+          path: '/target',
+        ),
+      );
+      final source = BookSource(
+        id: 'cookie-115',
+        type: '115',
+        name: 'source',
+        cookie: 'saved',
+      );
+      var restored = false;
+      var batchCalls = 0;
+      final workflow = Cloud115BtDailyWorkflow(
+        ledger: ledger,
+        sources: () => [source],
+        cookieSessionIsCached: (_) => restored,
+        restoreCookieSession: (_) async {
+          restored = true;
+        },
+        batchRunner: (_, entries, _, _) async {
+          batchCalls++;
+          return Cloud115BtBatchReport(
+            results: [
+              Cloud115BtBatchItemResult(
+                relativeFile: entries.single.item.file,
+                infoHash: entries.single.item.infohash,
+                state: 'submitted',
+              ),
+            ],
+            stopped: false,
+          );
+        },
+      );
+
+      final result = await workflow.run(
+        entries: [_entry()],
+        outputDir: tempDir.path,
+      );
+
+      expect(result.status, EhDailyCloudStageStatus.completed);
+      expect(restored, isTrue);
+      expect(batchCalls, 1);
+    },
+  );
+
+  test('a remote-only source cannot be used for a background BT task', () async {
+    final ledger = Cloud115BtBatchLedger(File('${tempDir.path}/ledger.jsonl'));
+    await ledger.setSelectionPreferences(
+      sourceId: 'remote-source',
+      target: const cloud115.Cloud115BtFolderSelection(
+        id: '123', parentId: '10', name: 'target', path: '/target',
+      ),
+    );
+    var restored = false;
+    var submitted = false;
+    final workflow = Cloud115BtDailyWorkflow(
+      ledger: ledger,
+      sources: () => [BookSource(
+        id: 'remote-source', type: '115', name: 'remote', cookie: 'saved', remoteOnly: true,
+      )],
+      cookieSessionIsCached: (_) => false,
+      restoreCookieSession: (_) async { restored = true; },
+      batchRunner: (_, _, _, _) async {
+        submitted = true;
+        return const Cloud115BtBatchReport(results: [], stopped: false);
+      },
+    );
+    final result = await workflow.run(entries: [_entry()], outputDir: tempDir.path);
+    expect(result.status, EhDailyCloudStageStatus.needsConfiguration);
+    expect(restored, isFalse);
+    expect(submitted, isFalse);
+  });
+
+  test(
     'accepted BT requests are not reported as cloud download completion',
     () async {
       final ledger = Cloud115BtBatchLedger(
@@ -136,6 +220,52 @@ void main() {
       expect(result.message, contains('云端下载完成与 RCH 书源识别尚未确认'));
     },
   );
+
+  test('rejected and invalid entries do not yield a completed cloud stage', () {
+    for (final state in [
+      'rejected',
+      'local_validation_failed',
+      'torrent_invalid',
+    ]) {
+      final result = Cloud115BtDailyWorkflow.summarizeBatchReport(
+        Cloud115BtBatchReport(
+          results: [
+            Cloud115BtBatchItemResult(
+              relativeFile: 'sample.torrent',
+              infoHash: '0123456789012345678901234567890123456789',
+              state: state,
+            ),
+          ],
+          stopped: false,
+        ),
+        1,
+      );
+      expect(result.status, EhDailyCloudStageStatus.partial, reason: state);
+      expect(result.skipped, 1);
+    }
+  });
+
+  test('accepted task awaiting cleanup is partial and is counted as pending', () {
+    final result = Cloud115BtDailyWorkflow.summarizeBatchReport(
+      const Cloud115BtBatchReport(results: [Cloud115BtBatchItemResult(
+        relativeFile: 'sample.torrent', infoHash: '0123456789012345678901234567890123456789',
+        state: 'submitted_cleanup_pending',
+      )], stopped: false), 1,
+    );
+    expect(result.status, EhDailyCloudStageStatus.partial);
+    expect(result.pending, 1);
+  });
+
+  test('confirmed existing destination is included in handled task count', () {
+    final result = Cloud115BtDailyWorkflow.summarizeBatchReport(
+      const Cloud115BtBatchReport(results: [Cloud115BtBatchItemResult(
+        relativeFile: 'sample.torrent', infoHash: '0123456789012345678901234567890123456789',
+        state: 'duplicate_found',
+      )], stopped: false), 1,
+    );
+    expect(result.status, EhDailyCloudStageStatus.completed);
+    expect(result.submitted, 1);
+  });
 
   test('remote duplicate with failed local cleanup remains pending', () {
     final result = Cloud115BtDailyWorkflow.summarizeBatchReport(

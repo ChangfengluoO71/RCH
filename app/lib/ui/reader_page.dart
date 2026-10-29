@@ -179,9 +179,7 @@ class _ReaderPageState extends State<ReaderPage> {
   late bool _skipCover;
   late KeyBinds _keys;
 
-  /// 进入阅读器时是否为紧凑（手机）布局：退出时据此恢复竖屏锁定或保持可旋转。
-  bool _compactAtOpen = true;
-  bool _orientationCaptured = false;
+  final Object _readerOrientationOwner = Object();
   final ReadingCompletionState _completion = ReadingCompletionState(
     pageCount: 0,
   );
@@ -295,10 +293,6 @@ class _ReaderPageState extends State<ReaderPage> {
     final portrait = size.width < size.height;
     final previousPortrait = _widePortraitViewport;
     _widePortraitViewport = portrait;
-    if (!_orientationCaptured) {
-      _orientationCaptured = true;
-      _compactAtOpen = isCompact(context);
-    }
     if (previousPortrait != null && previousPortrait != portrait) {
       _wideDisplayGeneration++;
       _scheduleWideViewportRecheck();
@@ -329,9 +323,7 @@ class _ReaderPageState extends State<ReaderPage> {
     super.initState();
     _dualZoomCtrl.addListener(_onDualZoomChanged);
     _webtoonCtrl.addListener(_onWebtoonScroll);
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-    }
+    appOrientationCoordinator.enterReader(_readerOrientationOwner);
     final g = LibraryStore.instance.settings;
     _mode = g.readMode;
     _webtoonRightToLeft = g.readMode != ReadMode.comic;
@@ -2131,13 +2123,7 @@ class _ReaderPageState extends State<ReaderPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AiUpscaleManager.instance.clearReadingBook(owner: aiReadingOwner);
     });
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      SystemChrome.setPreferredOrientations(
-        _compactAtOpen
-            ? [DeviceOrientation.portraitUp]
-            : DeviceOrientation.values,
-      );
-    }
+    appOrientationCoordinator.leaveReader(_readerOrientationOwner);
     final b = _book;
     if (b != null) closeBook(handle: b.handle);
     // 第 71 轮：整包下载模式下，若设置在"阅读完成后自动删除整包"，关闭书本即删 raw 包。

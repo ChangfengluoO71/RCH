@@ -37,6 +37,27 @@ Future<String> ehSetDailyEnabled({
   enabled: enabled,
 );
 
+/// Hold a lease across EH collection and all cloud submission stages.
+Future<BigInt?> ehTryAcquireWorkflowLease({required String path}) => RustLib
+    .instance
+    .api
+    .crateApiEhSubscriptionEhTryAcquireWorkflowLease(path: path);
+
+Future<void> ehReleaseWorkflowLease({required BigInt handle}) => RustLib
+    .instance
+    .api
+    .crateApiEhSubscriptionEhReleaseWorkflowLease(handle: handle);
+
+Future<String> ehResumeDailyRun({
+  required String path,
+  required String date,
+  required BigInt handle,
+}) => RustLib.instance.api.crateApiEhSubscriptionEhResumeDailyRun(
+  path: path,
+  date: date,
+  handle: handle,
+);
+
 /// Atomically claim one local date. The response contains the durable config
 /// snapshot and whether this process won the claim.
 Future<String> ehClaimDaily({required String path, required String date}) =>
@@ -55,8 +76,8 @@ Future<String> ehUpdateDailyRun({
   runJson: runJson,
 );
 
-/// Mark stale work interrupted only after checking the Windows collection
-/// lease; a second live RCH process must not be mistaken for a crash.
+/// Mark stale work interrupted only after acquiring the cross-platform
+/// workflow lease; another live runner must not be mistaken for a crash.
 Future<String> ehRecoverDailyRun({required String path}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhRecoverDailyRun(path: path);
 

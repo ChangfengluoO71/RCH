@@ -565,6 +565,7 @@ class Cloud115BtBatchReport {
       'unknown_remote_state',
       'duplicate_lookup_unknown',
       'duplicate_found_delete_failed',
+      'submitted_cleanup_pending',
     }.contains(result.state),
   );
 }
@@ -738,7 +739,11 @@ class Cloud115BtBatchProcessor {
               Cloud115BtBatchItemResult(
                 relativeFile: item.file,
                 infoHash: item.infohash,
-                state: localRemoved ? 'local_torrent_removed' : 'submitted',
+                state: localRemoved
+                    ? 'local_torrent_removed'
+                    : transaction.cleanupAfterSubmit
+                    ? 'submitted_cleanup_pending'
+                    : 'submitted',
                 message: localRemoved
                     ? '账本已记录提交；只读核实远端同哈希任务后删除了本地 Torrent。'
                     : transaction.cleanupAfterSubmit
@@ -912,11 +917,12 @@ class Cloud115BtBatchProcessor {
             continue;
           }
 
-          cloud115.Cloud115BtUploadParseResult parsed;
+          var files = checked.files;
           if (existing?.state == 'upload_started' ||
               existing?.state == 'upload_outcome_unknown' ||
               existing?.state == 'upload_parse_pending' ||
               existing?.state == 'torrent_parsed') {
+            late cloud115.Cloud115BtUploadParseResult parsed;
             onProgress?.call(
               entryIndex + 1,
               entries.length,
@@ -949,141 +955,109 @@ class Cloud115BtBatchProcessor {
               );
               continue;
             }
-          } else {
-            onProgress?.call(
-              entryIndex + 1,
-              entries.length,
-              item.file,
-              'uploading',
-            );
-            await transaction.recordItem(
-              accountId: checked.accountId,
-              infoHash: item.infohash,
-              targetFolderId: target.id,
-              relativeFile: item.file,
-              state: 'upload_started',
-            );
-            try {
-              parsed = await upload(entry);
-            } catch (error) {
+
+            if (parsed.state == 'UPLOADED_PARSE_PENDING') {
               await transaction.recordItem(
                 accountId: checked.accountId,
                 infoHash: item.infohash,
                 targetFolderId: target.id,
                 relativeFile: item.file,
-                state: 'upload_outcome_unknown',
+                state: 'upload_parse_pending',
               );
               results.add(
                 Cloud115BtBatchItemResult(
                   relativeFile: item.file,
                   infoHash: item.infohash,
-                  state: 'upload_outcome_unknown',
-                  message: '本项上传结果未确认；禁止重传。本轮继续处理其他种子。${_safeMessage(error)}',
+                  state: 'upload_parse_pending',
+                  message: parsed.message.trim().isEmpty
+                      ? 'Torrent 已上传，115 解析待恢复；为支持恢复保留本地种子，不会重传。本轮继续处理其他种子。'
+                      : '${_safeMessage(parsed.message)} 本轮继续处理其他种子；本地种子保留用于恢复。',
                 ),
               );
               continue;
             }
-          }
-
-          if (parsed.state == 'UPLOADED_PARSE_PENDING') {
-            await transaction.recordItem(
-              accountId: checked.accountId,
-              infoHash: item.infohash,
-              targetFolderId: target.id,
-              relativeFile: item.file,
-              state: 'upload_parse_pending',
-            );
-            results.add(
-              Cloud115BtBatchItemResult(
-                relativeFile: item.file,
-                infoHash: item.infohash,
-                state: 'upload_parse_pending',
-                message: parsed.message.trim().isEmpty
-                    ? 'Torrent 已上传，115 解析待恢复；为支持恢复保留本地种子，不会重传。本轮继续处理其他种子。'
-                    : '${_safeMessage(parsed.message)} 本轮继续处理其他种子；本地种子保留用于恢复。',
-              ),
-            );
-            continue;
-          }
-          if (parsed.state != 'PARSED') {
-            await transaction.recordItem(
-              accountId: checked.accountId,
-              infoHash: item.infohash,
-              targetFolderId: target.id,
-              relativeFile: item.file,
-              state: 'upload_outcome_unknown',
-            );
-            if (parsed.state == 'WAF_BLOCKED' ||
-                parsed.state == 'RATE_LIMITED' ||
-                parsed.state == 'AUTH_EXPIRED' ||
-                parsed.state == 'ACCESS_DENIED' ||
-                parsed.state == 'CHALLENGE_REQUIRED') {
-              final state = switch (parsed.state) {
-                'WAF_BLOCKED' => 'waf_blocked',
-                'RATE_LIMITED' => 'rate_limited',
-                'AUTH_EXPIRED' => 'auth_expired',
-                'ACCESS_DENIED' => 'access_denied',
-                _ => 'challenge_required',
-              };
+            if (parsed.state != 'PARSED') {
               await transaction.recordItem(
                 accountId: checked.accountId,
                 infoHash: item.infohash,
                 targetFolderId: target.id,
                 relativeFile: item.file,
-                state: state,
-              );
-              return stop(item.file, item.infohash, state, parsed.message);
-            }
-            results.add(
-              Cloud115BtBatchItemResult(
-                relativeFile: item.file,
-                infoHash: item.infohash,
                 state: 'upload_outcome_unknown',
-                message: parsed.message.trim().isEmpty
-                    ? '115 未确认本项 Torrent 上传与解析结果；禁止重传。本轮继续处理其他种子。'
-                    : '${_safeMessage(parsed.message)} 本轮继续处理其他种子。',
-              ),
-            );
-            continue;
-          }
+              );
+              if (parsed.state == 'WAF_BLOCKED' ||
+                  parsed.state == 'RATE_LIMITED' ||
+                  parsed.state == 'AUTH_EXPIRED' ||
+                  parsed.state == 'ACCESS_DENIED' ||
+                  parsed.state == 'CHALLENGE_REQUIRED') {
+                final state = switch (parsed.state) {
+                  'WAF_BLOCKED' => 'waf_blocked',
+                  'RATE_LIMITED' => 'rate_limited',
+                  'AUTH_EXPIRED' => 'auth_expired',
+                  'ACCESS_DENIED' => 'access_denied',
+                  _ => 'challenge_required',
+                };
+                await transaction.recordItem(
+                  accountId: checked.accountId,
+                  infoHash: item.infohash,
+                  targetFolderId: target.id,
+                  relativeFile: item.file,
+                  state: state,
+                );
+                return stop(item.file, item.infohash, state, parsed.message);
+              }
+              results.add(
+                Cloud115BtBatchItemResult(
+                  relativeFile: item.file,
+                  infoHash: item.infohash,
+                  state: 'upload_outcome_unknown',
+                  message: parsed.message.trim().isEmpty
+                      ? '115 未确认本项 Torrent 上传与解析结果；禁止重传。本轮继续处理其他种子。'
+                      : '${_safeMessage(parsed.message)} 本轮继续处理其他种子。',
+                ),
+              );
+              continue;
+            }
 
-          final mismatches = <String>[];
-          if (parsed.infoHash.toLowerCase() != item.infohash.toLowerCase()) {
-            mismatches.add('Infohash');
-          }
-          if (parsed.targetFolderId != target.id) {
-            mismatches.add('目标目录 ID');
-          }
-          if (parsed.targetFolderPath != target.path) {
-            mismatches.add('目标目录路径');
-          }
-          if (parsed.accountId != checked.accountId) {
-            mismatches.add('账号标识');
-          }
-          if (mismatches.isNotEmpty) {
+            final mismatches = <String>[];
+            if (parsed.infoHash.toLowerCase() != item.infohash.toLowerCase()) {
+              mismatches.add('Infohash');
+            }
+            if (parsed.targetFolderId != target.id) {
+              mismatches.add('目标目录 ID');
+            }
+            if (parsed.targetFolderPath != target.path) {
+              mismatches.add('目标目录路径');
+            }
+            if (parsed.accountId != checked.accountId) {
+              mismatches.add('账号标识');
+            }
+            if (mismatches.isNotEmpty) {
+              await transaction.recordItem(
+                accountId: checked.accountId,
+                infoHash: item.infohash,
+                targetFolderId: target.id,
+                relativeFile: item.file,
+                state: 'upload_outcome_unknown',
+              );
+              return stop(
+                item.file,
+                item.infohash,
+                'upload_outcome_unknown',
+                '上传响应的${mismatches.join('、')}与当前任务不一致；保留本地种子，只读恢复前不会重传。',
+              );
+            }
             await transaction.recordItem(
               accountId: checked.accountId,
               infoHash: item.infohash,
               targetFolderId: target.id,
               relativeFile: item.file,
-              state: 'upload_outcome_unknown',
+              state: 'torrent_parsed',
             );
-            return stop(
-              item.file,
-              item.infohash,
-              'upload_outcome_unknown',
-              '上传响应的${mismatches.join('、')}与当前任务不一致；保留本地种子，只读恢复前不会重传。',
-            );
-          }
-          await transaction.recordItem(
-            accountId: checked.accountId,
-            infoHash: item.infohash,
-            targetFolderId: target.id,
-            relativeFile: item.file,
-            state: 'torrent_parsed',
-          );
 
-          final wanted = parsed.files.map((file) => file.index).toSet().toList()
+            files = parsed.files;
+          }
+
+          final wanted = files.map((file) => file.index).toSet().toList()
             ..sort();
           if (wanted.isEmpty || wanted.any((index) => index < 0)) {
             results.add(
@@ -1091,7 +1065,7 @@ class Cloud115BtBatchProcessor {
                 relativeFile: item.file,
                 infoHash: item.infohash,
                 state: 'torrent_invalid',
-                message: '115 解析没有返回可提交的文件索引；已跳过本项并继续。',
+                message: '本地 Torrent 没有可提交的文件索引；已跳过本项并继续。',
               ),
             );
             continue;
@@ -1169,7 +1143,9 @@ class Cloud115BtBatchProcessor {
                 Cloud115BtBatchItemResult(
                   relativeFile: item.file,
                   infoHash: item.infohash,
-                  state: deleted ? 'local_torrent_removed' : 'submitted',
+                  state: deleted
+                      ? 'local_torrent_removed'
+                      : 'submitted_cleanup_pending',
                   message: deleted
                       ? '远端同哈希任务已核实；按设置删除了本地 Torrent。'
                       : '尚未能只读确认远端任务或本地删除失败；已保留 Torrent。',
@@ -1189,52 +1165,9 @@ class Cloud115BtBatchProcessor {
             }
             continue;
           }
-          if (submitted.state == 'ALREADY_PRESENT') {
-            await transaction.recordItem(
-              accountId: checked.accountId,
-              infoHash: item.infohash,
-              targetFolderId: target.id,
-              relativeFile: item.file,
-              state: 'duplicate_found',
-            );
-            final deleted = transaction.cleanupAfterSubmit
-                ? await _deleteAfterRemoteProof(
-                    transaction: transaction,
-                    entry: entry,
-                    target: target,
-                    accountId: checked.accountId,
-                    deleteTorrent: deleteTorrent,
-                  )
-                : false;
-            if (transaction.cleanupAfterSubmit && !deleted) {
-              await transaction.recordItem(
-                accountId: checked.accountId,
-                infoHash: item.infohash,
-                targetFolderId: target.id,
-                relativeFile: item.file,
-                state: 'duplicate_found_delete_failed',
-              );
-            }
-            results.add(
-              Cloud115BtBatchItemResult(
-                relativeFile: item.file,
-                infoHash: item.infohash,
-                state: deleted
-                    ? 'local_torrent_removed'
-                    : transaction.cleanupAfterSubmit
-                    ? 'duplicate_found_delete_failed'
-                    : 'duplicate_found',
-                message: deleted
-                    ? '115 报告同哈希任务已存在，并只读核实后删除了本地 Torrent。'
-                    : transaction.cleanupAfterSubmit
-                    ? '115 报告同哈希任务已存在；本地删除未完成，保留种子并可继续核对。'
-                    : '115 报告同哈希任务已存在；按设置保留本地 Torrent，不再提交。',
-              ),
-            );
-            continue;
-          }
-
-          if (submitted.state == 'REJECTED') {
+          if (submitted.state == 'REJECTED' ||
+              submitted.state == 'ALREADY_PRESENT') {
+            final disposition = _submissionDisposition(submitted);
             cloud115.Cloud115BtTaskStatus task;
             try {
               task = await queryTask(item.infohash);
@@ -1253,7 +1186,7 @@ class Cloud115BtBatchProcessor {
                   infoHash: item.infohash,
                   state: 'duplicate_lookup_unknown',
                   message:
-                      '115 拒绝了提交；只读查重暂时无法确认，保留本地种子、不重试并继续下一项。${_safeMessage(error)}',
+                      '$disposition；只读查重暂时无法确认，保留本地种子、不重试并继续下一项。${_safeMessage(error)}',
                 ),
               );
               continue;
@@ -1313,15 +1246,16 @@ class Cloud115BtBatchProcessor {
                   infoHash: item.infohash,
                   state: state,
                   message: deleted
-                      ? '提交被拒绝，但只读查询确认远端同哈希任务存在；已删除本地 Torrent。'
+                      ? '$disposition，但只读查询确认远端同哈希任务存在；已删除本地 Torrent。'
                       : transaction.cleanupAfterSubmit
-                      ? '提交被拒绝，远端同哈希任务已确认；本地删除未完成，保留种子并继续下一项。'
-                      : '提交被拒绝，远端同哈希任务已确认；按设置保留本地种子。',
+                      ? '$disposition，远端同哈希任务已确认；本地删除未完成，保留种子并继续下一项。'
+                      : '$disposition，远端同哈希任务已确认；按设置保留本地种子。',
                 ),
               );
               continue;
             }
-            if (task.state != 'not_found') {
+            if (task.state != 'not_found' ||
+                submitted.state == 'ALREADY_PRESENT') {
               await transaction.recordItem(
                 accountId: checked.accountId,
                 infoHash: item.infohash,
@@ -1334,9 +1268,7 @@ class Cloud115BtBatchProcessor {
                   relativeFile: item.file,
                   infoHash: item.infohash,
                   state: 'duplicate_lookup_unknown',
-                  message: task.statusText.trim().isEmpty
-                      ? '115 拒绝了提交；远端同哈希状态未知，保留本地种子、不重试并继续下一项。'
-                      : '115 拒绝了提交；${task.statusText.trim()}。保留本地种子、不重试并继续下一项。',
+                  message: '$disposition；远端同哈希状态或目标目录未确认，保留本地种子、不重试并继续下一项。',
                 ),
               );
               continue;
@@ -1374,7 +1306,7 @@ class Cloud115BtBatchProcessor {
               infoHash: item.infohash,
               state: state,
               message: state == 'rejected'
-                  ? '${submitted.message} 已跳过本项并继续处理其他种子。'
+                  ? '${_submissionDisposition(submitted)}。 已跳过本项并继续处理其他种子。'
                   : '${submitted.message} 本项不会重发；本轮继续处理其他种子。',
             ),
           );
@@ -1441,7 +1373,7 @@ class Cloud115BtBatchProcessor {
     cloud115.Cloud115BtFolderSelection target,
   ) {
     if (result.infoHash.toLowerCase() != expectedHash.toLowerCase() ||
-        result.targetFolderId != target.id) {
+        (result.state == 'found' && result.targetFolderId != target.id)) {
       throw StateError('115 任务查询结果与当前 Torrent 或目标目录不一致');
     }
   }
@@ -1455,9 +1387,14 @@ class Cloud115BtBatchProcessor {
     _ => null,
   };
 
-  static String _safeMessage(Object error) {
-    final text = error.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (text.isEmpty) return '未知错误';
-    return text.length <= 240 ? text : '${text.substring(0, 240)}…';
+  static String _submissionDisposition(cloud115.Cloud115BtSubmitResult result) {
+    if (result.state == 'ALREADY_PRESENT') return '115 报告同哈希任务已存在';
+    final code = RegExp(
+      r'(?:错误码|error\s*code)\s*[:：]?\s*(-?\d{1,19})(?!\d)',
+      caseSensitive: false,
+    ).firstMatch(result.message)?.group(1);
+    return code == null ? '115 拒绝了提交' : '115 拒绝了提交（错误码 $code）';
   }
+
+  static String _safeMessage(Object _) => '运行细节已隐藏；请检查 115 账号、目标目录和网络状态。';
 }

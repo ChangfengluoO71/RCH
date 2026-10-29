@@ -5144,8 +5144,12 @@ pub fn finish_cloud115_bt_monitor_poll(
         let Some((previous_state, previous_error)) = previous else {
             continue;
         };
-        let error_class = poll_error_class.or(observation.error_class.as_deref());
+        let error_class = observation.error_class.as_deref().or(poll_error_class);
+        let destination_unverified =
+            observation.error_class.as_deref() == Some("destination_unverified");
+        let clear_evidence = destination_unverified || observation.found_in_snapshot == Some(false);
         let next_state = match observation.found_in_snapshot {
+            _ if destination_unverified => "unknown",
             Some(true) => "found",
             Some(false) => "unknown",
             None => previous_state.as_str(),
@@ -5156,10 +5160,10 @@ pub fn finish_cloud115_bt_monitor_poll(
         tx.execute(
             "UPDATE cloud115_bt_task_monitor SET
                 remote_state=?1,
-                found_in_snapshot=COALESCE(?2, found_in_snapshot),
-                remote_status_code=COALESCE(?3, remote_status_code),
-                percent_done=COALESCE(?4, percent_done),
-                target_folder_evidence='unknown',
+                found_in_snapshot=CASE WHEN ?11 THEN NULL ELSE COALESCE(?2, found_in_snapshot) END,
+                remote_status_code=CASE WHEN ?11 THEN NULL WHEN ?2=1 THEN ?3 ELSE remote_status_code END,
+                percent_done=CASE WHEN ?11 THEN NULL WHEN ?2=1 THEN ?4 ELSE percent_done END,
+                target_folder_evidence=CASE WHEN ?11 THEN 'unknown' WHEN ?2=1 THEN 'matched' ELSE target_folder_evidence END,
                 last_checked_at=?5,
                 next_check_at=?6,
                 attempt_count=attempt_count+1,
@@ -5177,6 +5181,7 @@ pub fn finish_cloud115_bt_monitor_poll(
                 account_id,
                 hash,
                 observation.target_folder_id,
+                clear_evidence,
             ],
         )?;
         if previous_state != next_state || previous_error.as_deref() != error_class {
@@ -5628,6 +5633,71 @@ mod tests {
         assert_eq!(summary.found_count, 1);
         assert_eq!(summary.unknown_count, 0);
         assert_eq!(summary.due_count, 0);
+    }
+
+    #[test]
+    fn cloud115_monitor_clears_old_found_evidence_when_destination_is_unverified() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_tables(&conn).unwrap();
+        reconcile_cloud115_bt_monitor_entries(&conn, &[monitor_entry("submitted")], 100).unwrap();
+        let found = Cloud115BtMonitorObservation {
+            account_id: "account-1".into(),
+            info_hash: "0123456789012345678901234567890123456789".into(),
+            target_folder_id: "42".into(),
+            found_in_snapshot: Some(true),
+            status_code: Some(12),
+            percent_done: Some(0.5),
+            error_class: None,
+        };
+        let claim =
+            claim_cloud115_bt_monitor_due(&conn, "account-1", "source-1", "p1", 100, 200, 300)
+                .unwrap()
+                .unwrap();
+        finish_cloud115_bt_monitor_poll(
+            &conn,
+            &claim.run_id,
+            "account-1",
+            "p1",
+            &[found],
+            None,
+            200,
+            120,
+        )
+        .unwrap();
+        let unverified = Cloud115BtMonitorObservation {
+            account_id: "account-1".into(),
+            info_hash: "0123456789012345678901234567890123456789".into(),
+            target_folder_id: "42".into(),
+            found_in_snapshot: None,
+            status_code: None,
+            percent_done: None,
+            error_class: Some("destination_unverified".into()),
+        };
+        let claim =
+            claim_cloud115_bt_monitor_due(&conn, "account-1", "source-1", "p1", 200, 300, 300)
+                .unwrap()
+                .unwrap();
+        finish_cloud115_bt_monitor_poll(
+            &conn,
+            &claim.run_id,
+            "account-1",
+            "p1",
+            &[unverified],
+            None,
+            300,
+            220,
+        )
+        .unwrap();
+        let (state, found, status, percent, evidence): (String, Option<i64>, Option<i64>, Option<f64>, String) = conn.query_row(
+            "SELECT remote_state, found_in_snapshot, remote_status_code, percent_done, target_folder_evidence FROM cloud115_bt_task_monitor", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).unwrap();
+        assert_eq!(state, "unknown");
+        assert_eq!((found, status, percent), (None, None, None));
+        assert_eq!(evidence, "unknown");
+        let summary = cloud115_bt_monitor_summary(&conn, Some("source-1"), 220).unwrap();
+        assert_eq!(summary.found_count, 0);
+        assert_eq!(summary.unknown_count, 1);
     }
 
     #[test]

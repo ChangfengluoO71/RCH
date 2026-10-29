@@ -158,7 +158,12 @@ void main() {
             complete: true,
             pagesRead: 1,
             message: '',
-            tasks: [cloud115.Cloud115BtTaskSnapshotItem(infoHash: _hash)],
+            tasks: [
+              cloud115.Cloud115BtTaskSnapshotItem(
+                infoHash: _hash,
+                targetFolderId: '42',
+              ),
+            ],
           );
         },
         clock: () => DateTime.utc(2026, 10, 14),
@@ -172,6 +177,138 @@ void main() {
       expect(requests, 1);
       expect(monitor.summaryValue.foundCount, 1);
       expect(backend.observations.single.foundInSnapshot, isTrue);
+      await monitor.stopForExit();
+      monitor.dispose();
+    },
+  );
+
+  test('a same-hash task without a destination remains unknown', () async {
+    final monitor = Cloud115BtMonitor(
+      backend: backend,
+      ledgerFactory: () async => ledger,
+      sources: () => [source],
+      sessionReady: (_) => true,
+      readSnapshot: (_) async => const cloud115.Cloud115BtTaskSnapshot(
+        accountId: '12345',
+        state: 'ok',
+        complete: true,
+        pagesRead: 1,
+        message: '',
+        tasks: [
+          cloud115.Cloud115BtTaskSnapshotItem(
+            infoHash: _hash,
+            percentDone: 0.5,
+          ),
+        ],
+      ),
+      clock: () => DateTime.utc(2026, 10, 14),
+      owner: 'missing-destination',
+    );
+    await monitor.start();
+    expect(backend.observations.single.foundInSnapshot, isNull);
+    expect(backend.observations.single.percentDone, isNull);
+    expect(backend.observations.single.errorClass, 'destination_unverified');
+    await monitor.stopForExit();
+    monitor.dispose();
+  });
+
+  test(
+    'partial snapshot still reports unverified destination for a same hash',
+    () async {
+      final monitor = Cloud115BtMonitor(
+        backend: backend,
+        ledgerFactory: () async => ledger,
+        sources: () => [source],
+        sessionReady: (_) => true,
+        readSnapshot: (_) async => const cloud115.Cloud115BtTaskSnapshot(
+          accountId: '12345',
+          state: 'partial',
+          complete: false,
+          pagesRead: 1,
+          errorClass: 'query_budget_exhausted',
+          message: '',
+          tasks: [
+            cloud115.Cloud115BtTaskSnapshotItem(
+              infoHash: _hash,
+              targetFolderId: '43',
+            ),
+          ],
+        ),
+        clock: () => DateTime.utc(2026, 10, 14),
+        owner: 'partial-destination',
+      );
+      await monitor.start();
+      expect(backend.observations.single.foundInSnapshot, isNull);
+      expect(backend.observations.single.errorClass, 'destination_unverified');
+      await monitor.stopForExit();
+      monitor.dispose();
+    },
+  );
+
+  test('same-hash task in another destination stays unknown', () async {
+    final monitor = Cloud115BtMonitor(
+      backend: backend,
+      ledgerFactory: () async => ledger,
+      sources: () => [source],
+      sessionReady: (_) => true,
+      readSnapshot: (_) async => const cloud115.Cloud115BtTaskSnapshot(
+        accountId: '12345',
+        state: 'ok',
+        complete: true,
+        pagesRead: 1,
+        message: '',
+        tasks: [
+          cloud115.Cloud115BtTaskSnapshotItem(
+            infoHash: _hash,
+            targetFolderId: '43',
+            percentDone: 0.5,
+          ),
+        ],
+      ),
+      clock: () => DateTime.utc(2026, 10, 14),
+      owner: 'different-destination',
+    );
+    await monitor.start();
+    expect(backend.observations.single.foundInSnapshot, isNull);
+    expect(backend.observations.single.percentDone, isNull);
+    expect(backend.observations.single.errorClass, 'destination_unverified');
+    await monitor.stopForExit();
+    monitor.dispose();
+  });
+
+  test(
+    'same-hash entries preserve matching destination regardless of order',
+    () async {
+      final monitor = Cloud115BtMonitor(
+        backend: backend,
+        ledgerFactory: () async => ledger,
+        sources: () => [source],
+        sessionReady: (_) => true,
+        readSnapshot: (_) async => const cloud115.Cloud115BtTaskSnapshot(
+          accountId: '12345',
+          state: 'ok',
+          complete: true,
+          pagesRead: 1,
+          message: '',
+          tasks: [
+            cloud115.Cloud115BtTaskSnapshotItem(
+              infoHash: _hash,
+              targetFolderId: '42',
+              percentDone: 0.3,
+            ),
+            cloud115.Cloud115BtTaskSnapshotItem(
+              infoHash: _hash,
+              targetFolderId: '43',
+              percentDone: 0.9,
+            ),
+          ],
+        ),
+        clock: () => DateTime.utc(2026, 10, 14),
+        owner: 'multiple-destinations',
+      );
+      await monitor.start();
+      expect(backend.observations.single.foundInSnapshot, isTrue);
+      expect(backend.observations.single.percentDone, 0.3);
       await monitor.stopForExit();
       monitor.dispose();
     },

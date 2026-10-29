@@ -806,3 +806,24 @@ The first master CI exposed 10 pre-existing Color channel deprecation infos that
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: EH 115、Android 每日工作流与平板模式完成验收
+
+**Date**: 2026-10-29
+**Task**: EH 115、Android 每日工作流与平板模式完成验收
+**Branch**: `local-ai/cover-quark-debug`
+
+### Summary
+
+完成 EH 到 115 BT 云下载状态与指定目录工作流、Android 每日后台工作流及独立平板模式；用户确认验收成功。0.6.7+104604 已安装到手机和 MuMuPlayer 15，MuMu 平板风格重启后保持。提交 d6596f0 并归档 Trellis 任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d6596f0` | (see git log) |
+
+### Status
+
+[OK] **Completed**

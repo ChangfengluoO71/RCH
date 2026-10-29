@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/10-28-eh-115-android-tablet-plan/design.md","reason":"Approved architecture and cross-layer contracts"}
+{"file":".trellis/tasks/10-28-eh-115-android-tablet-plan/implement.md","reason":"Implementation scope, ordering and verification"}
+{"file":".trellis/spec/backend/115-web-source.md","reason":"115 Cookie session and request constraints"}
+{"file":".trellis/spec/backend/background-work-coordination.md","reason":"Background coordination and concurrency"}
+{"file":".trellis/spec/frontend/platform-materials.md","reason":"Cross-platform material behavior"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer state and persistence contracts"}

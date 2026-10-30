@@ -3,19 +3,19 @@ import 'dart:io';
 
 import 'package:app/src/rust/api/library.dart' as frb;
 import 'package:app/src/rust/api/source.dart';
-import 'package:app/src/rust/api/book.dart';
 import 'package:app/src/rust/api/remote_cover.dart' as rust_cover;
 import 'package:app/repository/tag_repository.dart';
-import 'package:app/store/baidu_session.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
-import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/profile_timing.dart';
-import 'package:app/store/quark_session.dart';
 import 'package:app/store/random_read_selector.dart';
+import 'package:app/store/remote_listing.dart';
+import 'package:app/store/smb_session.dart';
+import 'package:app/store/smb_source_config.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/store/storage_access.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/store/update_manager.dart';
@@ -40,6 +40,7 @@ import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/ui/source_browser.dart';
 import 'package:app/ui/source_tree.dart';
 import 'package:app/ui/sync_panel.dart';
+import 'package:app/ui/sftp_host_key_dialog.dart';
 import 'package:app/ui/scrape_panel.dart';
 import 'package:app/ui/update_panel.dart';
 import 'package:file_selector/file_selector.dart';
@@ -102,6 +103,7 @@ class _HomePageState extends State<HomePage> {
       LibraryStore.instance,
       TagRepository.instance,
     ]);
+    LibraryStore.instance.addListener(_onLayoutSettingsChanged);
     LibraryStore.instance.load();
     _scheduleUpdateCheck();
   }
@@ -136,29 +138,25 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  bool _portraitLocked = false;
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _syncOrientation();
   }
 
-  /// 手机（紧凑布局）锁定竖屏；平板（桌面布局）允许旋转，随布局切换自动调整。
+  void _onLayoutSettingsChanged() {
+    if (mounted) _syncOrientation();
+  }
+
+  /// Rotation follows the selected device experience, not split-screen width.
   void _syncOrientation() {
     if (defaultTargetPlatform != TargetPlatform.android) return;
-    final compact = isCompact(context);
-    if (compact && !_portraitLocked) {
-      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-      _portraitLocked = true;
-    } else if (!compact && _portraitLocked) {
-      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-      _portraitLocked = false;
-    }
+    appOrientationCoordinator.updateHome(resolveLayoutProfile(context));
   }
 
   @override
   void dispose() {
+    LibraryStore.instance.removeListener(_onLayoutSettingsChanged);
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -1230,6 +1228,12 @@ class _HomePageState extends State<HomePage> {
         secretCtrl = TextEditingController(text: src.clientSecret ?? ''),
         rootIdCtrl = TextEditingController(text: src.rootId ?? ''),
         cookieCtrl = TextEditingController(text: src.cookie ?? '');
+    final privateKeyCtrl = TextEditingController(text: src.privateKey ?? '');
+    final keyPassphraseCtrl = TextEditingController(
+      text: src.privateKeyPassphrase ?? '',
+    );
+    final hasPrivateKey = ValueNotifier<bool>(privateKeyCtrl.text.isNotEmpty);
+    final sftpAuthMethod = ValueNotifier<String>(src.effectiveSftpAuthMethod);
     showRchDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1245,11 +1249,121 @@ class _HomePageState extends State<HomePage> {
                 _fdPw('密码', passCtrl),
                 _fd('初始路径', pathCtrl),
               ] else if (src.isSftp) ...[
-                _fd('服务器地址', urlCtrl),
-                _fd('端口(默认22)', portCtrl),
-                _fd('用户名', userCtrl),
-                _fdPw('密码', passCtrl),
-                _fd('初始路径(默认/)', pathCtrl),
+                _fd('Server address', urlCtrl),
+                _fd('Port (default 22)', portCtrl),
+                _fd('Username', userCtrl),
+                ValueListenableBuilder<String>(
+                  valueListenable: sftpAuthMethod,
+                  builder: (context, method, _) =>
+                      DropdownButtonFormField<String>(
+                        initialValue: method,
+                        decoration: const InputDecoration(
+                          labelText: 'Authentication method',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'password',
+                            child: Text('Password'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'privateKey',
+                            child: Text('Private key'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          if (value == 'password') {
+                            privateKeyCtrl.clear();
+                            keyPassphraseCtrl.clear();
+                            hasPrivateKey.value = false;
+                          } else {
+                            passCtrl.clear();
+                          }
+                          sftpAuthMethod.value = value;
+                        },
+                      ),
+                ),
+                ValueListenableBuilder<String>(
+                  valueListenable: sftpAuthMethod,
+                  builder: (context, method, _) {
+                    if (method == 'password') {
+                      return _fdPw('Password', passCtrl);
+                    }
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ValueListenableBuilder<bool>(
+                          valueListenable: hasPrivateKey,
+                          builder: (context, hasKey, _) => OutlinedButton.icon(
+                            onPressed: () async {
+                              try {
+                                final file = await openFile(
+                                  acceptedTypeGroups: const [
+                                    XTypeGroup(
+                                      label: 'OpenSSH private key',
+                                      extensions: ['key', 'pem'],
+                                    ),
+                                  ],
+                                );
+                                if (file == null || !ctx.mounted) return;
+                                final value = await file.readAsString();
+                                if (!ctx.mounted) return;
+                                if (value.trim().isEmpty) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Private key file is empty',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                privateKeyCtrl.text = value;
+                                hasPrivateKey.value = true;
+                              } catch (error) {
+                                if (ctx.mounted) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Could not read private key: $error',
+                                      ),
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.key),
+                            label: Text(
+                              hasKey
+                                  ? 'Private key imported'
+                                  : 'Import OpenSSH private key',
+                            ),
+                          ),
+                        ),
+                        ValueListenableBuilder<bool>(
+                          valueListenable: hasPrivateKey,
+                          builder: (context, hasKey, _) => hasKey
+                              ? TextButton.icon(
+                                  onPressed: () {
+                                    privateKeyCtrl.clear();
+                                    hasPrivateKey.value = false;
+                                  },
+                                  icon: const Icon(Icons.delete_outline),
+                                  label: const Text('Remove private key'),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                        _fdPw(
+                          'Private key passphrase (optional)',
+                          keyPassphraseCtrl,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                _fd('Initial path (default /)', pathCtrl),
               ] else if (src.isBaidu) ...[
                 _fd('根目录(默认/)', pathCtrl),
                 _fdPw('refresh_token', tokenCtrl),
@@ -1345,9 +1459,13 @@ class _HomePageState extends State<HomePage> {
                   icon: const Icon(Icons.folder_open, size: 18),
                   label: const Text('选择文件夹（自动填根文件夹 ID）'),
                 ),
-              ] else if (src.isSmb)
-                _fd('共享目录路径(UNC)', pathCtrl)
-              else
+              ] else if (src.isSmb) ...[
+                _fd('服务器地址', urlCtrl),
+                _fd('SMB端口(默认445)', portCtrl),
+                _fd('共享名/初始目录', pathCtrl),
+                _fd('用户名（可选）', userCtrl),
+                _fdPw('密码（可选）', passCtrl),
+              ] else
                 _fd('目录路径', pathCtrl),
               _fd('备注', noteCtrl),
             ],
@@ -1360,20 +1478,156 @@ class _HomePageState extends State<HomePage> {
           ),
           FilledButton(
             onPressed: () async {
-              final port = src.isSftp
+              var port = src.isSftp || src.isSmb
                   ? int.tryParse(portCtrl.text.trim())
                   : null;
+              var updatedUrl = urlCtrl.text.trim();
+              var updatedPath = pathCtrl.text.trim();
+              if (src.isSmb) {
+                final smbPort = portCtrl.text.trim().isEmpty ? 445 : port;
+                if (smbPort == null || smbPort < 1 || smbPort > 65535) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('SMB 端口必须是 1 到 65535 之间的数字')),
+                  );
+                  return;
+                }
+                late final SmbSourceConfig config;
+                if (updatedPath.startsWith(r'\\')) {
+                  final legacy = SmbSourceConfig.parseLegacyUnc(updatedPath);
+                  if (updatedUrl.isNotEmpty &&
+                      updatedUrl.toLowerCase() != legacy.server.toLowerCase()) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('服务器地址与 UNC 路径中的服务器不一致')),
+                    );
+                    return;
+                  }
+                  config = SmbSourceConfig(
+                    server: legacy.server,
+                    port: smbPort,
+                    share: legacy.share,
+                    rootPath: legacy.rootPath,
+                  );
+                } else {
+                  config = SmbSourceConfig.fromSource(
+                    BookSource(
+                      id: src.id,
+                      type: 'smb',
+                      name: nameCtrl.text.trim(),
+                      url: updatedUrl,
+                      port: smbPort,
+                      path: updatedPath,
+                    ),
+                  );
+                }
+                updatedUrl = config.server;
+                updatedPath = config.canonicalPath;
+                port = config.port;
+                await verifySmbSource(
+                  BookSource(
+                    id: src.id,
+                    type: 'smb',
+                    name: nameCtrl.text.trim(),
+                    url: updatedUrl,
+                    port: port,
+                    path: updatedPath,
+                    username: userCtrl.text.trim().isEmpty
+                        ? null
+                        : userCtrl.text.trim(),
+                    password: passCtrl.text.isEmpty ? null : passCtrl.text,
+                  ),
+                );
+              }
+              String? verifiedSftpFingerprint;
+              String? verifiedSftpEndpoint;
+              if (src.isSftp) {
+                final method = sftpAuthMethod.value;
+                if (userCtrl.text.trim().isEmpty ||
+                    (method == 'password' && passCtrl.text.isEmpty) ||
+                    (method == 'privateKey' && privateKeyCtrl.text.isEmpty)) {
+                  if (!ctx.mounted) return;
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Enter a username and credentials for the selected SFTP method',
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                try {
+                  final draft = BookSource(
+                    id: src.id,
+                    type: 'sftp',
+                    name: nameCtrl.text.trim(),
+                    url: updatedUrl,
+                    port: port ?? 22,
+                  );
+                  final (host, sftpPort) = sftpHostPortOf(draft);
+                  final actualEndpoint = sftpEndpointKey(host, sftpPort);
+                  final actualFingerprint = await sftpProbeHostKey(
+                    host: host,
+                    port: sftpPort,
+                  );
+                  final expectedFingerprint = src.hostKeyFingerprint ?? '';
+                  final expectedEndpoint = src.hostKeyEndpoint ?? '';
+                  if (actualFingerprint != expectedFingerprint.trim() ||
+                      actualEndpoint != expectedEndpoint.trim()) {
+                    if (!ctx.mounted) return;
+                    final trusted = await confirmSftpHostKeyTrust(
+                      ctx,
+                      host: host,
+                      port: sftpPort,
+                      expectedFingerprint: expectedFingerprint,
+                      actualFingerprint: actualFingerprint,
+                      expectedEndpoint: expectedEndpoint,
+                      actualEndpoint: actualEndpoint,
+                    );
+                    if (!trusted || !ctx.mounted) return;
+                  }
+                  final session = await sftpConnect(
+                    host: host,
+                    port: sftpPort,
+                    username: userCtrl.text.trim(),
+                    authMethod: method,
+                    password: method == 'password' ? passCtrl.text : '',
+                    privateKey: method == 'privateKey'
+                        ? privateKeyCtrl.text
+                        : '',
+                    keyPassphrase: method == 'privateKey'
+                        ? keyPassphraseCtrl.text
+                        : '',
+                    expectedFingerprint: actualFingerprint,
+                  );
+                  verifiedSftpFingerprint = session.hostFingerprint;
+                  verifiedSftpEndpoint = actualEndpoint;
+                  port = sftpPort;
+                  try {
+                    await sftpDisconnect(id: session.id);
+                  } catch (_) {}
+                } catch (error) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      SnackBar(
+                        content: Text('SFTP verification failed: $error'),
+                      ),
+                    );
+                  }
+                  return;
+                }
+              }
               final isRootIdSource = src.is115 || src.isQuark;
               final root = rootIdCtrl.text.trim();
               final normalizedRoot = root.isEmpty ? '0' : root;
               await LibraryStore.instance.updateSource(
                 src.id,
                 name: nameCtrl.text.trim(),
-                url: urlCtrl.text.trim(),
+                url: updatedUrl,
                 username: userCtrl.text.trim(),
-                password: passCtrl.text.trim(),
+                password: src.isSftp && sftpAuthMethod.value == 'privateKey'
+                    ? ''
+                    : passCtrl.text,
                 port: port,
-                path: isRootIdSource ? normalizedRoot : pathCtrl.text.trim(),
+                path: isRootIdSource ? normalizedRoot : updatedPath,
                 refreshToken: tokenCtrl.text.trim().isEmpty
                     ? null
                     : tokenCtrl.text.trim(),
@@ -1389,19 +1643,44 @@ class _HomePageState extends State<HomePage> {
                 cookie: cookieCtrl.text.trim().isEmpty
                     ? null
                     : cookieCtrl.text.trim(),
+                hostKeyFingerprint: verifiedSftpFingerprint,
+                hostKeyEndpoint: verifiedSftpEndpoint,
+                sftpAuthMethod: src.isSftp ? sftpAuthMethod.value : null,
+                privateKey: src.isSftp && sftpAuthMethod.value == 'privateKey'
+                    ? privateKeyCtrl.text
+                    : '',
+                privateKeyPassphrase:
+                    src.isSftp && sftpAuthMethod.value == 'privateKey'
+                    ? keyPassphraseCtrl.text
+                    : '',
                 note: noteCtrl.text.trim(),
               );
               if (!ctx.mounted) return;
-              if (src.isQuark) clearQuarkSession(src.id);
-              if (src.is115) clearCloud115Session(src.id);
-              if (src.isBaidu) clearBaiduSession(src.id);
+              clearRemoteSessionCache(src);
               Navigator.of(ctx).pop();
             },
             child: const Text('保存'),
           ),
         ],
       ),
-    );
+    ).whenComplete(() {
+      nameCtrl.dispose();
+      urlCtrl.dispose();
+      userCtrl.dispose();
+      passCtrl.dispose();
+      portCtrl.dispose();
+      pathCtrl.dispose();
+      noteCtrl.dispose();
+      tokenCtrl.dispose();
+      appKeyCtrl.dispose();
+      secretCtrl.dispose();
+      rootIdCtrl.dispose();
+      cookieCtrl.dispose();
+      privateKeyCtrl.dispose();
+      keyPassphraseCtrl.dispose();
+      hasPrivateKey.dispose();
+      sftpAuthMethod.dispose();
+    });
   }
 
   Widget _fd(String label, TextEditingController c) => Padding(
@@ -1589,6 +1868,8 @@ class _HomePageState extends State<HomePage> {
   String _sourceTypeLabel(BookSource src) => switch (src.type) {
     'webdav' => 'WebDAV',
     'sftp' => 'SFTP',
+    'ftp' => 'FTP',
+    's3' => 'S3 对象存储',
     'smb' => 'SMB 共享',
     'baidu' => '百度网盘',
     '115' => '115 网盘',
@@ -2059,7 +2340,7 @@ class _HomePageState extends State<HomePage> {
       ),
       const SizedBox(height: 4),
       Text(
-        '横屏建议"桌面风格"（与 PC 相同，侧栏导航）；竖屏建议"手机风格"（底部导航）。手机（宽度 <600dp）始终为手机风格。',
+        '平板风格适合触屏大屏并允许旋转；分屏变窄时自动使用紧凑导航，仍保留平板模式。',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       const SizedBox(height: 10),
@@ -2069,6 +2350,7 @@ class _HomePageState extends State<HomePage> {
           segments: const [
             ButtonSegment(value: 'auto', label: Text('自动')),
             ButtonSegment(value: 'desktop', label: Text('桌面风格')),
+            ButtonSegment(value: 'tablet', label: Text('平板风格')),
             ButtonSegment(value: 'mobile', label: Text('手机风格')),
           ],
           selected: {s.tabletLayout},
@@ -2769,6 +3051,55 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ]),
+        if (isAndroidPlatform && resolveLayoutProfile(context).tablet)
+          section('平板弹窗材质', [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('标准'),
+                  selected: s.tabletOverlayMaterial == 'standard',
+                  onSelected: (_) {
+                    s.tabletOverlayMaterial = 'standard';
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+                ChoiceChip(
+                  avatar: const Icon(Icons.blur_on_outlined, size: 18),
+                  label: const Text('磨砂'),
+                  selected: s.tabletOverlayMaterial == 'frosted',
+                  onSelected: (_) {
+                    s.tabletOverlayMaterial = 'frosted';
+                    LibraryStore.instance.updateSettings(s);
+                  },
+                ),
+                OutlinedButton(
+                  onPressed: () => showRchDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('弹窗材质预览'),
+                      content: const Text('预览应用弹窗的背景和文字。'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          child: const Text('关闭'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  child: const Text('预览效果'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '磨砂仅作用于应用弹窗。高对比度或减少动画时使用标准材质；如果设备卡顿，可选择标准。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ]),
       ],
     );
   }
@@ -3031,6 +3362,7 @@ class AddSourceDialog extends StatefulWidget {
 
 class _AddDialogState extends State<AddSourceDialog> {
   String _type = 'webdav';
+  String _sftpAuthMethod = 'password';
   bool _showAdv = false;
   final _scrollCtrl = ScrollController();
   final _a = TextEditingController(),
@@ -3044,7 +3376,11 @@ class _AddDialogState extends State<AddSourceDialog> {
       _secret = TextEditingController(),
       _rootId = TextEditingController(),
       _cookie = TextEditingController(),
-      _cookie115 = TextEditingController();
+      _cookie115 = TextEditingController(),
+      _privateKey = TextEditingController(),
+      _keyPassphrase = TextEditingController(),
+      _s3Bucket = TextEditingController(),
+      _s3Region = TextEditingController();
 
   @override
   void initState() {
@@ -3063,7 +3399,51 @@ class _AddDialogState extends State<AddSourceDialog> {
   void dispose() {
     _scrollCtrl.dispose();
     _cookie115.dispose();
+    _privateKey.dispose();
+    _keyPassphrase.dispose();
+    _s3Bucket.dispose();
+    _s3Region.dispose();
     super.dispose();
+  }
+
+  Future<void> _importSftpPrivateKey() async {
+    try {
+      final file = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'OpenSSH private key', extensions: ['key', 'pem']),
+        ],
+      );
+      if (file == null || !mounted) return;
+      final value = await file.readAsString();
+      if (value.trim().isEmpty) {
+        _setError('私钥文件为空');
+        return;
+      }
+      setState(() {
+        _privateKey.text = value;
+        _e = null;
+      });
+    } catch (error) {
+      if (mounted) _setError('读取私钥失败：$error');
+    }
+  }
+
+  Future<void> _pickLocalDirectory() async {
+    if (isAndroidPlatform && !await ensureAllFilesAccess(context)) return;
+    if (!mounted) return;
+    try {
+      final selected = await getDirectoryPath(
+        initialDirectory: _b.text.trim().isEmpty ? null : _b.text.trim(),
+        confirmButtonText: '选择此目录',
+      );
+      if (selected == null || !mounted) return;
+      setState(() {
+        _b.text = selected.trim();
+        _e = null;
+      });
+    } catch (error) {
+      if (mounted) _setError('选择目录失败：$error');
+    }
   }
 
   /// 设置表单错误并自动滚动到可见处：连接失败等反馈必须立即可见，
@@ -3139,40 +3519,12 @@ class _AddDialogState extends State<AddSourceDialog> {
         _setError('请填写服务器地址');
         return;
       }
-      setState(() {
-        _t = true;
-        _e = null;
-      });
-      try {
-        final (host, port) = _sftpHostPort();
-        final s = await sftpConnect(
-          host: host,
-          port: port,
-          username: _p.text.trim(),
-          password: _s.text,
+      if (_p.text.trim().isEmpty ||
+          (_sftpAuthMethod == 'password' && _s.text.isEmpty) ||
+          (_sftpAuthMethod == 'privateKey' && _privateKey.text.isEmpty)) {
+        _setError(
+          'Enter a username and credentials for the selected SFTP method',
         );
-        await LibraryStore.instance.addSource(
-          BookSource(
-            id: 'sftp_${DateTime.now().millisecondsSinceEpoch}',
-            type: 'sftp',
-            name: n.isEmpty ? _u.text.trim() : n,
-            path: _b.text.trim().isEmpty ? s.root : _b.text.trim(),
-            url: _u.text.trim(),
-            username: _p.text.trim(),
-            password: _s.text,
-            port: port,
-          ),
-        );
-        if (mounted) Navigator.of(context).pop();
-      } catch (e) {
-        _setError('连接失败:$e');
-      } finally {
-        if (mounted) setState(() => _t = false);
-      }
-    } else if (_type == 'smb') {
-      final path = _b.text.trim();
-      if (path.isEmpty || !path.startsWith(r'\\')) {
-        _setError('请填写 UNC 共享路径（以 \\ 开头，如 \\\\192.168.1.10\\comic）');
         return;
       }
       setState(() {
@@ -3180,18 +3532,215 @@ class _AddDialogState extends State<AddSourceDialog> {
         _e = null;
       });
       try {
-        await listLocalDir(path: path); // 连通性测试（无权限/路径不存在会抛错）
-        await LibraryStore.instance.addSource(
-          BookSource(
-            id: 'smb_${DateTime.now().millisecondsSinceEpoch}',
-            type: 'smb',
-            name: n.isEmpty ? path : n,
-            path: path,
-          ),
+        final (host, port) = _sftpHostPort();
+        final actualFingerprint = await sftpProbeHostKey(
+          host: host,
+          port: port,
         );
+        if (!mounted) return;
+        final trusted = await confirmSftpHostKeyTrust(
+          context,
+          host: host,
+          port: port,
+          expectedFingerprint: '',
+          actualFingerprint: actualFingerprint,
+          expectedEndpoint: '',
+          actualEndpoint: sftpEndpointKey(host, port),
+        );
+        if (!trusted || !mounted) return;
+        final s = await sftpConnect(
+          host: host,
+          port: port,
+          username: _p.text.trim(),
+          authMethod: _sftpAuthMethod,
+          password: _sftpAuthMethod == 'password' ? _s.text : '',
+          privateKey: _sftpAuthMethod == 'privateKey' ? _privateKey.text : '',
+          keyPassphrase: _sftpAuthMethod == 'privateKey'
+              ? _keyPassphrase.text
+              : '',
+          expectedFingerprint: actualFingerprint,
+        );
+        try {
+          await LibraryStore.instance.addSource(
+            BookSource(
+              id: 'sftp_${DateTime.now().millisecondsSinceEpoch}',
+              type: 'sftp',
+              name: n.isEmpty ? _u.text.trim() : n,
+              path: _b.text.trim().isEmpty ? s.root : _b.text.trim(),
+              url: _u.text.trim(),
+              username: _p.text.trim(),
+              password: _sftpAuthMethod == 'password' ? _s.text : null,
+              port: port,
+              hostKeyFingerprint: s.hostFingerprint,
+              hostKeyEndpoint: sftpEndpointKey(host, port),
+              sftpAuthMethod: _sftpAuthMethod,
+              privateKey:
+                  _sftpAuthMethod != 'privateKey' || _privateKey.text.isEmpty
+                  ? null
+                  : _privateKey.text,
+              privateKeyPassphrase:
+                  _sftpAuthMethod != 'privateKey' || _keyPassphrase.text.isEmpty
+                  ? null
+                  : _keyPassphrase.text,
+            ),
+          );
+        } finally {
+          await sftpDisconnect(id: s.id);
+        }
         if (mounted) Navigator.of(context).pop();
       } catch (e) {
-        _setError('无法访问该共享目录:$e');
+        _setError('连接失败:$e');
+      } finally {
+        if (mounted) setState(() => _t = false);
+      }
+    } else if (_type == 'ftp') {
+      if (_u.text.trim().isEmpty) {
+        _setError('请填写服务器地址');
+        return;
+      }
+      if (_p.text.trim().isEmpty || _s.text.isEmpty) {
+        _setError('请填写 FTP 用户名和密码');
+        return;
+      }
+      setState(() {
+        _t = true;
+        _e = null;
+      });
+      try {
+        final (host, port) = _ftpHostPort();
+        final s = await ftpConnect(
+          host: host,
+          port: port,
+          username: _p.text.trim(),
+          password: _s.text,
+          rootPath: _b.text.trim().isEmpty ? '/' : _b.text.trim(),
+        );
+        try {
+          await LibraryStore.instance.addSource(
+            BookSource(
+              id: 'ftp_${DateTime.now().millisecondsSinceEpoch}',
+              type: 'ftp',
+              name: n.isEmpty ? _u.text.trim() : n,
+              path: s.root,
+              url: _u.text.trim(),
+              username: _p.text.trim(),
+              password: _s.text,
+              port: port,
+            ),
+          );
+        } finally {
+          await ftpDisconnect(id: s.id);
+        }
+        if (mounted) Navigator.of(context).pop();
+      } catch (e) {
+        _setError('连接失败:$e');
+      } finally {
+        if (mounted) setState(() => _t = false);
+      }
+    } else if (_type == 's3') {
+      if (_u.text.trim().isEmpty) {
+        _setError('请填写 S3 Endpoint');
+        return;
+      }
+      if (_s3Bucket.text.trim().isEmpty ||
+          _p.text.trim().isEmpty ||
+          _s.text.isEmpty) {
+        _setError('请填写 S3 Bucket、Access Key ID 和 Secret Access Key');
+        return;
+      }
+      setState(() {
+        _t = true;
+        _e = null;
+      });
+      try {
+        final region = _s3Region.text.trim().isEmpty
+            ? 'us-east-1'
+            : _s3Region.text.trim();
+        final s = await s3Connect(
+          endpoint: _u.text.trim(),
+          bucket: _s3Bucket.text.trim(),
+          accessKey: _p.text.trim(),
+          secretKey: _s.text,
+          region: region,
+          rootPath: _b.text.trim().isEmpty ? '/' : _b.text.trim(),
+        );
+        try {
+          await LibraryStore.instance.addSource(
+            BookSource(
+              id: 's3_${DateTime.now().millisecondsSinceEpoch}',
+              type: 's3',
+              name: n.isEmpty ? _s3Bucket.text.trim() : n,
+              path: s.root,
+              url: _u.text.trim(),
+              username: _p.text.trim(),
+              password: _s.text,
+              rootId: _s3Bucket.text.trim(),
+              s3Region: region,
+            ),
+          );
+        } finally {
+          await s3Disconnect(id: s.id);
+        }
+        if (mounted) Navigator.of(context).pop();
+      } catch (e) {
+        _setError('连接失败:$e');
+      } finally {
+        if (mounted) setState(() => _t = false);
+      }
+    } else if (_type == 'smb') {
+      setState(() {
+        _t = true;
+        _e = null;
+      });
+      try {
+        final inputPath = _b.text.trim();
+        final inputServer = _u.text.trim();
+        final parsedPort = _port.text.trim().isEmpty
+            ? 445
+            : int.tryParse(_port.text.trim());
+        if (parsedPort == null || parsedPort < 1 || parsedPort > 65535) {
+          throw const FormatException('SMB 端口必须是 1 到 65535 之间的数字');
+        }
+        late final SmbSourceConfig config;
+        if (inputPath.startsWith(r'\\')) {
+          final legacy = SmbSourceConfig.parseLegacyUnc(inputPath);
+          if (inputServer.isNotEmpty &&
+              inputServer.toLowerCase() != legacy.server.toLowerCase()) {
+            throw const FormatException('服务器地址与 UNC 路径中的服务器不一致');
+          }
+          config = SmbSourceConfig(
+            server: legacy.server,
+            port: parsedPort,
+            share: legacy.share,
+            rootPath: legacy.rootPath,
+          );
+        } else {
+          config = SmbSourceConfig.fromSource(
+            BookSource(
+              id: 'smb_draft',
+              type: 'smb',
+              name: n,
+              url: inputServer,
+              port: parsedPort,
+              path: inputPath,
+            ),
+          );
+        }
+        final source = BookSource(
+          id: 'smb_${DateTime.now().millisecondsSinceEpoch}',
+          type: 'smb',
+          name: n.isEmpty ? config.canonicalPath : n,
+          path: config.canonicalPath,
+          url: config.server,
+          port: config.port,
+          username: _p.text.trim().isEmpty ? null : _p.text.trim(),
+          password: _s.text.isEmpty ? null : _s.text,
+        );
+        await verifySmbSource(source);
+        await LibraryStore.instance.addSource(source);
+        if (mounted) Navigator.of(context).pop();
+      } catch (e) {
+        _setError('SMB 连接失败:$e');
       } finally {
         if (mounted) setState(() => _t = false);
       }
@@ -3561,13 +4110,44 @@ class _AddDialogState extends State<AddSourceDialog> {
 
   /// 解析 SFTP 服务器地址：`host` / `host:port`，端口缺省取端口字段或 22。
   (String, int) _sftpHostPort() {
-    final addr = _u.text.trim();
-    if (addr.contains(':')) {
-      final idx = addr.lastIndexOf(':');
-      final p = int.tryParse(addr.substring(idx + 1));
-      if (p != null && p > 0) return (addr.substring(0, idx), p);
+    final portText = _port.text.trim();
+    final configuredPort = int.tryParse(portText);
+    if (portText.isNotEmpty &&
+        (configuredPort == null ||
+            configuredPort < 1 ||
+            configuredPort > 65535)) {
+      throw const FormatException('SFTP port must be between 1 and 65535');
     }
-    return (addr, int.tryParse(_port.text.trim()) ?? 22);
+    return sftpHostPortOf(
+      BookSource(
+        id: 'sftp_draft',
+        type: 'sftp',
+        name: 'SFTP',
+        url: _u.text.trim(),
+        port: configuredPort ?? 22,
+      ),
+    );
+  }
+
+  /// 解析 FTP 服务器地址：`host` / `host:port`，端口缺省取端口字段或 21。
+  (String, int) _ftpHostPort() {
+    final portText = _port.text.trim();
+    final configuredPort = int.tryParse(portText);
+    if (portText.isNotEmpty &&
+        (configuredPort == null ||
+            configuredPort < 1 ||
+            configuredPort > 65535)) {
+      throw const FormatException('FTP port must be between 1 and 65535');
+    }
+    return sftpHostPortOf(
+      BookSource(
+        id: 'ftp_draft',
+        type: 'ftp',
+        name: 'FTP',
+        url: _u.text.trim(),
+        port: configuredPort ?? 21,
+      ),
+    );
   }
 
   @override
@@ -3606,6 +4186,16 @@ class _AddDialogState extends State<AddSourceDialog> {
                   leadingIcon: Icon(Icons.dns),
                 ),
                 DropdownMenuEntry(
+                  value: 'ftp',
+                  label: 'FTP',
+                  leadingIcon: Icon(Icons.storage),
+                ),
+                DropdownMenuEntry(
+                  value: 's3',
+                  label: 'S3',
+                  leadingIcon: Icon(Icons.cloud_sync),
+                ),
+                DropdownMenuEntry(
                   value: 'baidu',
                   label: '百度网盘',
                   leadingIcon: Icon(Icons.cloud_queue),
@@ -3638,26 +4228,80 @@ class _AddDialogState extends State<AddSourceDialog> {
             ),
             const SizedBox(height: 10),
             if (_type == 'local')
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _b,
+                    decoration: const InputDecoration(
+                      labelText: '目录路径',
+                      hintText: r'F:\comic\漫畫',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _t ? null : _pickLocalDirectory,
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('选择文件夹'),
+                  ),
+                ],
+              )
+            else if (_type == 'smb') ...[
               TextField(
-                controller: _b,
+                controller: _u,
                 decoration: const InputDecoration(
-                  labelText: '目录路径',
-                  hintText: r'F:\comic\漫畫',
+                  labelText: '服务器地址',
+                  hintText: '192.168.1.10 或 nas.local',
                   border: OutlineInputBorder(),
                   isDense: true,
                 ),
-              )
-            else if (_type == 'smb')
+              ),
+              const SizedBox(height: 10),
               TextField(
-                controller: _b,
+                controller: _port,
+                keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: '共享目录路径(UNC)',
-                  hintText: r'\\192.168.1.10\comic',
+                  labelText: 'SMB端口(默认445)',
                   border: OutlineInputBorder(),
                   isDense: true,
                 ),
-              )
-            else if (_type == 'webdav') ...[
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _b,
+                decoration: const InputDecoration(
+                  labelText: '共享名/初始目录',
+                  hintText: 'comic/漫画（也可粘贴旧 UNC 路径）',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _p,
+                decoration: const InputDecoration(
+                  labelText: '用户名（可选）',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _s,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: '密码（可选）',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text('用户名和密码均留空时会尝试 Guest 访问。'),
+              ),
+            ] else if (_type == 'webdav') ...[
               TextField(
                 controller: _u,
                 decoration: const InputDecoration(
@@ -3725,11 +4369,178 @@ class _AddDialogState extends State<AddSourceDialog> {
                 ),
               ),
               const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _sftpAuthMethod,
+                decoration: const InputDecoration(
+                  labelText: 'Authentication method',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'password', child: Text('Password')),
+                  DropdownMenuItem(
+                    value: 'privateKey',
+                    child: Text('Private key'),
+                  ),
+                ],
+                onChanged: _t
+                    ? null
+                    : (value) {
+                        if (value == null) return;
+                        setState(() {
+                          _sftpAuthMethod = value;
+                          if (value == 'password') {
+                            _privateKey.clear();
+                            _keyPassphrase.clear();
+                          } else {
+                            _s.clear();
+                          }
+                        });
+                      },
+              ),
+              const SizedBox(height: 10),
+              if (_sftpAuthMethod == 'password')
+                TextField(
+                  controller: _s,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                )
+              else ...[
+                OutlinedButton.icon(
+                  onPressed: _t ? null : _importSftpPrivateKey,
+                  icon: const Icon(Icons.key),
+                  label: Text(
+                    _privateKey.text.isEmpty
+                        ? 'Import OpenSSH private key'
+                        : 'Private key imported',
+                  ),
+                ),
+                if (_privateKey.text.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: _t
+                        ? null
+                        : () => setState(() {
+                            _privateKey.clear();
+                            _keyPassphrase.clear();
+                          }),
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Remove private key'),
+                  ),
+                TextField(
+                  controller: _keyPassphrase,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Private key passphrase (optional)',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              TextField(
+                controller: _b,
+                decoration: const InputDecoration(
+                  labelText: '初始路径(可选,默认/)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ] else if (_type == 'ftp') ...[
+              TextField(
+                controller: _u,
+                decoration: const InputDecoration(
+                  labelText: '服务器地址',
+                  hintText: '192.168.1.10 或 nas:2121',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _port,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '端口(默认21)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _p,
+                decoration: const InputDecoration(
+                  labelText: '用户名',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
               TextField(
                 controller: _s,
                 obscureText: true,
                 decoration: const InputDecoration(
                   labelText: '密码',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _b,
+                decoration: const InputDecoration(
+                  labelText: '初始路径(可选,默认/)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ] else if (_type == 's3') ...[
+              TextField(
+                controller: _u,
+                decoration: const InputDecoration(
+                  labelText: 'Endpoint(含协议，如 http://127.0.0.1:5246)',
+                  hintText: 'https://s3.example.com',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _s3Bucket,
+                decoration: const InputDecoration(
+                  labelText: 'Bucket',
+                  hintText: '1',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _p,
+                decoration: const InputDecoration(
+                  labelText: 'Access Key ID',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _s,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Secret Access Key',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _s3Region,
+                decoration: const InputDecoration(
+                  labelText: 'Region(可选,默认 us-east-1)',
                   border: OutlineInputBorder(),
                   isDense: true,
                 ),

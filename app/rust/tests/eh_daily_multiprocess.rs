@@ -1,8 +1,8 @@
 #![cfg(windows)]
 
 use rust_lib_app::eh_subscription::{
-    claim_daily, recover_daily_run, try_acquire_collection_lock, update_daily_run, EhAutomationRun,
-    EhRules,
+    claim_daily, recover_daily_run, release_workflow_lease, try_acquire_collection_lock,
+    try_acquire_workflow_lease, update_daily_run, EhAutomationRun, EhRules,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -62,6 +62,48 @@ fn wait_for_gate(gate: &Path) {
 fn parse_rules(path: &Path) -> EhRules {
     EhRules::from_json(&std::fs::read_to_string(path).expect("read isolated config"))
         .expect("parse isolated config")
+}
+
+#[test]
+fn full_workflow_lease_survives_until_process_exit_and_blocks_recovery() {
+    if std::env::var("RCH_EH_DAILY_CHILD_MODE").as_deref() == Ok("workflow") {
+        let path = PathBuf::from(std::env::var_os("RCH_EH_DAILY_CONFIG").unwrap());
+        let ready = PathBuf::from(std::env::var_os("RCH_EH_DAILY_READY").unwrap());
+        let gate = PathBuf::from(std::env::var_os("RCH_EH_DAILY_GATE").unwrap());
+        let _lease = try_acquire_workflow_lease(&path).unwrap().unwrap();
+        assert!(claim_daily(&path, "2026-10-12").unwrap().0);
+        std::fs::write(&ready, b"held").unwrap();
+        wait_for_gate(&gate);
+        return;
+    }
+    let root = test_root("workflow-crash");
+    let path = config_path(&root);
+    let ready = root.join("held");
+    let gate = root.join("stop-child");
+    let mut child = spawn_test(
+        "full_workflow_lease_survives_until_process_exit_and_blocks_recovery",
+        "workflow",
+        &path,
+        &ready,
+        &gate,
+    );
+    wait_for_paths(&[&ready]);
+    assert!(try_acquire_workflow_lease(&path).unwrap().is_none());
+    let active = EhRules::from_json(&recover_daily_run(&path).unwrap()).unwrap();
+    assert_eq!(active.automation.last_auto_run.unwrap().status, "claimed");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let recovered = EhRules::from_json(&recover_daily_run(&path).unwrap()).unwrap();
+    assert_eq!(
+        recovered.automation.last_auto_run.unwrap().status,
+        "interrupted_unknown"
+    );
+    let lease = try_acquire_workflow_lease(&path).unwrap().unwrap();
+    release_workflow_lease(lease).unwrap();
+    std::fs::remove_file(root.join(".eh_subscription_rules.json.workflow.lock")).unwrap();
+    std::fs::remove_file(&ready).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_dir(&root).unwrap();
 }
 
 #[test]

@@ -3,6 +3,39 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'tablet layout and Android material keep legacy choices and normalize unknown values',
+    () {
+      final legacy = AppSettings.fromJson(const {
+        'tabletLayout': 'desktop',
+        'windowMaterial': 'mica',
+        'overlayMaterial': 'acrylic',
+      });
+      expect(legacy.tabletLayout, 'desktop');
+      expect(legacy.toJson()['tabletOverlayMaterial'], 'standard');
+      expect(legacy.windowMaterial, 'mica');
+      expect(legacy.overlayMaterial, 'acrylic');
+
+      final tablet = AppSettings.fromJson(const {
+        'tabletLayout': 'tablet',
+        'tabletOverlayMaterial': 'frosted',
+        'windowMaterial': 'mica',
+        'overlayMaterial': 'acrylic',
+      });
+      final reloaded = AppSettings.fromJson(tablet.toJson());
+      expect(reloaded.tabletLayout, 'tablet');
+      expect(reloaded.toJson()['tabletOverlayMaterial'], 'frosted');
+      expect(reloaded.windowMaterial, 'mica');
+      expect(reloaded.overlayMaterial, 'acrylic');
+
+      final unknown = AppSettings.fromJson(const {
+        'tabletLayout': 'unknown',
+        'tabletOverlayMaterial': 'unknown',
+      });
+      expect(unknown.tabletLayout, 'auto');
+      expect(unknown.toJson()['tabletOverlayMaterial'], 'standard');
+    },
+  );
   test('AppSettings.fromJson 兼容 keys 的 Map 形态', () {
     final s = AppSettings.fromJson(const {
       'keys': {
@@ -114,7 +147,10 @@ void main() {
       expect(s.renderWidth, RenderWidth.standard, reason: '默认必须与历史行为一致');
 
       s.renderWidth = RenderWidth.dataSaver;
-      expect(AppSettings.fromJson(s.toJson()).renderWidth, RenderWidth.dataSaver);
+      expect(
+        AppSettings.fromJson(s.toJson()).renderWidth,
+        RenderWidth.dataSaver,
+      );
 
       final json = s.toJson();
       json.remove('renderWidth');

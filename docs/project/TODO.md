@@ -1,7 +1,7 @@
 # TODO.md — 当前项目状态与后续工作
 
-> 更新日期：2026-10-05。此文件只保留当前状态、可执行待办和交接要点；逐轮实现证据留在 [LOG.md](LOG.md)，任务进度以各 Trellis `task.json` 为准。
-> 当前稳定发布：**v0.6.3**（`app/pubspec.yaml` 为 `0.6.3+100603`），已于 2026-10-05 发布到 GitHub，CI 与 Release 工作流均通过。
+> 更新日期：2026-10-30。逐轮实现证据留在 [LOG.md](LOG.md)，任务进度以各 Trellis `task.json` 为准；当前实现、自动化/设备/Provider 验收与 Release 的唯一状态入口为 [CURRENT_STATE.md](CURRENT_STATE.md)。
+> 当前候选：**v0.7.0**（源码 `app/pubspec.yaml` 为 `0.7.0+100700`），尚未打 tag 发布；当前稳定发布仍为 v0.6.7（2026-10-17）。
 
 ## 状态口径
 
@@ -57,7 +57,6 @@
 - [首次启动缓存引导](../../.trellis/tasks/08-01-first-run-cache-guide/task.json)
 - [详情页信息自定义](../../.trellis/tasks/08-01-detail-info-settings/task.json)
 - [详情页阅读统计](../../.trellis/tasks/08-01-detail-page-stats/task.json)
-- [退出行为](../../.trellis/tasks/08-01-exit-behavior/task.json)
 - [AVIF 支持](../../.trellis/tasks/08-02-avif-support/task.json)
 - [封面加载性能](../../.trellis/tasks/08-02-cover-loading-perf/task.json)
 
@@ -69,6 +68,28 @@
 - 架构审计建议：明确旧 `downloader` 模块和书源客户端的职责；后续触及大模块时按职责拆分；先量测 SQLite 全局锁等待，再决定是否改变连接模型。当前不安排多 crate 重构。
 
 ## Done（已交付）
+
+### v0.7.0（2026-10-30，待发布）
+
+- 新增 SMB、FTP、S3 书源，SFTP 补主机密钥指纹确认、固定与私钥认证。
+- 远程书源「自动」改为流式优先，失败才回退整本下载。
+- 新增原生凭据保险箱；备份默认不包含明文凭据。
+- 修复 S3 特殊文件名读取、封面读取预算、S3 endpoint/桶根路径与「远端书源 0 本漫画」统计。
+- Android 增加可选的每日后台检查；平板/横屏与 115 工作流继续增强。
+- 本地 OpenList 4.2.4 只读验收：五协议列目录 240 本、打开多本漫画、S3 封面 240/240；`flutter analyze`、`flutter test`、Rust 库测试与远端扫描契约测试通过。
+
+### v0.6.7（2026-10-17）
+
+- EH 每日工作流支持 115 云下载或仅保存本地 Torrent；无 115 书源时可选择添加书源或只保存 Torrent。
+- 移除自动完整工作流的代码级 P0 门禁；Daily 仍默认关闭。历史 P0 研究记录保留。
+- 115 批处理按种子记录上传、BT 提交和未知状态；UNKNOWN 不盲目重试或误删本地 Torrent。
+- 书源详情与卡片完成漫画数和状态展示调整。
+
+细节见 [v0.6.7 GitHub Release](https://github.com/ChangfengluoO71/RCH/releases/tag/v0.6.7) 和 [发布说明](../releases/release_notes_v0.6.7.md)。
+
+### v0.6.6（2026-10-16）
+
+- 活动长任务退出确认与可恢复 Cloud115 监控提示已完成；Trellis 任务于 2026-10-16 归档，原始验收边界保留在[归档任务](../../.trellis/tasks/archive/2026-10/08-01-exit-behavior/task.json)。
 
 ### v0.6.3（2026-10-05）
 

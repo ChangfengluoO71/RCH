@@ -743,7 +743,16 @@ fn run_remote_cover_worker(source_id: &str, session: u64) {
         let result = crate::source::gate::with_priority(RequestPriority::Cover, || {
             cover_source_info(source_id, &logical_path, cover_page)
                 .ok_or(RemoteScanError::NotFound)
-                .and_then(|info| {
+                .and_then(|mut info| {
+                    // 索引 size 可能因早期"浏览即索引"漏写而为空；这里用远端
+                    // stat 补一次，避免封面永久被判 cover_size_missing。
+                    if info.size.filter(|value| *value > 0).is_none() {
+                        if let Ok(Some(size)) = adapter.file_size(&logical_path) {
+                            if size > 0 {
+                                info.size = Some(size);
+                            }
+                        }
+                    }
                     fetch_remote_cover_image_with_dimensions(
                         Arc::clone(&adapter),
                         &logical_path,
@@ -1378,17 +1387,13 @@ fn is_deliberate_whole_file(offset: u64, requested: usize, length: u64) -> bool 
     offset == 0 && requested as u64 >= length && length <= COVER_WHOLE_FILE_MAX_BYTES
 }
 /// 单次封面抓取的**远端读取次数**上限。
-/// 为什么字节预算不够：实测这些读是 **16KB 级**，115 CDN 单次往返 ~243ms，
-/// 24MB 预算要 1500+ 次 ⇒ 仍是 6 分钟。次数上限才能界定时延。
 ///
-/// 第 81 轮续（真机，MOBI/PDF 惰性读之后）：归档类封面现在走**惰性文档读**，
-/// 取数被精确到"首页那一条记录/那一张图"。但**单条记录本身可以很大**
-/// （真机 33.9/143/146/180 MB 的 MOBI 全部 `cover_read_budget_exceeded`，
-/// 而 ≤79 MB 的成功 ⇒ 代价与整本大小成正比）：在 4 请求/秒的门控下，
-/// 读一条 5–15 MB 的记录要几十次请求、十几秒 ⇒ 旧的 192 次/15 s 会把**可救**的封面判死。
-/// 因此放宽到 384 次 / 30 s / 64 MB：仍然有界（不会回到分钟级转圈），
-/// 但给"单条大记录"留出空间。真正不可救的仍会快速失败并给出具体码。
-const COVER_READ_BUDGET_READS: u64 = 384;
+/// 2026-10-30（S3 大文件实测）：900MB–3GB 的 CBZ 在本地 S3 上 2s 内就
+/// 用完 2048 次读，但只读了 4–5MB、字节/时间预算都远未到 —— 失败码却是
+/// `cover_read_budget_exceeded`。说明对"条目多/读块小"的大归档，2048 次仍紧。
+/// 这里放宽到 8192 次；字节(64MB)与挂钟(30s)两条仍然是硬边界，
+/// 病态尾部扫描依旧会被快速挡住，不会回到分钟级转圈。
+const COVER_READ_BUDGET_READS: u64 = 8192;
 /// 单次封面抓取的**挂钟**上限（兜底：远端变慢时也要让 worker 走下一个 job）。
 ///
 /// 第 79 轮续 3（真机）：原值 45 s 在**手机 + 4 请求/秒门控**下意味着"一张卡片转圈
@@ -1500,7 +1505,7 @@ impl ByteSource for AdapterByteSource {
         let elapsed_ms = self.started_at.elapsed().as_millis();
         // 2026-09-21（用户决策"取消拒绝"，依赖既有的整本缓存清理机制）：
         // **故意整本读**（offset 0 且一次就要完整个文件）不再受 64 MiB 字节预算约束。
-        // 只豁免"字节"这一条：次数(384)与时间(30s)两条照旧，所以"尾部 EOCD 扫描"
+        // 只豁免"字节"这一条：次数(2048)与时间(30s)两条照旧，所以"尾部 EOCD 扫描"
         // 这类**很多次小读**的病态访问仍会被挡住（见 `adapter_byte_source_stops_at_the_read_budget`）。
         let deliberate_whole_file = is_deliberate_whole_file(offset, requested, self.length);
         if deliberate_whole_file {
@@ -1969,7 +1974,7 @@ fn fetch_cover_from_document(
         Err(error) => {
             let mut span = span.field_str("code", error_code(error));
             // 第 81 轮续2（用户要求：先补诊断）：预算类失败必须能自证"是**哪一条**先超" ——
-            // 字节(64MB) / 次数(384) / 时间(30s)。此前只落一个笼统的
+            // 字节(64MB) / 次数(2048) / 时间(30s)。此前只落一个笼统的
             // `cover_read_budget_exceeded`，只能靠猜（真机 `2.mobi` 放宽预算后仍失败，
             // 无法判断是单条记录太大还是次数/时间不够）。
             //
@@ -2495,7 +2500,7 @@ fn start_job(config: StartConfig, resume: bool) -> std::result::Result<RemoteSca
     if !matches!(config.mode.as_str(), "full" | "incremental") {
         return Err("invalid scan mode".into());
     }
-    if matches!(config.source_type.as_str(), "local" | "smb") {
+    if config.source_type == "local" {
         return Err("source is local-only".into());
     }
     let _reservation = start_lock().lock().unwrap();

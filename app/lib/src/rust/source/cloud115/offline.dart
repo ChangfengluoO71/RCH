@@ -220,18 +220,25 @@ class Cloud115BtTaskSnapshot {
 /// translated into terminal states.
 class Cloud115BtTaskSnapshotItem {
   final String infoHash;
+
+  /// Destination parent from the remote task; None means it was not proven.
+  final String? targetFolderId;
   final PlatformInt64? statusCode;
   final double? percentDone;
 
   const Cloud115BtTaskSnapshotItem({
     required this.infoHash,
+    this.targetFolderId,
     this.statusCode,
     this.percentDone,
   });
 
   @override
   int get hashCode =>
-      infoHash.hashCode ^ statusCode.hashCode ^ percentDone.hashCode;
+      infoHash.hashCode ^
+      targetFolderId.hashCode ^
+      statusCode.hashCode ^
+      percentDone.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -239,6 +246,7 @@ class Cloud115BtTaskSnapshotItem {
       other is Cloud115BtTaskSnapshotItem &&
           runtimeType == other.runtimeType &&
           infoHash == other.infoHash &&
+          targetFolderId == other.targetFolderId &&
           statusCode == other.statusCode &&
           percentDone == other.percentDone;
 }

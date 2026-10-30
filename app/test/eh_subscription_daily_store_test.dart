@@ -169,6 +169,98 @@ void main() {
       },
     );
 
+    test(
+      'a damaged manifest cannot report the complete workflow as successful',
+      () async {
+        final store = EhSubscriptionStore.forTest(
+          rules: {
+            'out_dir': 'C:/EH output',
+            'automation': {
+              'daily_enabled': true,
+              'last_auto_attempt_date': '2026-10-13',
+              'last_run': {
+                'date': '2026-10-13',
+                'source': 'daily_auto',
+                'status': 'claimed',
+              },
+            },
+          },
+          rulesWriter: (_) async {},
+          collectRunner: (_) async => '{"stage":"done","saved":1}',
+          checkedManifestLoader: (_) async => '{"status":"damaged"}',
+        );
+        final outcome = await store.run(source: EhDailyRunSource.dailyAuto);
+        expect(outcome.status, EhDailyRunStatus.partial);
+        expect(
+          store.dailyAutomation.lastAutoRun?.cloudStage.status,
+          EhDailyCloudStageStatus.failed,
+        );
+      },
+    );
+
+    test(
+      'a saved authentication wait can resume after a manual result',
+      () async {
+        final store = EhSubscriptionStore.forTest(
+          rules: {
+            'out_dir': 'C:/EH output',
+            'automation': {
+              'daily_enabled': true,
+              'last_auto_attempt_date': '2026-10-13',
+              'last_run': {
+                'date': '2026-10-13',
+                'source': 'manual',
+                'status': 'completed',
+              },
+              'last_auto_run': {
+                'date': '2026-10-13',
+                'source': 'daily_auto',
+                'status': 'partial',
+                'run_id': 'daily-2026-10-13',
+                'cloud_stage': {'status': 'session_unavailable'},
+              },
+            },
+          },
+          rulesWriter: (_) async {},
+        );
+        final lease = (await store.tryAcquireWorkflowLease())!;
+        expect(await store.resumeDailyRun('2026-10-13', lease), isTrue);
+        expect(store.dailyAutomation.lastAutoRun?.runId, 'daily-2026-10-13');
+        expect(store.dailyAutomation.lastAutoRun?.resumeCount, 1);
+        await store.releaseWorkflowLease(lease);
+      },
+    );
+
+    test('a cancelled scan does not start the cloud stage', () async {
+      var cloudCalls = 0;
+      final store = EhSubscriptionStore.forTest(
+        rules: {
+          'out_dir': 'C:/EH output',
+          'automation': {
+            'daily_enabled': true,
+            'last_auto_attempt_date': '2026-10-13',
+            'last_run': {
+              'date': '2026-10-13',
+              'source': 'daily_auto',
+              'status': 'claimed',
+            },
+          },
+        },
+        rulesWriter: (_) async {},
+        collectRunner: (_) async => '{"stage":"cancelled","saved":0}',
+        checkedManifestLoader: (_) async => '{"status":"empty"}',
+        dailyCloudStageRunner: (_) async {
+          cloudCalls++;
+          return const EhDailyCloudStageResult(
+            status: EhDailyCloudStageStatus.completed,
+          );
+        },
+      );
+      final outcome = await store.run(source: EhDailyRunSource.dailyAuto);
+      expect(outcome.status, EhDailyRunStatus.cancelled);
+      expect(cloudCalls, 0);
+    });
+
     testWidgets(
       'Daily UI is off by default and never starts collection itself',
       (tester) async {

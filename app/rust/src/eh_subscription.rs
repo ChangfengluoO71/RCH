@@ -121,6 +121,7 @@ pub struct EhAutomationSettings {
     pub daily_enabled: bool,
     pub last_auto_attempt_date: Option<String>,
     pub last_run: Option<EhAutomationRun>,
+    pub last_auto_run: Option<EhAutomationRun>,
 }
 
 impl Default for EhAutomationSettings {
@@ -129,6 +130,7 @@ impl Default for EhAutomationSettings {
             daily_enabled: false,
             last_auto_attempt_date: None,
             last_run: None,
+            last_auto_run: None,
         }
     }
 }
@@ -136,6 +138,8 @@ impl Default for EhAutomationSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct EhAutomationRun {
+    pub run_id: Option<String>,
+    pub resume_count: u8,
     /// Local calendar date captured when this run was claimed.
     pub date: String,
     /// `manual` or `daily_auto`.
@@ -144,18 +148,35 @@ pub struct EhAutomationRun {
     pub status: String,
     pub saved: usize,
     pub error: Option<String>,
+    pub cloud_stage: Option<EhDailyCloudStage>,
 }
 
 impl Default for EhAutomationRun {
     fn default() -> Self {
         Self {
+            run_id: None,
+            resume_count: 0,
             date: String::new(),
             source: "manual".into(),
             status: "failed".into(),
             saved: 0,
             error: None,
+            cloud_stage: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EhDailyCloudStage {
+    pub status: String,
+    pub total: usize,
+    pub submitted: usize,
+    pub skipped: usize,
+    pub pending: usize,
+    pub removed: usize,
+    pub failed: usize,
+    pub message: Option<String>,
 }
 
 impl Default for AgeTier {
@@ -1536,6 +1557,98 @@ pub fn with_rules_config_lock<T>(
     operation()
 }
 
+// Separate, long-lived leases protect a complete scan and cloud submission.
+// File locks are process-wide and their handles can be released on a different
+// thread, unlike the thread-owned Windows config mutex.
+struct OsFileLease {
+    path: PathBuf,
+    file: std::fs::File,
+}
+
+static HELD_FILE_LEASES: std::sync::OnceLock<std::sync::Mutex<HashSet<PathBuf>>> =
+    std::sync::OnceLock::new();
+static WORKFLOW_HANDLES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<u64, OsFileLease>>,
+> = std::sync::OnceLock::new();
+static WORKFLOW_HANDLE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+fn lease_path(target: &Path, kind: &str) -> Result<PathBuf, String> {
+    let parent = rules_config_parent(target);
+    std::fs::create_dir_all(parent).map_err(|error| format!("创建 EH 配置目录失败：{error}"))?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|error| format!("定位 EH 配置目录失败：{error}"))?;
+    let name = target
+        .file_name()
+        .ok_or_else(|| "EH 规则路径无效".to_string())?;
+    let mut lock_name = std::ffi::OsString::from(".");
+    lock_name.push(name);
+    lock_name.push(format!(".{kind}.lock"));
+    Ok(parent.join(lock_name))
+}
+
+fn try_file_lease(target: &Path, kind: &str) -> Result<Option<OsFileLease>, String> {
+    let path = lease_path(target, kind)?;
+    let registry = HELD_FILE_LEASES.get_or_init(Default::default);
+    let mut held = registry.lock().map_err(|_| "EH 锁状态不可用".to_string())?;
+    if held.contains(&path) {
+        return Ok(None);
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| format!("打开 EH 工作流锁失败：{error}"))?;
+    match fs2::FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {
+            held.insert(path.clone());
+            Ok(Some(OsFileLease { path, file }))
+        }
+        Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+            Ok(None)
+        }
+        Err(error) => Err(format!("获取 EH 工作流锁失败：{error}")),
+    }
+}
+
+impl Drop for OsFileLease {
+    fn drop(&mut self) {
+        if let Ok(mut held) = HELD_FILE_LEASES.get_or_init(Default::default).lock() {
+            let _ = fs2::FileExt::unlock(&self.file);
+            held.remove(&self.path);
+        }
+    }
+}
+
+pub fn try_acquire_workflow_lease(target: &Path) -> Result<Option<u64>, String> {
+    let Some(lease) = try_file_lease(target, "workflow")? else {
+        return Ok(None);
+    };
+    let mut handles = WORKFLOW_HANDLES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "EH 工作流句柄状态不可用".to_string())?;
+    let handle = WORKFLOW_HANDLE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    if handle == 0 || handles.contains_key(&handle) {
+        return Err("EH 工作流句柄已耗尽".into());
+    }
+    handles.insert(handle, lease);
+    Ok(Some(handle))
+}
+
+pub fn release_workflow_lease(handle: u64) -> Result<(), String> {
+    let lease = WORKFLOW_HANDLES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "EH 工作流句柄状态不可用".to_string())?
+        .remove(&handle)
+        .ok_or_else(|| "EH 工作流句柄无效或已释放".to_string())?;
+    drop(lease);
+    Ok(())
+}
+
 #[cfg(windows)]
 pub struct EhCollectionLock {
     handle: *mut std::ffi::c_void,
@@ -1551,7 +1664,12 @@ impl Drop for EhCollectionLock {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+pub struct EhCollectionLock {
+    _lease: OsFileLease,
+}
+
+#[cfg(not(any(windows, unix)))]
 pub struct EhCollectionLock;
 
 /// Try to hold a configuration-scoped Windows lease for the duration of one
@@ -1563,10 +1681,15 @@ pub fn try_acquire_collection_lock(target: &Path) -> Result<Option<EhCollectionL
             .map(|handle| EhCollectionLock { handle }));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        Ok(try_file_lease(target, "collection")?.map(|lease| EhCollectionLock { _lease: lease }))
+    }
+
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = target;
-        Ok(Some(EhCollectionLock))
+        Err("当前平台不支持 EH 收集互斥锁".into())
     }
 }
 
@@ -1671,7 +1794,12 @@ pub fn claim_daily(target: &Path, date: &str) -> Result<(bool, String), String> 
         .automation
         .last_run
         .as_ref()
-        .is_some_and(|run| matches!(run.status.as_str(), "claimed" | "running"));
+        .is_some_and(|run| matches!(run.status.as_str(), "claimed" | "running"))
+        || rules
+            .automation
+            .last_auto_run
+            .as_ref()
+            .is_some_and(|run| matches!(run.status.as_str(), "claimed" | "running"));
     if active_run || collection_is_active(target)? {
         return Ok((false, rules.to_json()));
     }
@@ -1688,23 +1816,28 @@ pub fn claim_daily(target: &Path, date: &str) -> Result<(bool, String), String> 
     }
 
     rules.automation.last_auto_attempt_date = Some(date.to_string());
-    rules.automation.last_run = Some(EhAutomationRun {
+    let run = EhAutomationRun {
+        run_id: Some(format!("daily-{date}")),
+        resume_count: 0,
         date: date.to_string(),
         source: "daily_auto".into(),
         status: "claimed".into(),
         saved: 0,
         error: None,
-    });
+        cloud_stage: None,
+    };
+    rules.automation.last_run = Some(run.clone());
+    rules.automation.last_auto_run = Some(run);
     save_rules_atomic_unlocked(target, &rules)?;
     Ok((true, rules.to_json()))
 }
 
-pub fn update_daily_run(target: &Path, requested: EhAutomationRun) -> Result<String, String> {
+pub fn update_daily_run(target: &Path, mut requested: EhAutomationRun) -> Result<String, String> {
     if !is_valid_local_date_key(&requested.date)
         || !matches!(requested.source.as_str(), "manual" | "daily_auto")
         || !matches!(
             requested.status.as_str(),
-            "running" | "completed" | "failed" | "cancelled" | "interrupted_unknown"
+            "running" | "completed" | "partial" | "failed" | "cancelled" | "interrupted_unknown"
         )
     {
         return Err("EH Daily 运行状态无效，已停止写入".into());
@@ -1712,34 +1845,67 @@ pub fn update_daily_run(target: &Path, requested: EhAutomationRun) -> Result<Str
 
     let _lock = acquire_rules_config_lock(target)?;
     let mut rules = read_rules_for_update(target)?;
-    let current = rules.automation.last_run.as_ref();
+    let current = if requested.source == "daily_auto" {
+        rules.automation.last_auto_run.as_ref().or_else(|| {
+            rules
+                .automation
+                .last_run
+                .as_ref()
+                .filter(|run| run.source == "daily_auto")
+        })
+    } else {
+        rules.automation.last_run.as_ref()
+    };
     let collection_active = collection_is_active(target)?;
+    let matches_run = |run: &EhAutomationRun| {
+        run.date == requested.date
+            && run.source == requested.source
+            && match (&run.run_id, &requested.run_id) {
+                (Some(old), Some(new)) => old == new,
+                (Some(_), None) if requested.source == "manual" => false,
+                _ => true,
+            }
+    };
     let allowed = match requested.status.as_str() {
         "running" if requested.source == "daily_auto" => current.is_some_and(|run| {
             rules.automation.daily_enabled
                 && !collection_active
-                && run.date == requested.date
-                && run.source == requested.source
+                && matches_run(run)
                 && run.status == "claimed"
         }),
         "running" => {
             requested.source == "manual"
                 && !collection_active
                 && current.is_none_or(|run| !matches!(run.status.as_str(), "claimed" | "running"))
+                && rules
+                    .automation
+                    .last_auto_run
+                    .as_ref()
+                    .is_none_or(|run| !matches!(run.status.as_str(), "claimed" | "running"))
         }
-        "completed" | "failed" | "cancelled" | "interrupted_unknown" => {
-            current.is_some_and(|run| {
-                run.date == requested.date
-                    && run.source == requested.source
-                    && matches!(run.status.as_str(), "claimed" | "running")
-            })
-        }
+        "completed" | "partial" | "failed" | "cancelled" | "interrupted_unknown" => current
+            .is_some_and(|run| {
+                matches_run(run)
+                    && (matches!(run.status.as_str(), "claimed" | "running")
+                        || (run.run_id.is_some() && run.run_id == requested.run_id))
+            }),
         _ => false,
     };
     if !allowed {
         return Err("EH Daily 状态迁移不适用、已被更新或重复，已停止覆盖".into());
     }
-    rules.automation.last_run = Some(requested);
+    let is_latest = rules.automation.last_run.as_ref().is_none_or(matches_run);
+    if requested.run_id.is_none() {
+        requested.run_id = current.and_then(|run| run.run_id.clone());
+    }
+    if requested.source == "daily_auto" {
+        rules.automation.last_auto_run = Some(requested.clone());
+        if is_latest {
+            rules.automation.last_run = Some(requested);
+        }
+    } else {
+        rules.automation.last_run = Some(requested);
+    }
     save_rules_atomic_unlocked(target, &rules)?;
     Ok(rules.to_json())
 }
@@ -1758,9 +1924,20 @@ pub fn validate_daily_collection_start(
 
     let _lock = acquire_rules_config_lock(target)?;
     let rules = read_rules_for_update(target)?;
-    let matches_running_claim = rules.automation.last_run.as_ref().is_some_and(|run| {
-        run.date == date && run.source == "daily_auto" && run.status == "running"
-    });
+    let matches_running_claim = rules
+        .automation
+        .last_auto_run
+        .as_ref()
+        .or_else(|| {
+            rules
+                .automation
+                .last_run
+                .as_ref()
+                .filter(|run| run.source == "daily_auto")
+        })
+        .is_some_and(|run| {
+            run.date == date && run.source == "daily_auto" && run.status == "running"
+        });
     if !rules.automation.daily_enabled
         || rules.automation.last_auto_attempt_date.as_deref() != Some(date)
         || !matches_running_claim
@@ -1773,21 +1950,99 @@ pub fn validate_daily_collection_start(
 /// Recover stale claimed/running state only when no process still owns the
 /// configuration-scoped collection lease.
 pub fn recover_daily_run(target: &Path) -> Result<String, String> {
+    let workflow = try_file_lease(target, "workflow")?;
     let _lock = acquire_rules_config_lock(target)?;
     let mut rules = read_rules_for_update(target)?;
-    let Some(current) = rules.automation.last_run.as_ref() else {
-        return Ok(rules.to_json());
-    };
-    if !matches!(current.status.as_str(), "claimed" | "running") || collection_is_active(target)? {
+    if workflow.is_none() || collection_is_active(target)? {
         return Ok(rules.to_json());
     }
-
-    let mut recovered = current.clone();
-    recovered.status = "interrupted_unknown".into();
-    recovered.error = Some("上次进程退出时任务尚未结束，远端结果未知；本轮不会自动重试。".into());
-    rules.automation.last_run = Some(recovered);
-    save_rules_atomic_unlocked(target, &rules)?;
+    let recover = |run: &mut EhAutomationRun| {
+        if matches!(run.status.as_str(), "claimed" | "running") {
+            run.status = "interrupted_unknown".into();
+            run.error = Some("上次运行中断；远端结果未知，恢复时将先核对已有记录。".into());
+            true
+        } else {
+            false
+        }
+    };
+    let mut changed = false;
+    if let Some(run) = rules.automation.last_run.as_mut() {
+        changed |= recover(run);
+    }
+    if let Some(run) = rules.automation.last_auto_run.as_mut() {
+        changed |= recover(run);
+    } else if let Some(run) = rules
+        .automation
+        .last_run
+        .as_ref()
+        .filter(|run| run.source == "daily_auto")
+    {
+        rules.automation.last_auto_run = Some(run.clone());
+        changed = true;
+    }
+    if changed {
+        save_rules_atomic_unlocked(target, &rules)?;
+    }
     Ok(rules.to_json())
+}
+
+/// Resume only the same interrupted or safely waiting automatic run while the
+/// caller owns the full-workflow lease. Retries are bounded across restarts.
+pub fn resume_daily_run(target: &Path, date: &str, handle: u64) -> Result<(bool, String), String> {
+    if !is_valid_local_date_key(date) {
+        return Err("EH Daily 日期格式无效".into());
+    }
+    let expected = lease_path(target, "workflow")?;
+    let handles = WORKFLOW_HANDLES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "EH 工作流句柄状态不可用".to_string())?;
+    if !handles
+        .get(&handle)
+        .is_some_and(|lease| lease.path == expected)
+    {
+        return Err("EH 工作流锁不属于当前配置或已释放".into());
+    }
+    let _lock = acquire_rules_config_lock(target)?;
+    let mut rules = read_rules_for_update(target)?;
+    let current = rules.automation.last_auto_run.as_ref().or_else(|| {
+        rules
+            .automation
+            .last_run
+            .as_ref()
+            .filter(|run| run.source == "daily_auto")
+    });
+    let eligible = rules.automation.daily_enabled
+        && rules.automation.last_auto_attempt_date.as_deref() == Some(date)
+        && current.is_some_and(|run| {
+            let cloud_status = run.cloud_stage.as_ref().map(|stage| stage.status.as_str());
+            let retryable = run.status == "interrupted_unknown"
+                || (run.status == "failed" && matches!(cloud_status, None | Some("not_run")))
+                || (run.status == "partial"
+                    && matches!(
+                        cloud_status,
+                        Some("needs_configuration" | "session_unavailable")
+                    ));
+            run.date == date && run.source == "daily_auto" && retryable && run.resume_count < 2
+        })
+        && rules
+            .automation
+            .last_run
+            .as_ref()
+            .is_none_or(|run| !matches!(run.status.as_str(), "claimed" | "running"))
+        && !collection_is_active(target)?;
+    if !eligible {
+        return Ok((false, rules.to_json()));
+    }
+    let mut run = current.expect("checked above").clone();
+    run.run_id.get_or_insert_with(|| format!("daily-{date}"));
+    run.resume_count += 1;
+    run.status = "claimed".into();
+    run.error = None;
+    rules.automation.last_auto_run = Some(run.clone());
+    rules.automation.last_run = Some(run);
+    save_rules_atomic_unlocked(target, &rules)?;
+    Ok((true, rules.to_json()))
 }
 
 const MAX_TORRENT_METADATA_BYTES: u64 = 16 * 1024 * 1024;
@@ -3458,6 +3713,7 @@ mod tests {
             status: "claimed".into(),
             saved: 0,
             error: None,
+            ..EhAutomationRun::default()
         });
 
         save_rules_atomic(&path, &rules).expect("validated atomic config replacement");

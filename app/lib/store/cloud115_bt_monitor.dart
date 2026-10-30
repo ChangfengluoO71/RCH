@@ -458,35 +458,47 @@ class Cloud115BtMonitor extends ChangeNotifier {
         errorClass = 'partial_snapshot';
       }
       final accountMatches = snapshot.accountId == accountId;
-      final byHash = accountMatches
-          ? <String, cloud115.Cloud115BtTaskSnapshotItem>{
-              for (final task in snapshot.tasks)
-                task.infoHash.toLowerCase(): task,
-            }
-          : <String, cloud115.Cloud115BtTaskSnapshotItem>{};
+      final byHash = <String, List<cloud115.Cloud115BtTaskSnapshotItem>>{};
+      if (accountMatches) {
+        for (final remote in snapshot.tasks) {
+          byHash
+              .putIfAbsent(remote.infoHash.toLowerCase(), () => [])
+              .add(remote);
+        }
+      }
       attempt = claim.tasks.fold<int>(
         0,
         (maximum, task) => max(maximum, task.attemptCount),
       );
       for (final task in claim.tasks) {
-        final remote = byHash[task.infoHash.toLowerCase()];
+        final candidates = byHash[task.infoHash.toLowerCase()] ?? const [];
+        cloud115.Cloud115BtTaskSnapshotItem? remote;
+        for (final candidate in candidates) {
+          if (candidate.targetFolderId == task.targetFolderId) {
+            remote = candidate;
+            break;
+          }
+        }
+        final destinationUnverified = remote == null && candidates.isNotEmpty;
         observations.add(
           Cloud115MonitorObservation(
             accountId: accountId,
             infoHash: task.infoHash,
             targetFolderId: task.targetFolderId,
-            foundInSnapshot: !accountMatches
+            foundInSnapshot: !accountMatches || destinationUnverified
                 ? null
                 : remote != null
                 ? true
                 : snapshot.complete && snapshot.state == 'ok'
                 ? false
                 : null,
-            statusCode: !accountMatches || remote?.statusCode == null
+            statusCode: remote?.statusCode == null
                 ? null
                 : int.tryParse(remote!.statusCode.toString()),
-            percentDone: accountMatches ? remote?.percentDone : null,
-            errorClass: errorClass,
+            percentDone: remote?.percentDone,
+            errorClass: destinationUnverified
+                ? 'destination_unverified'
+                : errorClass,
           ),
         );
       }

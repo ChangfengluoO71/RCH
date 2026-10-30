@@ -8,7 +8,7 @@ import '../source/cloud115/offline.dart';
 import 'book.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `canonical_child_path`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `file_stem`, `get_baidu_session`, `get_cloud115_cookie_session`, `get_cloud115_session`, `get_quark_session`, `get_session`, `get_sftp_session`, `legacy_cover_authority`, `next_id`, `parse_strategy`, `prime_remote_folder_locator`, `provider_path`, `quark_downloads`, `quark_sessions`, `reader_diag`, `remote_folder_cache_ns`, `remote_provider_adapter`, `retry_after_ms`, `scan_error`, `scan_io_error`, `sessions`, `sftp_downloads`, `sftp_sessions`, `supports_remote_scan`
+// These functions are ignored because they are not marked as `pub`: `baidu_downloads`, `baidu_sessions`, `canonical_child_path`, `cloud115_cookie_downloads`, `cloud115_cookie_sessions`, `cloud115_downloads`, `cloud115_sessions`, `downloads`, `file_stem`, `ftp_downloads`, `ftp_sessions`, `get_baidu_session`, `get_cloud115_cookie_session`, `get_cloud115_session`, `get_ftp_session`, `get_quark_session`, `get_s3_session`, `get_session`, `get_sftp_session`, `get_smb_session`, `legacy_cover_authority`, `next_id`, `parse_strategy`, `prime_remote_folder_locator`, `provider_path`, `quark_downloads`, `quark_sessions`, `reader_diag`, `remote_folder_cache_ns`, `remote_provider_adapter`, `retry_after_ms`, `s3_downloads`, `s3_sessions`, `scan_error`, `scan_io_error`, `sessions`, `sftp_downloads`, `sftp_sessions`, `smb_downloads`, `smb_sessions`, `supports_remote_scan`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OpenStrategy`, `RemoteSessionClient`, `SessionRemoteAdapter`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `cache_path`, `capabilities`, `list`, `normalize_path`, `read_file_limited`, `read_range`, `register_path`
@@ -154,17 +154,95 @@ Future<void> webdavDeleteFile({
   path: path,
 );
 
-/// 连接 SFTP 服务器（密码认证），返回会话句柄；root 固定为 `/`。
+/// 连接 SMB2/3 共享并建立只读来源会话。
+Future<SmbSessionInfo> smbConnect({
+  required String host,
+  required int port,
+  required String share,
+  required String rootPath,
+  required String username,
+  required String password,
+}) => RustLib.instance.api.crateApiSourceSmbConnect(
+  host: host,
+  port: port,
+  share: share,
+  rootPath: rootPath,
+  username: username,
+  password: password,
+);
+
+/// 断开 SMB 会话并在 blocking 线程释放其 Tokio runtime。
+Future<void> smbDisconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceSmbDisconnect(id: id);
+
+/// 列出 SMB 共享内的目录。
+Future<List<DirEntry>> smbList({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceSmbList(session: session, path: path);
+
+/// 打开 SMB 共享中的漫画，支持下载缓存与随机流式读取。
+Future<BookInfo> openSmbBook({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenSmbBook(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 查询 SMB 整本缓存下载进度。
+Future<double> smbDownloadProgress({required BigInt session}) =>
+    RustLib.instance.api.crateApiSourceSmbDownloadProgress(session: session);
+
+/// 检查 SMB 漫画是否已有 raw 缓存。
+Future<bool> smbHasRawCache({required BigInt session, required String path}) =>
+    RustLib.instance.api.crateApiSourceSmbHasRawCache(
+      session: session,
+      path: path,
+    );
+
+/// 生成 SMB 共享文件封面；远端路径永不作为本地文件系统路径读取。
+Future<PageImage> smbCover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceSmbCover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
+);
+
+/// Read an SSH server fingerprint without sending credentials.
+Future<String> sftpProbeHostKey({required String host, required int port}) =>
+    RustLib.instance.api.crateApiSourceSftpProbeHostKey(host: host, port: port);
+
+/// Connect to SFTP only after the caller has explicitly trusted its host key.
 Future<SftpSessionInfo> sftpConnect({
   required String host,
   required int port,
   required String username,
+  required String authMethod,
   required String password,
+  required String privateKey,
+  required String keyPassphrase,
+  required String expectedFingerprint,
 }) => RustLib.instance.api.crateApiSourceSftpConnect(
   host: host,
   port: port,
   username: username,
+  authMethod: authMethod,
   password: password,
+  privateKey: privateKey,
+  keyPassphrase: keyPassphrase,
+  expectedFingerprint: expectedFingerprint,
 );
 
 /// 断开 SFTP 会话（在 blocking 线程释放连接与 runtime）。
@@ -513,7 +591,7 @@ Future<PageImage> quarkCover({
 /// `logical fields → authority → current key → (可恢复时) alternate historical key → cover_cache_read`。
 ///
 /// 双历史 key 规则（冻结）：
-/// * **Family 1**（webdav / sftp / baidu / 115）：raw 当前存在 → current = 实际 raw path，
+/// * **Family 1**（webdav / smb / sftp / baidu / 115）：raw 当前存在 → current = 实际 raw path，
 ///   alternate = logical path；raw 当前不存在 → current = logical path，
 ///   alternate = **确定性候选 raw path**（由 production 算法精确重建，故历史 raw-key cover 仍可读）。
 /// * **Family 2**（115web / quark）：raw 当前存在 → current = 扫描出的实际 raw path，
@@ -694,6 +772,136 @@ Future<PageImage> cloud115Cover({
   required int height,
   CropRect? crop,
 }) => RustLib.instance.api.crateApiSourceCloud115Cover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
+);
+
+/// 连接 FTP 服务器并建立只读来源会话。
+Future<FtpSessionInfo> ftpConnect({
+  required String host,
+  required int port,
+  required String username,
+  required String password,
+  required String rootPath,
+}) => RustLib.instance.api.crateApiSourceFtpConnect(
+  host: host,
+  port: port,
+  username: username,
+  password: password,
+  rootPath: rootPath,
+);
+
+/// 断开 FTP 会话。
+Future<void> ftpDisconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceFtpDisconnect(id: id);
+
+/// 列出 FTP 目录。
+Future<List<DirEntry>> ftpList({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceFtpList(session: session, path: path);
+
+/// 打开 FTP 中的漫画，自动模式下流式优先、失败回退整本下载。
+Future<BookInfo> openFtpBook({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenFtpBook(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 查询 FTP 整本缓存下载进度。
+Future<double> ftpDownloadProgress({required BigInt session}) =>
+    RustLib.instance.api.crateApiSourceFtpDownloadProgress(session: session);
+
+/// 检查 FTP 漫画是否已有 raw 缓存。
+Future<bool> ftpHasRawCache({required BigInt session, required String path}) =>
+    RustLib.instance.api.crateApiSourceFtpHasRawCache(
+      session: session,
+      path: path,
+    );
+
+/// 生成 FTP 漫画封面。
+Future<PageImage> ftpCover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceFtpCover(
+  session: session,
+  path: path,
+  page: page,
+  width: width,
+  height: height,
+  crop: crop,
+);
+
+/// 连接 path-style S3 bucket 并建立只读来源会话。
+Future<S3SessionInfo> s3Connect({
+  required String endpoint,
+  required String bucket,
+  required String accessKey,
+  required String secretKey,
+  required String region,
+  required String rootPath,
+}) => RustLib.instance.api.crateApiSourceS3Connect(
+  endpoint: endpoint,
+  bucket: bucket,
+  accessKey: accessKey,
+  secretKey: secretKey,
+  region: region,
+  rootPath: rootPath,
+);
+
+/// 断开 S3 会话。
+Future<void> s3Disconnect({required BigInt id}) =>
+    RustLib.instance.api.crateApiSourceS3Disconnect(id: id);
+
+/// 列出 S3 “目录”（ListObjectsV2 + delimiter）。
+Future<List<DirEntry>> s3List({
+  required BigInt session,
+  required String path,
+}) => RustLib.instance.api.crateApiSourceS3List(session: session, path: path);
+
+/// 打开 S3 中的漫画，自动模式下流式优先、失败回退整本下载。
+Future<BookInfo> openS3Book({
+  required BigInt session,
+  required String path,
+  required String strategy,
+}) => RustLib.instance.api.crateApiSourceOpenS3Book(
+  session: session,
+  path: path,
+  strategy: strategy,
+);
+
+/// 查询 S3 整本缓存下载进度。
+Future<double> s3DownloadProgress({required BigInt session}) =>
+    RustLib.instance.api.crateApiSourceS3DownloadProgress(session: session);
+
+/// 检查 S3 漫画是否已有 raw 缓存。
+Future<bool> s3HasRawCache({required BigInt session, required String path}) =>
+    RustLib.instance.api.crateApiSourceS3HasRawCache(
+      session: session,
+      path: path,
+    );
+
+/// 生成 S3 漫画封面。
+Future<PageImage> s3Cover({
+  required BigInt session,
+  required String path,
+  required int page,
+  required int width,
+  required int height,
+  CropRect? crop,
+}) => RustLib.instance.api.crateApiSourceS3Cover(
   session: session,
   path: path,
   page: page,
@@ -904,6 +1112,31 @@ class Cloud115SessionInfo {
           refreshToken == other.refreshToken;
 }
 
+/// FTP 会话信息。
+class FtpSessionInfo {
+  final BigInt id;
+  final String root;
+  final String capabilityLabel;
+
+  const FtpSessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+  });
+
+  @override
+  int get hashCode => id.hashCode ^ root.hashCode ^ capabilityLabel.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FtpSessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel;
+}
+
 /// 生成 WebDAV 书籍封面缩略图(取第 page 页,等比缩放 + 中心裁剪到 w×h)。
 /// 封面结果写入磁盘缓存（cover/）供后续秒开。
 /// 优先走磁盘缓存 → raw/ 本地缓存 → HTTP Range 流式。
@@ -1048,15 +1281,13 @@ class QuarkSessionInfo {
           cookie == other.cookie;
 }
 
-/// SFTP 会话信息。
-class SftpSessionInfo {
+/// S3 会话信息。
+class S3SessionInfo {
   final BigInt id;
   final String root;
-
-  /// 能力标记（Dart 侧显示用）。
   final String capabilityLabel;
 
-  const SftpSessionInfo({
+  const S3SessionInfo({
     required this.id,
     required this.root,
     required this.capabilityLabel,
@@ -1068,7 +1299,66 @@ class SftpSessionInfo {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
+      other is S3SessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel;
+}
+
+/// SFTP 会话信息。
+class SftpSessionInfo {
+  final BigInt id;
+  final String root;
+
+  /// 能力标记（Dart 侧显示用）。
+  final String capabilityLabel;
+  final String hostFingerprint;
+
+  const SftpSessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+    required this.hostFingerprint,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      root.hashCode ^
+      capabilityLabel.hashCode ^
+      hostFingerprint.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
       other is SftpSessionInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          root == other.root &&
+          capabilityLabel == other.capabilityLabel &&
+          hostFingerprint == other.hostFingerprint;
+}
+
+/// SMB 会话信息。
+class SmbSessionInfo {
+  final BigInt id;
+  final String root;
+  final String capabilityLabel;
+
+  const SmbSessionInfo({
+    required this.id,
+    required this.root,
+    required this.capabilityLabel,
+  });
+
+  @override
+  int get hashCode => id.hashCode ^ root.hashCode ^ capabilityLabel.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SmbSessionInfo &&
           runtimeType == other.runtimeType &&
           id == other.id &&
           root == other.root &&

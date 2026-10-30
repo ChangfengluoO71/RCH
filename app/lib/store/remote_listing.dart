@@ -9,10 +9,13 @@
 
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
+import 'package:app/store/ftp_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/s3_session.dart';
+import 'package:app/store/smb_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 
@@ -34,15 +37,44 @@ void cacheRemoteSession(String sourceId, BigInt session) =>
 /// 清除某个书源的会话缓存（凭据变更、连接失败、断开时调用，避免复用失效会话）。
 void evictRemoteSession(String sourceId) => _sessionCache.remove(sourceId);
 
+/// Clear both the provider-owned session and the shared browser/scan session
+/// after connection settings change. SMB/SFTP session stores also release
+/// their native clients when they are evicted.
+void clearRemoteSessionCache(BookSource source) {
+  evictRemoteSession(source.id);
+  switch (source.type) {
+    case 'webdav':
+      clearWebdavSession(source.id);
+    case 'smb':
+      clearSmbSession(source.id);
+    case 'sftp':
+      clearSftpSession(source.id);
+    case 'ftp':
+      clearFtpSession(source.id);
+    case 's3':
+      clearS3Session(source.id);
+    case 'baidu':
+      clearBaiduSession(source.id);
+    case '115':
+      clearCloud115Session(source.id);
+    case 'quark':
+      clearQuarkSession(source.id);
+  }
+}
+
 /// 复用预热阶段已经建立的会话（若存在），避免重复登录。
-Future<BigInt?> cachedRemoteSession(String sourceId) async => _sessionCache[sourceId];
+Future<BigInt?> cachedRemoteSession(String sourceId) async =>
+    _sessionCache[sourceId];
 
 Future<BigInt?> remoteSessionFor(BookSource source) async {
   final cached = _sessionCache[source.id];
   if (cached != null) return cached; // 预热/上次浏览已建会话 ⇒ 直接复用（不再登录）
   final session = switch (source.type) {
     'webdav' => await webdavSessionFor(source),
+    'smb' => await smbSessionFor(source),
     'sftp' => await sftpSessionFor(source),
+    'ftp' => await ftpSessionFor(source),
+    's3' => await s3SessionFor(source),
     'baidu' => await baiduSessionFor(source),
     '115' => await cloud115SessionFor(source),
     'quark' => await quarkSessionFor(source),
@@ -60,7 +92,10 @@ Future<List<FolderSnapshotEntry>> listRemoteDirFor(
 }) async {
   final list = switch (source.type) {
     'webdav' => await webdavList(session: session, path: path),
+    'smb' => await smbList(session: session, path: path),
     'sftp' => await sftpList(session: session, path: path),
+    'ftp' => await ftpList(session: session, path: path),
+    's3' => await s3List(session: session, path: path),
     'baidu' => await baiduList(session: session, path: path),
     '115' => await cloud115ListFor(source, session: session, path: path),
     'quark' => await quarkList(session: session, path: path),

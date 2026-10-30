@@ -47,11 +47,11 @@ RCH 不只是一个“打开漫画文件”的阅读器，而是希望把**本�
 * 🏷️ **标签与元数据管理** — 作者、系列、类别、状态、自定义标签、已读状态、阅读记录
 * 🧠 **离线智能刮削** — 只使用目录快照解析作品名、作者、章节和资源属性，Ready 结果自动进入元数据与标签
 * 🏷️ **E 站元数据导入** — 唯一作品名命中才自动导入；多个候选或未命中时预览确认，已有字段不会被覆盖
-* ☁️ **多源远程书架** — WebDAV / SMB / SFTP / 百度网盘 / 115 / 夸克网盘
+* ☁️ **多源远程书架** — WebDAV / SMB / SFTP / FTP / S3 / 百度网盘 / 115 / 夸克网盘
 * 🌊 **Streaming-first** — 支持 Range 的远程源可以边下边读，不支持时自动回退到整本下载
 * 💾 **本地缓存** — 页面、整本下载、封面、AI 超分等缓存独立管理
 * 🔄 **多设备同步** — 基于 WebDAV 的状态同步与三方合并
-* 🔌 **EH 订阅与自动化** — 按搜索语法、评分、标题标记和分龄下载数筛选并保存 Torrent，显示扫描进度；115 Cookie Web BT 写入仍是实验功能，每日自动写入保持 P0 门禁关闭
+* 🔌 **EH 订阅与自动化** — 按搜索语法、评分、标题标记和分龄下载数筛选并保存 Torrent，显示扫描进度；115 Cookie Web BT 写入仍是实验功能，Daily 默认关闭；历史 P0 研究记录不再作为运行时代码门禁
 * 🎲 **随机阅读** — 「最近阅读」栏提供「随机一本」；读到最后一页延迟 3 秒提示，可直接换一本或退回详情页
 * 🔒 **Local-first** — 漫画文件保留在用户自己的存储中，RCH 不提供自己的云端漫画存储服务
 
@@ -99,23 +99,26 @@ RCH 不只是一个“打开漫画文件”的阅读器，而是希望把**本�
 
 当前稳定版本：
 
-**v0.6.7**
+**v0.7.0**
+
+> **当前项目状态：** [实现、自动化测试、真实设备/Provider 验收和已发布版本的核验入口](docs/project/CURRENT_STATE.md)。
 
 | 平台                  | 文件                          | 说明                           |
 | ------------------- | --------------------------- | ---------------------------- |
-| Windows 10 / 11 x64 | `RCH-0.6.7-windows-x64.exe` | Windows 桌面版                  |
+| Windows 10 / 11 x64 | `RCH-0.7.0-windows-x64.exe` | Windows 桌面版                  |
 | Android arm64-v8a   | `app-arm64-v8a-release.apk` | Android 64 位（推荐）            |
 | Android armeabi-v7a | `app-armeabi-v7a-release.apk` | Android 32 位                 |
 | Android x86_64      | `app-x86_64-release.apk`    | Android x86 模拟器 / 通用        |
 
-### v0.6.7 更新重点
+### v0.7.0 更新重点
 
-- EH 每日工作流可在 115 云下载与仅保存本地 Torrent 两种模式间选择；设置保存在本机，不保存 Cookie。
-- 保存的种子按本地目录清单处理，批次状态和云端只读核对结果更清晰；仅在远端确认后才允许按设置清理对应 Torrent。
-- 书源卡片显示按可阅读资源统计的漫画数量，详情页查看索引与扫描状态；本地和云端书源使用不同图标。
-- 移除书源卡片中的离线书目按钮及“可阅读/需连接”状态文字，卡片布局更简洁。
+- 新增 SMB、FTP 与 S3 远程书源；SFTP 增加主机密钥指纹确认与私钥认证。
+- 远程书源「自动」模式改为流式优先，失败才回退整本下载。
+- 书源与同步凭据迁移到原生凭据保险箱；备份不再包含明文凭据。
+- 修复 S3 特殊文件名读取、封面预算与「远端书源 0 本漫画」统计。
+- Android 增加可选的每日后台检查，平板/横屏布局与 115 工作流继续增强。
 
-完整说明见[版本更新说明](docs/releases/release_notes_v0.6.7.md)。
+完整说明见[版本更新说明](docs/releases/release_notes_v0.7.0.md)。
 
 ### Windows
 
@@ -173,7 +176,7 @@ RCH 提供下载通道与镜像切换功能。
 | 标签与管理   | 标签、搜索、排序、已读状态              |
 | 智能刮削     | 离线目录解析、自动入库、标签投影、重新刮削       |
 | E 站导入     | 在线候选检索、唯一标题自动导入、歧义预览       |
-| 远程书源    | WebDAV / SMB / SFTP        |
+| 远程书源    | WebDAV / SMB / SFTP / FTP / S3 |
 | 网盘书源    | 百度网盘 / 115 / 夸克            |
 | 远程阅读    | 流式 / 整本下载 / 自动策略           |
 | 缓存      | 页面、下载、封面、AI 超分缓存           |
@@ -193,7 +196,7 @@ RCH 提供下载通道与镜像切换功能。
 
 使用 NAS / 服务器：
 
-**[WebDAV](docs/user-guide.md#51-webdav)** · **[SMB](docs/user-guide.md#52-smb)** · **[SFTP](docs/user-guide.md#53-sftp)**
+**[WebDAV](docs/user-guide.md#51-webdav)** · **[SMB](docs/user-guide.md#52-smb)** · **[SFTP](docs/user-guide.md#53-sftp)** · **[FTP](docs/user-guide.md#58-ftp)** · **[S3](docs/user-guide.md#59-s3)**
 
 使用网盘：
 
@@ -418,8 +421,10 @@ RCH 使用 Provider 抽象统一接入不同存储来源。
 | ------ | ------------------ |
 | 本地目录   | 浏览 / 阅读 / 缓存       |
 | WebDAV | 浏览 / Range 流式 / 下载 |
-| SMB    | NAS / Windows 共享   |
-| SFTP   | SSH 远程文件访问         |
+| SMB    | NAS / Windows 共享 / 只读 SMB2/3 |
+| SFTP   | SSH 远程文件 / 主机密钥指纹 / 密码或私钥 |
+| FTP    | 明文 FTP / Range 随机读 |
+| S3     | path-style S3 / SigV4 / Range 随机读 |
 | 百度网盘   | 官方 API / OAuth     |
 | 115 网盘 | 扫码 Cookie / 官方 APP ID |
 | 夸克网盘   | 扫码 Cookie          |
@@ -592,6 +597,8 @@ RCH 不提供自己的漫画云存储，因此：
 * WebDAV
 * SFTP
 * SMB
+* FTP
+* S3
 * 百度网盘
 * 115 网盘
 * 夸克网盘
@@ -642,8 +649,8 @@ RCH 采用 Flutter + Rust 的跨平台架构。
         ▼                ▼
  Local Storage       Remote Sources
         │                │
-      SQLite       WebDAV / SMB
-      Cache        SFTP / Cloud
+      SQLite       WebDAV / SMB / SFTP
+      Cache        FTP / S3 / Cloud
 ```
 
 Flutter 负责：
@@ -687,6 +694,8 @@ Local
 WebDAV
 SMB
 SFTP
+FTP
+S3
 Cloud
   ↓
 Provider

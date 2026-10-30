@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
-- **Last Active**: 2026-10-17
+- **Total Sessions**: 26
+- **Last Active**: 2026-10-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~808 | Active |
+| `journal-1.md` | ~829 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-10-29 | EH 115、Android 每日工作流与平板模式完成验收 | `d6596f0` | `local-ai/cover-quark-debug` |
 | 25 | 2026-10-17 | v0.6.7 发布准备与书源卡片收尾 | `b0baf8f` | `local-ai/cover-quark-debug` |
 | 24 | 2026-10-16 | v0.6.6 CI gate remediation | `5ed0652` | `local-ai/cover-quark-debug` |
 | 23 | 2026-10-16 | v0.6.6 release prep | `5d45f16` | `local-ai/cover-quark-debug` |

@@ -5156,3 +5156,31 @@ Windows 安装包 + 分 ABI APK → GitHub Release）。发布说明 `docs/relea
 - GitHub Release 已公开发布并标记为 Latest：<https://github.com/ChangfengluoO71/RCH/releases/tag/v0.6.3>。
 - 资产共 4 件：`RCH-0.6.3-windows-x64.exe`、`app-arm64-v8a-release.apk`、`app-armeabi-v7a-release.apk`、`app-x86_64-release.apk`。
 - GitHub CI 覆盖构建与自动化检查；阅读器跳页/加载、随机候选分布和 Windows 安装器桌面 smoke 仍按 TODO 等待用户侧复验。
+
+## 2026-10-30｜第140轮：远程协议收口与 v0.7.0 候选
+
+**本轮目标**：完成 SMB/SFTP/FTP/S3 远程书源、凭据保险箱与流式阅读的收口，整理 0.7.0 发布说明交用户核查后发布。
+
+**改动**
+- 新增纯 Rust SMB2/3 只读客户端、FTP（suppaftp）与 S3（SigV4 + Range）客户端，接入远程浏览、封面、打开、进度上报与缓存。
+- SFTP 增加主机密钥指纹确认/固定/变更拒绝，认证支持密码或 OpenSSH/PEM 私钥。
+- 远程书源「自动」改为缓存 → 流式 → 失败回退下载；只有显式「优先下载整本」等待完整下载。
+- 新增原生凭据保险箱并对远程书源/同步凭据做迁移；备份默认剔除凭据。
+- 修复 S3 endpoint 端口、桶根路径、特殊字符 key（`#`/`|`/空格）、封面读取预算；修复远端书源「0 本漫画」统计。
+- 版本号提升至 `0.7.0+100700`，新增发布说明、CHANGELOG、README、用户手册与 CURRENT_STATE/TODO 更新。
+
+**原因与设计**
+- S3 的 canonical URI 必须按服务端原始 key 签名，请求 URL 使用百分号编码；两者不能混用，否则特殊字符键会 403/404。
+- 远端扫描只落文件、不一定落父目录行；漫画统计不能依赖 `parent_id`，改由文件 path 推导父路径并校验 `remote_listing_state` 的扫描代数与完成状态。
+- 流式优先避免「自动」模式把整本大压缩包下载后才可阅读；下载保留为显式选择与失败兜底。
+
+**验证**
+- 本地 OpenList 4.2.4：SMB/SFTP/WebDAV/FTP/S3 均可列目录 240 本并打开多本漫画；S3 封面 240/240、失败 0；五协议 `cache\raw` 不增长；侧栏各 239 本（`.cbz`+`.zip` 同书去重）。
+- `flutter analyze` 无问题；`flutter test` 411 passed / 1 skipped；`cargo test --lib --locked` 577 passed / 4 ignored；`cargo test --locked --test remote_scan_contract` 18 passed。
+- Windows Release 构建成功，文件版本 `0.7.0+100700`。全量 Rust 集成测试受本机页面文件限制未跑完，留 CI。
+
+**影响范围**：远程书源协议层、凭据存储、远程扫描统计、阅读打开策略、S3 封面、发布文档与版本号。
+
+**状态**：本地提交 `49c6cf7`（代码）与 `677f060`（发布文档）；尚未 push、未打 tag、未发布 GitHub。`audit/`、`docs/AGENT_HANDOVER.md` 保持未跟踪，未混入本轮提交。
+
+**遗留**：用户核查发布说明后 push 分支并等 `ci.yml` 全绿，再打 `v0.7.0` tag；Android 设备、平板与 115 云端仍缺真机/Provider 验收；临时 OpenList 书源与测试账号待用户确认后清理。

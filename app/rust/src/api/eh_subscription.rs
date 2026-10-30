@@ -87,6 +87,29 @@ pub async fn eh_set_daily_enabled(path: String, enabled: bool) -> Result<String,
         .map_err(|e| format!("任务失败：{e}"))?
 }
 
+/// Hold a lease across EH collection and all cloud submission stages.
+pub fn eh_try_acquire_workflow_lease(path: String) -> Result<Option<u64>, String> {
+    eh::try_acquire_workflow_lease(Path::new(&path))
+}
+
+pub fn eh_release_workflow_lease(handle: u64) -> Result<(), String> {
+    eh::release_workflow_lease(handle)
+}
+
+pub async fn eh_resume_daily_run(
+    path: String,
+    date: String,
+    handle: u64,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let (resumed, rules_json) = eh::resume_daily_run(Path::new(&path), &date, handle)?;
+        serde_json::to_string(&serde_json::json!({"resumed": resumed, "rules_json": rules_json}))
+            .map_err(|error| format!("EH Daily 恢复结果序列化失败：{error}"))
+    })
+    .await
+    .map_err(|error| format!("任务失败：{error}"))?
+}
+
 /// Atomically claim one local date. The response contains the durable config
 /// snapshot and whether this process won the claim.
 pub async fn eh_claim_daily(path: String, date: String) -> Result<String, String> {
@@ -125,7 +148,9 @@ pub async fn eh_recover_daily_run(path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        eh_claim_daily, eh_load_rules, eh_save_rules, eh_update_daily_run, existing_rules_text,
+        eh_claim_daily, eh_load_rules, eh_recover_daily_run, eh_release_workflow_lease,
+        eh_resume_daily_run, eh_save_rules, eh_set_daily_enabled, eh_try_acquire_workflow_lease,
+        eh_update_daily_run, existing_rules_text,
     };
     use crate::eh_subscription::{EhAutomationRun, EhRules};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -287,6 +312,261 @@ mod tests {
         });
 
         let _ = std::fs::remove_dir_all(path.parent().expect("fixture parent"));
+    }
+
+    #[test]
+    fn partial_cloud_stage_round_trips_and_survives_a_later_manual_run() {
+        let path = test_rules_path();
+        let path_arg = path.to_string_lossy().into_owned();
+        runtime().block_on(async {
+            eh_load_rules(path_arg.clone()).await.unwrap();
+            super::eh_set_daily_enabled(path_arg.clone(), true)
+                .await
+                .unwrap();
+            let claim: serde_json::Value = serde_json::from_str(
+                &eh_claim_daily(path_arg.clone(), "2026-10-29".into())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(claim["claimed"], true);
+            let run = |source: &str, status: &str, run_id: &str| {
+                serde_json::json!({
+                    "date": "2026-10-29", "source": source, "status": status,
+                    "run_id": run_id, "saved": 2,
+                    "cloud_stage": {"status": "partial", "total": 2, "submitted": 1,
+                        "pending": 1, "message": "waiting for remote confirmation"}
+                })
+                .to_string()
+            };
+            eh_update_daily_run(
+                path_arg.clone(),
+                run("daily_auto", "running", "daily-2026-10-29"),
+            )
+            .await
+            .unwrap();
+            let finished = eh_update_daily_run(
+                path_arg.clone(),
+                run("daily_auto", "partial", "daily-2026-10-29"),
+            )
+            .await
+            .expect("partial is a durable terminal state");
+            let saved: serde_json::Value = serde_json::from_str(&finished).unwrap();
+            assert_eq!(saved["automation"]["last_run"]["cloud_stage"]["pending"], 1);
+
+            eh_update_daily_run(path_arg.clone(), run("manual", "running", "manual-1"))
+                .await
+                .unwrap();
+            let saved =
+                eh_update_daily_run(path_arg.clone(), run("manual", "completed", "manual-1"))
+                    .await
+                    .unwrap();
+            let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+            assert_eq!(saved["automation"]["last_auto_run"]["status"], "partial");
+            assert_eq!(
+                saved["automation"]["last_auto_run"]["cloud_stage"]["pending"],
+                1
+            );
+            assert_eq!(saved["automation"]["last_run"]["run_id"], "manual-1");
+        });
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn manual_cloud_summary_can_finalize_only_its_own_run() {
+        let path = test_rules_path();
+        let path_arg = path.to_string_lossy().into_owned();
+        runtime().block_on(async {
+            eh_load_rules(path_arg.clone()).await.unwrap();
+            let run = |status: &str, run_id: &str| {
+                serde_json::json!({
+                    "date": "2026-10-29", "source": "manual", "status": status,
+                    "run_id": run_id, "saved": 1,
+                    "cloud_stage": {"status": "partial", "total": 1, "failed": 1}
+                })
+                .to_string()
+            };
+            eh_update_daily_run(path_arg.clone(), run("running", "manual-1"))
+                .await
+                .unwrap();
+            eh_update_daily_run(path_arg.clone(), run("completed", "manual-1"))
+                .await
+                .unwrap();
+            let saved = eh_update_daily_run(path_arg.clone(), run("partial", "manual-1"))
+                .await
+                .expect("the same run can add its later cloud result");
+            let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+            assert_eq!(saved["automation"]["last_run"]["cloud_stage"]["failed"], 1);
+            eh_update_daily_run(path_arg.clone(), run("running", "manual-2"))
+                .await
+                .unwrap();
+            eh_update_daily_run(path_arg.clone(), run("completed", "manual-2"))
+                .await
+                .unwrap();
+            assert!(
+                eh_update_daily_run(path_arg.clone(), run("partial", "manual-1"))
+                    .await
+                    .is_err()
+            );
+        });
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn workflow_lease_blocks_another_runner_and_recovery_until_released() {
+        let path = test_rules_path();
+        let path_arg = path.to_string_lossy().into_owned();
+        runtime().block_on(async {
+            eh_load_rules(path_arg.clone()).await.unwrap();
+            eh_set_daily_enabled(path_arg.clone(), true).await.unwrap();
+            eh_claim_daily(path_arg.clone(), "2026-10-29".into())
+                .await
+                .unwrap();
+            let lease = eh_try_acquire_workflow_lease(path_arg.clone())
+                .unwrap()
+                .unwrap();
+            assert!(eh_try_acquire_workflow_lease(path_arg.clone())
+                .unwrap()
+                .is_none());
+            let still_active = eh_recover_daily_run(path_arg.clone()).await.unwrap();
+            let state: serde_json::Value = serde_json::from_str(&still_active).unwrap();
+            assert_eq!(state["automation"]["last_auto_run"]["status"], "claimed");
+            eh_release_workflow_lease(lease).unwrap();
+            let recovered = eh_recover_daily_run(path_arg).await.unwrap();
+            let state: serde_json::Value = serde_json::from_str(&recovered).unwrap();
+            assert_eq!(
+                state["automation"]["last_auto_run"]["status"],
+                "interrupted_unknown"
+            );
+        });
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(
+            path.parent()
+                .unwrap()
+                .join(".eh_subscription_rules.json.workflow.lock"),
+        )
+        .unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn interrupted_daily_resume_preserves_identity_after_manual_run_and_is_bounded() {
+        let path = test_rules_path();
+        let path_arg = path.to_string_lossy().into_owned();
+        runtime().block_on(async {
+            eh_load_rules(path_arg.clone()).await.unwrap();
+            eh_set_daily_enabled(path_arg.clone(), true).await.unwrap();
+            eh_claim_daily(path_arg.clone(), "2026-10-29".into())
+                .await
+                .unwrap();
+            eh_recover_daily_run(path_arg.clone()).await.unwrap();
+            for status in ["running", "completed"] {
+                let run = serde_json::json!({
+                    "date": "2026-10-29", "source": "manual", "status": status,
+                    "run_id": "manual-between-retries"
+                });
+                eh_update_daily_run(path_arg.clone(), run.to_string())
+                    .await
+                    .unwrap();
+            }
+            assert!(
+                eh_resume_daily_run(path_arg.clone(), "2026-10-29".into(), 999)
+                    .await
+                    .is_err()
+            );
+            for expected in 1..=2 {
+                let lease = eh_try_acquire_workflow_lease(path_arg.clone())
+                    .unwrap()
+                    .unwrap();
+                let result = eh_resume_daily_run(path_arg.clone(), "2026-10-29".into(), lease)
+                    .await
+                    .unwrap();
+                let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+                assert_eq!(result["resumed"], true);
+                let rules: serde_json::Value =
+                    serde_json::from_str(result["rules_json"].as_str().unwrap()).unwrap();
+                let run = &rules["automation"]["last_auto_run"];
+                assert_eq!(run["run_id"], "daily-2026-10-29");
+                assert_eq!(run["resume_count"], expected);
+                assert_eq!(run["status"], "claimed");
+                eh_release_workflow_lease(lease).unwrap();
+                eh_recover_daily_run(path_arg.clone()).await.unwrap();
+            }
+            let lease = eh_try_acquire_workflow_lease(path_arg.clone())
+                .unwrap()
+                .unwrap();
+            let result = eh_resume_daily_run(path_arg.clone(), "2026-10-29".into(), lease)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&result).unwrap()["resumed"],
+                false
+            );
+            eh_release_workflow_lease(lease).unwrap();
+        });
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(
+            path.parent()
+                .unwrap()
+                .join(".eh_subscription_rules.json.workflow.lock"),
+        )
+        .unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn same_day_retry_accepts_only_safe_waiting_or_scan_failures() {
+        for (status, cloud, allowed) in [
+            ("partial", "session_unavailable", true),
+            ("partial", "needs_configuration", true),
+            ("failed", "not_run", true),
+            ("partial", "partial", false),
+            ("cancelled", "not_run", false),
+        ] {
+            let path = test_rules_path();
+            let path_arg = path.to_string_lossy().into_owned();
+            runtime().block_on(async {
+                eh_load_rules(path_arg.clone()).await.unwrap();
+                eh_set_daily_enabled(path_arg.clone(), true).await.unwrap();
+                eh_claim_daily(path_arg.clone(), "2026-10-29".into())
+                    .await
+                    .unwrap();
+                let mut run = serde_json::json!({
+                    "date": "2026-10-29", "source": "daily_auto", "status": "running",
+                    "run_id": "daily-2026-10-29", "cloud_stage": {"status": "not_run"}
+                });
+                eh_update_daily_run(path_arg.clone(), run.to_string())
+                    .await
+                    .unwrap();
+                run["status"] = status.into();
+                run["cloud_stage"]["status"] = cloud.into();
+                eh_update_daily_run(path_arg.clone(), run.to_string())
+                    .await
+                    .unwrap();
+                let lease = eh_try_acquire_workflow_lease(path_arg.clone())
+                    .unwrap()
+                    .unwrap();
+                let result = eh_resume_daily_run(path_arg.clone(), "2026-10-29".into(), lease)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&result).unwrap()["resumed"],
+                    allowed,
+                    "unexpected retry eligibility for {status}/{cloud}"
+                );
+                eh_release_workflow_lease(lease).unwrap();
+            });
+            std::fs::remove_file(&path).unwrap();
+            std::fs::remove_file(
+                path.parent()
+                    .unwrap()
+                    .join(".eh_subscription_rules.json.workflow.lock"),
+            )
+            .unwrap();
+            std::fs::remove_dir(path.parent().unwrap()).unwrap();
+        }
     }
 
     #[test]

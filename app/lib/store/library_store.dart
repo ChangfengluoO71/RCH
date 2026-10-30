@@ -13,6 +13,7 @@ import '../src/rust/api/book.dart' as rust_book;
 import '../src/rust/api/db.dart';
 import 'folder_snapshot_store.dart';
 import 'foreground_work_coordinator.dart';
+import 'credential_vault.dart';
 import 'library_catalog.dart';
 import 'library_index_service.dart';
 import 'models.dart';
@@ -316,7 +317,7 @@ class LibraryStore extends ChangeNotifier {
     for (final r in recRepo.records.values.toList()) {
       final localPath = normalizeLocalFilesystemPath(
         r.path,
-        isLocalFs: r.sourceType == 'local' || r.sourceType == 'smb',
+        isLocalFs: r.sourceType == 'local',
         isWindows: Platform.isWindows,
       );
       final nk = bookKeyOf(r.sourceType, r.sourceId, localPath);
@@ -364,7 +365,7 @@ class LibraryStore extends ChangeNotifier {
       final p = m.key.substring(sep2 + 1);
       final localPath = normalizeLocalFilesystemPath(
         p,
-        isLocalFs: st == 'local' || st == 'smb',
+        isLocalFs: st == 'local',
         isWindows: Platform.isWindows,
       );
       final nk = bookKeyOf(st, sid, localPath);
@@ -575,8 +576,7 @@ class LibraryStore extends ChangeNotifier {
     final f = await _file();
     final data = {
       ..._books.toJson(
-        includeSensitive:
-            !(!kIsWeb && defaultTargetPlatform == TargetPlatform.android),
+        includeSensitive: includeSensitiveCredentialsInBackup(isWeb: kIsWeb),
       ),
       ..._records.toJson(),
       'settings': settings.toJson(),
@@ -739,6 +739,11 @@ class LibraryStore extends ChangeNotifier {
     String? rootId,
     String? cookie,
     String? credentialRef,
+    String? hostKeyFingerprint,
+    String? hostKeyEndpoint,
+    String? sftpAuthMethod,
+    String? privateKey,
+    String? privateKeyPassphrase,
     String? note,
   }) async {
     final current = sourceById(id);
@@ -762,6 +767,11 @@ class LibraryStore extends ChangeNotifier {
       rootId: normalizedRoot,
       cookie: cookie,
       credentialRef: credentialRef,
+      hostKeyFingerprint: hostKeyFingerprint,
+      hostKeyEndpoint: hostKeyEndpoint,
+      sftpAuthMethod: sftpAuthMethod,
+      privateKey: privateKey,
+      privateKeyPassphrase: privateKeyPassphrase,
       note: note,
     );
     // Phase 6.1 采纳语义：用户编辑保存即视为"本机配置该书源"——
@@ -805,6 +815,13 @@ class LibraryStore extends ChangeNotifier {
       await TagRepository.instance.removeBookTagsByPrefixAndPrune(prefix);
       // SQLite 同步删除：saveToSqlite 只 upsert 不删行，漏删会让书源/记录重启后复活。
       await dbDeleteSource(id: id);
+      try {
+        await _books.deleteSourceCredentials(src);
+      } catch (error) {
+        debugPrint(
+          '[LibraryStore] secure credential cleanup failed: ${error.runtimeType}',
+        );
+      }
       await dbDeleteRecordsBySourcePrefix(prefix: prefix);
       await dbDeleteMetasBySourcePrefix(prefix: prefix);
     }
@@ -1420,7 +1437,7 @@ class LibraryStore extends ChangeNotifier {
     // A freshly-created local source may not have completed its first index
     // yet. It is safe to check local filesystem candidates, but never do this
     // fallback for cloud/remote sources (which would violate local-first).
-    if (sourceType == 'local' || sourceType == 'smb') {
+    if (sourceType == 'local') {
       final raw = parts.sublist(2).join('|');
       final candidates = <String>[raw];
       for (final ext in const [

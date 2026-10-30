@@ -14,6 +14,7 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/random_read_selector.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:app/ui/opener.dart';
@@ -24,6 +25,7 @@ import 'package:app/ui/common.dart';
 import 'package:app/ui/quark_qr_scan.dart';
 import 'package:app/ui/webtoon_navigation.dart';
 import 'package:app/ui/rch_overlay.dart';
+import 'package:app/ui/sftp_host_key_dialog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -179,9 +181,7 @@ class _ReaderPageState extends State<ReaderPage> {
   late bool _skipCover;
   late KeyBinds _keys;
 
-  /// 进入阅读器时是否为紧凑（手机）布局：退出时据此恢复竖屏锁定或保持可旋转。
-  bool _compactAtOpen = true;
-  bool _orientationCaptured = false;
+  final Object _readerOrientationOwner = Object();
   final ReadingCompletionState _completion = ReadingCompletionState(
     pageCount: 0,
   );
@@ -295,10 +295,6 @@ class _ReaderPageState extends State<ReaderPage> {
     final portrait = size.width < size.height;
     final previousPortrait = _widePortraitViewport;
     _widePortraitViewport = portrait;
-    if (!_orientationCaptured) {
-      _orientationCaptured = true;
-      _compactAtOpen = isCompact(context);
-    }
     if (previousPortrait != null && previousPortrait != portrait) {
       _wideDisplayGeneration++;
       _scheduleWideViewportRecheck();
@@ -329,9 +325,7 @@ class _ReaderPageState extends State<ReaderPage> {
     super.initState();
     _dualZoomCtrl.addListener(_onDualZoomChanged);
     _webtoonCtrl.addListener(_onWebtoonScroll);
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-    }
+    appOrientationCoordinator.enterReader(_readerOrientationOwner);
     final g = LibraryStore.instance.settings;
     _mode = g.readMode;
     _webtoonRightToLeft = g.readMode != ReadMode.comic;
@@ -609,6 +603,31 @@ class _ReaderPageState extends State<ReaderPage> {
         isCurrent: isCurrent,
       );
       if (recovered || !isCurrent()) return;
+      if (!mounted) return;
+      if (error is SftpHostKeyTrustRequired &&
+          source != null &&
+          source.isSftp) {
+        final trusted = await confirmSftpHostKeyTrust(
+          context,
+          host: error.host,
+          port: error.port,
+          expectedFingerprint: error.expectedFingerprint,
+          actualFingerprint: error.actualFingerprint,
+          expectedEndpoint: error.expectedEndpoint,
+          actualEndpoint: error.actualEndpoint,
+        );
+        if (!mounted || !isCurrent()) return;
+        if (trusted) {
+          await LibraryStore.instance.updateSource(
+            source.id,
+            hostKeyFingerprint: error.actualFingerprint,
+            hostKeyEndpoint: error.actualEndpoint,
+          );
+          if (!isCurrent()) return;
+          await _open();
+          return;
+        }
+      }
       final partialBook = _book;
       _book = null;
       if (partialBook != null) {
@@ -2131,13 +2150,7 @@ class _ReaderPageState extends State<ReaderPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AiUpscaleManager.instance.clearReadingBook(owner: aiReadingOwner);
     });
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      SystemChrome.setPreferredOrientations(
-        _compactAtOpen
-            ? [DeviceOrientation.portraitUp]
-            : DeviceOrientation.values,
-      );
-    }
+    appOrientationCoordinator.leaveReader(_readerOrientationOwner);
     final b = _book;
     if (b != null) closeBook(handle: b.handle);
     // 第 71 轮：整包下载模式下，若设置在"阅读完成后自动删除整包"，关闭书本即删 raw 包。

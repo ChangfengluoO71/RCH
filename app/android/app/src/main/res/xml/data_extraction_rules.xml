@@ -3,9 +3,11 @@
     <cloud-backup disableIfNoEncryptionCapabilities="true">
         <exclude domain="file" path="rch_credentials_v1.enc" />
         <exclude domain="file" path="rch_credentials_v1.enc.bak" />
+        <exclude domain="file" path="rch_credentials_v1.enc.part" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="rch_credentials_v1.enc" />
         <exclude domain="file" path="rch_credentials_v1.enc.bak" />
+        <exclude domain="file" path="rch_credentials_v1.enc.part" />
     </device-transfer>
 </data-extraction-rules>

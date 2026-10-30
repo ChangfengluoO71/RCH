@@ -27,25 +27,36 @@ class BatchTagTarget {
   int get hashCode => Object.hash(path, entryType);
 }
 
-/// 书源:本地 / WebDAV / SMB / SFTP / 百度网盘 / 115 网盘 / 夸克网盘。
+/// 书源:本地 / WebDAV / SMB / SFTP / FTP / S3 / 百度网盘 / 115 网盘 / 夸克网盘。
 class BookSource {
   final String id;
   final String
-  type; // 'local' | 'webdav' | 'smb' | 'sftp' | 'baidu' | '115' | 'quark'
+  type; // 'local' | 'webdav' | 'smb' | 'sftp' | 'ftp' | 's3' | 'baidu' | '115' | 'quark'
   String name;
   String path; // local: 目录路径;webdav: 初始浏览路径
   String? url;
   String? username;
   String? password;
+  String? hostKeyFingerprint; // Locally trusted SFTP SHA-256 host-key pin
+  String? hostKeyEndpoint; // Endpoint (host:port) the host-key pin belongs to
+  String? sftpAuthMethod; // 'password' | 'privateKey'; old rows default safely
+  String? privateKey; // Stored only in the system credential vault
+  String? privateKeyPassphrase; // Stored only in the system credential vault
   int? port; // SFTP 端口（默认 22）
   String? refreshToken; // 百度/115：刷新令牌
   String? clientId; // 百度 AppKey / 115 APP ID（必填，无内置）
   String? clientSecret; // 百度 SecretKey（115 无）
-  String? rootId; // 115 根文件夹 ID
+  String? rootId; // 115 根文件夹 ID / S3 bucket 名
+  String? s3Region; // S3 区域（默认 us-east-1）
   String? cookie; // 夸克网盘 Cookie（pan.quark.cn 登录后粘贴）
   /// Android Keystore 中凭据包的引用。桌面端可为空，旧明文字段仍保留
   /// 作为兼容输入，但新导出的脱敏 JSON 永不包含这些字段。
   String? credentialRef;
+
+  /// Transient guard set when a native vault read fails. It is intentionally
+  /// excluded from persistence and prevents unrelated saves from replacing a
+  /// still-valid credential bundle with an empty one.
+  bool credentialHydrationFailed = false;
   String note; // 用户备注
   String capabilityLabel; // "local" | "webdav_range" | "webdav_norange"
   bool remoteOnly; // 其他设备的本地书源：仅元数据，不可阅读
@@ -60,10 +71,16 @@ class BookSource {
     this.username,
     this.password,
     this.port,
+    this.hostKeyFingerprint,
+    this.hostKeyEndpoint,
+    this.sftpAuthMethod,
+    this.privateKey,
+    this.privateKeyPassphrase,
     this.refreshToken,
     this.clientId,
     this.clientSecret,
     this.rootId,
+    this.s3Region,
     this.cookie,
     this.credentialRef,
     this.note = '',
@@ -74,7 +91,12 @@ class BookSource {
 
   bool get isWebDav => type == 'webdav';
   bool get isSftp => type == 'sftp';
+  String get effectiveSftpAuthMethod =>
+      sftpAuthMethod ??
+      (privateKey?.isNotEmpty == true ? 'privateKey' : 'password');
   bool get isSmb => type == 'smb';
+  bool get isFtp => type == 'ftp';
+  bool get isS3 => type == 's3';
   bool get isBaidu => type == 'baidu';
   bool get is115 => type == '115';
   bool get isQuark => type == 'quark';
@@ -86,6 +108,27 @@ class BookSource {
   /// fallback; a completely empty root is the service root (`0`). Other source
   /// types continue to use their configured path unchanged.
   String get effectiveRootPath {
+    if (isSmb) {
+      final normalized = path.replaceAll('\\', '/');
+      final segments = normalized
+          .split('/')
+          .where((segment) => segment.isNotEmpty)
+          .toList(growable: false);
+      if ((url ?? '').trim().isEmpty) {
+        var offset = 0;
+        if (segments.length >= 4 &&
+            segments[0] == '?' &&
+            segments[1].toLowerCase() == 'unc') {
+          offset = 2;
+        }
+        if (segments.length >= offset + 2 && normalized.startsWith('//')) {
+          // Legacy UNC rows keep the share in their logical path so their
+          // catalog identity remains stable after the source is normalized.
+          return segments.skip(offset + 1).join('/');
+        }
+      }
+      return segments.join('/');
+    }
     if (is115 || isQuark) {
       final configured = rootId?.trim();
       if (configured != null) return configured.isEmpty ? '0' : configured;
@@ -98,13 +141,17 @@ class BookSource {
   /// 幽灵书源：来自其他设备的本地书源，仅元数据、不可打开阅读。
   bool get isGhost => remoteOnly;
 
-  /// 走本地文件系统链路的来源（本地目录 + SMB UNC）。
-  bool get isLocalFs => type == 'local' || type == 'smb';
+  /// Only local directories use host filesystem APIs. SMB is a remote source
+  /// even when it points at a LAN share.
+  bool get isLocalFs => type == 'local';
 
-  /// 需要会话连接的远程来源（WebDAV / SFTP / 百度网盘 / 115 / 夸克网盘）。
+  /// 需要会话连接的远程来源（含 SMB）。
   bool get needsSession =>
       type == 'webdav' ||
+      type == 'smb' ||
       type == 'sftp' ||
+      type == 'ftp' ||
+      type == 's3' ||
       type == 'baidu' ||
       type == '115' ||
       type == 'quark';
@@ -112,10 +159,11 @@ class BookSource {
   /// 能力标记的显示颜色。
   /// 🟢 本地/NAS  🟡 WebDAV(Range)  🔴 WebDAV(无Range)
   ({String emoji, String label}) get capabilityDisplay {
-    if (type == 'local' || type == 'smb') {
-      return (emoji: '\u{1F7E2}', label: type == 'smb' ? 'SMB 本地/NAS' : '本地');
-    }
+    if (type == 'local') return (emoji: '\u{1F7E2}', label: '本地');
+    if (type == 'smb') return (emoji: '\u{1F7E1}', label: 'SMB');
     if (type == 'sftp') return (emoji: '\u{1F7E1}', label: 'SFTP');
+    if (type == 'ftp') return (emoji: '\u{1F7E1}', label: 'FTP');
+    if (type == 's3') return (emoji: '\u{1F7E1}', label: 'S3');
     if (type == 'baidu') return (emoji: '\u{1F7E2}', label: '百度网盘');
     if (type == '115') return (emoji: '\u{1F7E1}', label: '115 网盘');
     if (type == 'quark') return (emoji: '\u{1F7E1}', label: '夸克网盘');
@@ -137,10 +185,17 @@ class BookSource {
     if (username != null) 'username': username,
     if (includeSensitive && password != null) 'password': password,
     if (port != null) 'port': port,
+    if (hostKeyFingerprint != null) 'hostKeyFingerprint': hostKeyFingerprint,
+    if (hostKeyEndpoint != null) 'hostKeyEndpoint': hostKeyEndpoint,
+    if (sftpAuthMethod != null) 'sftpAuthMethod': sftpAuthMethod,
+    if (includeSensitive && privateKey != null) 'privateKey': privateKey,
+    if (includeSensitive && privateKeyPassphrase != null)
+      'privateKeyPassphrase': privateKeyPassphrase,
     if (includeSensitive && refreshToken != null) 'refreshToken': refreshToken,
     if (clientId != null) 'clientId': clientId,
     if (includeSensitive && clientSecret != null) 'clientSecret': clientSecret,
     if (rootId != null) 'rootId': rootId,
+    if (s3Region != null) 's3Region': s3Region,
     if (includeSensitive && cookie != null) 'cookie': cookie,
     if (credentialRef != null) 'credentialRef': credentialRef,
     'note': note,
@@ -158,10 +213,16 @@ class BookSource {
     username: j['username'] as String?,
     password: j['password'] as String?,
     port: j['port'] as int?,
+    hostKeyFingerprint: j['hostKeyFingerprint'] as String?,
+    hostKeyEndpoint: j['hostKeyEndpoint'] as String?,
+    sftpAuthMethod: j['sftpAuthMethod'] as String?,
+    privateKey: j['privateKey'] as String?,
+    privateKeyPassphrase: j['privateKeyPassphrase'] as String?,
     refreshToken: j['refreshToken'] as String?,
     clientId: j['clientId'] as String?,
     clientSecret: j['clientSecret'] as String?,
     rootId: j['rootId'] as String?,
+    s3Region: j['s3Region'] as String?,
     cookie: j['cookie'] as String?,
     credentialRef: j['credentialRef'] as String?,
     note: (j['note'] as String?) ?? '',
@@ -390,6 +451,7 @@ class AppSettings {
   bool useSystemDynamicColors;
   String windowMaterial; // standard | mica
   String overlayMaterial; // standard | acrylic
+  String tabletOverlayMaterial; // standard | frosted (Android tablet)
   ReadMode readMode; // 阅读模式:日漫/美漫/条漫
   bool invertTap; // 日漫模式下点击区是否反向
   DualPageMode dualPageMode; // 双页拼接模式
@@ -402,8 +464,7 @@ class AppSettings {
   BookOpenStrategy bookOpenStrategy; // 远程书源打开策略（WebDAV/SFTP 共用）
   /// 整包下载模式下，阅读完成后自动删除 raw 整包（封面缓存保留）。
   bool deletePackageAfterReading;
-  String
-  tabletLayout; // 'auto' | 'desktop' | 'mobile'：平板布局模式（auto=按宽度，desktop=桌面侧栏，mobile=手机底部导航）
+  String tabletLayout; // auto | desktop | tablet | mobile
   String updateMirror; // GitHub 下载镜像前缀（''=官方直连；自定义镜像也存这里）
   String updateMirrorList; // 远程拉取的镜像列表 JSON（[{name,url}]），供自动更新
   int updateMirrorFetchedAt; // 镜像列表最后成功拉取时间（ms epoch，0=从未）
@@ -428,6 +489,7 @@ class AppSettings {
     this.useSystemDynamicColors = false,
     this.windowMaterial = 'standard',
     this.overlayMaterial = 'standard',
+    this.tabletOverlayMaterial = 'standard',
     this.readMode = ReadMode.manga,
     this.invertTap = false,
     this.dualPageMode = DualPageMode.off,
@@ -466,6 +528,7 @@ class AppSettings {
     'useSystemDynamicColors': useSystemDynamicColors,
     'windowMaterial': windowMaterial,
     'overlayMaterial': overlayMaterial,
+    'tabletOverlayMaterial': tabletOverlayMaterial,
     'readMode': readMode.name,
     'invertTap': invertTap,
     'dualPageMode': dualPageMode.name,
@@ -526,6 +589,10 @@ class AppSettings {
         const {'standard', 'acrylic'}.contains(j['overlayMaterial'])
         ? j['overlayMaterial'] as String
         : 'standard',
+    tabletOverlayMaterial:
+        const {'standard', 'frosted'}.contains(j['tabletOverlayMaterial'])
+        ? j['tabletOverlayMaterial'] as String
+        : 'standard',
     readMode: ReadMode.values.firstWhere(
       (r) => r.name == j['readMode'],
       orElse: () => ReadMode.manga,
@@ -550,7 +617,15 @@ class AppSettings {
     ),
     deletePackageAfterReading:
         (j['deletePackageAfterReading'] as bool?) ?? false,
-    tabletLayout: (j['tabletLayout'] as String?) ?? 'auto',
+    tabletLayout:
+        const {
+          'auto',
+          'desktop',
+          'tablet',
+          'mobile',
+        }.contains(j['tabletLayout'])
+        ? j['tabletLayout'] as String
+        : 'auto',
     updateMirror: (j['updateMirror'] as String?) ?? '',
     updateMirrorList: _stringFromJson(j['updateMirrorList'], '[]'),
     updateMirrorFetchedAt: (j['updateMirrorFetchedAt'] as int?) ?? 0,

@@ -7,6 +7,7 @@ import android.util.Base64
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -25,28 +26,36 @@ class CredentialVault(context: Context) {
         private const val FILE_NAME = "rch_credentials_v1.enc"
         private const val IV_BYTES = 12
         private const val TAG_BITS = 128
+        private val processLock = Any()
     }
 
     private val file = File(context.filesDir, FILE_NAME)
-    @Synchronized
-    fun put(key: String, value: String) {
+    private val lockFile = File(context.filesDir, "$FILE_NAME.lock")
+
+    private fun <T> withVaultLock(block: () -> T): T = synchronized(processLock) {
+        RandomAccessFile(lockFile, "rw").use { lock ->
+            lock.channel.lock().use { block() }
+        }
+    }
+
+    fun put(key: String, value: String) = withVaultLock {
         require(key.isNotBlank()) { "credential key must not be blank" }
         val values = readValues().apply { put(key, value) }
         writeValues(values)
     }
 
-    @Synchronized
-    fun get(key: String): String? {
+    fun get(key: String): String? = withVaultLock {
         require(key.isNotBlank()) { "credential key must not be blank" }
-        return readValues().optString(key, null)
+        readValues().optString(key, null)
     }
 
-    @Synchronized
-    fun delete(key: String) {
+    fun delete(key: String) = withVaultLock {
         require(key.isNotBlank()) { "credential key must not be blank" }
         val values = readValues()
         values.remove(key)
         if (values.length() == 0) {
+            val backup = File(file.parentFile, "${file.name}.bak")
+            if (backup.exists() && !backup.delete()) error("unable to clear credential vault backup")
             if (file.exists() && !file.delete()) error("unable to delete credential vault")
         } else {
             writeValues(values)
@@ -76,6 +85,12 @@ class CredentialVault(context: Context) {
     }
 
     private fun readValues(): JSONObject {
+        // A process can die after staging the previous ciphertext. Restore
+        // that copy before treating a missing destination as an empty vault.
+        val backup = File(file.parentFile, "${file.name}.bak")
+        if (!file.exists() && backup.exists() && !backup.renameTo(file)) {
+            error("unable to recover credential vault")
+        }
         if (!file.exists()) return JSONObject()
         val payload = file.readBytes()
         require(payload.size > IV_BYTES) { "credential vault is truncated" }

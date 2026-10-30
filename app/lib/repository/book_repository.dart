@@ -11,18 +11,43 @@ import 'package:flutter/foundation.dart';
 import '../src/rust/api/db.dart';
 import '../store/credential_vault.dart';
 import '../store/models.dart';
+import '../store/smb_source_config.dart';
 
 class BookRepository {
-  BookRepository._();
+  BookRepository._({
+    this._credentialVault,
+    Future<List<BookSourceDto>> Function()? loadSources,
+    Future<List<BookMetaDto>> Function()? loadMetas,
+    Future<void> Function(BookSourceDto source)? upsertSource,
+  }) : _loadSources = loadSources ?? dbLoadAllSources,
+       _loadMetas = loadMetas ?? dbLoadAllMetas,
+       _upsertSource =
+           upsertSource ?? ((source) => dbUpsertSource(source: source));
+
+  @visibleForTesting
+  BookRepository.forTesting({
+    required CredentialVault credentialVault,
+    required Future<List<BookSourceDto>> Function() loadSources,
+    required Future<List<BookMetaDto>> Function() loadMetas,
+    required Future<void> Function(BookSourceDto source) upsertSource,
+  }) : this._(
+         credentialVault: credentialVault,
+         loadSources: loadSources,
+         loadMetas: loadMetas,
+         upsertSource: upsertSource,
+       );
+
   static final BookRepository instance = BookRepository._();
 
   final List<BookSource> sources = [];
   final Map<String, BookMeta> metas = {};
 
   CredentialVault? _credentialVault;
+  final Future<List<BookSourceDto>> Function() _loadSources;
+  final Future<List<BookMetaDto>> Function() _loadMetas;
+  final Future<void> Function(BookSourceDto source) _upsertSource;
 
-  bool get _usesCredentialVault =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  bool get _usesCredentialVault => usesNativeCredentialVault(isWeb: kIsWeb);
 
   CredentialVault get _vault => _credentialVault ??= platformCredentialVault();
 
@@ -34,17 +59,23 @@ class BookRepository {
     String? refreshToken,
     String? clientSecret,
     String? cookie,
+    String? privateKey,
+    String? privateKeyPassphrase,
   }) =>
       (password?.isNotEmpty ?? false) ||
       (refreshToken?.isNotEmpty ?? false) ||
       (clientSecret?.isNotEmpty ?? false) ||
-      (cookie?.isNotEmpty ?? false);
+      (cookie?.isNotEmpty ?? false) ||
+      (privateKey?.isNotEmpty ?? false) ||
+      (privateKeyPassphrase?.isNotEmpty ?? false);
 
   String _encodeSourceCredentials(BookSource source) => encodeCredentialBundle({
     'password': source.password,
     'refreshToken': source.refreshToken,
     'clientSecret': source.clientSecret,
     'cookie': source.cookie,
+    'privateKey': source.privateKey,
+    'privateKeyPassphrase': source.privateKeyPassphrase,
   });
 
   Future<String?> _migrateOrHydrateCredentials(BookSource source) async {
@@ -57,6 +88,8 @@ class BookRepository {
               refreshToken: source.refreshToken,
               clientSecret: source.clientSecret,
               cookie: source.cookie,
+              privateKey: source.privateKey,
+              privateKeyPassphrase: source.privateKeyPassphrase,
             )
             ? _credentialKey(source)
             : null);
@@ -73,6 +106,8 @@ class BookRepository {
         refreshToken: source.refreshToken,
         clientSecret: source.clientSecret,
         cookie: source.cookie,
+        privateKey: source.privateKey,
+        privateKeyPassphrase: source.privateKeyPassphrase,
       )) {
         // One-time migration for legacy SQLite/library.json rows. The
         // read-back is mandatory before clearing SQLite in the next step.
@@ -87,24 +122,31 @@ class BookRepository {
       }
     } catch (error, stack) {
       // Never turn a vault failure into an intentional credential clear. Keep
-      // the legacy values in memory and let the next save retry migration.
-      debugPrint('[BookRepository] credential vault migration failed: $error');
+      // legacy values in memory, and make unrelated saves preserve this ref;
+      // the next load retries hydration.
+      source.credentialHydrationFailed = true;
+      debugPrint(
+        '[BookRepository] credential vault migration failed (${error.runtimeType})',
+      );
       debugPrintStack(stackTrace: stack);
       return source.credentialRef;
     }
 
+    source.credentialHydrationFailed = false;
     source.credentialRef = key;
     source.password = bundle['password'];
     source.refreshToken = bundle['refreshToken'];
     source.clientSecret = bundle['clientSecret'];
     source.cookie = bundle['cookie'];
+    source.privateKey = bundle['privateKey'];
+    source.privateKeyPassphrase = bundle['privateKeyPassphrase'];
 
     if (migrated) {
       // Clear only after the vault payload was verified. The in-memory source
       // remains hydrated for the current session.
       try {
-        await dbUpsertSource(
-          source: BookSourceDto(
+        await _upsertSource(
+          BookSourceDto(
             id: source.id,
             type: source.type,
             name: source.name,
@@ -113,6 +155,9 @@ class BookRepository {
             username: source.username,
             password: null,
             port: source.port,
+            hostKeyFingerprint: source.hostKeyFingerprint,
+            hostKeyEndpoint: source.hostKeyEndpoint,
+            sftpAuthMethod: source.sftpAuthMethod,
             refreshToken: null,
             clientId: source.clientId,
             clientSecret: null,
@@ -141,6 +186,13 @@ class BookRepository {
 
   void removeSource(String id) => sources.removeWhere((s) => s.id == id);
 
+  /// Remove the system-keychain bundle after the database row is deleted.
+  Future<void> deleteSourceCredentials(BookSource source) async {
+    if (!_usesCredentialVault) return;
+    final key = source.credentialRef;
+    if (key != null && key.isNotEmpty) await _vault.delete(key);
+  }
+
   void updateSource(
     String id, {
     String? name,
@@ -154,6 +206,11 @@ class BookRepository {
     String? clientSecret,
     String? rootId,
     String? cookie,
+    String? hostKeyFingerprint,
+    String? hostKeyEndpoint,
+    String? sftpAuthMethod,
+    String? privateKey,
+    String? privateKeyPassphrase,
     String? credentialRef,
     String? note,
   }) {
@@ -170,6 +227,15 @@ class BookRepository {
         if (clientSecret != null) s.clientSecret = clientSecret;
         if (rootId != null) s.rootId = rootId;
         if (cookie != null) s.cookie = cookie;
+        if (hostKeyFingerprint != null) {
+          s.hostKeyFingerprint = hostKeyFingerprint;
+        }
+        if (hostKeyEndpoint != null) s.hostKeyEndpoint = hostKeyEndpoint;
+        if (sftpAuthMethod != null) s.sftpAuthMethod = sftpAuthMethod;
+        if (privateKey != null) s.privateKey = privateKey;
+        if (privateKeyPassphrase != null) {
+          s.privateKeyPassphrase = privateKeyPassphrase;
+        }
         if (credentialRef != null) s.credentialRef = credentialRef;
         if (note != null) s.note = note;
       }
@@ -217,7 +283,7 @@ class BookRepository {
 
   Future<void> loadFromSqlite() async {
     sources.clear();
-    final srcDtos = await dbLoadAllSources();
+    final srcDtos = await _loadSources();
     for (final dto in srcDtos) {
       final source = BookSource(
         id: dto.id,
@@ -233,6 +299,9 @@ class BookRepository {
         clientSecret: dto.clientSecret,
         rootId: dto.rootId,
         cookie: dto.cookie,
+        hostKeyFingerprint: dto.hostKeyFingerprint,
+        hostKeyEndpoint: dto.hostKeyEndpoint,
+        sftpAuthMethod: dto.sftpAuthMethod,
         credentialRef: dto.credentialRef,
         note: dto.note,
         capabilityLabel: dto.capabilityLabel,
@@ -240,11 +309,25 @@ class BookRepository {
         originDeviceId: dto.originDeviceId,
       );
       await _migrateOrHydrateCredentials(source);
+      if (source.isSmb) {
+        try {
+          final config = SmbSourceConfig.fromSource(source);
+          source.url = config.server;
+          source.port = config.port;
+          source.path = config.canonicalPath;
+        } on FormatException catch (error) {
+          // Keep malformed legacy rows loadable; the session boundary will
+          // return this actionable configuration error when the source opens.
+          debugPrint(
+            '[BookRepository] SMB source configuration is invalid: ${error.message}',
+          );
+        }
+      }
       sources.add(source);
     }
 
     metas.clear();
-    final metaDtos = await dbLoadAllMetas();
+    final metaDtos = await _loadMetas();
     for (final dto in metaDtos) {
       metas[dto.key] = bookMetaFromDto(dto);
     }
@@ -284,33 +367,30 @@ class BookRepository {
 
   Future<void> _saveSourceToSqlite(BookSource s) async {
     if (_usesCredentialVault) {
+      final hasSensitiveCredentials = _hasSensitive(
+        password: s.password,
+        refreshToken: s.refreshToken,
+        clientSecret: s.clientSecret,
+        cookie: s.cookie,
+        privateKey: s.privateKey,
+        privateKeyPassphrase: s.privateKeyPassphrase,
+      );
       final key =
           s.credentialRef ??
-          (_hasSensitive(
-                password: s.password,
-                refreshToken: s.refreshToken,
-                clientSecret: s.clientSecret,
-                cookie: s.cookie,
-              )
-              ? _credentialKey(s)
-              : null);
+          (hasSensitiveCredentials ? _credentialKey(s) : null);
       if (key != null &&
-          _hasSensitive(
-            password: s.password,
-            refreshToken: s.refreshToken,
-            clientSecret: s.clientSecret,
-            cookie: s.cookie,
-          )) {
+          (!s.credentialHydrationFailed || hasSensitiveCredentials)) {
         final payload = _encodeSourceCredentials(s);
         await _vault.put(key, payload);
         if (await _vault.get(key) != payload) {
           throw StateError('凭据保险库回读校验失败');
         }
         s.credentialRef = key;
+        s.credentialHydrationFailed = false;
       }
     }
-    await dbUpsertSource(
-      source: BookSourceDto(
+    await _upsertSource(
+      BookSourceDto(
         id: s.id,
         type: s.type,
         name: s.name,
@@ -325,6 +405,9 @@ class BookRepository {
         rootId: s.rootId,
         cookie: _usesCredentialVault ? null : s.cookie,
         credentialRef: s.credentialRef,
+        hostKeyFingerprint: s.hostKeyFingerprint,
+        hostKeyEndpoint: s.hostKeyEndpoint,
+        sftpAuthMethod: s.sftpAuthMethod,
         note: s.note,
         capabilityLabel: s.capabilityLabel,
         remoteOnly: s.remoteOnly,

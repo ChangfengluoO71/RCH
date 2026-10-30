@@ -40,7 +40,15 @@ bool _hasStoredCredentials(BookSource source) {
       return (source.cookie ?? '').isNotEmpty;
     case 'webdav':
     case 'sftp':
+    case 'ftp':
       return (source.url ?? '').isNotEmpty;
+    case 's3':
+      return (source.url ?? '').isNotEmpty &&
+          (source.rootId ?? '').isNotEmpty &&
+          (source.username ?? '').isNotEmpty;
+    case 'smb':
+      // Empty credentials are a valid SMB Guest session.
+      return true;
     default:
       return false;
   }

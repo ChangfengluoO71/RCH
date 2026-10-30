@@ -173,7 +173,7 @@ fn upload_timeout_is_unknown_and_cannot_be_retried_without_reconciliation() {
     let torrent = fixture_torrent();
     let identity = protocol::torrent_identity(&torrent).unwrap();
     let server = MockServer::start(vec![MockReply::delay_without_response(
-        std::time::Duration::from_millis(900),
+        std::time::Duration::from_millis(2300),
     )]);
     let adapter = WebCookieProtocol::new(server.addr(), TEST_COOKIE, TEST_MILLIS).unwrap();
 

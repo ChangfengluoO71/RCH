@@ -10,6 +10,40 @@ All notable changes to RCH will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-30
+
+### Added
+
+- 新增 SMB 书源：纯 Rust SMB2/3 只读访问，支持 Guest、用户名/密码、域账号与旧 UNC 路径。
+- 新增 FTP 书源：明文 FTP，支持 MLSD、SIZE 与 `REST` + `RETR` 随机读取。
+- 新增 S3 书源：path-style S3 REST + SigV4，支持自定义 endpoint、bucket、region 与前缀。
+- SFTP 增加主机密钥指纹确认/固定与变更拒绝，认证支持密码或 OpenSSH/PEM 私钥。
+- 新增原生凭据保险箱：Android Keystore AES-GCM，其他平台 `flutter_secure_storage`；远程书源与同步凭据从明文偏好迁移。
+- Android 增加可选的 WorkManager 每日 EH 检查；默认关闭，由系统约束调度。
+- 增加平板/横屏布局与材质适配。
+- 115 Cookie Web BT 增加每日工作流适配、批次账本与监控增强。
+
+### Changed
+
+- 远程书源「自动」模式改为流式优先：缓存按需读取，失败才回退整本下载；仅显式选择「优先下载整本」时等待完整下载。
+- 备份默认不包含凭据，主机指纹与 endpoint 参与信任校验。
+
+### Fixed
+
+- 修复 S3 endpoint 端口与桶根路径导致的 `403 Forbidden`。
+- 修复 S3 特殊文件名（`#`、`|`、空格、中文）的签名与请求编码不一致导致的读取失败。
+- 修复 S3 封面读取预算过早耗尽与大压缩包封面失败；本地 OpenList 实测封面可用 240/240。
+- 修复远端书源「0 本漫画」统计：无根目录行时从文件路径推导父路径并校验扫描代数与完成状态。
+- 修复远端目录浏览缺少文件大小、封面缺少来源信息时未回退远程 `file_size` 的问题。
+
+### Docs
+
+- 新增 `docs/releases/release_notes_v0.7.0.md`。
+- 新增远程协议可靠性、SFTP 主机密钥与 SMB 认证的规格/实施记录。
+- 更新用户手册的远程书源、流式阅读与凭据说明。
+
+完整说明见 [`docs/releases/release_notes_v0.7.0.md`](../releases/release_notes_v0.7.0.md)。
+
 ## [0.6.7] — 2026-10-17
 
 ### Added

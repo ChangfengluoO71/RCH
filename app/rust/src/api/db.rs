@@ -215,6 +215,9 @@ pub struct BookSourceDto {
     pub root_id: Option<String>,
     pub cookie: Option<String>,
     pub credential_ref: Option<String>,
+    pub host_key_fingerprint: Option<String>,
+    pub host_key_endpoint: Option<String>,
+    pub sftp_auth_method: Option<String>,
     pub note: String,
     pub capability_label: String,
     pub remote_only: bool,
@@ -243,6 +246,9 @@ pub fn db_load_all_sources() -> Vec<BookSourceDto> {
             capability_label: r.capability_label,
             remote_only: r.remote_only,
             origin_device_id: r.origin_device_id,
+            host_key_fingerprint: r.host_key_fingerprint,
+            host_key_endpoint: r.host_key_endpoint,
+            sftp_auth_method: r.sftp_auth_method,
         })
         .collect()
 }
@@ -263,6 +269,9 @@ pub fn db_upsert_source(source: BookSourceDto) -> Result<(), String> {
         root_id: source.root_id,
         cookie: source.cookie,
         credential_ref: source.credential_ref,
+        host_key_fingerprint: source.host_key_fingerprint,
+        host_key_endpoint: source.host_key_endpoint,
+        sftp_auth_method: source.sftp_auth_method,
         note: source.note,
         capability_label: source.capability_label,
         remote_only: source.remote_only,

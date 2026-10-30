@@ -1,0 +1,29 @@
+{
+  "id": "remote-protocol-reliability",
+  "name": "remote-protocol-reliability",
+  "title": "Remote protocol reliability: SMB and SFTP",
+  "description": "Implement real SMB access and secure SFTP authentication based on the tested gaps.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "cfl",
+  "assignee": "cfl",
+  "createdAt": "2026-10-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-29-smb-source-auth",
+    "10-29-sftp-host-key-auth"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

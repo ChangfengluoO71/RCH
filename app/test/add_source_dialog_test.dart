@@ -1,10 +1,26 @@
 import 'package:app/ui/home_page.dart';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+class _FakeFileSelectorPlatform extends FileSelectorPlatform {
+  FileDialogOptions? directoryOptions;
+
+  @override
+  Future<String?> getDirectoryPathWithOptions(FileDialogOptions options) async {
+    directoryOptions = options;
+    return r'F:\comic\测试漫画';
+  }
+}
+
 void main() {
   Future<void> pumpDialog(WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Center(child: AddSourceDialog()))));
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: Center(child: AddSourceDialog())),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -28,16 +44,34 @@ void main() {
     expect(find.text('目录路径'), findsOneWidget);
     expect(find.text('服务器地址'), findsNothing);
 
-    // 切到 SMB：显示 UNC 共享路径
+    // 切到 SMB：显示服务器、共享路径和可选账号密码
     await selectType('SMB');
-    expect(find.text('共享目录路径(UNC)'), findsOneWidget);
+    expect(find.text('服务器地址'), findsOneWidget);
+    expect(find.text('SMB端口(默认445)'), findsOneWidget);
+    expect(find.text('共享名/初始目录'), findsOneWidget);
+    expect(find.text('用户名（可选）'), findsOneWidget);
+    expect(find.text('密码（可选）'), findsOneWidget);
 
-    // 切到 SFTP：显示服务器地址/端口/用户名/密码/初始路径
+    // SFTP offers explicit password and private-key authentication.
     await selectType('SFTP');
     expect(find.text('服务器地址'), findsOneWidget);
     expect(find.text('端口(默认22)'), findsOneWidget);
     expect(find.text('用户名'), findsOneWidget);
-    expect(find.text('密码'), findsOneWidget);
+    expect(find.text('Authentication method'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Password'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Private key').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Import OpenSSH private key'), findsOneWidget);
+    expect(find.text('Private key passphrase (optional)'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Password'), findsNothing);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Password').last);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, 'Password'), findsOneWidget);
+    expect(find.text('Private key passphrase (optional)'), findsNothing);
     expect(find.text('初始路径(可选,默认/)'), findsOneWidget);
 
     // 切到百度网盘：根目录 + 授权按钮 + refresh_token
@@ -72,7 +106,36 @@ void main() {
     // 导致用户以为“点了添加没反应”）
     final errRect = tester.getRect(errFinder);
     final dialogRect = tester.getRect(find.byType(AlertDialog));
-    expect(errRect.bottom <= dialogRect.bottom + 1, isTrue,
-        reason: '错误信息应自动滚动到可见位置');
+    expect(
+      errRect.bottom <= dialogRect.bottom + 1,
+      isTrue,
+      reason: '错误信息应自动滚动到可见位置',
+    );
+  });
+
+  testWidgets('本地书源可以通过系统文件夹选择器填写目录', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    final previousPlatform = FileSelectorPlatform.instance;
+    final fakePlatform = _FakeFileSelectorPlatform();
+    FileSelectorPlatform.instance = fakePlatform;
+    try {
+      await pumpDialog(tester);
+      await tester.tap(find.byType(DropdownMenu<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('本地目录').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('选择文件夹'));
+      await tester.pumpAndSettle();
+
+      expect(fakePlatform.directoryOptions?.confirmButtonText, '选择此目录');
+      expect(
+        tester.widget<TextField>(find.byType(TextField).last).controller!.text,
+        r'F:\comic\测试漫画',
+      );
+    } finally {
+      FileSelectorPlatform.instance = previousPlatform;
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }

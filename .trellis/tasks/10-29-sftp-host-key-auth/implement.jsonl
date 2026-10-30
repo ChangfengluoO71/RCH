@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/remote-source-protocols.md","reason":"Shared vault, remote session, error handling, and selected-auth contracts."}
+{"file":".trellis/spec/backend/sftp-source.md","reason":"SFTP endpoint pinning and selected authentication mode requirements."}
+{"file":"docs/superpowers/specs/2026-10-29-remote-source-protocols.md","reason":"Approved SFTP trust/auth design and live verification approach."}

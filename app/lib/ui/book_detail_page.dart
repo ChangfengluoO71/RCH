@@ -7,6 +7,8 @@ import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/ftp_session.dart';
+import 'package:app/store/s3_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/sync_manager.dart';
 import 'package:app/store/webdav_session.dart';
@@ -177,6 +179,16 @@ class _BookDetailPageState extends State<BookDetailPage> {
                   ),
                   'sftp' => await openSftpBook(
                     session: await sftpSessionFor(s),
+                    path: providerPath,
+                    strategy: strategy,
+                  ),
+                  'ftp' => await openFtpBook(
+                    session: await ftpSessionFor(s),
+                    path: providerPath,
+                    strategy: strategy,
+                  ),
+                  's3' => await openS3Book(
+                    session: await s3SessionFor(s),
                     path: providerPath,
                     strategy: strategy,
                   ),

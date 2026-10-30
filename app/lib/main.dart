@@ -11,11 +11,16 @@ import 'package:app/src/rust/frb_generated.dart';
 import 'package:app/store/ai_upscale_manager.dart';
 import 'package:app/store/automation_coordinator.dart';
 import 'package:app/store/eh_daily_coordinator.dart';
+import 'package:app/store/eh_daily_background_bootstrap.dart';
+import 'package:app/store/eh_daily_background_sources.dart';
+import 'package:app/store/credential_vault.dart';
 import 'package:app/store/eh_subscription_store.dart';
 import 'package:app/store/cloud115_bt_daily_workflow.dart';
+import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/cloud115_bt_monitor.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/library_store.dart';
+import 'package:app/store/models.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/scan_diag_log.dart';
 import 'package:app/store/cache_root_marker.dart';
@@ -36,6 +41,7 @@ import 'package:app/ui/rch_overlay.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 Future<void> main() async {
@@ -85,7 +91,11 @@ Future<void> main() async {
   final root = await cacheRootPath();
   final pending = await pendingMigration(root: root);
   final ehStore = EhSubscriptionStore.instance;
-  final dailyCloudWorkflow = Cloud115BtDailyWorkflow();
+  final dailyCloudWorkflow = Cloud115BtDailyWorkflow(
+    restoreCookieSession: Platform.isAndroid
+        ? restoreCloud115CookieSessionWithoutInteraction
+        : null,
+  );
   ehStore.configureDailyCloudStageRunner(
     runCloudStage: (entries) =>
         dailyCloudWorkflow.run(entries: entries, outputDir: ehStore.outDir),
@@ -139,12 +149,119 @@ Future<void> _initializeAfterFirstFrame() async {
   await AiUpscaleManager.instance.init();
   await AutomationCoordinator.instance.init();
 
-  // Daily EH collection is process-local and Windows-only. Loading the existing
-  // rules file is local I/O; the coordinator remains inert unless the user has
-  // explicitly enabled its persisted setting.
-  if (Platform.isWindows) {
+  // Android also registers persistent WorkManager wakeups when opted in.
+  if (Platform.isWindows || Platform.isAndroid) {
     await EhSubscriptionStore.instance.init();
     await EhDailyCoordinator.instance.start();
+  }
+}
+
+/// Android WorkManager launches this separate Flutter engine after the app
+/// process is gone. No widget, dialog, QR login, or process-local session is
+/// needed to restore the persisted workflow.
+@pragma('vm:entry-point')
+Future<void> ehDailyBackgroundMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  const channel = MethodChannel('rch/eh_daily_worker');
+  final store = EhSubscriptionStore.instance;
+  var stopRequested = false;
+  channel.setMethodCallHandler((call) async {
+    if (call.method == 'stop') {
+      stopRequested = true;
+      if (store.busy) await store.cancel();
+    }
+  });
+  var status = 'initialization_failed';
+  EhDailyCoordinator? coordinator;
+  try {
+    await RustLib.init();
+    final vault = platformCredentialVault();
+    var sources = <BookSource>[];
+    Future<List<BookSource>> readSources() => loadEhDailyBackgroundSources(
+      readSources: dbLoadAllSources,
+      vault: vault,
+    );
+    await bootstrapEhDailyStorage(
+      readMarker: readCacheRootMarker,
+      readLegacyRoot: _cacheDirFromLibraryJson,
+      invalidRoot: _isInvalidRootForPlatform,
+      setRoot: (root) => setCacheRootPath(path: root),
+      currentRoot: cacheRootPath,
+      loadLibrary: () async {
+        final root = await cacheRootPath();
+        if (await pendingMigration(root: root) != null) {
+          throw StateError('缓存目录迁移尚未完成。');
+        }
+        sources = await readSources();
+      },
+    );
+    await store.init();
+    if (!store.dailyReady) throw StateError('每日工作流配置不可用。');
+    final workflow = Cloud115BtDailyWorkflow(
+      sources: () => sources,
+      restoreCookieSession: (source) async {
+        final latest = await readSources();
+        final matching = latest.where((candidate) => candidate.id == source.id);
+        if (matching.length != 1 ||
+            matching.single.cookie != source.cookie ||
+            matching.single.rootId != source.rootId ||
+            matching.single.remoteOnly != source.remoteOnly ||
+            matching.single.credentialRef != source.credentialRef) {
+          throw StateError('115 书源已更改，请在应用中重新检查。');
+        }
+        await restoreCloud115CookieSessionWithoutInteraction(source);
+      },
+    );
+    store.configureDailyCloudStageRunner(
+      runCloudStage: (entries) =>
+          workflow.run(entries: entries, outputDir: store.outDir),
+    );
+    if (stopRequested) {
+      status = 'cancelled';
+    } else if (store.dailyAutomation.dailyEnabled &&
+        store.hasOutDir &&
+        !await _backgroundOutputDirectoryWritable(store.outDir)) {
+      status = 'waitingForOutputDirectory';
+    } else {
+      coordinator = EhDailyCoordinator(
+        host: store,
+        isAndroid: true,
+        headless: true,
+      );
+      await coordinator.start();
+      status = coordinator.status.name;
+    }
+  } catch (_) {
+    // Native status stores a bounded category only, never credentials or paths.
+    status = 'initialization_failed';
+  } finally {
+    coordinator?.dispose();
+    try {
+      await closeHeadlessCloud115CookieSessions();
+    } catch (_) {
+      // Cleanup cannot turn a completed remote write into a retry.
+    }
+    await channel.invokeMethod<void>('complete', {'status': status});
+  }
+}
+
+Future<bool> _backgroundOutputDirectoryWritable(String path) async {
+  final directory = Directory(path);
+  if (!await directory.exists()) return false;
+  final probe = File(
+    '${directory.path}${Platform.pathSeparator}.rch_daily_probe_${DateTime.now().microsecondsSinceEpoch}',
+  );
+  try {
+    await probe.writeAsBytes(const []);
+    await probe.delete();
+    return true;
+  } catch (_) {
+    try {
+      if (await probe.exists()) await probe.delete();
+    } catch (_) {
+      // Surface the unavailable directory without exposing its path.
+    }
+    return false;
   }
 }
 

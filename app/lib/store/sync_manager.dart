@@ -32,7 +32,30 @@ String? normalizeCredentialRef(String? value) {
 
 /// 同步配置 + 备份管理（单例）。
 class SyncManager extends ChangeNotifier {
-  SyncManager._();
+  SyncManager._({
+    this._credentialVault,
+    Future<List<SettingEntryDto>> Function()? loadSettings,
+    Future<void> Function({required String key, required String value})?
+    saveSetting,
+    Future<List<DeviceDto>> Function()? listDevices,
+  }) : _loadSettings = loadSettings ?? dbLoadAllSettings,
+       _saveSetting = saveSetting ?? dbSaveSetting,
+       _listDevices = listDevices ?? dbListDevices;
+
+  @visibleForTesting
+  SyncManager.forTesting({
+    required CredentialVault credentialVault,
+    required Future<List<SettingEntryDto>> Function() loadSettings,
+    required Future<void> Function({required String key, required String value})
+    saveSetting,
+    required Future<List<DeviceDto>> Function() listDevices,
+  }) : this._(
+         credentialVault: credentialVault,
+         loadSettings: loadSettings,
+         saveSetting: saveSetting,
+         listDevices: listDevices,
+       );
+
   static final SyncManager instance = SyncManager._();
 
   String webdavUrl = '';
@@ -48,9 +71,13 @@ class SyncManager extends ChangeNotifier {
   CredentialVault? _credentialVault;
   String? _webdavPasswordRef;
   bool _credentialVaultReady = false;
+  bool _webdavPasswordDirty = false;
+  final Future<List<SettingEntryDto>> Function() _loadSettings;
+  final Future<void> Function({required String key, required String value})
+  _saveSetting;
+  final Future<List<DeviceDto>> Function() _listDevices;
 
-  bool get _usesCredentialVault =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  bool get _usesCredentialVault => usesNativeCredentialVault(isWeb: kIsWeb);
 
   CredentialVault get _vault => _credentialVault ??= platformCredentialVault();
 
@@ -63,7 +90,7 @@ class SyncManager extends ChangeNotifier {
 
   Future<void> load() async {
     try {
-      final entries = await dbLoadAllSettings();
+      final entries = await _loadSettings();
       final map = {for (final e in entries) e.key: e.value};
       webdavUrl = sanitizeConfig(map[_kWebdavUrl] ?? '').trim();
       webdavUsername = sanitizeConfig(map[_kWebdavUsername] ?? '').trim();
@@ -71,6 +98,7 @@ class SyncManager extends ChangeNotifier {
       _webdavPasswordRef = normalizeCredentialRef(map[_kWebdavPasswordRef]);
       webdavPassword = legacyPassword;
       _credentialVaultReady = false;
+      _webdavPasswordDirty = false;
       if (_usesCredentialVault) {
         final ref = _webdavPasswordRef ?? 'sync:webdav-password';
         try {
@@ -90,7 +118,9 @@ class SyncManager extends ChangeNotifier {
         } catch (error, stack) {
           // Keep the legacy value in memory and leave the DB row intact; a
           // vault failure must never silently erase the sync password.
-          debugPrint('[SyncManager] credential vault migration failed: $error');
+          debugPrint(
+            '[SyncManager] credential vault migration failed (${error.runtimeType})',
+          );
           debugPrintStack(stackTrace: stack);
         }
       }
@@ -101,7 +131,7 @@ class SyncManager extends ChangeNotifier {
       crossDeviceSearch = map[_kCrossDeviceSearch] != 'false';
       _webdavSession = null;
       deviceNames.clear();
-      for (final d in await dbListDevices()) {
+      for (final d in await _listDevices()) {
         deviceNames[d.id] = d.name;
       }
       // 清理后的配置写回，避免隐藏控制字符残留在 DB
@@ -113,10 +143,10 @@ class SyncManager extends ChangeNotifier {
   }
 
   Future<void> save() async {
-    await dbSaveSetting(key: _kWebdavUrl, value: webdavUrl);
-    await dbSaveSetting(key: _kWebdavUsername, value: webdavUsername);
-    var persistedPassword = webdavPassword;
-    if (_usesCredentialVault && _credentialVaultReady) {
+    String? persistedPassword = webdavPassword;
+    String? persistedPasswordRef;
+    if (_usesCredentialVault &&
+        (_credentialVaultReady || _webdavPasswordDirty)) {
       final ref = _webdavPasswordRef ?? 'sync:webdav-password';
       if (webdavPassword.isNotEmpty) {
         await _vault.put(ref, webdavPassword);
@@ -127,16 +157,34 @@ class SyncManager extends ChangeNotifier {
         persistedPassword = '';
       } else {
         await _vault.delete(ref);
+        if (await _vault.get(ref) != null) {
+          throw StateError('sync credential vault delete verification failed');
+        }
         _webdavPasswordRef = ref;
+        persistedPassword = '';
       }
-      await dbSaveSetting(key: _kWebdavPasswordRef, value: ref);
+      _credentialVaultReady = true;
+      _webdavPasswordDirty = false;
+      persistedPasswordRef = ref;
+    } else if (_usesCredentialVault) {
+      // A prior read/migration failed. Preserve the old settings row by not
+      // writing either the password or its reference until the vault works.
+      persistedPassword = null;
     }
-    await dbSaveSetting(key: _kWebdavPassword, value: persistedPassword);
-    await dbSaveSetting(key: _kWebdavDir, value: webdavDir);
-    await dbSaveSetting(key: _kDeviceName, value: deviceName);
-    await dbSaveSetting(key: 'sync_last_at', value: '$lastAt');
-    await dbSaveSetting(key: 'sync_last_status', value: lastStatus);
-    await dbSaveSetting(key: _kCrossDeviceSearch, value: '$crossDeviceSearch');
+
+    await _saveSetting(key: _kWebdavUrl, value: webdavUrl);
+    await _saveSetting(key: _kWebdavUsername, value: webdavUsername);
+    if (persistedPassword != null) {
+      await _saveSetting(key: _kWebdavPassword, value: persistedPassword);
+    }
+    if (persistedPasswordRef != null) {
+      await _saveSetting(key: _kWebdavPasswordRef, value: persistedPasswordRef);
+    }
+    await _saveSetting(key: _kWebdavDir, value: webdavDir);
+    await _saveSetting(key: _kDeviceName, value: deviceName);
+    await _saveSetting(key: 'sync_last_at', value: '$lastAt');
+    await _saveSetting(key: 'sync_last_status', value: lastStatus);
+    await _saveSetting(key: _kCrossDeviceSearch, value: '$crossDeviceSearch');
     notifyListeners();
   }
 
@@ -149,6 +197,7 @@ class SyncManager extends ChangeNotifier {
     webdavUrl = sanitizeConfig(url).trim();
     webdavUsername = sanitizeConfig(username).trim();
     webdavPassword = sanitizeConfig(password);
+    _webdavPasswordDirty = true;
     webdavDir = sanitizeConfig(dir).trim();
     _webdavSession = null;
     await save();

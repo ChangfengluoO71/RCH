@@ -1,7 +1,7 @@
 # RCH 架构
 
-> **实现快照：v0.6.2**。依据 2026-10-01 检出的源码整理；本文件记录当前实现和已知边界。
-> 产品目标与冻结契约见 [SPEC](project/SPEC.md)，开发历史见 [LOG](project/LOG.md)，后续工作见 [TODO](project/TODO.md)。
+> **历史实现快照：v0.6.2（2026-10-01）**。本文保留当时整理的架构结构与已知边界，不作为当前版本、功能验收或发布状态入口。当前核验见 [CURRENT_STATE](project/CURRENT_STATE.md)。
+> 产品目标与冻结契约见 [SPEC](project/SPEC.md)，开发历史见 [LOG](project/LOG.md)，可执行待办见 [TODO](project/TODO.md)。
 
 ## 1. 系统边界
 

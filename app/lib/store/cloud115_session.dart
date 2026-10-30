@@ -221,6 +221,41 @@ bool hasCachedCloud115CookieSession(BookSource source) =>
     (source.cookie ?? '').trim().isNotEmpty &&
     _cloud115CookieSessions.containsKey(source.id);
 
+/// Restore a saved Cookie for a headless Daily run. This intentionally does
+/// not invoke the interactive retry path, mutate a source, or persist a
+/// server-returned Cookie: another engine may have updated the source since
+/// this engine loaded its snapshot.
+Future<void> restoreCloud115CookieSessionWithoutInteraction(
+  BookSource source,
+) async {
+  if (hasCachedCloud115CookieSession(source)) return;
+  final cookie = (source.cookie ?? '').trim();
+  final rootId = source.rootId ?? '0';
+  if (!source.is115 || cookie.isEmpty) {
+    throw StateError('已保存的 115 Cookie 不可用');
+  }
+  final session = await cloud115CookieConnect(cookie: cookie, rootId: rootId);
+  if ((source.cookie ?? '').trim() != cookie ||
+      (source.rootId ?? '0') != rootId) {
+    await cloud115CookieDisconnect(id: session.id);
+    throw StateError('115 书源已更改，请重新检查配置');
+  }
+  if (hasCachedCloud115CookieSession(source)) {
+    await cloud115CookieDisconnect(id: session.id);
+    return;
+  }
+  _cloud115CookieSessions[source.id] = session.id;
+}
+
+/// Called only when a headless engine has finished all its operations.
+Future<void> closeHeadlessCloud115CookieSessions() async {
+  final sessions = _cloud115CookieSessions.values.toSet();
+  _cloud115CookieSessions.clear();
+  for (final id in sessions) {
+    await cloud115CookieDisconnect(id: id);
+  }
+}
+
 /// Reads the stable account number encoded in the configured Cookie without
 /// opening a client, refreshing the Cookie, or issuing a request. Used only to
 /// ensure monitoring rows are never queried under a different account.

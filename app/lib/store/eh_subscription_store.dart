@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:app/store/eh_daily_coordinator.dart';
 import 'package:app/src/rust/api/eh_subscription.dart' as eh_api;
@@ -471,6 +472,8 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   EhTorrentDirectoryLoader? _torrentDirectoryLoader;
   VoidCallback? _onScanRequested;
   EhRulesWriter? _rulesWriter;
+  BigInt? _testWorkflowLease;
+  static int _nextTestWorkflowLease = 0;
   EhCollectRunner? _collectRunner;
   bool _cancelRequested = false;
   EhDailyCloudStageRunner? _dailyCloudStageRunner;
@@ -694,6 +697,13 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
             date: date,
             source: EhDailyRunSource.dailyAuto,
             status: EhDailyRunStatus.claimed,
+            runId: 'daily-$date',
+          ),
+          lastAutoRun: EhDailyRunRecord(
+            date: date,
+            source: EhDailyRunSource.dailyAuto,
+            status: EhDailyRunStatus.claimed,
+            runId: 'daily-$date',
           ),
         ),
       );
@@ -710,7 +720,14 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   Future<void> updateDailyRun(EhDailyRunRecord run) async {
     final path = _rulesPath;
     if (path == null || _rulesWriter != null) {
-      await saveDailyAutomation(dailyAutomation.copyWith(lastRun: run));
+      await saveDailyAutomation(
+        dailyAutomation.copyWith(
+          lastRun: run,
+          lastAutoRun: run.source == EhDailyRunSource.dailyAuto
+              ? run
+              : dailyAutomation.lastAutoRun,
+        ),
+      );
       return;
     }
     final savedJson = await eh_api.ehUpdateDailyRun(
@@ -724,24 +741,97 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   Future<void> recoverDailyRun() async {
     final path = _rulesPath;
     if (path == null || _rulesWriter != null) {
+      if (_testWorkflowLease != null) return;
       final current = dailyAutomation.lastRun;
       if (current == null ||
           (current.status != EhDailyRunStatus.claimed &&
               current.status != EhDailyRunStatus.running)) {
         return;
       }
+      final recovered = current.copyWith(
+        status: EhDailyRunStatus.interruptedUnknown,
+        error: '上次运行中断；远端结果未知，恢复时将先核对已有记录。',
+      );
       await saveDailyAutomation(
         dailyAutomation.copyWith(
-          lastRun: current.copyWith(
-            status: EhDailyRunStatus.interruptedUnknown,
-            error: '上次进程退出时任务尚未结束，远端结果未知；本轮不会自动重试。',
-          ),
+          lastRun: recovered,
+          lastAutoRun: current.source == EhDailyRunSource.dailyAuto
+              ? recovered
+              : dailyAutomation.lastAutoRun,
         ),
       );
       return;
     }
     final savedJson = await eh_api.ehRecoverDailyRun(path: path);
     _applyPersistedRules(savedJson);
+  }
+
+  @override
+  Future<BigInt?> tryAcquireWorkflowLease() async {
+    final path = _rulesPath;
+    if (path == null || _rulesWriter != null) {
+      if (_testWorkflowLease != null) return null;
+      return _testWorkflowLease = BigInt.from(++_nextTestWorkflowLease);
+    }
+    return eh_api.ehTryAcquireWorkflowLease(path: path);
+  }
+
+  @override
+  Future<void> releaseWorkflowLease(BigInt lease) async {
+    final path = _rulesPath;
+    if (path == null || _rulesWriter != null) {
+      if (_testWorkflowLease != lease) throw StateError('工作流锁无效');
+      _testWorkflowLease = null;
+      return;
+    }
+    await eh_api.ehReleaseWorkflowLease(handle: lease);
+  }
+
+  @override
+  Future<bool> resumeDailyRun(String date, BigInt lease) async {
+    final path = _rulesPath;
+    if (path == null || _rulesWriter != null) {
+      final state = dailyAutomation;
+      final run = state.effectiveLastAutoRun;
+      final retryable =
+          run != null &&
+          (run.status == EhDailyRunStatus.interruptedUnknown ||
+              (run.status == EhDailyRunStatus.failed &&
+                  run.cloudStage.status == EhDailyCloudStageStatus.notRun) ||
+              (run.status == EhDailyRunStatus.partial &&
+                  (run.cloudStage.status ==
+                          EhDailyCloudStageStatus.needsConfiguration ||
+                      run.cloudStage.status ==
+                          EhDailyCloudStageStatus.sessionUnavailable)));
+      if (_testWorkflowLease != lease ||
+          !state.dailyEnabled ||
+          run == null ||
+          run.date != date ||
+          !retryable ||
+          run.resumeCount >= 2) {
+        return false;
+      }
+      final resumed = run.copyWith(
+        status: EhDailyRunStatus.claimed,
+        resumeCount: run.resumeCount + 1,
+        error: null,
+      );
+      await saveDailyAutomation(
+        state.copyWith(lastRun: resumed, lastAutoRun: resumed),
+      );
+      return true;
+    }
+    final result =
+        jsonDecode(
+              await eh_api.ehResumeDailyRun(
+                path: path,
+                date: date,
+                handle: lease,
+              ),
+            )
+            as Map;
+    _applyPersistedRules(result['rules_json'] as String);
+    return result['resumed'] as bool? ?? false;
   }
 
   void _applyPersistedRules(String savedJson, {String? submittedJson}) {
@@ -923,8 +1013,20 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
   @override
   Future<EhRunOutcome> run({
     EhDailyRunSource source = EhDailyRunSource.manual,
+    BigInt? workflowLease,
   }) async {
     if (busy || !hasOutDir) return EhRunOutcome.busy;
+    final ownLease = workflowLease == null;
+    final lease = workflowLease ?? await tryAcquireWorkflowLease();
+    if (lease == null) return EhRunOutcome.busy;
+    try {
+      return await _runWithWorkflowLease(source);
+    } finally {
+      if (ownLease) await releaseWorkflowLease(lease);
+    }
+  }
+
+  Future<EhRunOutcome> _runWithWorkflowLease(EhDailyRunSource source) async {
     final initialAutomation = dailyAutomation;
     if (source == EhDailyRunSource.manual &&
         initialAutomation.lastRun?.source == EhDailyRunSource.dailyAuto &&
@@ -956,16 +1058,18 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
     EhDailyRunRecord? activeRun;
     try {
       final previous = dailyAutomation;
-      final runDate =
+      final claimed = previous.effectiveLastAutoRun;
+      activeRun =
           source == EhDailyRunSource.dailyAuto &&
-              previous.lastRun?.status == EhDailyRunStatus.claimed
-          ? previous.lastRun!.date
-          : ehLocalDateKey(DateTime.now());
-      activeRun = EhDailyRunRecord(
-        date: runDate,
-        source: source,
-        status: EhDailyRunStatus.running,
-      );
+              claimed?.status == EhDailyRunStatus.claimed
+          ? claimed!.copyWith(status: EhDailyRunStatus.running, error: null)
+          : EhDailyRunRecord(
+              date: ehLocalDateKey(DateTime.now()),
+              source: source,
+              status: EhDailyRunStatus.running,
+              runId:
+                  'manual-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}',
+            );
       await updateDailyRun(activeRun);
       started = true;
       longTask.update(phase: '检索 EH 订阅');
@@ -984,7 +1088,9 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
       progress = EhProgress.fromJson(
         Map<String, dynamic>.from(jsonDecode(raw) as Map),
       );
-      final status = progress.error == null && progress.stage != 'failed'
+      final status = _cancelRequested || progress.stage == 'cancelled'
+          ? EhDailyRunStatus.cancelled
+          : progress.error == null && progress.stage != 'failed'
           ? EhDailyRunStatus.completed
           : EhDailyRunStatus.failed;
       outcome = EhRunOutcome(
@@ -1026,15 +1132,15 @@ class EhSubscriptionStore extends ChangeNotifier implements EhDailyHost {
               );
             }
           }
-          if (cloudStage.status != EhDailyCloudStageStatus.completed &&
-              cloudStage.status != EhDailyCloudStageStatus.notRun) {
-            outcome = EhRunOutcome(
-              started: true,
-              status: EhDailyRunStatus.partial,
-              saved: progress.saved,
-              error: cloudStage.message,
-            );
-          }
+        }
+        if (cloudStage.status != EhDailyCloudStageStatus.completed &&
+            cloudStage.status != EhDailyCloudStageStatus.notRun) {
+          outcome = EhRunOutcome(
+            started: true,
+            status: EhDailyRunStatus.partial,
+            saved: progress.saved,
+            error: cloudStage.message,
+          );
         }
       }
     } catch (e) {

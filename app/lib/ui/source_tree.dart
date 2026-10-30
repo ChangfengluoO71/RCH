@@ -16,7 +16,7 @@ typedef SourceAction = void Function(frb.SourceAvailabilityDto source);
 
 bool needsRemoteScanStatusFor(frb.SourceAvailabilityDto source) =>
     source.isRemote ||
-    const {'webdav', 'sftp', 'baidu', '115', 'quark'}.contains(source.type);
+    const {'webdav', 'smb', 'sftp', 'ftp', 's3', 'baidu', '115', 'quark'}.contains(source.type);
 
 String remoteScanIdleMessageFor(
   frb.SourceAvailabilityDto source, {
@@ -235,7 +235,7 @@ class _SourceTile extends StatelessWidget {
   }
 }
 
-bool _isLocalFileSource(String type) => type == 'local' || type == 'smb';
+bool _isLocalFileSource(String type) => type == 'local';
 
 /// 书源 id 的短标识（用于同名书源的标题消歧）。
 /// 形如 `sync_62556ad8_1786286465729` → `17862864`；`115_1789360028897` → `17893600`。

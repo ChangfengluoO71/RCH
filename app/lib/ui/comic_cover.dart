@@ -6,6 +6,7 @@ import 'package:app/src/rust/api/remote_cover.dart' as rust;
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/store/ftp_session.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/library_store.dart';
 import 'package:app/store/models.dart';
@@ -13,6 +14,8 @@ import 'package:app/store/quark_session.dart';
 import 'package:app/store/remote_cover_repository.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
+import 'package:app/store/s3_session.dart';
+import 'package:app/store/smb_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/common.dart';
 import 'package:app/store/webdav_session.dart';
@@ -214,6 +217,8 @@ class _QueuedTask {
 String? legacyCoverKindOf(BookSource source) {
   if (source.isWebDav) return 'webdav';
   if (source.isSftp) return 'sftp';
+  if (source.isFtp) return 'ftp';
+  if (source.isS3) return 's3';
   if (source.isBaidu) return 'baidu';
   if (source.is115) {
     return (source.clientId ?? '').trim().isEmpty ? '115web' : '115';
@@ -793,7 +798,20 @@ class _ComicCoverState extends State<ComicCover> {
       source: source,
       path: path,
     );
-    if (source.isWebDav) {
+    if (source.isSmb) {
+      final session = await _guardRemoteCoverIo(() => smbSessionFor(source));
+      final image = await _guardRemoteCoverIo(
+        () => smbCover(
+          session: session,
+          path: providerPath,
+          page: page,
+          width: width,
+          height: height,
+          crop: crop,
+        ),
+      );
+      return await rgbaToImage(image.rgba, image.width, image.height);
+    } else if (source.isWebDav) {
       final session = await _guardRemoteCoverIo(() => webdavSessionFor(source));
       final p = await _guardRemoteCoverIo(
         () => webdavCover(
@@ -810,6 +828,32 @@ class _ComicCoverState extends State<ComicCover> {
       final session = await _guardRemoteCoverIo(() => sftpSessionFor(source));
       final p = await _guardRemoteCoverIo(
         () => sftpCover(
+          session: session,
+          path: providerPath,
+          page: page,
+          width: width,
+          height: height,
+          crop: crop,
+        ),
+      );
+      return await rgbaToImage(p.rgba, p.width, p.height);
+    } else if (source.isFtp) {
+      final session = await _guardRemoteCoverIo(() => ftpSessionFor(source));
+      final p = await _guardRemoteCoverIo(
+        () => ftpCover(
+          session: session,
+          path: providerPath,
+          page: page,
+          width: width,
+          height: height,
+          crop: crop,
+        ),
+      );
+      return await rgbaToImage(p.rgba, p.width, p.height);
+    } else if (source.isS3) {
+      final session = await _guardRemoteCoverIo(() => s3SessionFor(source));
+      final p = await _guardRemoteCoverIo(
+        () => s3Cover(
           session: session,
           path: providerPath,
           page: page,
@@ -1068,6 +1112,8 @@ class _ComicCoverState extends State<ComicCover> {
   Future<BigInt> _createRemoteSession() async {
     if (widget.source.isWebDav) return webdavSessionFor(widget.source);
     if (widget.source.isSftp) return sftpSessionFor(widget.source);
+    if (widget.source.isFtp) return ftpSessionFor(widget.source);
+    if (widget.source.isS3) return s3SessionFor(widget.source);
     if (widget.source.isBaidu) return baiduSessionFor(widget.source);
     if (widget.source.is115) return cloud115SessionFor(widget.source);
     if (widget.source.isQuark) return quarkSessionFor(widget.source);

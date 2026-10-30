@@ -76,8 +76,8 @@ Future<String> ehUpdateDailyRun({
   runJson: runJson,
 );
 
-/// Mark stale work interrupted only after acquiring the cross-platform
-/// workflow lease; another live runner must not be mistaken for a crash.
+/// Mark stale work interrupted only after checking the Windows collection
+/// lease; a second live RCH process must not be mistaken for a crash.
 Future<String> ehRecoverDailyRun({required String path}) =>
     RustLib.instance.api.crateApiEhSubscriptionEhRecoverDailyRun(path: path);
 

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/services.dart';
 
 /// Minimal credential boundary used by Android. Callers store one JSON object
@@ -35,6 +37,51 @@ class MethodChannelCredentialVault implements CredentialVault {
   }
 }
 
+/// Storage operations needed by [FlutterSecureStorageCredentialVault].
+/// Keeping this boundary injectable lets tests verify routing and failure
+/// behavior without relying on an operating-system credential service.
+abstract interface class CredentialKeyValueStore {
+  Future<void> write({required String key, required String value});
+
+  Future<String?> read({required String key});
+
+  Future<void> delete({required String key});
+}
+
+class FlutterSecureStorageKeyValueStore implements CredentialKeyValueStore {
+  FlutterSecureStorageKeyValueStore({FlutterSecureStorage? storage})
+    : _storage = storage ?? const FlutterSecureStorage();
+
+  final FlutterSecureStorage _storage;
+
+  @override
+  Future<void> write({required String key, required String value}) =>
+      _storage.write(key: key, value: value);
+
+  @override
+  Future<String?> read({required String key}) => _storage.read(key: key);
+
+  @override
+  Future<void> delete({required String key}) => _storage.delete(key: key);
+}
+
+class FlutterSecureStorageCredentialVault implements CredentialVault {
+  FlutterSecureStorageCredentialVault({CredentialKeyValueStore? storage})
+    : _storage = storage ?? FlutterSecureStorageKeyValueStore();
+
+  final CredentialKeyValueStore _storage;
+
+  @override
+  Future<void> put(String key, String value) =>
+      _storage.write(key: key, value: value);
+
+  @override
+  Future<String?> get(String key) => _storage.read(key: key);
+
+  @override
+  Future<void> delete(String key) => _storage.delete(key: key);
+}
+
 /// In-memory implementation for unit tests and non-Android tooling. It is not
 /// selected for Android production paths, so it cannot accidentally become a
 /// plaintext persistence fallback there.
@@ -51,7 +98,18 @@ class MemoryCredentialVault implements CredentialVault {
   Future<void> delete(String key) async => values.remove(key);
 }
 
-CredentialVault platformCredentialVault() => MethodChannelCredentialVault();
+CredentialVault platformCredentialVault({TargetPlatform? platform}) =>
+    (platform ?? defaultTargetPlatform) == TargetPlatform.android
+    ? MethodChannelCredentialVault()
+    : FlutterSecureStorageCredentialVault();
+
+/// Native platforms must use a secure store. Web keeps its existing storage
+/// behavior because the plugin's browser storage has a different trust model.
+bool usesNativeCredentialVault({required bool isWeb}) => !isWeb;
+
+/// Native library backups never contain credentials; web keeps its existing
+/// export behavior for compatibility.
+bool includeSensitiveCredentialsInBackup({required bool isWeb}) => isWeb;
 
 String encodeCredentialBundle(Map<String, String?> values) => jsonEncode({
   for (final entry in values.entries)

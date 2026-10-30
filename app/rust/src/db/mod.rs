@@ -166,6 +166,9 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             password TEXT,
             credential_ref TEXT,
             port INTEGER,
+            host_key_fingerprint TEXT,
+            host_key_endpoint TEXT,
+            sftp_auth_method TEXT,
             note TEXT NOT NULL DEFAULT '',
             capability_label TEXT NOT NULL DEFAULT '',
             fingerprint TEXT,
@@ -619,6 +622,18 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             "credential_ref",
             "ALTER TABLE book_sources ADD COLUMN credential_ref TEXT",
         ),
+        (
+            "host_key_fingerprint",
+            "ALTER TABLE book_sources ADD COLUMN host_key_fingerprint TEXT",
+        ),
+        (
+            "host_key_endpoint",
+            "ALTER TABLE book_sources ADD COLUMN host_key_endpoint TEXT",
+        ),
+        (
+            "sftp_auth_method",
+            "ALTER TABLE book_sources ADD COLUMN sftp_auth_method TEXT",
+        ),
     ] {
         if !src_cols.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
@@ -632,6 +647,9 @@ pub(crate) fn init_tables(conn: &Connection) -> Result<()> {
             ("fingerprint", "fingerprint TEXT"),
             ("remote_only", "remote_only INTEGER NOT NULL DEFAULT 0"),
             ("origin_device_id", "origin_device_id TEXT"),
+            ("host_key_fingerprint", "host_key_fingerprint TEXT"),
+            ("host_key_endpoint", "host_key_endpoint TEXT"),
+            ("sftp_auth_method", "sftp_auth_method TEXT"),
             ("updated_at", "updated_at INTEGER NOT NULL DEFAULT 0"),
             ("deleted", "deleted INTEGER NOT NULL DEFAULT 0"),
         ],
@@ -1196,6 +1214,9 @@ pub struct BookSourceRow {
     pub username: Option<String>,
     pub password: Option<String>,
     pub port: Option<i64>,
+    pub host_key_fingerprint: Option<String>,
+    pub host_key_endpoint: Option<String>,
+    pub sftp_auth_method: Option<String>,
     pub refresh_token: Option<String>,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
@@ -1211,7 +1232,7 @@ pub struct BookSourceRow {
 pub fn load_all_sources() -> Vec<BookSourceRow> {
     let conn = get().lock().unwrap();
     let mut stmt = conn
-        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, credential_ref, note, capability_label, remote_only, origin_device_id FROM book_sources")
+        .prepare("SELECT id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, credential_ref, note, capability_label, remote_only, origin_device_id, host_key_fingerprint, host_key_endpoint, sftp_auth_method FROM book_sources")
         .unwrap();
     stmt.query_map([], |row| {
         Ok(BookSourceRow {
@@ -1233,6 +1254,9 @@ pub fn load_all_sources() -> Vec<BookSourceRow> {
             capability_label: row.get(15)?,
             remote_only: row.get::<_, i64>(16)? != 0,
             origin_device_id: row.get(17)?,
+            host_key_fingerprint: row.get(18)?,
+            host_key_endpoint: row.get(19)?,
+            sftp_auth_method: row.get(20)?,
         })
     })
     .unwrap()
@@ -1348,15 +1372,45 @@ pub fn compute_source_fingerprint(
     path: &str,
     root_id: Option<&str>,
 ) -> String {
+    compute_source_fingerprint_with_port(r#type, url, path, root_id, None)
+}
+
+/// Port-aware source fingerprint. The legacy helper above remains for callers
+/// whose identity does not include a separately persisted port.
+pub fn compute_source_fingerprint_with_port(
+    r#type: &str,
+    url: Option<&str>,
+    path: &str,
+    root_id: Option<&str>,
+    port: Option<i64>,
+) -> String {
     let (endpoint, root) = match r#type {
         "webdav" | "sftp" => (
             normalize_url_endpoint(url.unwrap_or_default()),
             normalize_path(path),
         ),
-        "smb" => (
-            normalize_path(path).trim_start_matches('/').to_string(),
-            String::new(),
-        ),
+        "smb" => {
+            let server = url.unwrap_or_default().trim();
+            let identity_path = if server.is_empty() {
+                // Preserve the original UNC-only fingerprint input. Existing
+                // rows may have durable identity references under this hash.
+                normalize_path(path).trim_start_matches('/').to_string()
+            } else {
+                let port = port.unwrap_or(445);
+                let host_authority = if server.contains(':') && !server.starts_with('[') {
+                    format!("[{server}]")
+                } else {
+                    server.to_string()
+                };
+                let authority = if port == 445 {
+                    host_authority
+                } else {
+                    format!("{host_authority}:{port}")
+                };
+                format!("{authority}/{}", path.trim_start_matches(['/', '\\']))
+            };
+            (normalize_path(&identity_path), String::new())
+        }
         "local" => (normalize_path(path), String::new()),
         "baidu" => (String::new(), normalize_path(path)),
         "115" | "quark" => (
@@ -1377,18 +1431,38 @@ pub fn compute_source_fingerprint(
 /// 存量回填：为 fingerprint 为空的存量书源计算并写入（幂等，每次打开执行）。
 /// ADR-020 约束 1.4：新增书源一律非空，此处只兜底旧数据。
 pub(crate) fn backfill_source_fingerprints(conn: &Connection) -> Result<()> {
-    let rows: Vec<(String, String, Option<String>, String, Option<String>)> = conn
+    let rows: Vec<(
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<i64>,
+    )> = conn
         .prepare(
-            "SELECT id, type, url, path, root_id FROM book_sources
+            "SELECT id, type, url, path, root_id, port FROM book_sources
              WHERE fingerprint IS NULL OR fingerprint = ''",
         )?
         .query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })?
         .filter_map(|r| r.ok())
         .collect();
-    for (id, r#type, url, path, root_id) in rows {
-        let fp = compute_source_fingerprint(&r#type, url.as_deref(), &path, root_id.as_deref());
+    for (id, r#type, url, path, root_id, port) in rows {
+        let fp = compute_source_fingerprint_with_port(
+            &r#type,
+            url.as_deref(),
+            &path,
+            root_id.as_deref(),
+            port,
+        );
         if !fp.is_empty() {
             conn.execute(
                 "UPDATE book_sources SET fingerprint = ?1 WHERE id = ?2",
@@ -1419,16 +1493,114 @@ pub fn find_fingerprint_duplicates(conn: &Connection) -> Vec<(String, Vec<String
         .unwrap_or_default()
 }
 
+fn smb_identity_coordinates(
+    url: Option<&str>,
+    path: &str,
+    port: Option<i64>,
+) -> Option<(String, i64, String)> {
+    let port = port.unwrap_or(445);
+    let server = url.map(str::trim).filter(|server| !server.is_empty());
+    if let Some(server) = server {
+        return Some((
+            server.to_string(),
+            port,
+            normalize_path(path.trim_start_matches(['/', '\\'])),
+        ));
+    }
+
+    let normalized = path.replace('\\', "/");
+    let mut segments: Vec<&str> = normalized
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.len() >= 2 && segments[0] == "?" && segments[1].eq_ignore_ascii_case("UNC") {
+        segments.drain(..2);
+    }
+    if segments.len() < 2 {
+        return None;
+    }
+    let server = segments[0].to_string();
+    let share_path = segments[1..].join("/");
+    Some((server, port, normalize_path(&share_path)))
+}
+
+fn same_smb_identity(
+    left: Option<(String, i64, String)>,
+    right: Option<(String, i64, String)>,
+) -> bool {
+    match (left, right) {
+        (
+            Some((left_server, left_port, left_path)),
+            Some((right_server, right_port, right_path)),
+        ) => {
+            left_server.eq_ignore_ascii_case(&right_server)
+                && left_port == right_port
+                && left_path == right_path
+        }
+        _ => false,
+    }
+}
+
+fn extended_unc_fingerprint_for_smb_source(
+    url: Option<&str>,
+    path: &str,
+    port: Option<i64>,
+) -> Option<String> {
+    let (server, source_port, share_path) = smb_identity_coordinates(url, path, port)?;
+    if source_port != 445 || share_path.is_empty() {
+        return None;
+    }
+    let unc_path = format!(r"\\?\UNC\{}\{}", server, share_path.replace('/', "\\"));
+    Some(compute_source_fingerprint("smb", None, &unc_path, None))
+}
+
 fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
     // ADR-020 约束 1.4：fingerprint 由身份字段派生，任何新增/编辑都不允许为 NULL。
-    let fp = compute_source_fingerprint(&s.r#type, s.url.as_deref(), &s.path, s.root_id.as_deref());
     let tx = conn.unchecked_transaction()?;
+    let computed_fingerprint = compute_source_fingerprint_with_port(
+        &s.r#type,
+        s.url.as_deref(),
+        &s.path,
+        s.root_id.as_deref(),
+        s.port,
+    );
+    let prior_identity: Option<(String, Option<String>, String, Option<i64>, String)> = tx
+        .query_row(
+            "SELECT type, url, path, port, fingerprint FROM book_sources WHERE id=?1",
+            params![s.id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let fp = match prior_identity {
+        Some((prior_type, prior_url, prior_path, prior_port, prior_fingerprint))
+            if prior_type == "smb"
+                && s.r#type == "smb"
+                && same_smb_identity(
+                    smb_identity_coordinates(prior_url.as_deref(), &prior_path, prior_port),
+                    smb_identity_coordinates(s.url.as_deref(), &s.path, s.port),
+                )
+                && extended_unc_fingerprint_for_smb_source(s.url.as_deref(), &s.path, s.port)
+                    .as_deref()
+                    == Some(prior_fingerprint.as_str()) =>
+        {
+            prior_fingerprint
+        }
+        _ => computed_fingerprint,
+    };
     let connection_changed: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM book_sources WHERE id=?1 AND (
            type IS NOT ?2 OR path IS NOT ?3 OR url IS NOT ?4 OR username IS NOT ?5 OR
            password IS NOT ?6 OR port IS NOT ?7 OR refresh_token IS NOT ?8 OR
            client_id IS NOT ?9 OR client_secret IS NOT ?10 OR root_id IS NOT ?11 OR
-           cookie IS NOT ?12 OR credential_ref IS NOT ?13))",
+           cookie IS NOT ?12 OR credential_ref IS NOT ?13 OR host_key_fingerprint IS NOT ?14 OR host_key_endpoint IS NOT ?15 OR sftp_auth_method IS NOT ?16))",
         params![
             s.id,
             s.r#type,
@@ -1442,20 +1614,26 @@ fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
             s.client_secret,
             s.root_id,
             s.cookie,
-            s.credential_ref
+            s.credential_ref,
+            s.host_key_fingerprint,
+            s.host_key_endpoint,
+            s.sftp_auth_method,
         ],
         |row| row.get(0),
     )?;
     tx.execute(
         "INSERT INTO book_sources
-         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, credential_ref, note, capability_label, fingerprint, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+         (id, type, name, path, url, username, password, port, refresh_token, client_id, client_secret, root_id, cookie, credential_ref, host_key_fingerprint, host_key_endpoint, sftp_auth_method, note, capability_label, fingerprint, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT(id) DO UPDATE SET
             type=excluded.type, name=excluded.name, path=excluded.path, url=excluded.url,
             username=excluded.username, password=excluded.password, port=excluded.port,
             refresh_token=excluded.refresh_token, client_id=excluded.client_id,
              client_secret=excluded.client_secret, root_id=excluded.root_id, cookie=excluded.cookie,
              credential_ref=excluded.credential_ref,
+            host_key_fingerprint=CASE WHEN excluded.type = 'sftp' THEN COALESCE(excluded.host_key_fingerprint, book_sources.host_key_fingerprint) ELSE NULL END,
+            host_key_endpoint=CASE WHEN excluded.type = 'sftp' THEN COALESCE(excluded.host_key_endpoint, book_sources.host_key_endpoint) ELSE NULL END,
+            sftp_auth_method=CASE WHEN excluded.type = 'sftp' THEN COALESCE(excluded.sftp_auth_method, book_sources.sftp_auth_method) ELSE NULL END,
             note=excluded.note, capability_label=excluded.capability_label,
             fingerprint=excluded.fingerprint, updated_at=excluded.updated_at",
         params![
@@ -1473,6 +1651,9 @@ fn upsert_source_on(conn: &Connection, s: &BookSourceRow) -> Result<()> {
             s.root_id,
             s.cookie,
             s.credential_ref,
+            s.host_key_fingerprint,
+            s.host_key_endpoint,
+            s.sftp_auth_method,
             s.note,
             s.capability_label,
             fp,
@@ -6215,7 +6396,14 @@ mod tests {
             assert!(c.contains(&"deleted".to_string()), "{t} 缺 deleted");
         }
         let src = table_cols(&conn, "book_sources");
-        for col in ["fingerprint", "remote_only", "origin_device_id"] {
+        for col in [
+            "fingerprint",
+            "remote_only",
+            "origin_device_id",
+            "host_key_fingerprint",
+            "host_key_endpoint",
+            "sftp_auth_method",
+        ] {
             assert!(src.contains(&col.to_string()), "book_sources 缺 {col}");
         }
         for t in ["read_records", "book_metas"] {
@@ -6256,6 +6444,9 @@ mod tests {
             "origin_device_id",
             "updated_at",
             "deleted",
+            "host_key_fingerprint",
+            "host_key_endpoint",
+            "sftp_auth_method",
         ] {
             assert!(c.contains(&col.to_string()), "缺列 {col}");
         }
@@ -6328,6 +6519,87 @@ mod tests {
     }
 
     #[test]
+    fn smb_fingerprint_keeps_legacy_unc_identity_and_separates_custom_ports() {
+        let legacy = compute_source_fingerprint("smb", None, r"\\nas\comics\Manga", None);
+        let canonical = compute_source_fingerprint_with_port(
+            "smb",
+            Some("nas"),
+            "comics/Manga",
+            None,
+            Some(445),
+        );
+        let custom_port = compute_source_fingerprint_with_port(
+            "smb",
+            Some("nas"),
+            "comics/Manga",
+            None,
+            Some(1445),
+        );
+
+        // Preserve the fingerprint persisted by the original UNC-only model.
+        // Comparing only the two new paths would miss an identity change to
+        // every already-saved SMB source.
+        assert_eq!(
+            legacy,
+            "211793818208e3ff14eeac9b1268c5e5cb1eace8fb85e95039ebc30b6da9aef0"
+        );
+        assert_eq!(legacy, canonical);
+        assert_ne!(canonical, custom_port);
+    }
+
+    #[test]
+    fn smb_extended_unc_normalization_preserves_the_existing_fingerprint() {
+        let conn = schema_conn();
+        let mut source = BookSourceRow {
+            id: "extended-unc".into(),
+            r#type: "smb".into(),
+            name: "NAS".into(),
+            path: r"\\?\UNC\NAS\comics\Manga".into(),
+            url: None,
+            username: None,
+            password: None,
+            port: None,
+            refresh_token: None,
+            client_id: None,
+            client_secret: None,
+            root_id: None,
+            cookie: None,
+            credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
+            note: String::new(),
+            capability_label: "smb2/3".into(),
+            remote_only: false,
+            origin_device_id: None,
+        };
+
+        upsert_source_on(&conn, &source).unwrap();
+        let legacy_fingerprint: String = conn
+            .query_row(
+                "SELECT fingerprint FROM book_sources WHERE id='extended-unc'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // BookRepository normalizes this path to host + share-relative path.
+        source.path = "comics/Manga".into();
+        source.url = Some("NAS".into());
+        source.port = Some(445);
+        upsert_source_on(&conn, &source).unwrap();
+        let normalized_fingerprint: String = conn
+            .query_row(
+                "SELECT fingerprint FROM book_sources WHERE id='extended-unc'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(normalized_fingerprint, legacy_fingerprint);
+    }
+
+    #[test]
     fn fingerprint_normalization_matrix() {
         // URL query / fragment 与资源身份无关
         let plain = compute_source_fingerprint(
@@ -6381,6 +6653,9 @@ mod tests {
             root_id: None,
             cookie: None,
             credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
             note: String::new(),
             capability_label: "webdav".into(),
             remote_only: false,
@@ -6412,6 +6687,83 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fp, fp2);
+    }
+
+    #[test]
+    fn sftp_host_key_pin_round_trips_and_null_sync_does_not_clear_local_trust() {
+        let conn = schema_conn();
+        let mut source = BookSourceRow {
+            id: "sftp-pin".into(),
+            r#type: "sftp".into(),
+            name: "NAS".into(),
+            path: "/".into(),
+            url: Some("nas.local".into()),
+            username: Some("reader".into()),
+            password: None,
+            port: Some(22),
+            refresh_token: None,
+            client_id: None,
+            client_secret: None,
+            root_id: None,
+            cookie: None,
+            credential_ref: Some("source:sftp-pin".into()),
+            host_key_fingerprint: Some("SHA256:first".into()),
+            host_key_endpoint: Some("nas.local:22".into()),
+            sftp_auth_method: Some("password".into()),
+            note: String::new(),
+            capability_label: "sftp".into(),
+            remote_only: false,
+            origin_device_id: None,
+        };
+        upsert_source_on(&conn, &source).unwrap();
+        let pin: String = conn
+            .query_row(
+                "SELECT host_key_fingerprint FROM book_sources WHERE id='sftp-pin'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pin, "SHA256:first");
+        let endpoint: String = conn
+            .query_row(
+                "SELECT host_key_endpoint FROM book_sources WHERE id='sftp-pin'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(endpoint, "nas.local:22");
+
+        source.host_key_fingerprint = Some("SHA256:rotated".into());
+        source.host_key_endpoint = Some("nas.local:2222".into());
+        source.sftp_auth_method = Some("privateKey".into());
+        upsert_source_on(&conn, &source).unwrap();
+        source.host_key_fingerprint = None;
+        source.host_key_endpoint = None;
+        upsert_source_on(&conn, &source).unwrap();
+        let pin: String = conn
+            .query_row(
+                "SELECT host_key_fingerprint FROM book_sources WHERE id='sftp-pin'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pin, "SHA256:rotated");
+        let endpoint: String = conn
+            .query_row(
+                "SELECT host_key_endpoint FROM book_sources WHERE id='sftp-pin'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(endpoint, "nas.local:2222");
+        let auth_method: String = conn
+            .query_row(
+                "SELECT sftp_auth_method FROM book_sources WHERE id='sftp-pin'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(auth_method, "privateKey");
     }
 
     #[test]
@@ -6469,6 +6821,9 @@ mod tests {
             root_id: None,
             cookie: None,
             credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
             note: String::new(),
             capability_label: "webdav".into(),
             remote_only: false,
@@ -6522,6 +6877,9 @@ mod tests {
             root_id: None,
             cookie: None,
             credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
             note: String::new(),
             capability_label: "webdav".into(),
             remote_only: false,
@@ -6962,6 +7320,9 @@ mod tests {
             root_id: None,
             cookie: None,
             credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
             note: String::new(),
             capability_label: "local".into(),
             remote_only: false,
@@ -7128,6 +7489,9 @@ mod tests {
             root_id: Some("root".into()),
             cookie: None,
             credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
             note: String::new(),
             capability_label: "quark".into(),
             remote_only: false,
@@ -7305,6 +7669,9 @@ mod tests {
             root_id: None,
             cookie: None,
             credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
             note: String::new(),
             capability_label: "local".into(),
             remote_only: false,
@@ -7398,6 +7765,9 @@ mod tests {
             root_id: None,
             cookie: None,
             credential_ref: None,
+            host_key_fingerprint: None,
+            host_key_endpoint: None,
+            sftp_auth_method: None,
             note: String::new(),
             capability_label: "local".into(),
             remote_only: false,

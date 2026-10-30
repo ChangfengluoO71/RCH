@@ -8,6 +8,8 @@ import 'package:app/src/rust/api/library.dart' as frblib;
 import 'package:app/src/rust/api/remote_cover.dart' as remote_cover;
 import 'package:app/src/rust/api/source.dart';
 import 'package:app/store/baidu_session.dart';
+import 'package:app/store/ftp_session.dart';
+import 'package:app/store/s3_session.dart';
 import 'package:app/store/cloud115_session.dart';
 import 'package:app/store/folder_snapshot_store.dart';
 import 'package:app/store/foreground_work_coordinator.dart';
@@ -21,6 +23,7 @@ import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:app/store/remote_cover_repository.dart';
 import 'package:app/store/storage_access.dart';
+import 'package:app/store/smb_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/ui/cloud115_qr_scan.dart';
 import 'package:app/ui/quark_qr_scan.dart';
@@ -33,6 +36,7 @@ import 'package:app/ui/poster_grid.dart';
 import 'package:app/ui/remote_scan_status.dart';
 import 'package:app/store/webdav_session.dart';
 import 'package:app/ui/rch_overlay.dart';
+import 'package:app/ui/sftp_host_key_dialog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -387,8 +391,14 @@ class _SourceBrowserState extends State<SourceBrowser>
     try {
       _session = widget.source.isWebDav
           ? await webdavSessionFor(widget.source)
+          : widget.source.isSmb
+          ? await smbSessionFor(widget.source)
           : widget.source.isSftp
           ? await sftpSessionFor(widget.source)
+          : widget.source.isFtp
+          ? await ftpSessionFor(widget.source)
+          : widget.source.isS3
+          ? await s3SessionFor(widget.source)
           : widget.source.isBaidu
           ? await baiduSessionFor(widget.source)
           : widget.source.isQuark
@@ -399,6 +409,27 @@ class _SourceBrowserState extends State<SourceBrowser>
       if (created != null) cacheRemoteSession(widget.source.id, created);
       _remoteFailure = null;
     } catch (e) {
+      if (e is SftpHostKeyTrustRequired && mounted) {
+        final trusted = await confirmSftpHostKeyTrust(
+          context,
+          host: e.host,
+          port: e.port,
+          expectedFingerprint: e.expectedFingerprint,
+          actualFingerprint: e.actualFingerprint,
+          expectedEndpoint: e.expectedEndpoint,
+          actualEndpoint: e.actualEndpoint,
+        );
+        if (trusted && mounted) {
+          await LibraryStore.instance.updateSource(
+            widget.source.id,
+            hostKeyFingerprint: e.actualFingerprint,
+            hostKeyEndpoint: e.actualEndpoint,
+          );
+          if (!mounted) return;
+          await _connectSession();
+          return;
+        }
+      }
       // 复用/新建失败都清缓存 ⇒ 下一次进源会重新登录（自愈），不会一直卡在失效会话上。
       evictRemoteSession(widget.source.id);
       _remoteFailure = e;
@@ -473,13 +504,7 @@ class _SourceBrowserState extends State<SourceBrowser>
   }
 
   void _clearProviderSessionCaches() {
-    final id = widget.source.id;
-    evictRemoteSession(id);
-    if (widget.source.isBaidu) clearBaiduSession(id);
-    if (widget.source.is115) clearCloud115Session(id);
-    if (widget.source.isQuark) clearQuarkSession(id);
-    if (widget.source.isSftp) clearSftpSession(id);
-    if (widget.source.isWebDav) clearWebdavSession(id);
+    clearRemoteSessionCache(widget.source);
   }
 
   Future<void> _retryRemoteConnection() async {
@@ -711,7 +736,10 @@ class _SourceBrowserState extends State<SourceBrowser>
     try {
       final list = switch (widget.source.type) {
         'webdav' => await webdavList(session: _session!, path: path),
+        'smb' => await smbList(session: _session!, path: path),
         'sftp' => await sftpList(session: _session!, path: path),
+        'ftp' => await ftpList(session: _session!, path: path),
+        's3' => await s3List(session: _session!, path: path),
         'baidu' => await baiduList(session: _session!, path: path),
         '115' => await cloud115ListFor(
           widget.source,
@@ -733,6 +761,9 @@ class _SourceBrowserState extends State<SourceBrowser>
                 name: e.name,
                 path: e.path,
                 isDir: e.isDir,
+                // 浏览即索引时也要带上 size；否则 indexDirSnapshot 会把
+                // library_index.size 写成 null，封面管线报 cover_size_missing。
+                size: e.size.toInt(),
               ),
             )
             .toList();
@@ -1198,7 +1229,8 @@ class _SourceBrowserState extends State<SourceBrowser>
       if (mounted) {
         _safeSetState(
           () => _error =
-              '刷新 refresh_token 失败：\${remoteErrorMessage(error)}\n（未配置 AppKey/SecretKey，请编辑书源填写）',
+              '刷新 refresh_token 失败：${remoteErrorMessage(error)}\n'
+              '（未配置 AppKey/SecretKey，请编辑书源填写）',
         );
       }
       return;
@@ -1217,7 +1249,8 @@ class _SourceBrowserState extends State<SourceBrowser>
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '刷新失败：\${remoteErrorMessage(error)}\n浏览器已打开百度授权页，登录并同意后把页面显示的授权码粘贴到这里。',
+              '刷新失败：${remoteErrorMessage(error)}\n'
+              '浏览器已打开百度授权页，登录并同意后把页面显示的授权码粘贴到这里。',
               style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 10),
@@ -1489,7 +1522,10 @@ class _SourceBrowserState extends State<SourceBrowser>
   Future<List<DirEntry>> _listForBatchTag(String path) async {
     return switch (widget.source.type) {
       'webdav' => await webdavList(session: _session!, path: path),
+      'smb' => await smbList(session: _session!, path: path),
       'sftp' => await sftpList(session: _session!, path: path),
+      'ftp' => await ftpList(session: _session!, path: path),
+      's3' => await s3List(session: _session!, path: path),
       'baidu' => await baiduList(session: _session!, path: path),
       '115' => await cloud115ListFor(
         widget.source,

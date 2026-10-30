@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/remote-source-protocols.md","reason":"Verify host-key trust, no-auth probing, vault use, and explicit auth selection."}
+{"file":".trellis/spec/backend/sftp-source.md","reason":"Check SFTP endpoint pinning and compatibility behavior."}

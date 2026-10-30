@@ -102,7 +102,7 @@ impl WebCookieProtocol {
         let host = parsed.host_str().ok_or(ProtocolError::InvalidResponse)?;
         let port = parsed.port().ok_or(ProtocolError::InvalidResponse)?;
         let client = Client::builder()
-            .timeout(Duration::from_millis(700))
+            .timeout(Duration::from_secs(2))
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()

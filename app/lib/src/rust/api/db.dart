@@ -489,6 +489,9 @@ class BookSourceDto {
   final String? rootId;
   final String? cookie;
   final String? credentialRef;
+  final String? hostKeyFingerprint;
+  final String? hostKeyEndpoint;
+  final String? sftpAuthMethod;
   final String note;
   final String capabilityLabel;
   final bool remoteOnly;
@@ -509,6 +512,9 @@ class BookSourceDto {
     this.rootId,
     this.cookie,
     this.credentialRef,
+    this.hostKeyFingerprint,
+    this.hostKeyEndpoint,
+    this.sftpAuthMethod,
     required this.note,
     required this.capabilityLabel,
     required this.remoteOnly,
@@ -531,6 +537,9 @@ class BookSourceDto {
       rootId.hashCode ^
       cookie.hashCode ^
       credentialRef.hashCode ^
+      hostKeyFingerprint.hashCode ^
+      hostKeyEndpoint.hashCode ^
+      sftpAuthMethod.hashCode ^
       note.hashCode ^
       capabilityLabel.hashCode ^
       remoteOnly.hashCode ^
@@ -555,6 +564,9 @@ class BookSourceDto {
           rootId == other.rootId &&
           cookie == other.cookie &&
           credentialRef == other.credentialRef &&
+          hostKeyFingerprint == other.hostKeyFingerprint &&
+          hostKeyEndpoint == other.hostKeyEndpoint &&
+          sftpAuthMethod == other.sftpAuthMethod &&
           note == other.note &&
           capabilityLabel == other.capabilityLabel &&
           remoteOnly == other.remoteOnly &&

@@ -14,6 +14,7 @@ import 'package:app/store/library_store.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/random_read_selector.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/sftp_session.dart';
 import 'package:app/store/remote_scan_coordinator.dart';
 import 'package:app/store/remote_scan_models.dart';
 import 'package:app/ui/opener.dart';
@@ -24,6 +25,7 @@ import 'package:app/ui/common.dart';
 import 'package:app/ui/quark_qr_scan.dart';
 import 'package:app/ui/webtoon_navigation.dart';
 import 'package:app/ui/rch_overlay.dart';
+import 'package:app/ui/sftp_host_key_dialog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -601,6 +603,31 @@ class _ReaderPageState extends State<ReaderPage> {
         isCurrent: isCurrent,
       );
       if (recovered || !isCurrent()) return;
+      if (!mounted) return;
+      if (error is SftpHostKeyTrustRequired &&
+          source != null &&
+          source.isSftp) {
+        final trusted = await confirmSftpHostKeyTrust(
+          context,
+          host: error.host,
+          port: error.port,
+          expectedFingerprint: error.expectedFingerprint,
+          actualFingerprint: error.actualFingerprint,
+          expectedEndpoint: error.expectedEndpoint,
+          actualEndpoint: error.actualEndpoint,
+        );
+        if (!mounted || !isCurrent()) return;
+        if (trusted) {
+          await LibraryStore.instance.updateSource(
+            source.id,
+            hostKeyFingerprint: error.actualFingerprint,
+            hostKeyEndpoint: error.actualEndpoint,
+          );
+          if (!isCurrent()) return;
+          await _open();
+          return;
+        }
+      }
       final partialBook = _book;
       _book = null;
       if (partialBook != null) {

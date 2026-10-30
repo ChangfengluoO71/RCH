@@ -7,13 +7,17 @@ use super::{webdav::DownloadProgress, ByteSource, Entry};
 use anyhow::{anyhow, Context, Result};
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-/// russh 客户端 handler：接受任意主机密钥，记录指纹。
+/// russh client handler with explicit host-key pinning.
 #[derive(Clone)]
-struct SshHandler;
+struct SshHandler {
+    expected_fingerprint: Option<String>,
+    allow_unpinned: bool,
+    observed_fingerprint: Arc<Mutex<Option<String>>>,
+}
 
 impl russh::client::Handler for SshHandler {
     type Error = russh::Error;
@@ -22,11 +26,35 @@ impl russh::client::Handler for SshHandler {
         &mut self,
         server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        tracing::info!(
-            "SFTP 主机密钥指纹: {}",
-            server_public_key.fingerprint(russh::keys::HashAlg::Sha256)
-        );
-        Ok(true)
+        let fingerprint = server_public_key
+            .fingerprint(russh::keys::HashAlg::Sha256)
+            .to_string();
+        if let Ok(mut observed) = self.observed_fingerprint.lock() {
+            *observed = Some(fingerprint.clone());
+        }
+        Ok(self.allow_unpinned
+            || self
+                .expected_fingerprint
+                .as_deref()
+                .is_some_and(|expected| fingerprint_matches(expected, &fingerprint)))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SftpAuthMethod {
+    Password,
+    PrivateKey,
+}
+
+fn resolve_auth_method(method: &str, password: &str, private_key: &str) -> Result<SftpAuthMethod> {
+    match method {
+        "password" if !password.is_empty() => Ok(SftpAuthMethod::Password),
+        "password" => Err(anyhow!("SFTP password authentication requires a password")),
+        "privateKey" if !private_key.trim().is_empty() => Ok(SftpAuthMethod::PrivateKey),
+        "privateKey" => Err(anyhow!(
+            "SFTP public-key authentication requires a private key"
+        )),
+        _ => Err(anyhow!("Unsupported SFTP authentication method")),
     }
 }
 
@@ -39,66 +67,164 @@ pub struct SftpClient {
     sftp: Arc<russh_sftp::client::SftpSession>,
     /// `host:port`，用于 raw/ 缓存命名空间（与 WebDAV origin 对称）。
     endpoint: String,
+    host_fingerprint: String,
 }
 
 impl SftpClient {
     /// 连接 + 密码认证 + 打开 SFTP 子系统。
     /// 阻塞调用（内部 block_on）；应在 spawn_blocking 中执行。
-    pub fn connect(host: &str, port: u16, user: &str, pass: &str) -> Result<Self> {
+    pub fn connect(
+        host: &str,
+        port: u16,
+        user: &str,
+        auth_method: &str,
+        pass: &str,
+        private_key: &str,
+        key_passphrase: &str,
+        expected_fingerprint: &str,
+    ) -> Result<Self> {
+        let auth_method = resolve_auth_method(auth_method, pass, private_key)?;
+        if expected_fingerprint.trim().is_empty() {
+            return Err(anyhow!("SFTP host key must be trusted before connecting"));
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
-            .context("创建 SFTP runtime 失败")?;
+            .context("create SFTP runtime")?;
         let host = host.to_string();
         let user = user.to_string();
         let pass = pass.to_string();
-        let (conn, sftp, endpoint) = runtime.block_on(async move {
+        let private_key = private_key.to_string();
+        let key_passphrase = key_passphrase.to_string();
+        let expected_fingerprint = expected_fingerprint.trim().to_string();
+        let observed_fingerprint = Arc::new(Mutex::new(None));
+        let observed_for_connect = Arc::clone(&observed_fingerprint);
+        let (conn, sftp, endpoint, host_fingerprint) = runtime.block_on(async move {
             let connect_fut = async {
-                let config = Arc::new(russh::client::Config::default());
-                let mut session = russh::client::connect(config, (host.as_str(), port), SshHandler)
-                    .await
-                    .map_err(|e| anyhow!("连接 SFTP 服务器失败: {e}"))?;
-                let authed = session
-                    .authenticate_password(user.as_str(), pass.as_str())
-                    .await
-                    .map_err(|e| anyhow!("SFTP 认证失败: {e}"))?;
+                let handler = SshHandler {
+                    expected_fingerprint: Some(expected_fingerprint.clone()),
+                    allow_unpinned: false,
+                    observed_fingerprint: observed_for_connect,
+                };
+                let mut session = russh::client::connect(
+                    Arc::new(russh::client::Config::default()),
+                    (host.as_str(), port),
+                    handler,
+                )
+                .await
+                .map_err(|_| anyhow!("SFTP connection failed or saved host key changed"))?;
+                let authed = match auth_method {
+                    SftpAuthMethod::Password => session
+                        .authenticate_password(user.as_str(), pass.as_str())
+                        .await
+                        .map_err(|_| anyhow!("SFTP authentication failed"))?,
+                    SftpAuthMethod::PrivateKey => {
+                        let key = russh::keys::decode_secret_key(
+                            &private_key,
+                            (!key_passphrase.is_empty()).then_some(key_passphrase.as_str()),
+                        )
+                        .map_err(|_| anyhow!("SFTP private key or passphrase is invalid"))?;
+                        let rsa_hash = session
+                            .best_supported_rsa_hash()
+                            .await
+                            .map_err(|_| anyhow!("SFTP public-key authentication is unavailable"))?
+                            .unwrap_or(Some(russh::keys::HashAlg::Sha256));
+                        let key = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), rsa_hash);
+                        session
+                            .authenticate_publickey(user.as_str(), key)
+                            .await
+                            .map_err(|_| anyhow!("SFTP public-key authentication failed"))?
+                    }
+                };
                 if !authed.success() {
-                    return Err(anyhow!("SFTP 认证失败: 用户名或密码错误"));
+                    return Err(anyhow!("SFTP authentication failed"));
                 }
                 let channel = session
                     .channel_open_session()
                     .await
-                    .map_err(|e| anyhow!("打开 SFTP channel 失败: {e}"))?;
+                    .map_err(|_| anyhow!("could not open the SFTP channel"))?;
                 channel
                     .request_subsystem(true, "sftp")
                     .await
-                    .map_err(|e| anyhow!("启动 SFTP 子系统失败: {e}"))?;
+                    .map_err(|_| anyhow!("could not start the SFTP subsystem"))?;
                 let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
                     .await
-                    .map_err(|e| anyhow!("初始化 SFTP 会话失败: {e}"))?;
+                    .map_err(|_| anyhow!("could not initialize the SFTP subsystem"))?;
                 sftp.set_timeout(10);
+                let host_fingerprint = observed_fingerprint
+                    .lock()
+                    .ok()
+                    .and_then(|value| value.clone())
+                    .ok_or_else(|| anyhow!("SFTP server did not provide a host fingerprint"))?;
+                if !fingerprint_matches(&expected_fingerprint, &host_fingerprint) {
+                    return Err(anyhow!("SFTP server host key changed"));
+                }
                 Ok::<
                     (
                         russh::client::Handle<SshHandler>,
                         russh_sftp::client::SftpSession,
+                        String,
                     ),
                     anyhow::Error,
-                >((session, sftp))
+                >((session, sftp, host_fingerprint))
             };
-            let (conn, sftp) = tokio::time::timeout(Duration::from_secs(20), connect_fut)
-                .await
-                .map_err(|_| anyhow!("连接 SFTP 服务器超时(20s)"))?
-                .map_err(|e: anyhow::Error| e)?;
-            // authority 由共享 helper 产出（纯函数），writer / reader 同源。
+            let (conn, sftp, host_fingerprint) =
+                tokio::time::timeout(Duration::from_secs(20), connect_fut)
+                    .await
+                    .map_err(|_| anyhow!("SFTP connection timed out"))?
+                    .map_err(|error: anyhow::Error| error)?;
             let endpoint = endpoint_for(&host, port);
-            Ok::<_, anyhow::Error>((conn, sftp, endpoint))
+            Ok::<_, anyhow::Error>((conn, sftp, endpoint, host_fingerprint))
         })?;
         Ok(SftpClient {
             runtime: Arc::new(runtime),
             _conn: conn,
             sftp: Arc::new(sftp),
             endpoint,
+            host_fingerprint,
+        })
+    }
+
+    pub fn probe_host_key(host: &str, port: u16) -> Result<String> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .context("create SFTP probe runtime")?;
+        let host = host.to_string();
+        let observed_fingerprint = Arc::new(Mutex::new(None));
+        let observed_for_handler = Arc::clone(&observed_fingerprint);
+        runtime.block_on(async move {
+            let handler = SshHandler {
+                expected_fingerprint: None,
+                allow_unpinned: true,
+                observed_fingerprint: observed_for_handler,
+            };
+            let session = tokio::time::timeout(
+                Duration::from_secs(20),
+                russh::client::connect(
+                    Arc::new(russh::client::Config::default()),
+                    (host.as_str(), port),
+                    handler,
+                ),
+            )
+            .await
+            .map_err(|_| anyhow!("SFTP host-key probe timed out"))?
+            .map_err(|_| anyhow!("SFTP host-key probe failed"))?;
+            let fingerprint = observed_fingerprint
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
+                .ok_or_else(|| anyhow!("SFTP server did not provide a host fingerprint"))?;
+            let _ = session
+                .disconnect(
+                    russh::Disconnect::ByApplication,
+                    "host-key probe only",
+                    "en",
+                )
+                .await;
+            Ok(fingerprint)
         })
     }
 
@@ -107,35 +233,88 @@ impl SftpClient {
         &self.endpoint
     }
 
+    pub fn host_fingerprint(&self) -> &str {
+        &self.host_fingerprint
+    }
+
     /// raw/ 缓存路径探测（与 WebDAV 同名逻辑，命名空间用 endpoint）。
     pub fn raw_cache_path(&self, path: &str) -> Option<PathBuf> {
         raw_cache_path(&self.endpoint, path)
     }
 
     /// 列出目录（目录在前，自然排序；与本地/WebDAV 一致）。
+    ///
+    /// 兼容性说明（2026-10-30，OpenList 4.2.4）：
+    /// * 空路径归一为 `/`。OpenList 的 sftpd 会把 OPENDIR 的空路径存成 `""`，
+    ///   后续 READDIR 因 `getDir(handle) == ""` 直接返回 invalid handle。
+    /// * 使用独立的 raw 通道逐包 READDIR：OpenList sftpd 在目录读完时只 `continue`，
+    ///   不发送 `SSH_FXP_STATUS(EOF)`，`SftpSession::read_dir` 会一直等到超时。
+    ///   这里把 `Timeout` 视为目录结束（OpenList 兼容），标准服务器仍以显式 EOF 结束。
     pub fn list(&self, path: &str) -> Result<Vec<Entry>> {
-        let sftp = Arc::clone(&self.sftp);
-        let path = path.to_string();
-        let dir = self
-            .runtime
-            .block_on(async move { sftp.read_dir(path).await })
-            .map_err(|e| anyhow!("SFTP 列目录失败: {e}"))?;
-        let mut out: Vec<Entry> = dir
-            .into_iter()
-            .map(|e| Entry {
-                name: e.file_name(),
-                path: e.path(),
-                is_dir: e.file_type().is_dir(),
-                size: e.metadata().len(),
-                mtime: e
-                    .metadata()
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0),
-            })
-            .collect();
+        let path = effective_list_path(path);
+        let parent = path.clone();
+        let files = self.runtime.block_on(async {
+            let channel = self
+                ._conn
+                .channel_open_session()
+                .await
+                .map_err(|e| anyhow!("SFTP 列目录失败: cannot open channel: {e}"))?;
+            channel
+                .request_subsystem(true, "sftp")
+                .await
+                .map_err(|e| anyhow!("SFTP 列目录失败: cannot start subsystem: {e}"))?;
+            let raw = russh_sftp::client::RawSftpSession::new(channel.into_stream());
+            raw.init()
+                .await
+                .map_err(|e| anyhow!("SFTP 列目录失败: {e}"))?;
+            raw.set_timeout(5);
+            let handle = raw
+                .opendir(path)
+                .await
+                .map_err(|e| anyhow!("SFTP 列目录失败: {e}"))?;
+            let mut files = Vec::new();
+            loop {
+                match raw.readdir(handle.handle.clone()).await {
+                    Ok(name) => {
+                        if name.files.is_empty() {
+                            break;
+                        }
+                        files.extend(name.files);
+                    }
+                    Err(russh_sftp::client::error::Error::Status(status))
+                        if status.status_code == russh_sftp::protocol::StatusCode::Eof =>
+                    {
+                        break;
+                    }
+                    // OpenList sftpd 不发 EOF 状态包；等满 5s 即视为目录结束。
+                    Err(russh_sftp::client::error::Error::Timeout) => break,
+                    Err(error) => {
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(2),
+                            raw.close(handle.handle.clone()),
+                        )
+                        .await;
+                        return Err(anyhow!("SFTP 列目录失败: {error}"));
+                    }
+                }
+            }
+            let _ = tokio::time::timeout(Duration::from_secs(2), raw.close(handle.handle.clone()))
+                .await;
+            Ok::<_, anyhow::Error>(
+                files
+                    .into_iter()
+                    .filter(|file| file.filename != "." && file.filename != "..")
+                    .map(|file| Entry {
+                        name: file.filename.clone(),
+                        path: readdir_child_path(&parent, &file.filename),
+                        is_dir: file.attrs.is_dir(),
+                        size: file.attrs.len(),
+                        mtime: file.attrs.mtime.map(i64::from).unwrap_or(0),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })?;
+        let mut out = files;
         out.sort_by(|a, b| {
             b.is_dir
                 .cmp(&a.is_dir)
@@ -255,6 +434,12 @@ impl SftpClient {
     }
 }
 
+fn fingerprint_matches(expected: &str, actual: &str) -> bool {
+    let expected = expected.trim();
+    let actual = actual.trim();
+    !expected.is_empty() && !actual.is_empty() && expected == actual
+}
+
 /// SFTP 远程文件作为 [`ByteSource`]：read_at 委托给会话（open→seek→read）。
 pub struct SftpFile {
     client: Arc<SftpClient>,
@@ -275,6 +460,29 @@ impl ByteSource for SftpFile {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         self.client.read_at(&self.path, offset, buf)
+    }
+}
+
+/// 列目录前归一化根路径：空/空白视为 `/`。
+///
+/// OpenList sftpd 把 OPENDIR 的 `""` 存成空串，后续 READDIR 会直接返回
+/// invalid handle；而 RCH 的空初始路径历史上会传 `""`。
+fn effective_list_path(path: &str) -> String {
+    if path.trim().is_empty() {
+        "/".to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+/// READDIR 子项路径，规则与 `russh_sftp::client::fs::ReadDir` 一致。
+fn readdir_child_path(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_string()
+    } else if parent.ends_with('/') {
+        format!("{parent}{name}")
+    } else {
+        format!("{parent}/{name}")
     }
 }
 
@@ -374,11 +582,241 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sftp_auth_method_is_explicit_and_requires_its_selected_credential() {
+        assert_eq!(
+            resolve_auth_method("password", "secret", "private-key").unwrap(),
+            SftpAuthMethod::Password
+        );
+        assert_eq!(
+            resolve_auth_method("privateKey", "secret", "private-key").unwrap(),
+            SftpAuthMethod::PrivateKey
+        );
+        assert!(resolve_auth_method("password", "", "private-key").is_err());
+        assert!(resolve_auth_method("privateKey", "secret", "").is_err());
+        assert!(resolve_auth_method("auto", "secret", "private-key").is_err());
+    }
+
+    #[test]
+    fn live_fixture_pins_host_key_authenticates_with_password_and_reads_random_offsets() {
+        let Some(config) = LiveConfig::from_env() else {
+            return;
+        };
+        let probed_fingerprint = SftpClient::probe_host_key(&config.host, config.port)
+            .expect("live SFTP host-key probe should not require credentials");
+        assert_eq!(probed_fingerprint, config.fingerprint);
+        let client = SftpClient::connect(
+            &config.host,
+            config.port,
+            &config.username,
+            "password",
+            &config.password,
+            "",
+            "",
+            &config.fingerprint,
+        )
+        .expect("live SFTP password credentials should authenticate");
+        assert_live_fixture(&client, &config.file);
+        client.disconnect();
+
+        let wrong_password = format!("{}-invalid", config.password);
+        let error = SftpClient::connect(
+            &config.host,
+            config.port,
+            &config.username,
+            "password",
+            &wrong_password,
+            "",
+            "",
+            &config.fingerprint,
+        )
+        .err()
+        .expect("invalid SFTP password must fail");
+        assert!(!error.to_string().contains(&wrong_password));
+    }
+
+    #[test]
+    fn live_fixture_authenticates_with_private_key_and_rejects_changed_host_key() {
+        let Some(config) = LiveConfig::from_env() else {
+            return;
+        };
+        let Ok(key_path) = std::env::var("RCH_SFTP_TEST_PRIVATE_KEY_FILE") else {
+            return;
+        };
+        let private_key = std::fs::read_to_string(key_path)
+            .expect("live SFTP private-key fixture should be readable");
+        let key_passphrase = std::env::var("RCH_SFTP_TEST_KEY_PASSPHRASE").unwrap_or_default();
+        let client = SftpClient::connect(
+            &config.host,
+            config.port,
+            &config.username,
+            "privateKey",
+            "",
+            &private_key,
+            &key_passphrase,
+            &config.fingerprint,
+        )
+        .expect("live SFTP private-key credentials should authenticate");
+        assert_live_fixture(&client, &config.file);
+        client.disconnect();
+
+        let auth_log_before = std::fs::read_to_string(&config.auth_log_file)
+            .expect("SFTP test server should record authentication attempts");
+        let rotated_port = std::env::var("RCH_SFTP_TEST_ROTATED_PORT")
+            .ok()
+            .and_then(|port| port.parse().ok())
+            .unwrap_or(config.port);
+        let stale_pin = if rotated_port == config.port {
+            "SHA256:deliberately-wrong-pin"
+        } else {
+            &config.fingerprint
+        };
+        let changed_pin = SftpClient::connect(
+            &config.host,
+            rotated_port,
+            &config.username,
+            "password",
+            &config.password,
+            "",
+            "",
+            stale_pin,
+        )
+        .err()
+        .expect("a changed host key must fail before login");
+        assert!(!changed_pin.to_string().contains(&config.password));
+        assert_eq!(
+            std::fs::read_to_string(&config.auth_log_file)
+                .expect("SFTP test server should record authentication attempts"),
+            auth_log_before,
+            "a changed host key must be rejected before the server sees credentials"
+        );
+    }
+
+    #[test]
+    fn live_fixture_accepts_encrypted_private_key_and_rejects_wrong_passphrase() {
+        let Some(config) = LiveConfig::from_env() else {
+            return;
+        };
+        let Ok(key_path) = std::env::var("RCH_SFTP_TEST_ENCRYPTED_PRIVATE_KEY_FILE") else {
+            return;
+        };
+        let private_key = std::fs::read_to_string(key_path)
+            .expect("encrypted SFTP private-key fixture should be readable");
+        let key_passphrase = std::env::var("RCH_SFTP_TEST_KEY_PASSPHRASE")
+            .expect("encrypted SFTP test passphrase should be set");
+        let client = SftpClient::connect(
+            &config.host,
+            config.port,
+            &config.username,
+            "privateKey",
+            "",
+            &private_key,
+            &key_passphrase,
+            &config.fingerprint,
+        )
+        .expect("correct encrypted SFTP private key should authenticate");
+        assert_live_fixture(&client, &config.file);
+        client.disconnect();
+
+        let wrong_passphrase = format!("{key_passphrase}-invalid");
+        let error = SftpClient::connect(
+            &config.host,
+            config.port,
+            &config.username,
+            "privateKey",
+            "",
+            &private_key,
+            &wrong_passphrase,
+            &config.fingerprint,
+        )
+        .err()
+        .expect("incorrect private-key passphrase must fail");
+        assert!(!error.to_string().contains(&wrong_passphrase));
+    }
+
+    fn assert_live_fixture(client: &SftpClient, file: &str) {
+        const CONTENT: &[u8] = b"RCH-SFTP-READ-FIXTURE-2026";
+        assert!(client
+            .list(".")
+            .unwrap()
+            .iter()
+            .any(|entry| entry.name == file));
+        assert_eq!(client.file_size(file).unwrap(), CONTENT.len() as u64);
+
+        let mut head = [0; 7];
+        assert_eq!(client.read_at(file, 0, &mut head).unwrap(), head.len());
+        assert_eq!(&head, &CONTENT[..7]);
+
+        let mut middle = [0; 9];
+        assert_eq!(client.read_at(file, 6, &mut middle).unwrap(), middle.len());
+        assert_eq!(&middle, &CONTENT[6..15]);
+
+        let mut tail = [0; 16];
+        let tail_len = CONTENT.len() - 20;
+        assert_eq!(client.read_at(file, 20, &mut tail).unwrap(), tail_len);
+        assert_eq!(&tail[..tail_len], &CONTENT[20..]);
+        assert_eq!(
+            client
+                .read_at(file, CONTENT.len() as u64, &mut tail)
+                .unwrap(),
+            0
+        );
+    }
+
+    struct LiveConfig {
+        host: String,
+        port: u16,
+        username: String,
+        password: String,
+        fingerprint: String,
+        file: String,
+        auth_log_file: String,
+    }
+
+    impl LiveConfig {
+        fn from_env() -> Option<Self> {
+            Some(Self {
+                host: std::env::var("RCH_SFTP_TEST_HOST").ok()?,
+                port: std::env::var("RCH_SFTP_TEST_PORT").ok()?.parse().ok()?,
+                username: std::env::var("RCH_SFTP_TEST_USERNAME").ok()?,
+                password: std::env::var("RCH_SFTP_TEST_PASSWORD").ok()?,
+                fingerprint: std::env::var("RCH_SFTP_TEST_FINGERPRINT").ok()?,
+                file: std::env::var("RCH_SFTP_TEST_FILE").ok()?,
+                auth_log_file: std::env::var("RCH_SFTP_TEST_AUTH_LOG_FILE").ok()?,
+            })
+        }
+    }
+
+    #[test]
+    fn sftp_host_key_pin_requires_an_exact_nonempty_fingerprint() {
+        assert!(fingerprint_matches("SHA256:abc123", " SHA256:abc123 "));
+        assert!(!fingerprint_matches("", "SHA256:abc123"));
+        assert!(!fingerprint_matches("SHA256:abc123", "SHA256:abc124"));
+        assert!(!fingerprint_matches("sha256:abc123", "SHA256:abc123"));
+    }
+
+    #[test]
     fn join_remote_path_works() {
         assert_eq!(join_remote_path("/", "漫画.cbz"), "/漫画.cbz");
         assert_eq!(join_remote_path("/comic", "a.cbz"), "/comic/a.cbz");
         assert_eq!(join_remote_path("/comic/", "a.cbz"), "/comic/a.cbz");
         assert_eq!(join_remote_path("", "a.cbz"), "a.cbz");
+    }
+
+    #[test]
+    fn effective_list_path_only_normalizes_empty_roots() {
+        assert_eq!(effective_list_path(""), "/");
+        assert_eq!(effective_list_path("   "), "/");
+        assert_eq!(effective_list_path("/"), "/");
+        assert_eq!(effective_list_path("/日漫"), "/日漫");
+        assert_eq!(effective_list_path("."), ".", "相对路径语义必须保留");
+    }
+
+    #[test]
+    fn readdir_child_path_matches_readdir_rules() {
+        assert_eq!(readdir_child_path("", "a.cbz"), "a.cbz");
+        assert_eq!(readdir_child_path("/", "a.cbz"), "/a.cbz");
+        assert_eq!(readdir_child_path("/日漫", "a.cbz"), "/日漫/a.cbz");
+        assert_eq!(readdir_child_path("/日漫/", "a.cbz"), "/日漫/a.cbz");
     }
 
     #[test]

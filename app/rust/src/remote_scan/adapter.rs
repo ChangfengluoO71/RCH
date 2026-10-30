@@ -143,6 +143,11 @@ pub trait RemoteProviderAdapter: Send + Sync {
     ) -> Result<(Vec<RemoteEntry>, Option<String>), RemoteScanError>;
     fn read_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>, RemoteScanError>;
     fn read_file_limited(&self, path: &str, max_bytes: u64) -> Result<Vec<u8>, RemoteScanError>;
+    /// 远端文件大小（可选）。扫描索引缺 size 时，封面 worker 用它补齐，
+    /// 避免把封面永久判成 `cover_size_missing`。
+    fn file_size(&self, _path: &str) -> Result<Option<u64>, RemoteScanError> {
+        Ok(None)
+    }
     fn normalize_path(&self, path: &str) -> String;
     /// Register a logical-to-provider path mapping supplied by a caller that
     /// already fetched a directory listing. Providers with opaque ids (for

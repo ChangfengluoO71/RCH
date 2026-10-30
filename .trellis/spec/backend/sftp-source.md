@@ -41,12 +41,12 @@ pub struct SftpClient {
 
 - 随机读 = 每次调用独立 `open`（只读）→ `seek` → `read`（russh-sftp 无 `read_at` API）；并发安全，上层 SourceReader 256KB 读放大缓解往返。
 - 整本下载：循环 `read` 分块写盘，**勿用** `sftp.read(path)`（整包进内存）。
-- 主机密钥：首次自动接受并 `tracing::info!` 记录 SHA256 指纹（简化 TOFU）。
+- 主机密钥安全、首次确认、指纹轮换和认证方法以 [远程书源协议规范](./remote-source-protocols.md) 为准；不得自动接受未知主机密钥。
 - 打开策略（全局设置 `bookOpenStrategy`）：`"auto"` 先整本下载 raw/ 失败回退流式；`"download"` 强制整本失败报错；`"stream"` 直接流式。
 
 ## API 契约（FRB 生成）
 
-- `sftp_connect(host, port, username, password) -> SftpSessionInfo { id, root: "/" }`
+- `sftp_probe_host_key(host, port) -> Result<String>` 与 `sftp_connect(host, port, username, auth_method, password, private_key, key_passphrase, expected_fingerprint) -> Result<SftpSessionInfo>`；认证与存储契约见远程书源协议规范。
 - `sftp_disconnect(id)` / `sftp_list(session, path) -> Vec<DirEntry>`
 - `open_sftp_book(session, path, strategy) -> BookInfo`（`cache_ns = "sftp|{endpoint}|{path}"`）
 - `sftp_download_progress(session) -> f64` / `sftp_has_raw_cache(session, path) -> bool`

@@ -147,18 +147,45 @@ fn cloud_has_credentials(
         Option<String>,
         Option<String>,
     ),
+    credential_ref: Option<&str>,
+    sftp_auth_method: Option<&str>,
 ) -> bool {
     let (username, password, refresh_token, cookie, _client_secret) = row;
+    let has_vault_credentials = credential_ref
+        .map(str::trim)
+        .map(|reference| !reference.is_empty())
+        .unwrap_or(false);
+    let has_username = username
+        .as_deref()
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
+    let has_password = password
+        .as_deref()
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
     match r#type {
-        "webdav" | "sftp" => {
-            username.as_deref().map(|u| !u.is_empty()).unwrap_or(false)
-                && password.as_deref().map(|p| !p.is_empty()).unwrap_or(false)
+        "webdav" | "smb" => has_username && (has_password || has_vault_credentials),
+        "sftp" => {
+            let private_key_auth = sftp_auth_method == Some("privateKey");
+            has_username
+                && if private_key_auth {
+                    has_vault_credentials
+                } else {
+                    has_password || has_vault_credentials
+                }
         }
-        "baidu" => refresh_token
-            .as_deref()
-            .map(|t| !t.is_empty())
-            .unwrap_or(false),
-        "115" | "quark" => cookie.as_deref().map(|c| !c.is_empty()).unwrap_or(false),
+        "baidu" => {
+            refresh_token
+                .as_deref()
+                .map(|t| !t.is_empty())
+                .unwrap_or(false)
+                || has_vault_credentials
+        }
+        "115" | "quark" => {
+            cookie.as_deref().map(|c| !c.is_empty()).unwrap_or(false) || has_vault_credentials
+        }
         _ => false,
     }
 }
@@ -169,10 +196,10 @@ fn source_status(
     has_local_resource: bool,
     has_credentials: bool,
 ) -> &'static str {
-    let is_cloud = r#type != "local" && r#type != "smb";
-    if !is_cloud && has_local_resource {
+    let is_local = r#type == "local";
+    if is_local && has_local_resource {
         "read"
-    } else if has_local_source && (has_credentials || !is_cloud) {
+    } else if has_local_source && (has_credentials || is_local || r#type == "smb") {
         "needs_network"
     } else {
         "index_only"
@@ -237,7 +264,8 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, type, name, path, url, username, password, refresh_token, client_secret, cookie,
-                    root_id, client_id, capability_label, fingerprint, remote_only, origin_device_id
+                    root_id, client_id, capability_label, fingerprint, remote_only, origin_device_id,
+                    credential_ref, sftp_auth_method
              FROM book_sources WHERE deleted = 0",
         )
         .map_err(|e| e.to_string())?;
@@ -260,6 +288,8 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
                 r.get::<_, String>(13)?,         // fingerprint
                 r.get::<_, i64>(14)?,            // remote_only
                 r.get::<_, Option<String>>(15)?, // origin_device_id
+                r.get::<_, Option<String>>(16)?, // credential_ref
+                r.get::<_, Option<String>>(17)?, // sftp_auth_method
             ))
         })
         .map_err(|e| e.to_string())?
@@ -303,6 +333,8 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
         fingerprint,
         remote_only,
         origin_device_id,
+        credential_ref,
+        sftp_auth_method,
     ) in rows
     {
         let is_remote = remote_only != 0;
@@ -315,9 +347,10 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
                 cookie.clone(),
                 client_secret.clone(),
             ),
+            credential_ref.as_deref(),
+            sftp_auth_method.as_deref(),
         );
-        let has_local_resource =
-            (r#type == "local" || r#type == "smb") && std::path::Path::new(&path).exists();
+        let has_local_resource = r#type == "local" && std::path::Path::new(&path).exists();
         let device_id = if is_remote {
             origin_device_id.clone().unwrap_or_else(|| own_id.clone())
         } else {
@@ -339,7 +372,7 @@ pub fn db_source_tree() -> Result<Vec<SourceTreeNodeDto>, String> {
         let device_name_out = devices[idx].device_name.clone();
         let status =
             source_status(&r#type, !is_remote, has_local_resource, has_credentials).to_string();
-        let requires_network = r#type != "local" && r#type != "smb" && has_credentials;
+        let requires_network = r#type != "local" && (has_credentials || r#type == "smb");
         devices[idx].sources.push(SourceAvailabilityDto {
             source_id: id,
             fingerprint,
@@ -430,23 +463,26 @@ fn local_archive_path_predicate_sql() -> String {
 /// remote sources require complete listing proof for every counted resource.
 fn readable_comic_candidate_predicate_sql() -> String {
     let local_archive = local_archive_path_predicate_sql();
+    // 远端扫描只把列出的文件写入 library_index，父目录行不一定落库，因此不能
+    // 依赖 parent_id 反查父目录；从文件 path 去掉 name 后推导父路径，再核对
+    // remote_listing_state 是否完整。
+    let parent_path = "CASE \
+        WHEN rtrim(substr(li.path, 1, length(li.path) - length(li.name)), '/') = '' \
+        THEN '/' \
+        ELSE rtrim(substr(li.path, 1, length(li.path) - length(li.name)), '/') \
+        END";
     format!(
-        "(s.type IN ('local', 'smb') AND (
+        "(s.type = 'local' AND (
             (li.entry_type = 'file' AND (li.asset_kind = 'ArchiveFile' OR ({local_archive})))
             OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder')
-         )) OR (s.type NOT IN ('local', 'smb') AND (
+         )) OR (s.type != 'local' AND (
             (li.entry_type = 'file' AND li.asset_kind = 'ArchiveFile' AND EXISTS (
                 SELECT 1
-                FROM library_index parent
-                JOIN remote_listing_state listing
-                  ON listing.source_id = parent.source_id
-                 AND listing.logical_path = parent.path
-                 AND listing.scan_generation = li.scan_generation
-                 AND listing.listing_complete = 1
-                WHERE parent.id = li.parent_id
-                  AND parent.source_id = li.source_id
-                  AND parent.entry_type = 'dir'
-                  AND parent.deleted = 0
+                FROM remote_listing_state listing
+                WHERE listing.source_id = li.source_id
+                  AND listing.logical_path = ({parent_path})
+                  AND listing.scan_generation = li.scan_generation
+                  AND listing.listing_complete = 1
             ))
             OR (li.entry_type = 'dir' AND li.asset_kind = 'ImageFolder'
                 AND li.listing_complete = 1 AND EXISTS (
@@ -627,7 +663,8 @@ fn build_book_query(
                 (SELECT GROUP_CONCAT(t.name, ',') FROM book_tags bt
                  JOIN tags t ON t.id = bt.tag_id AND t.deleted = 0
                  WHERE bt.deleted = 0
-                   AND bt.book_key = {book_key_expr})
+                   AND bt.book_key = {book_key_expr}),
+                s.credential_ref, s.sftp_auth_method
          FROM library_index li
          JOIN book_sources s ON s.id = li.source_id AND s.deleted = 0
          LEFT JOIN book_metas m ON m.key = {book_key_expr} AND m.deleted = 0
@@ -710,6 +747,8 @@ fn run_book_query(
                 r.get::<_, Option<String>>(12)?,
                 r.get::<_, Option<String>>(13)?,
                 r.get::<_, Option<String>>(14)?,
+                r.get::<_, Option<String>>(15)?,
+                r.get::<_, Option<String>>(16)?,
             ))
         })
         .map_err(|e| e.to_string())?;
@@ -732,14 +771,17 @@ fn run_book_query(
             cookie,
             client_secret,
             tags_str,
+            credential_ref,
+            sftp_auth_method,
         ) = r;
         let is_remote = remote_only != 0;
         let has_credentials = cloud_has_credentials(
             &source_type,
             &(username, password, refresh_token, cookie, client_secret),
+            credential_ref.as_deref(),
+            sftp_auth_method.as_deref(),
         );
-        let has_local_resource = (source_type == "local" || source_type == "smb")
-            && std::path::Path::new(&path).exists();
+        let has_local_resource = source_type == "local" && std::path::Path::new(&path).exists();
         let status = source_status(
             &source_type,
             !is_remote,
@@ -825,4 +867,39 @@ pub fn db_source_books(
     params.push(Box::new(limit));
     params.push(Box::new(offset));
     run_book_query(&conn, &sql, &params)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cloud_has_credentials, source_status};
+
+    #[test]
+    fn vault_backed_sftp_private_key_is_available_to_local_search() {
+        let credentials = (Some("reader".to_string()), None, None, None, None);
+        let has_credentials = cloud_has_credentials(
+            "sftp",
+            &credentials,
+            Some("source:sftp-library"),
+            Some("privateKey"),
+        );
+
+        assert!(has_credentials);
+        assert_eq!(
+            source_status("sftp", true, false, has_credentials),
+            "needs_network"
+        );
+    }
+
+    #[test]
+    fn vault_backed_cloud_cookie_keeps_search_results_openable() {
+        let credentials = (None, None, None, None, None);
+        let has_credentials =
+            cloud_has_credentials("115", &credentials, Some("source:115-library"), None);
+
+        assert!(has_credentials);
+        assert_eq!(
+            source_status("115", true, false, has_credentials),
+            "needs_network"
+        );
+    }
 }

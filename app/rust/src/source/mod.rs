@@ -8,11 +8,14 @@ use std::io::{self, Read, Seek, SeekFrom};
 
 pub mod baidu;
 pub mod cloud115;
+pub mod ftp;
 pub mod gate;
 pub mod local;
 pub mod quark;
+pub mod s3;
 pub mod sftp;
 pub mod singleflight;
+pub mod smb;
 pub mod webdav;
 
 pub(crate) use gate::{GateLimit, RateGate};

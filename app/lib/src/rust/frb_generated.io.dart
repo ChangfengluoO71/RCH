@@ -263,6 +263,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double dco_decode_f_64(dynamic raw);
 
   @protected
+  FtpSessionInfo dco_decode_ftp_session_info(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -524,6 +527,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RemoteScanStatusDto dco_decode_remote_scan_status_dto(dynamic raw);
 
   @protected
+  S3SessionInfo dco_decode_s_3_session_info(dynamic raw);
+
+  @protected
   ScrapeProposalDto dco_decode_scrape_proposal_dto(dynamic raw);
 
   @protected
@@ -537,6 +543,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SftpSessionInfo dco_decode_sftp_session_info(dynamic raw);
+
+  @protected
+  SmbSessionInfo dco_decode_smb_session_info(dynamic raw);
 
   @protected
   SourceAvailabilityDto dco_decode_source_availability_dto(dynamic raw);
@@ -874,6 +883,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
+  FtpSessionInfo sse_decode_ftp_session_info(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -1199,6 +1211,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  S3SessionInfo sse_decode_s_3_session_info(SseDeserializer deserializer);
+
+  @protected
   ScrapeProposalDto sse_decode_scrape_proposal_dto(
     SseDeserializer deserializer,
   );
@@ -1214,6 +1229,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SftpSessionInfo sse_decode_sftp_session_info(SseDeserializer deserializer);
+
+  @protected
+  SmbSessionInfo sse_decode_smb_session_info(SseDeserializer deserializer);
 
   @protected
   SourceAvailabilityDto sse_decode_source_availability_dto(
@@ -1630,6 +1648,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ftp_session_info(
+    FtpSessionInfo self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
@@ -2058,6 +2082,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_s_3_session_info(
+    S3SessionInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_scrape_proposal_dto(
     ScrapeProposalDto self,
     SseSerializer serializer,
@@ -2081,6 +2111,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_sftp_session_info(
     SftpSessionInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_smb_session_info(
+    SmbSessionInfo self,
     SseSerializer serializer,
   );
 

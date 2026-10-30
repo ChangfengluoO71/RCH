@@ -9,7 +9,10 @@ use crate::remote_scan::model::{classify, normalize_path, RemoteEntry};
 use crate::source::baidu::{self as baidu_source, BaiduClient};
 use crate::source::cloud115::{self as cloud115_source, Cloud115Client, Cloud115WebClient};
 use crate::source::quark::{self as quark_source, QuarkClient};
+use crate::source::ftp::{FtpClient, FtpFile};
+use crate::source::s3::{S3Client, S3File};
 use crate::source::sftp::{self as sftp_source, SftpClient};
+use crate::source::smb::SmbClient;
 use crate::source::webdav::{self, DownloadProgress, WebDavClient, WebDavFile};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -18,6 +21,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 static SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<WebDavClient>>>> = OnceLock::new();
 static SFTP_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<SftpClient>>>> = OnceLock::new();
+static SMB_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<SmbClient>>>> = OnceLock::new();
+static FTP_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<FtpClient>>>> = OnceLock::new();
+static S3_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<S3Client>>>> = OnceLock::new();
 static BAIDU_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<BaiduClient>>>> = OnceLock::new();
 static CLOUD115_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<Cloud115Client>>>> = OnceLock::new();
 static CLOUD115_COOKIE_SESSIONS: OnceLock<Mutex<HashMap<u64, Arc<Cloud115WebClient>>>> =
@@ -28,6 +34,9 @@ static NEXT: OnceLock<Mutex<u64>> = OnceLock::new();
 /// 正在进行的下载进度追踪表(session_id -> DownloadProgress)。
 static DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static SFTP_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
+static SMB_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
+static FTP_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
+static S3_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static BAIDU_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static CLOUD115_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> = OnceLock::new();
 static CLOUD115_COOKIE_DOWNLOADS: OnceLock<Mutex<HashMap<u64, Arc<DownloadProgress>>>> =
@@ -46,8 +55,32 @@ fn sftp_sessions() -> &'static Mutex<HashMap<u64, Arc<SftpClient>>> {
     SFTP_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn smb_sessions() -> &'static Mutex<HashMap<u64, Arc<SmbClient>>> {
+    SMB_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ftp_sessions() -> &'static Mutex<HashMap<u64, Arc<FtpClient>>> {
+    FTP_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn s3_sessions() -> &'static Mutex<HashMap<u64, Arc<S3Client>>> {
+    S3_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ftp_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
+    FTP_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn s3_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
+    S3_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn sftp_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
     SFTP_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn smb_downloads() -> &'static Mutex<HashMap<u64, Arc<DownloadProgress>>> {
+    SMB_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn baidu_sessions() -> &'static Mutex<HashMap<u64, Arc<BaiduClient>>> {
@@ -105,6 +138,33 @@ pub(crate) fn get_sftp_session(id: u64) -> Result<Arc<SftpClient>> {
         .get(&id)
         .map(Arc::clone)
         .ok_or_else(|| anyhow::anyhow!("无效的 SFTP 会话: {id}"))
+}
+
+pub(crate) fn get_smb_session(id: u64) -> Result<Arc<SmbClient>> {
+    smb_sessions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(Arc::clone)
+        .ok_or_else(|| anyhow::anyhow!("无效的 SMB 会话: {id}"))
+}
+
+pub(crate) fn get_ftp_session(id: u64) -> Result<Arc<FtpClient>> {
+    ftp_sessions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(Arc::clone)
+        .ok_or_else(|| anyhow::anyhow!("无效的 FTP 会话: {id}"))
+}
+
+pub(crate) fn get_s3_session(id: u64) -> Result<Arc<S3Client>> {
+    s3_sessions()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(Arc::clone)
+        .ok_or_else(|| anyhow::anyhow!("无效的 S3 会话: {id}"))
 }
 
 pub(crate) fn get_baidu_session(id: u64) -> Result<Arc<BaiduClient>> {
@@ -332,21 +392,28 @@ pub async fn open_webdav_book(session: u64, path: String, strategy: String) -> R
                     }
                 }
                 OpenStrategy::Auto => {
-                    // 优先尝试整本下载到 raw/ 缓存
-                    match client.download_to_raw_cache(&path, progress) {
-                        Ok(local_path) => {
-                            tracing::info!("WebDAV 整本已缓存: {}", local_path.display());
-                            let src = crate::source::local::LocalFile::open(&local_path)?;
-                            document::open_document(src, &path)
-                        }
-                        Err(e) => {
-                            tracing::warn!("WebDAV 整本下载失败, 回退到 Range 流式: {e}");
-                            if client.range_supported(&path)? {
+                    // 与 UI 文案一致：流式优先，失败才整本下载。
+                    if let Some(local_path) = webdav::raw_cache_path(client.origin(), &path) {
+                        tracing::info!("WebDAV 命中缓存，直接本地打开: {}", local_path.display());
+                        let src = crate::source::local::LocalFile::open(&local_path)?;
+                        document::open_document(src, &path)
+                    } else {
+                        match client.range_supported(&path) {
+                            Ok(true) => {
                                 let len = client.file_size(&path)?;
-                                let src = WebDavFile::new(client, path.clone(), len);
+                                let src = WebDavFile::new(Arc::clone(&client), path.clone(), len);
                                 document::open_document(src, &path)
-                            } else {
-                                let src = client.download_full(&path)?;
+                            }
+                            Ok(false) => {
+                                tracing::info!("WebDAV 无 Range 支持，整本下载");
+                                let local_path = client.download_to_raw_cache(&path, progress)?;
+                                let src = crate::source::local::LocalFile::open(&local_path)?;
+                                document::open_document(src, &path)
+                            }
+                            Err(error) => {
+                                tracing::warn!("WebDAV 流式探测失败，回退整本下载: {error}");
+                                let local_path = client.download_to_raw_cache(&path, progress)?;
+                                let src = crate::source::local::LocalFile::open(&local_path)?;
                                 document::open_document(src, &path)
                             }
                         }
@@ -376,7 +443,10 @@ pub(crate) fn get_cloud115_cookie_session(id: u64) -> Result<Arc<Cloud115WebClie
 
 enum RemoteSessionClient {
     WebDav(Arc<WebDavClient>),
+    Smb(Arc<SmbClient>),
     Sftp(Arc<SftpClient>),
+    Ftp(Arc<FtpClient>),
+    S3(Arc<S3Client>),
     Baidu(Arc<BaiduClient>),
     Cloud115(Arc<Cloud115Client>),
     Cloud115Cookie(Arc<Cloud115WebClient>),
@@ -434,11 +504,20 @@ fn scan_error(error: anyhow::Error) -> RemoteScanError {
         || text.contains("登录")
         || text.contains("token")
         || text.contains("认证")
+        || text.contains("authentication was rejected")
     {
         RemoteScanError::Unauthorized
-    } else if text.contains("403") || text.contains("权限") || text.contains("forbidden") {
+    } else if text.contains("403")
+        || text.contains("权限")
+        || text.contains("forbidden")
+        || text.contains("access to the smb share or path was denied")
+    {
         RemoteScanError::Forbidden
-    } else if text.contains("404") || text.contains("不存在") || text.contains("not found") {
+    } else if text.contains("404")
+        || text.contains("不存在")
+        || text.contains("not found")
+        || text.contains("smb share or path was not found")
+    {
         RemoteScanError::NotFound
     } else if text.contains("429") || text.contains("频繁") || text.contains("rate") {
         RemoteScanError::RateLimited {
@@ -448,6 +527,7 @@ fn scan_error(error: anyhow::Error) -> RemoteScanError {
         || text.contains("timed out")
         || text.contains("连接")
         || text.contains("network")
+        || text.contains("smb server is unreachable")
     {
         RemoteScanError::TransientNetwork("provider_unavailable".into())
     } else {
@@ -466,11 +546,20 @@ fn scan_io_error(error: io::Error) -> RemoteScanError {
             stage: "range_read".into(),
             status: 405,
         }
-    } else if text.contains("401") || text.contains("unauthorized") {
+    } else if text.contains("401")
+        || text.contains("unauthorized")
+        || text.contains("authentication was rejected")
+    {
         RemoteScanError::Unauthorized
-    } else if text.contains("403") || text.contains("forbidden") {
+    } else if text.contains("403")
+        || text.contains("forbidden")
+        || text.contains("access to the smb share or path was denied")
+    {
         RemoteScanError::Forbidden
-    } else if text.contains("404") || text.contains("not found") {
+    } else if text.contains("404")
+        || text.contains("not found")
+        || text.contains("smb share or path was not found")
+    {
         RemoteScanError::NotFound
     } else if text.contains("429") || text.contains("rate") || text.contains("频繁") {
         RemoteScanError::RateLimited {
@@ -483,6 +572,7 @@ fn scan_io_error(error: io::Error) -> RemoteScanError {
         || text.contains("连接")
         || text.contains("network")
         || text.contains("请求失败")
+        || text.contains("smb server is unreachable")
     {
         RemoteScanError::TransientNetwork("range_read_failed".into())
     } else {
@@ -505,7 +595,10 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
         let provider_path = self.provider_path(path);
         let entries = match &self.client {
             RemoteSessionClient::WebDav(c) => c.list(&provider_path),
+            RemoteSessionClient::Smb(c) => c.list(&provider_path),
             RemoteSessionClient::Sftp(c) => c.list(&provider_path),
+            RemoteSessionClient::Ftp(c) => c.list(&provider_path),
+            RemoteSessionClient::S3(c) => c.list(&provider_path),
             RemoteSessionClient::Baidu(c) => c.list(&provider_path),
             RemoteSessionClient::Cloud115(c) => c.list(&provider_path),
             RemoteSessionClient::Cloud115Cookie(c) => c.list(&provider_path),
@@ -541,6 +634,23 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
     }
 
     #[flutter_rust_bridge::frb(ignore)]
+    fn file_size(
+        &self,
+        path: &str,
+    ) -> std::result::Result<Option<u64>, RemoteScanError> {
+        let provider_path = self.provider_path(path);
+        let size = match &self.client {
+            RemoteSessionClient::WebDav(client) => client.file_size(&provider_path).ok(),
+            RemoteSessionClient::Smb(client) => client.file_size(&provider_path).ok(),
+            RemoteSessionClient::Sftp(client) => client.file_size(&provider_path).ok(),
+            RemoteSessionClient::Ftp(client) => client.file_size(&provider_path).ok(),
+            RemoteSessionClient::S3(client) => client.file_size(&provider_path).ok(),
+            _ => None,
+        };
+        Ok(size)
+    }
+
+    #[flutter_rust_bridge::frb(ignore)]
     fn read_range(
         &self,
         path: &str,
@@ -552,7 +662,10 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
         let provider_path = self.provider_path(path);
         let read = match &self.client {
             RemoteSessionClient::WebDav(c) => c.read_range(&provider_path, offset, &mut bytes),
+            RemoteSessionClient::Smb(c) => c.read_at(&provider_path, offset, &mut bytes),
             RemoteSessionClient::Sftp(c) => c.read_at(&provider_path, offset, &mut bytes),
+            RemoteSessionClient::Ftp(c) => c.read_at(&provider_path, offset, &mut bytes),
+            RemoteSessionClient::S3(c) => c.read_at(&provider_path, offset, &mut bytes),
             RemoteSessionClient::Baidu(c) => {
                 let (url, _) = c.dlink(&provider_path).map_err(scan_error)?;
                 c.read_range_with_dlink(&url, &provider_path, offset, &mut bytes)
@@ -621,7 +734,10 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
         let provider_path = self.provider_path(_path);
         let range_read = match &self.client {
             RemoteSessionClient::WebDav(c) => c.range_probe_checked(&provider_path)?.supported,
+            RemoteSessionClient::Smb(_) => true,
             RemoteSessionClient::Sftp(_) => true,
+            RemoteSessionClient::Ftp(_) => true,
+            RemoteSessionClient::S3(_) => true,
             RemoteSessionClient::Baidu(c) => {
                 let (url, _) = c.dlink(&provider_path).map_err(scan_error)?;
                 c.probe_range_checked(&url)?.supported
@@ -649,6 +765,7 @@ impl RemoteProviderAdapter for SessionRemoteAdapter {
 fn remote_folder_cache_ns(source_type: &str, session: u64, path: &str) -> Result<String> {
     let origin = match source_type {
         "webdav" => get_session(session)?.origin().to_string(),
+        "smb" => get_smb_session(session)?.endpoint().to_string(),
         "sftp" => get_sftp_session(session)?.endpoint().to_string(),
         "baidu" => get_baidu_session(session)?.origin(),
         "115" => {
@@ -727,7 +844,7 @@ pub(crate) fn remote_provider_adapter(
     session: u64,
     root_path: &str,
 ) -> Result<Arc<dyn RemoteProviderAdapter>> {
-    if matches!(source_type, "smb" | "local") {
+    if source_type == "local" {
         return Err(anyhow!("local-only source is not eligible for remote scan"));
     }
     if !supports_remote_scan(source_type) {
@@ -739,11 +856,30 @@ pub(crate) fn remote_provider_adapter(
             root_path.to_string(),
             false,
         ),
+        "smb" => {
+            let client = get_smb_session(session)?;
+            let root = client.configured_root_path(root_path)?;
+            (RemoteSessionClient::Smb(client), root, false)
+        }
         "sftp" => (
             RemoteSessionClient::Sftp(get_sftp_session(session)?),
-            root_path.to_string(),
+            if root_path.trim().is_empty() {
+                "/".to_string()
+            } else {
+                root_path.to_string()
+            },
             false,
         ),
+        "ftp" => {
+            let client = get_ftp_session(session)?;
+            let root = client.root().to_string();
+            (RemoteSessionClient::Ftp(client), root, false)
+        }
+        "s3" => {
+            let client = get_s3_session(session)?;
+            let root = client.root().to_string();
+            (RemoteSessionClient::S3(client), root, false)
+        }
         "baidu" => {
             let client = get_baidu_session(session)?;
             let root = client.root().to_string();
@@ -781,7 +917,10 @@ pub(crate) fn remote_provider_adapter(
 }
 
 fn supports_remote_scan(source_type: &str) -> bool {
-    matches!(source_type, "webdav" | "sftp" | "baidu" | "115" | "quark")
+    matches!(
+        source_type,
+        "webdav" | "smb" | "sftp" | "ftp" | "s3" | "baidu" | "115" | "quark"
+    )
 }
 
 #[cfg(test)]
@@ -826,10 +965,10 @@ mod remote_scan_adapter_tests {
 
     #[test]
     fn provider_factory_contract_covers_every_remote_source_and_excludes_local_only_sources() {
-        for source_type in ["webdav", "sftp", "baidu", "115", "quark"] {
+        for source_type in ["webdav", "smb", "sftp", "baidu", "115", "quark"] {
             assert!(supports_remote_scan(source_type), "{source_type}");
         }
-        for source_type in ["local", "smb", "m8", "unknown"] {
+        for source_type in ["local", "m8", "unknown"] {
             assert!(!supports_remote_scan(source_type), "{source_type}");
         }
     }
@@ -870,6 +1009,14 @@ pub async fn open_cached_remote_book(
             (
                 webdav::raw_cache_path(&origin, &path),
                 format!("webdav|{}|{}", origin, path),
+            )
+        }
+        "smb" => {
+            let client = get_smb_session(session).map_err(|e| e.to_string())?;
+            let endpoint = client.endpoint().to_string();
+            (
+                client.raw_cache_path(&path),
+                format!("smb|{}|{}", endpoint, path),
             )
         }
         "sftp" => {
@@ -979,30 +1126,257 @@ pub async fn webdav_delete_file(session: u64, path: String) -> Result<(), String
         .map_err(|e| e.to_string())
 }
 
+/// SMB 会话信息。
+pub struct SmbSessionInfo {
+    pub id: u64,
+    pub root: String,
+    pub capability_label: String,
+}
+
+/// 连接 SMB2/3 共享并建立只读来源会话。
+pub async fn smb_connect(
+    host: String,
+    port: u16,
+    share: String,
+    root_path: String,
+    username: String,
+    password: String,
+) -> Result<SmbSessionInfo> {
+    let client = tokio::task::spawn_blocking(move || {
+        SmbClient::connect(&host, port, &share, &root_path, &username, &password)
+    })
+    .await??;
+    let root = client.configured_root_path("/")?;
+    let id = next_id();
+    smb_sessions().lock().unwrap().insert(id, Arc::new(client));
+    Ok(SmbSessionInfo {
+        id,
+        root,
+        capability_label: "smb2/3".to_string(),
+    })
+}
+
+/// 断开 SMB 会话并在 blocking 线程释放其 Tokio runtime。
+pub async fn smb_disconnect(id: u64) {
+    let client = smb_sessions().lock().unwrap().remove(&id);
+    if let Some(client) = client {
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = client.disconnect();
+            drop(client);
+        })
+        .await;
+    }
+}
+
+/// 列出 SMB 共享内的目录。
+pub async fn smb_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
+    let client = get_smb_session(session)?;
+    let entries = tokio::task::spawn_blocking(move || client.list(&path)).await??;
+    Ok(entries
+        .into_iter()
+        .map(|entry| DirEntry {
+            name: entry.name,
+            path: entry.path,
+            is_dir: entry.is_dir,
+            size: entry.size,
+            mtime: entry.mtime,
+        })
+        .collect())
+}
+
+/// 打开 SMB 共享中的漫画，支持下载缓存与随机流式读取。
+pub async fn open_smb_book(session: u64, path: String, strategy: String) -> Result<BookInfo> {
+    let client = get_smb_session(session)?;
+    let endpoint = client.endpoint().to_string();
+    let cache_ns = format!("smb|{}|{}", endpoint, path);
+    let strat = parse_strategy(&strategy);
+
+    let progress = if strat != OpenStrategy::Stream {
+        let file_size = {
+            let client = Arc::clone(&client);
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || client.file_size(&path)).await??
+        };
+        let progress = Arc::new(DownloadProgress::new(file_size));
+        smb_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&progress));
+        Some(progress)
+    } else {
+        None
+    };
+
+    let book = {
+        let client = Arc::clone(&client);
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    let source = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(source, &path)
+                };
+            match strat {
+                OpenStrategy::Download => {
+                    let local_path = client.download_to_raw_cache(&path, progress)?;
+                    open_local(local_path)
+                }
+                OpenStrategy::Stream => {
+                    if let Some(local_path) = client.raw_cache_path(&path) {
+                        open_local(local_path)
+                    } else {
+                        let source = client.open_file(&path)?;
+                        document::open_document(source, &path)
+                    }
+                }
+                OpenStrategy::Auto => {
+                    // 与 UI 文案一致：流式优先，失败才整本下载。
+                    if let Some(local_path) = client.raw_cache_path(&path) {
+                        open_local(local_path)
+                    } else {
+                        match client.open_file(&path) {
+                            Ok(source) => document::open_document(source, &path),
+                            Err(error) => {
+                                tracing::warn!("SMB 流式打开失败，回退整本下载: {error}");
+                                let local_path = client.download_to_raw_cache(&path, progress)?;
+                                open_local(local_path)
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .await??
+    };
+
+    if strat != OpenStrategy::Stream {
+        smb_downloads().lock().unwrap().remove(&session);
+    }
+    Ok(register_book(book, &cache_ns))
+}
+
+/// 查询 SMB 整本缓存下载进度。
+pub fn smb_download_progress(session: u64) -> f64 {
+    smb_downloads()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .map(|progress| progress.fraction())
+        .unwrap_or(1.0)
+}
+
+/// 检查 SMB 漫画是否已有 raw 缓存。
+pub fn smb_has_raw_cache(session: u64, path: String) -> bool {
+    get_smb_session(session)
+        .ok()
+        .and_then(|client| client.raw_cache_path(&path))
+        .is_some()
+}
+
+/// 生成 SMB 共享文件封面；远端路径永不作为本地文件系统路径读取。
+pub async fn smb_cover(
+    session: u64,
+    path: String,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<CropRect>,
+) -> Result<PageImage> {
+    let client = get_smb_session(session)?;
+    let crop_tuple = crop.as_ref().map(|rect| (rect.x, rect.y, rect.w, rect.h));
+    let cache_path = client.raw_cache_candidate_path(&path)?;
+    let cache_path_string = cache_path.to_string_lossy();
+    if let Some((rgba, cached_width, cached_height)) =
+        cache::cover_cache_read(&cache_path_string, page, width, height, crop_tuple)
+    {
+        return Ok(PageImage {
+            rgba,
+            width: cached_width,
+            height: cached_height,
+        });
+    }
+
+    let client_for_read = Arc::clone(&client);
+    let path_for_read = path.clone();
+    let image = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
+        if let Some(local_path) = client_for_read.raw_cache_path(&path_for_read) {
+            let source = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(source, &path_for_read)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|rect| (rect.x, rect.y, rect.w, rect.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let source = client_for_read.open_file(&path_for_read)?;
+        let book = document::open_document(source, &path_for_read)?;
+        let bytes = book.page_bytes(page)?;
+        let crop = crop.map(|rect| (rect.x, rect.y, rect.w, rect.h));
+        crate::decode::decode_cover(&bytes, width, height, crop)
+    })
+    .await??;
+
+    let _ = cache::cover_cache_write(
+        &cache_path_string,
+        page,
+        width,
+        height,
+        crop_tuple,
+        &image.rgba,
+    );
+    Ok(PageImage {
+        rgba: image.rgba,
+        width: image.width,
+        height: image.height,
+    })
+}
+
 /// SFTP 会话信息。
 pub struct SftpSessionInfo {
     pub id: u64,
     pub root: String,
     /// 能力标记（Dart 侧显示用）。
     pub capability_label: String, // "sftp"
+    pub host_fingerprint: String,
 }
 
-/// 连接 SFTP 服务器（密码认证），返回会话句柄；root 固定为 `/`。
+/// Read an SSH server fingerprint without sending credentials.
+pub async fn sftp_probe_host_key(host: String, port: u16) -> Result<String> {
+    tokio::task::spawn_blocking(move || SftpClient::probe_host_key(&host, port)).await?
+}
+
+/// Connect to SFTP only after the caller has explicitly trusted its host key.
 pub async fn sftp_connect(
     host: String,
     port: u16,
     username: String,
+    auth_method: String,
     password: String,
+    private_key: String,
+    key_passphrase: String,
+    expected_fingerprint: String,
 ) -> Result<SftpSessionInfo> {
-    let client =
-        tokio::task::spawn_blocking(move || SftpClient::connect(&host, port, &username, &password))
-            .await??;
+    let client = tokio::task::spawn_blocking(move || {
+        SftpClient::connect(
+            &host,
+            port,
+            &username,
+            &auth_method,
+            &password,
+            &private_key,
+            &key_passphrase,
+            &expected_fingerprint,
+        )
+    })
+    .await??;
+    let host_fingerprint = client.host_fingerprint().to_string();
     let id = next_id();
     sftp_sessions().lock().unwrap().insert(id, Arc::new(client));
     Ok(SftpSessionInfo {
         id,
         root: "/".to_string(),
         capability_label: "sftp".to_string(),
+        host_fingerprint,
     })
 }
 
@@ -1085,18 +1459,26 @@ pub async fn open_sftp_book(session: u64, path: String, strategy: String) -> Res
                         document::open_document(src, &path)
                     }
                 }
-                OpenStrategy::Auto => match client.download_to_raw_cache(&path, progress) {
-                    Ok(local_path) => {
-                        tracing::info!("SFTP 整本已缓存: {}", local_path.display());
+                OpenStrategy::Auto => {
+                    // 与 UI 文案一致：流式优先，失败才整本下载。
+                    if let Some(local_path) = sftp_source::raw_cache_path(client.endpoint(), &path)
+                    {
+                        tracing::info!("SFTP 命中缓存，直接本地打开: {}", local_path.display());
                         open_local(local_path)
+                    } else {
+                        match client.file_size(&path) {
+                            Ok(len) => {
+                                let src = sftp_source::SftpFile::new(client, path.clone(), len);
+                                document::open_document(src, &path)
+                            }
+                            Err(error) => {
+                                tracing::warn!("SFTP 流式打开失败，回退整本下载: {error}");
+                                let local_path = client.download_to_raw_cache(&path, progress)?;
+                                open_local(local_path)
+                            }
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!("SFTP 整本下载失败, 回退流式: {e}");
-                        let len = client.file_size(&path)?;
-                        let src = sftp_source::SftpFile::new(client, path.clone(), len);
-                        document::open_document(src, &path)
-                    }
-                },
+                }
             }
         })
         .await??
@@ -2005,6 +2387,15 @@ fn legacy_cover_authority(lookup: &LegacyCoverLocalLookupDto) -> Option<String> 
             &lookup.host,
             u16::try_from(lookup.port).unwrap_or(22),
         )),
+        "smb" => {
+            let share = lookup.logical_path.split('/').next().unwrap_or_default();
+            crate::source::smb::endpoint_for(
+                &lookup.host,
+                u16::try_from(lookup.port).unwrap_or(445),
+                share,
+            )
+            .ok()
+        }
         "baidu" => BaiduClient::new(&lookup.app_key, "", "", &lookup.root)
             .ok()
             .map(|client| client.origin()),
@@ -2028,7 +2419,7 @@ fn legacy_cover_authority(lookup: &LegacyCoverLocalLookupDto) -> Option<String> 
 /// `logical fields → authority → current key → (可恢复时) alternate historical key → cover_cache_read`。
 ///
 /// 双历史 key 规则（冻结）：
-/// * **Family 1**（webdav / sftp / baidu / 115）：raw 当前存在 → current = 实际 raw path，
+/// * **Family 1**（webdav / smb / sftp / baidu / 115）：raw 当前存在 → current = 实际 raw path，
 ///   alternate = logical path；raw 当前不存在 → current = logical path，
 ///   alternate = **确定性候选 raw path**（由 production 算法精确重建，故历史 raw-key cover 仍可读）。
 /// * **Family 2**（115web / quark）：raw 当前存在 → current = 扫描出的实际 raw path，
@@ -2063,6 +2454,18 @@ pub fn read_legacy_cover_local(lookup: LegacyCoverLocalLookupDto) -> Option<Page
                 None => (
                     logical_path_buf,
                     Some(crate::source::webdav::raw_cache_candidate_path(
+                        &authority, logical,
+                    )),
+                ),
+            }
+        }
+        "smb" => {
+            let raw = crate::source::smb::raw_cache_path(&authority, logical);
+            match raw {
+                Some(raw) => (raw, Some(logical_path_buf)),
+                None => (
+                    logical_path_buf,
+                    Some(crate::source::smb::raw_cache_candidate_path(
                         &authority, logical,
                     )),
                 ),
@@ -2748,6 +3151,420 @@ pub async fn cloud115_cover(
     })
 }
 
+/// FTP 会话信息。
+pub struct FtpSessionInfo {
+    pub id: u64,
+    pub root: String,
+    pub capability_label: String,
+}
+
+/// 连接 FTP 服务器并建立只读来源会话。
+pub async fn ftp_connect(
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
+    root_path: String,
+) -> Result<FtpSessionInfo> {
+    let client = tokio::task::spawn_blocking(move || {
+        FtpClient::connect(&host, port, &username, &password, &root_path)
+    })
+    .await??;
+    let root = client.root().to_string();
+    let id = next_id();
+    ftp_sessions().lock().unwrap().insert(id, Arc::new(client));
+    Ok(FtpSessionInfo {
+        id,
+        root,
+        capability_label: "ftp".to_string(),
+    })
+}
+
+/// 断开 FTP 会话。
+pub async fn ftp_disconnect(id: u64) {
+    let client = ftp_sessions().lock().unwrap().remove(&id);
+    if let Some(client) = client {
+        let _ = tokio::task::spawn_blocking(move || {
+            client.disconnect();
+            drop(client);
+        })
+        .await;
+    }
+}
+
+/// 列出 FTP 目录。
+pub async fn ftp_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
+    let client = get_ftp_session(session)?;
+    let entries = tokio::task::spawn_blocking(move || client.list(&path)).await??;
+    Ok(entries
+        .into_iter()
+        .map(|entry| DirEntry {
+            name: entry.name,
+            path: entry.path,
+            is_dir: entry.is_dir,
+            size: entry.size,
+            mtime: entry.mtime,
+        })
+        .collect())
+}
+
+/// 打开 FTP 中的漫画，自动模式下流式优先、失败回退整本下载。
+pub async fn open_ftp_book(session: u64, path: String, strategy: String) -> Result<BookInfo> {
+    let client = get_ftp_session(session)?;
+    let endpoint = client.endpoint().to_string();
+    let cache_ns = format!("ftp|{}|{}", endpoint, path);
+    let strat = parse_strategy(&strategy);
+    let progress = if strat != OpenStrategy::Stream {
+        let file_size = {
+            let client = Arc::clone(&client);
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || client.file_size(&path)).await??
+        };
+        let progress = Arc::new(DownloadProgress::new(file_size));
+        ftp_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&progress));
+        Some(progress)
+    } else {
+        None
+    };
+    let book = {
+        let client = Arc::clone(&client);
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    let source = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(source, &path)
+                };
+            match strat {
+                OpenStrategy::Download => {
+                    let local_path = client.download_to_raw_cache(&path, progress)?;
+                    open_local(local_path)
+                }
+                OpenStrategy::Stream => {
+                    if let Some(local_path) = client.raw_cache_path(&path) {
+                        open_local(local_path)
+                    } else {
+                        let len = client.file_size(&path)?;
+                        let source = FtpFile::new(Arc::clone(&client), path.clone(), len);
+                        document::open_document(source, &path)
+                    }
+                }
+                OpenStrategy::Auto => {
+                    if let Some(local_path) = client.raw_cache_path(&path) {
+                        open_local(local_path)
+                    } else {
+                        let streamed = (|| -> Result<Box<dyn document::Document>> {
+                            let len = client.file_size(&path)?;
+                            let source = FtpFile::new(Arc::clone(&client), path.clone(), len);
+                            document::open_document(source, &path)
+                        })();
+                        match streamed {
+                            Ok(book) => Ok(book),
+                            Err(error) => {
+                                tracing::warn!("FTP 流式打开失败，回退整本下载: {error}");
+                                let local_path = client.download_to_raw_cache(&path, progress)?;
+                                open_local(local_path)
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .await??
+    };
+    if strat != OpenStrategy::Stream {
+        ftp_downloads().lock().unwrap().remove(&session);
+    }
+    Ok(register_book(book, &cache_ns))
+}
+
+/// 查询 FTP 整本缓存下载进度。
+pub fn ftp_download_progress(session: u64) -> f64 {
+    ftp_downloads()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .map(|progress| progress.fraction())
+        .unwrap_or(1.0)
+}
+
+/// 检查 FTP 漫画是否已有 raw 缓存。
+pub fn ftp_has_raw_cache(session: u64, path: String) -> bool {
+    get_ftp_session(session)
+        .ok()
+        .and_then(|client| client.raw_cache_path(&path))
+        .is_some()
+}
+
+/// 生成 FTP 漫画封面。
+pub async fn ftp_cover(
+    session: u64,
+    path: String,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<CropRect>,
+) -> Result<PageImage> {
+    let client = get_ftp_session(session)?;
+    let crop_tuple = crop.as_ref().map(|rect| (rect.x, rect.y, rect.w, rect.h));
+    let cache_path_string = client.raw_cache_candidate_path(&path).to_string_lossy().to_string();
+    if let Some((rgba, cached_width, cached_height)) =
+        cache::cover_cache_read(&cache_path_string, page, width, height, crop_tuple)
+    {
+        return Ok(PageImage {
+            rgba,
+            width: cached_width,
+            height: cached_height,
+        });
+    }
+    let client_for_read = Arc::clone(&client);
+    let path_for_read = path.clone();
+    let image = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
+        if let Some(local_path) = client_for_read.raw_cache_path(&path_for_read) {
+            let source = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(source, &path_for_read)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|rect| (rect.x, rect.y, rect.w, rect.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let len = client_for_read.file_size(&path_for_read)?;
+        let source = FtpFile::new(Arc::clone(&client_for_read), path_for_read.clone(), len);
+        let book = document::open_document(source, &path_for_read)?;
+        let bytes = book.page_bytes(page)?;
+        let crop = crop.map(|rect| (rect.x, rect.y, rect.w, rect.h));
+        crate::decode::decode_cover(&bytes, width, height, crop)
+    })
+    .await??;
+    let _ = cache::cover_cache_write(
+        &cache_path_string,
+        page,
+        width,
+        height,
+        crop_tuple,
+        &image.rgba,
+    );
+    Ok(PageImage {
+        rgba: image.rgba,
+        width: image.width,
+        height: image.height,
+    })
+}
+
+/// S3 会话信息。
+pub struct S3SessionInfo {
+    pub id: u64,
+    pub root: String,
+    pub capability_label: String,
+}
+
+/// 连接 path-style S3 bucket 并建立只读来源会话。
+#[allow(clippy::too_many_arguments)]
+pub async fn s3_connect(
+    endpoint: String,
+    bucket: String,
+    access_key: String,
+    secret_key: String,
+    region: String,
+    root_path: String,
+) -> Result<S3SessionInfo> {
+    let client = tokio::task::spawn_blocking(move || {
+        S3Client::connect(
+            &endpoint,
+            &bucket,
+            &access_key,
+            &secret_key,
+            &region,
+            &root_path,
+        )
+    })
+    .await??;
+    let root = client.root().to_string();
+    let id = next_id();
+    s3_sessions().lock().unwrap().insert(id, Arc::new(client));
+    Ok(S3SessionInfo {
+        id,
+        root,
+        capability_label: "s3".to_string(),
+    })
+}
+
+/// 断开 S3 会话。
+pub async fn s3_disconnect(id: u64) {
+    let client = s3_sessions().lock().unwrap().remove(&id);
+    if let Some(client) = client {
+        let _ = tokio::task::spawn_blocking(move || drop(client)).await;
+    }
+}
+
+/// 列出 S3 “目录”（ListObjectsV2 + delimiter）。
+pub async fn s3_list(session: u64, path: String) -> Result<Vec<DirEntry>> {
+    let client = get_s3_session(session)?;
+    let entries = tokio::task::spawn_blocking(move || client.list(&path)).await??;
+    Ok(entries
+        .into_iter()
+        .map(|entry| DirEntry {
+            name: entry.name,
+            path: entry.path,
+            is_dir: entry.is_dir,
+            size: entry.size,
+            mtime: entry.mtime,
+        })
+        .collect())
+}
+
+/// 打开 S3 中的漫画，自动模式下流式优先、失败回退整本下载。
+pub async fn open_s3_book(session: u64, path: String, strategy: String) -> Result<BookInfo> {
+    let client = get_s3_session(session)?;
+    let endpoint = client.endpoint().to_string();
+    let cache_ns = format!("s3|{}|{}", endpoint, path);
+    let strat = parse_strategy(&strategy);
+    let progress = if strat != OpenStrategy::Stream {
+        let file_size = {
+            let client = Arc::clone(&client);
+            let path = path.clone();
+            tokio::task::spawn_blocking(move || client.file_size(&path)).await??
+        };
+        let progress = Arc::new(DownloadProgress::new(file_size));
+        s3_downloads()
+            .lock()
+            .unwrap()
+            .insert(session, Arc::clone(&progress));
+        Some(progress)
+    } else {
+        None
+    };
+    let book = {
+        let client = Arc::clone(&client);
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Box<dyn document::Document>> {
+            let open_local =
+                |local_path: std::path::PathBuf| -> Result<Box<dyn document::Document>> {
+                    let source = crate::source::local::LocalFile::open(&local_path)?;
+                    document::open_document(source, &path)
+                };
+            match strat {
+                OpenStrategy::Download => {
+                    let local_path = client.download_to_raw_cache(&path, progress)?;
+                    open_local(local_path)
+                }
+                OpenStrategy::Stream => {
+                    if let Some(local_path) = client.raw_cache_path(&path) {
+                        open_local(local_path)
+                    } else {
+                        let len = client.file_size(&path)?;
+                        let source = S3File::new(Arc::clone(&client), path.clone(), len);
+                        document::open_document(source, &path)
+                    }
+                }
+                OpenStrategy::Auto => {
+                    if let Some(local_path) = client.raw_cache_path(&path) {
+                        open_local(local_path)
+                    } else {
+                        let streamed = (|| -> Result<Box<dyn document::Document>> {
+                            let len = client.file_size(&path)?;
+                            let source = S3File::new(Arc::clone(&client), path.clone(), len);
+                            document::open_document(source, &path)
+                        })();
+                        match streamed {
+                            Ok(book) => Ok(book),
+                            Err(error) => {
+                                tracing::warn!("S3 流式打开失败，回退整本下载: {error}");
+                                let local_path = client.download_to_raw_cache(&path, progress)?;
+                                open_local(local_path)
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .await??
+    };
+    if strat != OpenStrategy::Stream {
+        s3_downloads().lock().unwrap().remove(&session);
+    }
+    Ok(register_book(book, &cache_ns))
+}
+
+/// 查询 S3 整本缓存下载进度。
+pub fn s3_download_progress(session: u64) -> f64 {
+    s3_downloads()
+        .lock()
+        .unwrap()
+        .get(&session)
+        .map(|progress| progress.fraction())
+        .unwrap_or(1.0)
+}
+
+/// 检查 S3 漫画是否已有 raw 缓存。
+pub fn s3_has_raw_cache(session: u64, path: String) -> bool {
+    get_s3_session(session)
+        .ok()
+        .and_then(|client| client.raw_cache_path(&path))
+        .is_some()
+}
+
+/// 生成 S3 漫画封面。
+pub async fn s3_cover(
+    session: u64,
+    path: String,
+    page: u32,
+    width: u32,
+    height: u32,
+    crop: Option<CropRect>,
+) -> Result<PageImage> {
+    let client = get_s3_session(session)?;
+    let crop_tuple = crop.as_ref().map(|rect| (rect.x, rect.y, rect.w, rect.h));
+    let cache_path_string = client.raw_cache_candidate_path(&path).to_string_lossy().to_string();
+    if let Some((rgba, cached_width, cached_height)) =
+        cache::cover_cache_read(&cache_path_string, page, width, height, crop_tuple)
+    {
+        return Ok(PageImage {
+            rgba,
+            width: cached_width,
+            height: cached_height,
+        });
+    }
+    let client_for_read = Arc::clone(&client);
+    let path_for_read = path.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<crate::decode::DecodedImage> {
+        let governor = crate::reader::blocking_request_governor();
+        let _permit = governor.acquire(crate::reader::RequestPriority::Cover)?;
+        if let Some(local_path) = client_for_read.raw_cache_path(&path_for_read) {
+            let source = crate::source::local::LocalFile::open(&local_path)?;
+            let book = document::open_document(source, &path_for_read)?;
+            let bytes = book.page_bytes(page)?;
+            let crop = crop.map(|rect| (rect.x, rect.y, rect.w, rect.h));
+            return crate::decode::decode_cover(&bytes, width, height, crop);
+        }
+        let len = client_for_read.file_size(&path_for_read)?;
+        let source = S3File::new(Arc::clone(&client_for_read), path_for_read.clone(), len);
+        let book = document::open_document(source, &path_for_read)?;
+        let bytes = book.page_bytes(page)?;
+        let crop = crop.map(|rect| (rect.x, rect.y, rect.w, rect.h));
+        crate::decode::decode_cover(&bytes, width, height, crop)
+    })
+    .await?;
+    let image = result?;
+    let _ = cache::cover_cache_write(
+        &cache_path_string,
+        page,
+        width,
+        height,
+        crop_tuple,
+        &image.rgba,
+    );
+    Ok(PageImage {
+        rgba: image.rgba,
+        width: image.width,
+        height: image.height,
+    })
+}
+
 #[cfg(test)]
 mod d2_cache_authority_tests {
     //! P1-D-2：legacy cover 的**双历史 key** 兼容契约（CA 套件）。
@@ -2891,6 +3708,10 @@ mod d2_cache_authority_tests {
                 authority,
                 logical(dto),
             )),
+            "smb" => Some(crate::source::smb::raw_cache_candidate_path(
+                authority,
+                logical(dto),
+            )),
             "baidu" => Some(crate::source::baidu::raw_cache_candidate_path(
                 authority,
                 logical(dto),
@@ -2928,6 +3749,9 @@ mod d2_cache_authority_tests {
                 .unwrap_or(logical_buf),
             "sftp" => {
                 crate::source::sftp::raw_cache_path(authority, logical(dto)).unwrap_or(logical_buf)
+            }
+            "smb" => {
+                crate::source::smb::raw_cache_path(authority, logical(dto)).unwrap_or(logical_buf)
             }
             "baidu" => {
                 crate::source::baidu::raw_cache_path(authority, logical(dto)).unwrap_or(logical_buf)

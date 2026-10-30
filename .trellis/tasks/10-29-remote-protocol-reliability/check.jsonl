@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/remote-source-protocols.md","reason":"Review required protocol behavior, source identity, vault handling, and session lifecycle against this contract."}
+{"file":".trellis/spec/backend/sftp-source.md","reason":"Review SFTP trust and authentication behavior against the package-specific contract."}

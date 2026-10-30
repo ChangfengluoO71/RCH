@@ -27,6 +27,8 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Automation Pipeline Contracts](./automation-pipeline.md) | M8 自动刮削与现有 SyncEngine 的任务通道、顺序、去重与失败隔离 | Filled |
 | [Background Work and Foreground Responsiveness](./background-work-coordination.md) | Index single-flight, typed sync outcomes, bounded batch writes, maintenance yields, and async cloud loading | Filled (2026-10-12) |
 
+Remote source protocol contracts (SMB/SFTP/credential storage): [remote-source-protocols.md](./remote-source-protocols.md).
+
 ---
 
 | [Source Refresh and Stale-Data Cleanup](./source-refresh-cleanup.md) | Source CRUD completion, 115/Quark effective roots, and safe cleanup boundaries | Filled |

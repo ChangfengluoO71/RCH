@@ -5,9 +5,12 @@ import 'package:app/src/rust/api/book.dart' as frbbook;
 import 'package:app/src/rust/api/source.dart' as frbsource;
 import 'package:app/store/baidu_session.dart';
 import 'package:app/store/cloud115_session.dart';
+import 'package:app/store/ftp_session.dart';
 import 'package:app/store/library_catalog.dart';
 import 'package:app/store/models.dart';
 import 'package:app/store/quark_session.dart';
+import 'package:app/store/s3_session.dart';
+import 'package:app/store/smb_session.dart';
 import 'package:app/store/sftp_session.dart';
 import 'package:app/store/webdav_session.dart';
 
@@ -157,7 +160,10 @@ class BookOpenCoordinator {
 
   Future<BigInt> _sessionFor(BookSource source) {
     if (source.isWebDav) return webdavSessionFor(source);
+    if (source.isSmb) return smbSessionFor(source);
     if (source.isSftp) return sftpSessionFor(source);
+    if (source.isFtp) return ftpSessionFor(source);
+    if (source.isS3) return s3SessionFor(source);
     if (source.isBaidu) return baiduSessionFor(source);
     if (source.is115) return cloud115SessionFor(source);
     if (source.isQuark) return quarkSessionFor(source);
@@ -197,7 +203,14 @@ class BookOpenCoordinator {
 
     late final Future<frbbook.BookInfo> Function() open;
     Future<double> Function()? progress;
-    if (sourceType == 'webdav') {
+    if (sourceType == 'smb') {
+      open = () => frbsource.openSmbBook(
+        session: session,
+        path: providerPath,
+        strategy: strategy.name,
+      );
+      progress = () => frbsource.smbDownloadProgress(session: session);
+    } else if (sourceType == 'webdav') {
       open = () => frbsource.openWebdavBook(
         session: session,
         path: providerPath,
@@ -211,6 +224,20 @@ class BookOpenCoordinator {
         strategy: strategy.name,
       );
       progress = () => frbsource.sftpDownloadProgress(session: session);
+    } else if (source?.isFtp == true) {
+      open = () => frbsource.openFtpBook(
+        session: session,
+        path: providerPath,
+        strategy: strategy.name,
+      );
+      progress = () => frbsource.ftpDownloadProgress(session: session);
+    } else if (source?.isS3 == true) {
+      open = () => frbsource.openS3Book(
+        session: session,
+        path: providerPath,
+        strategy: strategy.name,
+      );
+      progress = () => frbsource.s3DownloadProgress(session: session);
     } else if (source?.isBaidu == true) {
       open = () => frbsource.openBaiduBook(
         session: session,
@@ -237,9 +264,9 @@ class BookOpenCoordinator {
       throw UnsupportedError('不支持的书源类型：$sourceType');
     }
 
-    final progressProvider = strategy == BookOpenStrategy.stream
-        ? null
-        : progress;
+    final progressProvider = strategy == BookOpenStrategy.download
+        ? progress
+        : null;
     var polling = progressProvider != null;
     final pollTask = _pollProgress(
       progress: progressProvider,

@@ -17,6 +17,8 @@ import 'library_store.dart';
 import 'long_task_registry.dart';
 import 'models.dart';
 import 'quark_session.dart';
+import 'ftp_session.dart';
+import 's3_session.dart';
 import 'sftp_session.dart';
 import 'webdav_session.dart';
 
@@ -333,6 +335,16 @@ class AiUpscaleManager extends ChangeNotifier {
         ),
         'sftp' => openSftpBook(
           session: await sftpSessionFor(source),
+          path: providerPath,
+          strategy: strategy,
+        ),
+        'ftp' => openFtpBook(
+          session: await ftpSessionFor(source),
+          path: providerPath,
+          strategy: strategy,
+        ),
+        's3' => openS3Book(
+          session: await s3SessionFor(source),
           path: providerPath,
           strategy: strategy,
         ),
